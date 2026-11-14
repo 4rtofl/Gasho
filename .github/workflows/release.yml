@@ -2,12 +2,11 @@
 # from main every 15 minutes, when what goes into them changed since their last release. scripts/release.ts decides the
 # versions (x.y.z: y up for a pull request labeled "enhancement" or a new plugin API, z up otherwise), commits them to
 # main, tags the commit (daemon-v<version>, plugin-sdk-v<version>) and publishes. Run it by hand to release at once.
+# The 15-minute rhythm comes from a Cloudflare Worker (infra/release-trigger) that dispatches this workflow: GitHub's
+# own schedule never fired for it.
 name: Release
 
 on:
-  schedule:
-    # Every 15 minutes.
-    - cron: "0,15,30,45 * * * *"
   workflow_dispatch:
 
 permissions:

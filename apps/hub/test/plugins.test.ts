@@ -53,6 +53,11 @@ test("checkManifest takes a good manifest and says what is wrong with a bad one"
   const ok = checkManifest(manifest, "hello", files);
   assert.ok("manifest" in ok);
   assert.equal(ok.manifest.methods?.save?.timeoutSeconds, 30);
+  assert.equal(ok.manifest.genre, undefined);
+  // A genre is kept whatever its id, as long as it is of the right form: which genres there are is up to the catalog.
+  const withGenre = checkManifest({ ...manifest, genre: "devtools" }, "hello", files);
+  assert.ok("manifest" in withGenre);
+  assert.equal(withGenre.manifest.genre, "devtools");
   const bad = (m: object, folder = "hello", f = files) => {
     const r = checkManifest({ ...manifest, ...m }, folder, f);
     return "error" in r ? r.error : "";
@@ -61,14 +66,34 @@ test("checkManifest takes a good manifest and says what is wrong with a bad one"
   assert.match(bad({}, "other"), /フォルダーの名前/);
   assert.match(bad({ api: "2.0" }), /API 2\.0/);
   assert.match(bad({ api: "1.9" }), /API 1\.9/);
-  assert.match(bad({ api: "1.6" }), /この Gasho は 1\.5 までです/);
+  assert.match(bad({ api: "1.8" }), /この Gasho は 1\.7 までです/);
   assert.match(bad({ version: "1" }), /version/);
+  assert.match(bad({ genre: "Dev Tools" }), /genre/);
+  assert.match(bad({ genre: ["devtools"] }), /genre/);
   assert.match(bad({ web: { js: "../x.js" } }), /web\.js/);
   assert.match(bad({}, "hello", new Set(["gasho-plugin.json", "web.js", "web.css"])), /daemon\.js のファイル（daemon\.js）がありません/);
-  assert.match(bad({ web: undefined, daemon: undefined }), /web と daemon/);
+  assert.match(bad({ web: undefined, daemon: undefined }), /web・daemon・theme/);
   assert.match(bad({ methods: { go: { kind: "maybe" } } }), /kind/);
   assert.match(bad({ permissions: ["root"] }), /permissions/);
   assert.match(bad({ settings: { x: { type: "select", scope: "server", label: "x", options: [] } } }), /options/);
+
+  // A theme alone is a plugin (API 1.6). Only Gasho's names, and values that stay one CSS value.
+  const theme = { id: "hello", name: "Hello", version: "1.0.0", api: "1.6", theme: { background: " #10141c ", "neutral-950": "oklch(0.2 0 0)" } };
+  const onlyManifest = new Set(["gasho-plugin.json"]);
+  const t = checkManifest(theme, "hello", onlyManifest);
+  assert.ok("manifest" in t);
+  assert.deepEqual(t.manifest.theme, { background: "#10141c", "neutral-950": "oklch(0.2 0 0)" });
+  const badTheme = (m: object) => {
+    const r = checkManifest({ ...theme, ...m }, "hello", onlyManifest);
+    return "error" in r ? r.error : "";
+  };
+  assert.match(badTheme({ api: "1.5" }), /api を 1\.6 以上/);
+  assert.match(badTheme({ theme: {} }), /1つ以上/);
+  assert.match(badTheme({ theme: { "color-white": "#fff" } }), /color-white という名前はありません/);
+  assert.match(badTheme({ theme: JSON.parse('{"__proto__": "#fff"}') }), /__proto__ という名前はありません/);
+  assert.match(badTheme({ theme: { background: "red; color: blue" } }), /theme\.background/);
+  assert.match(badTheme({ theme: { background: "#000 } body { display: none" } }), /theme\.background/);
+  assert.match(badTheme({ theme: { background: "x".repeat(65) } }), /theme\.background/);
 });
 
 test("settingProblem checks values against their settings", () => {
@@ -120,9 +145,10 @@ test("the registry reads plugin folders, copies each version into the cache, and
   reg.close();
 });
 
-async function setup() {
+async function setup(...more: object[]) {
   const dir = tmp();
   writePlugin(dir);
+  for (const m of more) writePlugin(dir, m);
   const registry = new PluginRegistry({ dir, cacheDir: tmp() });
   await registry.scan();
   const store = new Store(":memory:");
@@ -152,7 +178,7 @@ test("browsers get the plugins with their files' URLs, and the daemon part's sta
   const p = snapshot.plugins?.[0];
   assert.equal(p?.id, "hello");
   assert.equal(p?.enabled, true);
-  assert.equal(p?.machines, "all");
+  assert.equal("machines" in (p ?? {}), false);
   assert.match(p?.web?.js ?? "", /^\/plugins\/hello\/[0-9a-f]{16}\/web\.js$/);
   assert.deepEqual(p?.values, { interval: 60 });
 
@@ -212,7 +238,7 @@ test("calls of a plugin are relayed to the working server and the answer goes ba
   const save = daemon.sent.filter((m) => m.type === "plugin.request").at(-1);
   assert.ok(save?.type === "plugin.request" && save.method === "save" && save.write === true);
 
-  // Disabled, or not chosen for this working server.
+  // Disabled; enabled again.
   hub.onClientMessage(client, { type: "plugin.enable", requestId: "e1", plugin: "hello", enabled: false });
   assert.deepEqual(client.sent.find((m) => m.type === "plugin.result" && m.requestId === "e1"), { type: "plugin.result", requestId: "e1", result: { ok: true } });
   assert.equal(lastPlugins(client.sent)?.[0]?.enabled, false);
@@ -221,9 +247,51 @@ test("calls of a plugin are relayed to the working server and the answer goes ba
   call("greet", { requestId: "r-off" });
   assert.match((answer("r-off") as { error?: string }).error ?? "", /無効/);
   hub.onClientMessage(client, { type: "plugin.enable", requestId: "e2", plugin: "hello", enabled: true });
-  hub.onClientMessage(client, { type: "plugin.machines", requestId: "m1", plugin: "hello", machines: [] });
-  call("greet", { requestId: "r-none" });
-  assert.match((answer("r-none") as { error?: string }).error ?? "", /動かしていません/);
+  const before = daemon.sent.filter((m) => m.type === "plugin.request").length;
+  call("greet", { requestId: "r-on" });
+  assert.equal(daemon.sent.filter((m) => m.type === "plugin.request").length, before + 1);
+});
+
+test("the daemon part of an enabled plugin runs on every working server, those registered later too", async () => {
+  const { client, daemon, hub, store, machineId } = await setup();
+  const later = store.createDevice("machine", "mac");
+  const other = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(other, { type: "hello", machineId: later.device.id, token: later.token, daemonVersion: "0.12.0" });
+  const run = (peer: { sent: HubToDaemon[] }) => {
+    const told = peer.sent.filter((m) => m.type === "plugins").at(-1);
+    return told?.type === "plugins" ? told.plugins.map((p) => [p.id, p.run]) : undefined;
+  };
+  assert.deepEqual(run(daemon), [["hello", true]]);
+  assert.deepEqual(run(other), [["hello", true]]);
+  hub.onDaemonMessage(other, { type: "plugin.status", api: "1.2", plugins: [{ id: "hello", state: "running" }] });
+  const states = lastPlugins(client.sent)?.[0]?.daemon;
+  assert.equal(states?.[later.device.id]?.state, "running");
+  assert.equal(states?.[machineId]?.state, "old");
+
+  // Disabled: on none of them.
+  hub.onClientMessage(client, { type: "plugin.enable", requestId: "e1", plugin: "hello", enabled: false });
+  assert.deepEqual(run(daemon), [["hello", false]]);
+  assert.deepEqual(run(other), [["hello", false]]);
+  assert.equal(lastPlugins(client.sent)?.[0]?.daemon?.[later.device.id]?.state, "off");
+});
+
+test("only one theme is enabled at a time: enabling one disables the others, recorded in the operations log", async () => {
+  const theme = (id: string) => ({ id, name: id, version: "1.0.0", api: "1.6", theme: { background: "#000" } });
+  const { client, hub, store } = await setup(theme("ayu-dark"), theme("vscode-dark"));
+  const enabled = () => Object.fromEntries((lastPlugins(client.sent) ?? []).map((p) => [p.id, p.enabled]));
+  const enable = (plugin: string, on = true) => hub.onClientMessage(client, { type: "plugin.enable", requestId: `e-${plugin}-${on}`, plugin, enabled: on });
+  // Plugins never switched count as enabled, so two themes can be (the screen uses the first).
+  assert.deepEqual(enabled(), { "ayu-dark": true, hello: true, "vscode-dark": true });
+
+  enable("ayu-dark");
+  assert.deepEqual(enabled(), { "ayu-dark": true, hello: true, "vscode-dark": false });
+  assert.ok(store.recentEvents().some((e) => e.event === "Gasho:plugin.enable" && e.summary?.startsWith("vscode-dark [off]（ayu-dark に切り替え）")));
+  enable("vscode-dark");
+  assert.deepEqual(enabled(), { "ayu-dark": false, hello: true, "vscode-dark": true });
+  // Turning a theme off turns no other on; a plugin that is no theme leaves the themes as they are.
+  enable("vscode-dark", false);
+  enable("hello");
+  assert.deepEqual(enabled(), { "ayu-dark": false, hello: true, "vscode-dark": false });
 });
 
 test("server settings are checked against the manifest, kept, and sent to browsers and gasho-daemon", async () => {
@@ -273,16 +341,11 @@ test("events of a daemon part go to every browser, and those to keep (retain) re
   hub.onDaemonMessage(daemon, { type: "plugin.event", plugin: "nope", topic: "state", data: 1 });
   assert.deepEqual(relayed(client.sent), []);
 
-  // Not chosen for this working server, or disabled: nothing goes on, and what was kept is dropped.
-  hub.onClientMessage(client, { type: "plugin.machines", requestId: "m1", plugin: "hello", machines: [] });
+  // Disabled: nothing goes on, and what was kept is dropped.
+  hub.onClientMessage(client, { type: "plugin.enable", requestId: "e1", plugin: "hello", enabled: false });
   assert.deepEqual(later(), []);
   event({ retain: true });
   assert.deepEqual(relayed(client.sent), []);
-  hub.onClientMessage(client, { type: "plugin.machines", requestId: "m2", plugin: "hello", machines: "all" });
-  event({ retain: true });
-  assert.equal(later()?.length, 1);
-  hub.onClientMessage(client, { type: "plugin.enable", requestId: "e1", plugin: "hello", enabled: false });
-  assert.deepEqual(later(), []);
   hub.onClientMessage(client, { type: "plugin.enable", requestId: "e2", plugin: "hello", enabled: true });
 
   // A new version of the plugin sends its own from its start: the old version's are dropped.

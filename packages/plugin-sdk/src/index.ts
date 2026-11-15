@@ -196,6 +196,85 @@ export interface ComposerFooterItem {
   component: ComponentType<ComposerFooterProps>;
 }
 
+/**
+ * A worktree as the sidebar knows it, for the plugin that puts the sidebar's sessions in categories (P17). Plugin API
+ * 1.7.
+ */
+export interface SessionListWorktree extends WorktreeInfo {
+  /** Gasho's name for it, unique among all working servers: what a category's `launch` names it by. */
+  key: string;
+  machine: MachineInfo;
+  /** Its repository's name, as Gasho shows it: its GitHub repository's, or its folder's. Absent outside a repository. */
+  repoName?: string;
+  /** A worktree of a repository registered with its working server (it may have no session). */
+  registered: boolean;
+}
+
+/** A session the sidebar shows, with what categories are made of (P17). */
+export interface SessionListSession {
+  machine: MachineInfo;
+  session: SessionInfo;
+  /** The key of its worktree (SessionListWorktree.key). */
+  worktree: string;
+  /** When it was last used (ms since the epoch): its latest activity, or its start. What "最後に使った順" counts. */
+  lastUsed: number;
+}
+
+/** What the plugin that puts the sidebar's sessions in categories gets (P17). */
+export interface SessionListContext {
+  machines: MachineInfo[];
+  /** The sessions Gasho shows, of all working servers: the one used last first. */
+  sessions: SessionListSession[];
+  /** The worktrees those sessions are in, and the other worktrees of the repositories registered with each working server. */
+  worktrees: SessionListWorktree[];
+}
+
+/** A session in a category of the sidebar (P17). */
+export interface SessionCategoryItem {
+  /** The working server (machine id). */
+  machine: string;
+  sessionId: string;
+  /** A smaller line under the session's name. */
+  description?: string;
+}
+
+/** A category of the sidebar's sessions (P17): a heading, which folds, and the sessions under it. */
+export interface SessionCategory {
+  /**
+   * Unique among the categories, and the same whenever they are drawn and in the plugin's next versions: Gasho keeps the
+   * order the person dragged them into, and which are folded, by it.
+   */
+  id: string;
+  title: string;
+  /** Dimmer text after the title (the working server's name, when there are several). */
+  description?: string;
+  /** Shown on hover over the heading. */
+  hint?: string;
+  /** The key of the worktree whose folder the "＋" at the right of the heading starts a session in. No "＋" without it. */
+  launch?: string;
+  /** In the order they show by default (the person can drag them into another). */
+  sessions: SessionCategoryItem[];
+}
+
+/**
+ * What puts the sidebar's sessions in categories, in place of Gasho's list of worktrees (P17). Gasho draws them, as it
+ * draws every sidebar item; the person can fold the categories and drag them and their sessions into another order,
+ * which Gasho keeps per browser. Only one plugin's list is used: the first such plugin in the plugins' order. Plugin
+ * API 1.7.
+ */
+export interface SessionListDefinition {
+  /**
+   * A React hook, called whenever the sessions change: the categories, in the order they show by default. A session
+   * left out of every category goes in one Gasho adds at the end ("その他").
+   */
+  useCategories: (ctx: SessionListContext) => SessionCategory[];
+  /**
+   * While these categories are shown, the tabs above a session leave out its worktree's sessions and the "＋" after them
+   * (the past conversations and the plugins' tabs stay).
+   */
+  hideSessionTabs?: boolean;
+}
+
 /** What the web part of a plugin adds to Gasho's screen (its web.js exports it as default). */
 export interface PluginDefinition {
   sidebar?: SidebarItem[];
@@ -213,6 +292,8 @@ export interface PluginDefinition {
   worktreeViews?: Record<string, ComponentType<WorktreeViewProps>>;
   /** Parts in the line under a session's chat box (P14). Plugin API 1.4. */
   composerFooter?: ComposerFooterItem[];
+  /** The sidebar's sessions in categories, in place of its list of worktrees (P17). Plugin API 1.7. */
+  sessionList?: SessionListDefinition;
 }
 
 /** A call of a method of the plugin's daemon part (P7). */

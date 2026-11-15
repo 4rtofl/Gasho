@@ -10,7 +10,7 @@ export function shownSessions(m: MachineInfo): SessionInfo[] {
 const byStart = (a: SessionInfo, b: SessionInfo) => (a.startedAt ?? 0) - (b.startedAt ?? 0) || a.sessionId.localeCompare(b.sessionId);
 
 /** When a session was last used: its latest activity, or for one with no conversation yet, when it started. */
-const lastUsed = (s: SessionInfo): number => s.lastActivityAt ?? s.startedAt ?? 0;
+export const lastUsed = (s: SessionInfo): number => s.lastActivityAt ?? s.startedAt ?? 0;
 
 /**
  * A worktree on a working server and the sessions Gasho shows in it: a row of the sidebar, and the tabs above a session.

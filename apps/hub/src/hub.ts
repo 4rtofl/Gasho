@@ -408,7 +408,7 @@ export class Hub {
       this.store.touchDevice(device.id);
       peer.send({ type: "welcome" });
       this.broadcast({ type: "machine", machine: m });
-      this.plugins?.onDaemonReady(device.id, peer);
+      this.plugins?.onDaemonReady(peer);
       this.plugins?.toClients();
       return;
     }
@@ -610,7 +610,6 @@ export class Hub {
         break;
       case "plugin.request":
       case "plugin.enable":
-      case "plugin.machines":
       case "plugin.setting":
       case "plugin.install":
       case "plugin.update":

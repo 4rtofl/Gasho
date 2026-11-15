@@ -1,0 +1,14 @@
+{
+  "name": "gasho-release-trigger",
+  "description": "Cloudflare の Cron から、15分ごとに GitHub Actions の Release ワークフローを動かす Worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "test": "node --test --disable-warning=ExperimentalWarning \"test/*.test.ts\""
+  },
+  "devDependencies": {
+    "wrangler": "^4.162.0"
+  }
+}

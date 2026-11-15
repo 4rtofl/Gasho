@@ -1,7 +1,7 @@
 // The Gasho server's part in plugins (docs/plugins.md): it tells browsers which plugins are installed and how they
 // stand, tells each gasho-daemon which daemon parts to run (and hands it their code), relays the calls of web parts to
-// daemon parts, and keeps which plugins are enabled, where their daemon parts run, and their settings. The plugins'
-// files come from PluginRegistry (plugins.ts); this never runs a plugin's code. It also adds, updates and removes
+// daemon parts, and keeps which plugins are enabled and their settings. The daemon part of an enabled plugin runs on
+// every working server. The plugins' files come from PluginRegistry (plugins.ts); this never runs a plugin's code. It also adds, updates and removes
 // plugins for browsers, from the catalog of GashoPlugins (catalog.ts). The events of daemon parts go on to every
 // browser; the Gasho server keeps the last of each topic that asked for it (retain) for browsers that connect later.
 import { randomUUID } from "node:crypto";
@@ -22,7 +22,6 @@ import type {
   PluginDaemonState,
   PluginEvent,
   PluginInfo,
-  PluginMachines,
   PluginManifest,
 } from "@gasho/protocol";
 import { CATALOG_MAX_AGE_MS, installRelease, type PluginCatalogSource } from "./catalog.ts";
@@ -47,7 +46,6 @@ export const MAX_PARAMS_BYTES = 64 * 1024;
 const MAX_CODE_BYTES = 15 * 1024 * 1024;
 /** The Gasho server waits this much longer than the daemon part may take, so that gasho-daemon's own answer arrives. */
 const RELAY_MARGIN_MS = 3000;
-const MAX_MACHINES = 100;
 /** An event's topic (characters) and data (as JSON, in bytes), at most. */
 const MAX_TOPIC = 100;
 const MAX_EVENT_BYTES = 256 * 1024;
@@ -87,18 +85,6 @@ type ManageCommand = Extract<PluginCommand, { type: "plugin.install" | "plugin.u
 type PluginStatusMessage = Extract<DaemonToHub, { type: "plugin.status" }>;
 type PluginEventMessage = Extract<DaemonToHub, { type: "plugin.event" }>;
 
-/** Whether a plugin's daemon part is meant to run on a working server. */
-export function chosen(machines: PluginMachines, machine: string): boolean {
-  return machines === "all" || machines.includes(machine);
-}
-
-/** Where to run a plugin's daemon part, as a browser asked: undefined when that is not right. */
-function machinesOf(m: unknown): PluginMachines | undefined {
-  if (m === "all") return "all";
-  const ok = Array.isArray(m) && m.length <= MAX_MACHINES && m.every((x) => typeof x === "string" && x.length > 0 && x.length <= 100);
-  return ok ? [...new Set(m as string[])] : undefined;
-}
-
 export class PluginHub {
   private deps: PluginHubDeps;
   /** What each connected gasho-daemon said about the plugins it runs (only those that know plugins say anything). */
@@ -136,7 +122,8 @@ export class PluginHub {
   changed(): void {
     this.forgetEvents();
     this.toClients();
-    for (const [machine, peer] of this.deps.daemons()) peer.send({ type: "plugins", plugins: this.daemonEntries(machine) });
+    const plugins = this.daemonEntries();
+    for (const [, peer] of this.deps.daemons()) peer.send({ type: "plugins", plugins });
   }
 
   /** What browsers see changed (a daemon part's state, a working server connected or gone). */
@@ -148,8 +135,8 @@ export class PluginHub {
     this.deps.broadcast({ type: "plugins", plugins });
   }
 
-  onDaemonReady(machine: string, peer: Peer<HubToDaemon>): void {
-    peer.send({ type: "plugins", plugins: this.daemonEntries(machine) });
+  onDaemonReady(peer: Peer<HubToDaemon>): void {
+    peer.send({ type: "plugins", plugins: this.daemonEntries() });
   }
 
   onDaemonClose(machine: string): void {
@@ -246,9 +233,6 @@ export class PluginHub {
     if (!daemon) return reply("この working server はオフラインです。");
     const status = this.status.get(machine);
     if (!status || !supports(status.api, manifest.api)) return reply(OLD_DAEMON);
-    if (!chosen(state.machines, machine)) {
-      return reply(`この working server では、${manifest.name} の working server で動く部分を動かしていません。プラグインの画面で選んでください。`);
-    }
     const own = status.plugins.get(entry.id);
     if (own?.state === "off") return reply("この working server の gasho-daemon は、プラグインを動かさない設定です（GASHO_PLUGINS）。");
 
@@ -298,14 +282,7 @@ export class PluginHub {
         if (typeof cmd.enabled !== "boolean") return { ok: false, error: "有効か無効かの指定が正しくありません。" };
         this.deps.store.setPluginState(entry.id, { ...state, enabled: cmd.enabled });
         audit("Gasho:plugin.enable", `${name} [${cmd.enabled ? "on" : "off"}]`);
-        break;
-      }
-      case "plugin.machines": {
-        const machines = machinesOf(cmd.machines);
-        if (!machines) return { ok: false, error: "working server の指定が正しくありません。" };
-        this.deps.store.setPluginState(entry.id, { ...state, machines });
-        const names = machines === "all" ? "すべて" : machines.map((id) => this.deps.machines().get(id)?.name ?? id).join("、") || "なし";
-        audit("Gasho:plugin.machines", `${name}：${names}`);
+        if (cmd.enabled && entry.revision?.manifest.theme) this.disableOtherThemes(peer, entry.id, name);
         break;
       }
       case "plugin.setting": {
@@ -334,7 +311,7 @@ export class PluginHub {
     if (this.busy.has(id)) return { ok: false, error: "このプラグインは、ほかの操作の途中です。終わってから、もう一度試してください。" };
     this.busy.add(id);
     try {
-      if (cmd.type === "plugin.install") return await this.install(peer, id, cmd.machines);
+      if (cmd.type === "plugin.install") return await this.install(peer, id);
       if (cmd.type === "plugin.update") return await this.update(peer, id);
       return await this.remove(peer, id);
     } catch (e) {
@@ -344,7 +321,7 @@ export class PluginHub {
     }
   }
 
-  private async install(peer: ClientPeer, id: string, asked: unknown): Promise<CommandResult> {
+  private async install(peer: ClientPeer, id: string): Promise<CommandResult> {
     const catalog = this.deps.catalog;
     if (!catalog) return { ok: false, error: "この Gasho サーバーでは、カタログからプラグインを入れられません。" };
     const entry = catalog.find(id);
@@ -354,20 +331,32 @@ export class PluginHub {
     }
     const wrongApi = apiProblem(entry.api);
     if (wrongApi) return { ok: false, error: wrongApi };
-    const machines = machinesOf(asked);
-    if (!machines) return { ok: false, error: "working server の指定が正しくありません。" };
     const tgz = await catalog.fetch(entry);
-    // Before the files, so that its daemon part starts only where it was chosen to.
-    this.deps.store.setPluginState(id, { enabled: true, machines });
+    // Before the files, so that it is enabled from the start even when a state of it was left behind.
+    this.deps.store.setPluginState(id, { enabled: true });
+    let manifest: PluginManifest;
     try {
-      await installRelease(this.deps.registry.dir, entry, tgz);
+      manifest = await installRelease(this.deps.registry.dir, entry, tgz);
     } catch (e) {
       this.deps.store.forgetPlugin(id);
       throw e;
     }
     this.audit(peer, "Gasho:plugin.install", `${entry.name} ${entry.version}`);
+    // Before the scan, so that browsers never hear of two themes enabled.
+    if (manifest.theme) this.disableOtherThemes(peer, id, manifest.name);
     await this.deps.registry.scan();
     return { ok: true };
+  }
+
+  /** Only one theme (P16) is enabled at a time: enabling or adding one (`id`) disables the others. */
+  private disableOtherThemes(peer: ClientPeer, id: string, name: string): void {
+    for (const e of this.deps.registry.entries()) {
+      if (e.id === id || !e.revision?.manifest.theme) continue;
+      const state = this.state(e.id);
+      if (!state.enabled) continue;
+      this.deps.store.setPluginState(e.id, { ...state, enabled: false });
+      this.audit(peer, "Gasho:plugin.enable", `${e.revision.manifest.name} [off]（${name} に切り替え）`);
+    }
   }
 
   private async update(peer: ClientPeer, id: string): Promise<CommandResult> {
@@ -401,12 +390,11 @@ export class PluginHub {
 
   // ---- what gasho-daemon is told and tells ----
 
-  private daemonEntries(machine: string): DaemonPluginEntry[] {
+  private daemonEntries(): DaemonPluginEntry[] {
     return this.deps.registry.entries().flatMap((e) => {
       const r = e.revision;
       if (!r?.manifest.daemon) return [];
-      const state = this.state(e.id);
-      return [{ id: e.id, hash: r.hash, run: state.enabled && chosen(state.machines, machine), settings: this.values(e.id, r.manifest) }];
+      return [{ id: e.id, hash: r.hash, run: this.state(e.id).enabled, settings: this.values(e.id, r.manifest) }];
     });
   }
 
@@ -427,15 +415,14 @@ export class PluginHub {
   }
 
   /**
-   * An event of a daemon part: passed on to every browser when the plugin is enabled and runs on that working server,
-   * and kept when it asks for it (retain). Others are dropped (gasho-daemon checks them already).
+   * An event of a daemon part: passed on to every browser when the plugin is enabled, and kept when it asks for it
+   * (retain). Others are dropped (gasho-daemon checks them already).
    */
   private onEvent(machine: string, msg: PluginEventMessage): void {
     const entry = typeof msg.plugin === "string" ? this.deps.registry.get(msg.plugin) : undefined;
     const hash = entry?.revision?.hash;
     if (!entry || !hash || !entry.revision?.manifest.daemon) return;
-    const state = this.state(entry.id);
-    if (!state.enabled || !chosen(state.machines, machine)) return;
+    if (!this.state(entry.id).enabled) return;
     const topic = msg.topic;
     if (typeof topic !== "string" || topic.length === 0 || topic.length > MAX_TOPIC || /[\u0000-\u001f]/.test(topic)) return;
     const json = JSON.stringify(msg.data ?? null);
@@ -453,14 +440,13 @@ export class PluginHub {
   }
 
   /**
-   * Drops kept events that no longer stand: of a plugin removed, disabled, not run on that working server any more, or
-   * replaced by a new version (whose daemon part sends its own from `start`).
+   * Drops kept events that no longer stand: of a plugin removed, disabled, or replaced by a new version (whose daemon
+   * part sends its own from `start`).
    */
   private forgetEvents(): void {
     for (const [key, r] of this.retained) {
       const entry = this.deps.registry.get(r.event.plugin);
-      const state = this.state(r.event.plugin);
-      if (entry?.revision?.hash === r.hash && state.enabled && chosen(state.machines, r.event.machine)) continue;
+      if (entry?.revision?.hash === r.hash && this.state(r.event.plugin).enabled) continue;
       this.retained.delete(key);
     }
   }
@@ -477,8 +463,8 @@ export class PluginHub {
 
   // ---- helpers ----
 
-  private state(id: string): { enabled: boolean; machines: PluginMachines } {
-    return this.deps.store.pluginState(id) ?? { enabled: true, machines: "all" };
+  private state(id: string): { enabled: boolean } {
+    return this.deps.store.pluginState(id) ?? { enabled: true };
   }
 
   /** The values of the settings the Gasho server keeps (scope "server"), with the defaults of those not set. */
@@ -497,7 +483,7 @@ export class PluginHub {
     const r = e.revision;
     const manifest: PluginManifest = r?.manifest ?? { id: e.id, name: e.id, version: "", api: "" };
     const state = this.state(e.id);
-    const info: PluginInfo = { id: e.id, manifest, dev: e.dev, enabled: state.enabled, machines: state.machines, values: r ? this.values(e.id, manifest) : {} };
+    const info: PluginInfo = { id: e.id, manifest, dev: e.dev, enabled: state.enabled, values: r ? this.values(e.id, manifest) : {} };
     if (r) {
       info.hash = r.hash;
       if (manifest.web) {
@@ -514,11 +500,11 @@ export class PluginHub {
     return info;
   }
 
-  private daemonState(e: PluginEntry, state: { enabled: boolean; machines: PluginMachines }, m: MachineInfo): { state: PluginDaemonState; error?: string } {
+  private daemonState(e: PluginEntry, state: { enabled: boolean }, m: MachineInfo): { state: PluginDaemonState; error?: string } {
     if (!m.connected || !this.deps.daemon(m.id)) return { state: "offline" };
     const status = this.status.get(m.id);
     if (!status || !supports(status.api, e.revision?.manifest.api ?? PLUGIN_API)) return { state: "old" };
-    if (!state.enabled || !chosen(state.machines, m.id)) return { state: "off" };
+    if (!state.enabled) return { state: "off" };
     const own = status.plugins.get(e.id);
     if (!own) return { state: "stopped" };
     return own.error ? { state: own.state, error: own.error } : { state: own.state };

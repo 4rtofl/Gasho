@@ -10,12 +10,58 @@ test("arrayMove takes the item out and puts it at the new place", () => {
 
 const rows = (n: number, height = 36): Rect[] => Array.from({ length: n }, (_, i) => ({ left: 0, top: i * height, width: 200, height }));
 
-test("in a list, the dragged item goes to the place whose middle is nearest its own", () => {
-  // Item 0 (middle 18) dragged down: it passes item 1 once its middle is past the line between them (36).
-  assert.equal(listIndex(rows(4), 30), 0);
-  assert.equal(listIndex(rows(4), 40), 1);
-  assert.equal(listIndex(rows(4), 200), 3);
-  assert.equal(listIndex(rows(4), -50), 0);
+test("in a list, the dragged item passes an item once its edge is past that item's middle", () => {
+  // Item 0 (36 high) dragged down: it passes item 1 (middle 54) once its bottom is past it, which is once its own
+  // middle is past the line between them (36), as before for rows of one height.
+  assert.equal(listIndex(rows(4), 0, 12), 0);
+  assert.equal(listIndex(rows(4), 0, 22), 1);
+  assert.equal(listIndex(rows(4), 0, 182), 3);
+  assert.equal(listIndex(rows(4), 0, -68), 0);
+  // Item 3 dragged up: it passes item 2 (middle 90) once its top is above it.
+  assert.equal(listIndex(rows(4), 3, 95), 3);
+  assert.equal(listIndex(rows(4), 3, 85), 2);
+  assert.equal(listIndex(rows(4), 3, 0), 0);
+});
+
+/** The places of blocks of these heights, one under another, in this order. */
+const stack = (heights: readonly number[]): Rect[] => {
+  let top = 0;
+  return heights.map((height) => {
+    const r = { left: 0, top, width: 200, height };
+    top += height;
+    return r;
+  });
+};
+
+/** What the order becomes, frame after frame, while the dragged block is held still with its top at `top`. */
+function heldStill(heights: Record<string, number>, order: string[], dragged: string, top: number, frames = 6): string[][] {
+  const seen: string[][] = [];
+  let now = order;
+  for (let i = 0; i < frames; i++) {
+    const from = now.indexOf(dragged);
+    now = arrayMove(now, from, listIndex(stack(now.map((id) => heights[id]!)), from, top));
+    seen.push(now);
+  }
+  return seen;
+}
+
+test("in a list of blocks of different heights, a block held still stays where it went", () => {
+  // A category of 9 sessions above one of 1: with the nearest middle, the small one dragged up by 113–239 px swapped
+  // places with the big one every 60 ms while held still.
+  const heights = { big: 352, small: 100 };
+  for (let up = 0; up <= 352; up += 1) {
+    const frames = heldStill(heights, ["big", "small"], "small", 352 - up);
+    const last = frames.at(-1)!;
+    assert.ok(frames.every((o) => o.join() === last.join()), `held ${up} px up: ${frames.map((o) => o.join("/")).join(" → ")}`);
+    // It goes before the big one once its top is above the big one's middle.
+    assert.deepEqual(last, up > 352 - 176 ? ["small", "big"] : ["big", "small"]);
+  }
+  // And the big one dragged down past the small one.
+  for (let down = 0; down <= 100; down += 1) {
+    const frames = heldStill(heights, ["big", "small"], "big", down);
+    const last = frames.at(-1)!;
+    assert.ok(frames.every((o) => o.join() === last.join()), `held ${down} px down`);
+  }
 });
 
 /**

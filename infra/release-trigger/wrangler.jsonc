@@ -1,0 +1,24 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	// GitHub Actions の Release ワークフロー（.github/workflows/release.yml）を、15分ごとに workflow_dispatch で動かす。
+	// GitHub Actions の schedule は動かないことがあるため、Cloudflare の Cron から起動する。README.md を参照
+	"name": "gasho-release-trigger",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-11-01",
+	"workers_dev": false,
+	"triggers": {
+		"crons": ["*/15 * * * *"]
+	},
+	"observability": {
+		"enabled": true
+	},
+	"vars": {
+		"GITHUB_REPOSITORY": "4rtoflow/Gasho",
+		"GITHUB_WORKFLOW": "release.yml",
+		"GITHUB_REF": "main"
+	},
+	// Actions の Read and write だけを持つ fine-grained PAT。npx wrangler secret put GITHUB_TOKEN で入れる
+	"secrets": {
+		"required": ["GITHUB_TOKEN"]
+	}
+}

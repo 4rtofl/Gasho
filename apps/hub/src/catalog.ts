@@ -1,17 +1,17 @@
 // The catalog of plugins (docs/plugins.md, P10). GashoPlugins' Actions build each plugin whose version has no release
 // yet into <id>-<version>.tgz (the files of its dist/) in the release <id>-v<version>, and list the newest version of
-// every plugin in catalog.json, in the release "catalog". The Gasho server reads that list with gh, logged in on its
-// machine (it keeps no token), and when a browser adds or updates a plugin, it fetches the plugin's file, checks it
-// against the list, and unpacks it into the plugins folder, where the registry (plugins.ts) picks it up like any other
-// change.
+// every plugin in catalog.json, in the release "catalog", with the genres that the plugins screen lists them by. The
+// Gasho server reads that list with gh, logged in on its machine (it keeps no token), and when a browser adds or
+// updates a plugin, it fetches the plugin's file, checks it against the list, and unpacks it into the plugins folder,
+// where the registry (plugins.ts) picks it up like any other change.
 import { execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { CatalogPlugin, PluginCatalog } from "@gasho/protocol";
-import { ID_RE, MAX_BYTES, MAX_FILES, readPluginFolder, swapPluginFolder, VERSION_RE } from "./plugins.ts";
+import type { CatalogPlugin, PluginCatalog, PluginGenre, PluginManifest } from "@gasho/protocol";
+import { GENRE_RE, ID_RE, MAX_BYTES, MAX_FILES, readPluginFolder, swapPluginFolder, VERSION_RE } from "./plugins.ts";
 import { readTgz } from "./tar.ts";
 
 export const DEFAULT_PLUGIN_REPO = "4rtoflow/GashoPlugins";
@@ -29,6 +29,7 @@ const DOWNLOAD_TIMEOUT_MS = 120_000;
 /** A plugin's file, at most (unpacked, it may hold MAX_BYTES). */
 const MAX_DOWNLOAD_BYTES = MAX_BYTES + 1024 * 1024;
 const MAX_PLUGINS = 500;
+const MAX_GENRES = 50;
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 /** Runs gh with these arguments; rejects (an execFile error, with its stderr) when it does not end well. */
@@ -67,7 +68,7 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "obj
 /** One plugin of catalog.json, or why it is left out. */
 function catalogEntry(p: unknown): CatalogPlugin | string {
   if (!isRecord(p)) return "an entry that is not an object";
-  const { id, name, version, description, api, permissions, daemon, release, file, sha256, size } = p;
+  const { id, name, version, description, genre, api, permissions, daemon, release, file, sha256, size } = p;
   if (typeof id !== "string" || !ID_RE.test(id)) return `a bad id (${String(id).slice(0, 40)})`;
   if (typeof name !== "string" || !name.trim() || name.length > 40) return `${id}: a bad name`;
   if (typeof version !== "string" || !VERSION_RE.test(version)) return `${id}: a bad version`;
@@ -78,6 +79,8 @@ function catalogEntry(p: unknown): CatalogPlugin | string {
   if (typeof size !== "number" || !Number.isInteger(size) || size <= 0 || size > MAX_DOWNLOAD_BYTES) return `${id}: a bad size`;
   const entry: CatalogPlugin = { id, name: name.trim(), version, api, daemon: daemon === true, release, file, sha256, size };
   if (typeof description === "string" && description.trim()) entry.description = description.trim().slice(0, 300);
+  // A genre of a form that is not right is left out: the plugin still shows, with no genre.
+  if (typeof genre === "string" && GENRE_RE.test(genre)) entry.genre = genre;
   if (Array.isArray(permissions)) {
     const named = permissions.filter((x): x is string => typeof x === "string" && x.length > 0 && x.length <= 40);
     if (named.length > 0) entry.permissions = [...new Set(named)] as CatalogPlugin["permissions"];
@@ -85,8 +88,23 @@ function catalogEntry(p: unknown): CatalogPlugin | string {
   return entry;
 }
 
-/** Reads catalog.json: its plugins (sorted by id; entries that are not right are left out and named in `skipped`). */
-export function parseCatalog(raw: unknown): { plugins: CatalogPlugin[]; updatedAt?: string; skipped: string[] } | { error: string } {
+/** The genres of catalog.json, in its order: those that are not right are left out and named in `skipped`. */
+function catalogGenres(raw: unknown, skipped: string[]): PluginGenre[] {
+  if (!Array.isArray(raw)) return [];
+  const genres: PluginGenre[] = [];
+  for (const g of raw.slice(0, MAX_GENRES)) {
+    if (!isRecord(g) || typeof g.id !== "string" || !GENRE_RE.test(g.id)) skipped.push(`a bad genre (${String(isRecord(g) ? g.id : g).slice(0, 40)})`);
+    else if (typeof g.name !== "string" || !g.name.trim() || g.name.length > 40) skipped.push(`genre ${g.id}: a bad name`);
+    else if (!genres.some((x) => x.id === g.id)) genres.push({ id: g.id, name: g.name.trim() });
+  }
+  return genres;
+}
+
+/**
+ * Reads catalog.json: its plugins (sorted by id) and their genres (in the catalog's order); entries that are not right
+ * are left out and named in `skipped`.
+ */
+export function parseCatalog(raw: unknown): { plugins: CatalogPlugin[]; genres: PluginGenre[]; updatedAt?: string; skipped: string[] } | { error: string } {
   if (!isRecord(raw) || !Array.isArray(raw.plugins)) return { error: "catalog.json の形が正しくありません。" };
   const plugins: CatalogPlugin[] = [];
   const skipped: string[] = [];
@@ -100,8 +118,9 @@ export function parseCatalog(raw: unknown): { plugins: CatalogPlugin[]; updatedA
     }
   }
   plugins.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const genres = catalogGenres(raw.genres, skipped);
   const updatedAt = typeof raw.updatedAt === "string" && raw.updatedAt ? raw.updatedAt.slice(0, 40) : undefined;
-  return { plugins, ...(updatedAt ? { updatedAt } : {}), skipped };
+  return { plugins, genres, ...(updatedAt ? { updatedAt } : {}), skipped };
 }
 
 /** Fetches one file of a release, to memory. */
@@ -200,7 +219,13 @@ export class PluginCatalogSource extends EventEmitter {
         const parsed = parseCatalog(raw);
         if ("error" in parsed) throw new Error(parsed.error);
         if (parsed.skipped.length > 0) this.log(`plugin catalog of ${this.repo}: left out ${parsed.skipped.join("; ")}`);
-        next = { repo: this.repo, checkedAt: this.now(), ...(parsed.updatedAt ? { updatedAt: parsed.updatedAt } : {}), plugins: parsed.plugins };
+        next = {
+          repo: this.repo,
+          checkedAt: this.now(),
+          ...(parsed.updatedAt ? { updatedAt: parsed.updatedAt } : {}),
+          plugins: parsed.plugins,
+          ...(parsed.genres.length > 0 ? { genres: parsed.genres } : {}),
+        };
       } catch (e) {
         const said = ghProblem(e);
         const error = said === "リリースが見つかりません。" ? `${this.repo} にカタログ（リリース catalog）がまだありません。` : said;
@@ -238,9 +263,9 @@ export class PluginCatalogSource extends EventEmitter {
 /**
  * Puts a plugin's release file in place of the plugin in the plugins folder, after checking it: it unpacks safely
  * (tar.ts), and what it holds is the catalog's version of that plugin and passes the registry's checks. Until it is
- * swapped in, the version before stays (swapPluginFolder).
+ * swapped in, the version before stays (swapPluginFolder). Gives the manifest of what it put in place.
  */
-export async function installRelease(pluginsDir: string, entry: CatalogPlugin, tgz: Buffer): Promise<void> {
+export async function installRelease(pluginsDir: string, entry: CatalogPlugin, tgz: Buffer): Promise<PluginManifest> {
   const { files, dirs } = readTgz(tgz, { maxBytes: MAX_BYTES, maxFiles: MAX_FILES });
   await fsp.mkdir(pluginsDir, { recursive: true });
   // Made inside the plugins folder (on the same disk, for the swap); the registry leaves out names starting with ".".
@@ -258,6 +283,7 @@ export async function installRelease(pluginsDir: string, entry: CatalogPlugin, t
     if (read.manifest.id !== entry.id) throw new Error(`中身の id（${read.manifest.id}）がカタログ（${entry.id}）と違います。`);
     if (read.manifest.version !== entry.version) throw new Error(`中身の版（${read.manifest.version}）がカタログ（${entry.version}）と違います。`);
     await swapPluginFolder(pluginsDir, entry.id, made);
+    return read.manifest;
   } catch (e) {
     await fsp.rm(made, { recursive: true, force: true });
     throw e;

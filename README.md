@@ -80,6 +80,8 @@ worktree を押すと、その worktree で最後に開いたセッションを�
 
 Gasho の外（Orca や端末）で起動した Claude Code が、サイドバーにある worktree で会話を開いていると、タブの上に「Gasho の外で N 件の会話が開いています」と出す。「Gasho に移す」を押すと、その会話の一覧を確かめるダイアログを出し、「終了する」で、それらの Claude Code に SIGTERM を送って終了させる。元の端末は閉じない。会話の記録は残るので、終了した会話は過去の会話に出て、続けたいものだけを Gasho で開き直せる。8秒待っても終わらない Claude Code は止めずに残し、元の端末で終了するよう伝える。バックグラウンドで動いている会話（`claude agents` に PID が無いもの）は、終了できないので数えない。
 
+サイドバーの worktree の一覧は、プラグイン（[docs/plugins.md](docs/plugins.md) の P17）で、セッションそのものを並べる一覧に置き換えられる。たとえば GashoPlugins の Session List Rewind は、リポジトリごとのカテゴリ（見出し）の下にセッションを並べ、セッション画面の上のタブからセッションを外す。カテゴリは見出しを押すと畳め、カテゴリもセッションもドラッグで並べ替えられる。
+
 サイドバーの worktree は、ドラッグで並べ替えられる。PC では、マウスで項目をそのままドラッグする（押して離すだけなら、worktree を開く）。スマホでは、項目の右端のつまみをドラッグする（項目に触れて動かすと一覧がスクロールする）。キーボードでは、項目にフォーカスして Alt+↑・Alt+↓ で動かせる。並べ替えると、それからは最後に使った順ではなく、その並びのまま変わらない。並べ替えたあとに初めてセッションを起動した worktree は、一覧の先頭に出る。見出しの「最後に使った順に戻す」（「＋」の左）を押すと、元の並び方に戻る。並び順はブラウザーごとに覚えるので、PC とスマホでは別々になる。
 
 PC では、サイドバーの右の端をドラッグして、幅を200〜360px（標準は248px）のあいだで変えられる。セッションの右に開くパネル（ブランチグラフ、ファイル、プラグインのパネル）も、左の端をドラッグして、幅を380〜620px（標準はウィンドウの幅の40%）のあいだで変えられる。ウィンドウが狭いときは、パネルを開いても会話の欄に140px残るところで止まる。端をダブルクリックすると標準の幅に戻る。端にフォーカスして ←・→ でも変えられる。幅はブラウザーごとに覚える。
@@ -195,7 +197,7 @@ Gasho の画面と gasho-daemon には、プラグインで機能を足せる。
 
 プラグインは、サイドバーの「プラグイン」の画面で、GashoPlugins にあるものから選んで追加する。GashoPlugins の GitHub Actions が、版を上げたプラグインをビルドしてリリースに置き、プラグインの一覧（カタログ）を作る。Gasho サーバーは、そのカタログとプラグインを、Gasho サーバーのマシンの GitHub CLI（gh）で取ってくる。Gasho サーバーのマシンで `gh auth login` を済ませておく。
 
-プラグインの画面では、プラグインを追加するほかに、有効・無効を切り替え、daemon の部分（working server で動く部分）を動かす working server を選び、カタログに新しい版があれば更新し、外すことができる。どれも、Gasho サーバーと gasho-daemon を起動し直さずに、開いている画面と gasho-daemon にすぐ反映する。daemon の部分は、プラグインに対応した gasho-daemon でだけ動く。古い gasho-daemon の working server では、プラグインの画面に「gasho-daemon が古い」と出る。
+プラグインの画面では、プラグインを追加するほかに、有効・無効をスイッチで切り替え、カタログに新しい版があれば更新し、外す（ゴミ箱のボタン）ことができる。GashoPlugins にあるプラグインは、ジャンル（連携、開発ツールなど）ごとに分けて出す。daemon の部分（working server で動く部分）は、有効なプラグインなら、すべての working server で動く。どれも、Gasho サーバーと gasho-daemon を起動し直さずに、開いている画面と gasho-daemon にすぐ反映する。daemon の部分は、プラグインに対応した gasho-daemon でだけ動く。古い gasho-daemon の working server では、プラグインの画面に「gasho-daemon が古い」と出る。
 
 作っているプラグインは、Gasho サーバーでコマンドを実行して入れる。
 
@@ -222,9 +224,13 @@ npm test
 npm run typecheck
 ```
 
+PR と main への push のたびに、GitHub Actions（`.github/workflows/ci.yml`）が Ubuntu で `npm run typecheck`・`npm test`・`npm run web:build` を流す。PR の画面に、それぞれの結果が別々に出る。
+
 ### 公開
 
 gasho-daemon（`@4rtoflow/gasho-daemon`）とプラグインの SDK（`@4rtoflow/gasho-plugin-sdk`）は、GitHub Actions（`.github/workflows/release.yml`）が GitHub Packages に公開する。15分ごとに main を見て、前に公開してから中身が変わったパッケージだけを公開する。
+
+ワークフローを15分ごとに起動するのは、Cloudflare Worker（`infra/release-trigger`）である。GitHub Actions の `schedule` では動かなかったため、Cron Trigger から `workflow_dispatch` で起動している。Worker のデプロイと、使うトークンの作り方・替え方は、[infra/release-trigger/README.md](infra/release-trigger/README.md) に書いた。
 
 版は x.y.z の形にする。
 

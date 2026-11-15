@@ -123,6 +123,11 @@ export function checkDefinition(d: unknown): PluginDefinition {
     if (d[k] !== undefined && !isRecord(d[k])) throw new Error(`${k} はオブジェクトにしてください。`);
   }
   if (d.settings !== undefined && typeof d.settings !== "function") throw new Error("settings は部品にしてください。");
+  if (d.sessionList !== undefined) {
+    const l = d.sessionList;
+    if (!isRecord(l) || typeof l.useCategories !== "function") throw new Error("sessionList には、関数 useCategories を書いてください。");
+    if (l.hideSessionTabs !== undefined && typeof l.hideSessionTabs !== "boolean") throw new Error("sessionList の hideSessionTabs は true か false にしてください。");
+  }
   return d as PluginDefinition;
 }
 
@@ -206,6 +211,11 @@ export function reportPluginError(id: string, message: string): void {
 export interface PluginPart {
   info: PluginInfo;
   def: PluginDefinition;
+  /**
+   * The hash of the version `def` is from. `info.hash` is the version the Gasho server announced, which is newer while
+   * it loads: a part made anew for it would still draw with the old `def`, and then call the new version's hooks.
+   */
+  version: string;
 }
 
 /** The installed plugins, the loaded web parts of the enabled ones (in the plugins' order), and their troubles. */
@@ -216,7 +226,7 @@ export function usePluginRegistry(): { infos: PluginInfo[]; parts: PluginPart[];
     .sort((a, b) => a.manifest.name.localeCompare(b.manifest.name, "ja"))
     .flatMap((info) => {
       const l = info.enabled ? s.loaded[info.id] : undefined;
-      return l ? [{ info, def: l.def }] : [];
+      return l ? [{ info, def: l.def, version: l.hash }] : [];
     });
   return { infos: plugins, parts, errors: s.errors, loading: s.loading };
 }

@@ -365,7 +365,7 @@ export interface MachineInfo {
   connected: boolean;
   lastSeen: number;
   daemonVersion?: string;
-  /** The plugin API gasho-daemon serves (plugin.status). Absent until it says it, and from one that knows no plugins. */
+  /** The plugin API gasho-daemon serves (plugin.status). Absent until it says it, while offline, and from one that knows no plugins. */
   pluginApi?: string;
   sessions: SessionInfo[];
   /** Whether Gasho can start sessions on this machine (gasho-daemon can make their terminals). */

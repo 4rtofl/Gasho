@@ -596,6 +596,8 @@ export class Hub {
     if (m) {
       m.connected = false;
       m.lastSeen = Date.now();
+      // Not kept in the database: kept while offline, it would be shown or not as the Gasho server restarted since.
+      m.pluginApi = undefined;
       this.store.saveMachine(m);
       this.broadcast({ type: "machine", machine: m });
     }

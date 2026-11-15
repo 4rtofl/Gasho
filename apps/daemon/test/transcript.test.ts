@@ -408,3 +408,19 @@ test("past conversations: a folder's, by the folder their records give, the late
   );
   assert.equal(all[0]?.lastActivityAt, 400_000);
 });
+
+test("Claude Code's notice that background work ended is a note, not something the user said", () => {
+  const notice =
+    "<task-notification>\n<task-id>blzugcwfb</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n<output-file>/tmp/x.output</output-file>\n" +
+    '<status>completed</status>\n<summary>Background command "Wait for the run" completed (exit code 0)</summary>\n</task-notification>';
+  const meta = emptyMeta();
+  const e = parseRecord({ type: "user", uuid: "n1", origin: { kind: "task-notification" }, message: { role: "user", content: notice } }, meta);
+  assert.equal(e?.role, "system");
+  assert.deepEqual(e?.blocks, [{ type: "text", text: 'Background command "Wait for the run" completed (exit code 0)' }]);
+  const arr = parseRecord({ type: "user", uuid: "n2", message: { role: "user", content: [{ type: "text", text: notice }] } }, meta);
+  assert.equal(arr?.role, "system");
+  // What the person wrote alongside a notice stays theirs, without the notice.
+  const mixed = parseRecord({ type: "user", uuid: "n3", message: { role: "user", content: `${notice}\n直して` } }, meta);
+  assert.equal(mixed?.role, "user");
+  assert.deepEqual(mixed?.blocks, [{ type: "text", text: "直して" }]);
+});

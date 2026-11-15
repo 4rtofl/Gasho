@@ -170,6 +170,22 @@ const STARTED_RES: Partial<Record<BackgroundTaskKind, RegExp>> = {
 const TASK_NOTICE_RE = /<task-notification>[\s\S]*?<\/task-notification>/g;
 const TASK_ID_RE = /<task-id>\s*([^<\s]+)\s*<\/task-id>/;
 const TASK_ENDED_RE = /<status>\s*(?:completed|failed|killed|stopped)\s*<\/status>/;
+const TASK_SUMMARY_RE = /<summary>([\s\S]*?)<\/summary>/;
+
+/**
+ * Claude Code's notices about background work, recorded as user messages: what each says (its summary) as a note, and
+ * the rest of the text, which the person wrote. A text without notices comes back as it is.
+ */
+export function splitNotices(text: string): { notes: string[]; rest: string } {
+  if (!text.includes("<task-notification>")) return { notes: [], rest: text };
+  const notes: string[] = [];
+  const rest = text.replace(TASK_NOTICE_RE, (notice) => {
+    const summary = TASK_SUMMARY_RE.exec(notice)?.[1]?.trim();
+    notes.push(summary || "Background task notification");
+    return "";
+  });
+  return { notes, rest: rest.trim() };
+}
 /** The ids of ended work that are remembered: a notice can be recorded before the result that started the work. */
 const MAX_ENDED = 1000;
 const MAX_TASK_TITLE = 200;
@@ -388,6 +404,14 @@ export function parseRecord(rec: Record<string, unknown>, meta: TranscriptMeta):
     if (!summary) return null;
     return { uuid, ts, role: "system", blocks: [{ type: "text", text: clip(summary, MAX_SUMMARY) }], isSidechain, compaction: "summary" };
   }
+  if (role === "user") {
+    // Claude Code's notices about background work are shown as notes, not as something the user said.
+    const text = typeof content === "string" ? content : Array.isArray(content) && content.every((b) => (b as { type?: unknown } | null)?.type === "text") ? contentToString(content) : undefined;
+    const { notes, rest } = text === undefined ? { notes: [], rest: "" } : splitNotices(text);
+    if (notes.length > 0 && !unwrapPasted(rest)) {
+      return { uuid, ts, role: "system", blocks: [{ type: "text", text: clip(notes.join("\n"), MAX_TEXT) }], isSidechain };
+    }
+  }
   if (role === "user" && typeof content === "string") {
     // Slash commands (such as /model) and their output are shown as notes, not as something the user said.
     const note = commandNote(content, meta);
@@ -398,7 +422,7 @@ export function parseRecord(rec: Record<string, unknown>, meta: TranscriptMeta):
   const blocks: TranscriptBlock[] = [];
   let interrupted = false;
   const pushText = (raw: string): void => {
-    const t = role === "user" ? unwrapPasted(raw) : raw;
+    const t = role === "user" ? unwrapPasted(splitNotices(raw).rest) : raw;
     if (!t) return;
     if (INTERRUPT_RE.test(t)) interrupted = true;
     blocks.push({ type: "text", text: clip(t, MAX_TEXT) });

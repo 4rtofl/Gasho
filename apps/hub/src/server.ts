@@ -35,6 +35,7 @@ const MIME: Record<string, string> = {
   ".mjs": "text/javascript; charset=utf-8",
   ".jpg": "image/jpeg",
   ".webp": "image/webp",
+  ".mp3": "audio/mpeg",
 };
 
 const HEARTBEAT_MS = 30_000;

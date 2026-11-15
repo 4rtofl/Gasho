@@ -815,10 +815,11 @@ function Panel({
     <SidebarContext.Provider value={{ collapsed }}>
       <div className="flex h-full flex-col">
         {header && (
+          // Gasho: px-2 as the list's, for a header that is a row of its own (the logo, lined up with the items' icons).
           <div
             className={cn(
-              "flex h-14 shrink-0 items-center overflow-hidden px-4 transition-all",
-              collapsed && "w-14 justify-center px-0 [&>div>*:not(:first-child)]:hidden [&>div]:gap-0 [&>*:not(:first-child)]:hidden"
+              "flex h-14 shrink-0 items-center overflow-hidden px-2 transition-all",
+              collapsed && "[&>div>*:not(:first-child)]:hidden [&>div]:gap-0 [&>*:not(:first-child)]:hidden"
             )}
           >
             {header}

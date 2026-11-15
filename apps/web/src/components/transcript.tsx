@@ -464,6 +464,8 @@ export function Transcript({
   const [following, setFollowing] = useState(true);
   const prev = useRef<{ first?: string; count: number; topRow: boolean }>({ count: 0, topRow: false });
   const atBottom = useRef(true);
+  // The conversation's box when it was last scrolled or resized; see onScroll.
+  const boxSize = useRef({ width: 0, height: 0 });
   // The rows at the top of the screen, refreshed as the reader scrolls; see keepAnchor.
   const anchors = useRef<Anchor[]>([]);
   const anchorFrame = useRef(0);
@@ -584,18 +586,19 @@ export function Transcript({
     prevPending.current = pendingCount;
   }, [pendingCount]);
 
-  // The chat box grows with its text and status line, and what comes at the end of the conversation comes and goes.
-  // While at the bottom, keep the newest entry, and what comes after it, above the chat box.
+  // The chat box grows with its text and status line, what comes at the end of the conversation comes and goes, and
+  // the conversation's box narrows when a panel opens beside it. While at the bottom, keep the newest entry, and what
+  // comes after it, above the chat box.
   const hasFooter = footer !== undefined;
   const hasEnd = end !== undefined;
   useEffect(() => {
     const el = scroller.current;
-    const boxes = [footerBox.current, endBox.current].filter((box) => box !== null);
-    if (!el || boxes.length === 0) return;
+    if (!el) return;
     const observer = new ResizeObserver(() => {
+      boxSize.current = { width: el.clientWidth, height: el.clientHeight };
       if (atBottom.current) el.scrollTop = el.scrollHeight;
     });
-    for (const box of boxes) observer.observe(box);
+    for (const box of [el, footerBox.current, endBox.current]) if (box) observer.observe(box);
     return () => observer.disconnect();
   }, [hasFooter, hasEnd]);
 
@@ -611,7 +614,13 @@ export function Transcript({
       onScroll={(e) => {
         const el = e.currentTarget;
         scrolling.current.at = Date.now();
-        atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+        // A scroll made just before the box was resized (a scroll to the newest entry, then a panel opened) has its
+        // event handled after the new layout, where that position may no longer be the bottom. Such an event only
+        // tells that the end is in view; the ResizeObserver above keeps the bottom.
+        const resized = el.clientWidth !== boxSize.current.width || el.clientHeight !== boxSize.current.height;
+        boxSize.current = { width: el.clientWidth, height: el.clientHeight };
+        const near = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+        if (near || !resized) atBottom.current = near;
         setFollowing(atBottom.current);
         if (!atBottom.current && !anchorFrame.current) {
           anchorFrame.current = requestAnimationFrame(() => {

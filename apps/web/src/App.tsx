@@ -40,14 +40,16 @@ import {
   notificationShown,
   rememberedOf,
   repoChoices,
+  sessionDot,
   sessionToOpen,
+  unreadSessions,
+  worktreeDot,
   worktreeId,
   worktreeKey,
   worktreesByLastUse,
-  worktreeStatus,
   type WorktreeSessions,
 } from "@/lib/sessions";
-import { reloadToNewBuild, sendCommand, useAppState } from "@/lib/store";
+import { reloadToNewBuild, sendCommand, useAppState, useReadWhileOpen } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { arrangeWorktreeCategories, groupingKey, holdWorktreeList, worktreeListContext, type HeldWorktreeList } from "@/lib/worktree-groupings";
 import { PANEL_WIDTH_MAX, PANEL_WIDTH_MIN, clampPanelWidth, defaultPanelWidth, usePanelWidth } from "@/lib/widths";
@@ -213,12 +215,14 @@ export function App() {
   // The category whose "＋" is starting a session, and what the dialog opens with when that did not work.
   const [launchingIn, setLaunchingIn] = useState<string>();
   const [launchInitial, setLaunchInitial] = useState<LaunchInitial>();
+  useReadWhileOpen(route.name === "session" ? route.machine : undefined, route.name === "session" ? route.sessionId : undefined);
 
   if (auth === "checking") return <Centered>読み込み中…</Centered>;
   if (auth === "unreachable") return <Centered>Gasho サーバーにつながりません。再試行しています…</Centered>;
   if (auth === "unregistered") return <PairView />;
 
   const unread = notifications.filter((n) => !n.read && notificationShown(n, machines)).length;
+  const unreadOnes = unreadSessions(notifications);
   // The worktrees of all working servers in one list: the one used last first, then those without sessions, or in the
   // order they were dragged into (worktrees that got their first session since then come first).
   const byId = new Map(allWorktrees.map((w) => [w.id, w]));
@@ -294,7 +298,7 @@ export function App() {
         id: row.key,
         label: sessionLabel(s),
         description: row.description,
-        icon: <StatusDot status={m.connected ? s.status : "unknown"} />,
+        icon: <StatusDot {...sessionDot(m, s, unreadOnes)} />,
         badge: !m.connected ? "オフライン" : s.status === "waiting" ? "確認" : undefined,
         mark: background ? (
           <LoaderCircle role="img" aria-label={`バックグラウンドで ${background} 件実行中`} className="size-3 animate-spin text-sky-400 motion-reduce:animate-none">
@@ -340,14 +344,14 @@ export function App() {
     };
   });
 
-  // A worktree's row, in Gasho's list and in a grouping's categories: its state, its name, the line under it (its
-  // repository, and its working server when there are several, unless the grouping gave another or none), and whether
-  // it waits for an answer or is offline.
+  // A worktree's row, in Gasho's list and in a grouping's categories: its state (a bell in its place while a session
+  // has a notification not read), its name, the line under it (its repository, and its working server when there are
+  // several, unless the grouping gave another or none), and whether it waits for an answer or is offline.
   const worktreeRow = (w: WorktreeSessions, line?: string): SidebarItem => ({
     id: w.id,
     label: w.label,
     description: line === undefined ? [w.repo, machines.length > 1 ? w.machine.name : undefined].filter(Boolean).join(" · ") || undefined : line || undefined,
-    icon: <StatusDot status={worktreeStatus(w)} />,
+    icon: <StatusDot {...worktreeDot(w, unreadOnes)} />,
     badge: !w.machine.connected ? "オフライン" : w.sessions.some((s) => s.status === "waiting") ? "確認" : undefined,
   });
   const groupingWorktrees = new Map(groupingContext.worktrees.map((w) => [w.key, w]));

@@ -7,6 +7,35 @@ export function shownSessions(m: MachineInfo): SessionInfo[] {
   return m.sessions.filter((s) => s.managed);
 }
 
+/** What a dot shows: a session's state, or "none" for a worktree without sessions. */
+export type DotStatus = SessionStatus | "none";
+
+/** A dot, or a bell in its place while its session (one of its worktree's) has a notification not read yet. */
+export interface Dot {
+  status: DotStatus;
+  unread: boolean;
+}
+
+const unreadKey = (machine: string, sessionId: string) => [machine, sessionId].join("\u001f");
+
+/** The sessions that have a notification not read yet, for sessionDot and worktreeDot. */
+export function unreadSessions(notifications: GashoNotification[]): ReadonlySet<string> {
+  return new Set(notifications.flatMap((n) => (n.read ? [] : [unreadKey(n.machine, n.sessionId)])));
+}
+
+/** A session's dot. The bell shows also while its working server is offline: what was not read stays so. */
+export function sessionDot(m: MachineInfo, s: SessionInfo, unread: ReadonlySet<string>): Dot {
+  return { status: m.connected ? s.status : "unknown", unread: unread.has(unreadKey(m.id, s.sessionId)) };
+}
+
+/** A worktree's dot in the sidebar: that of its most pressing session, and a bell if any of them has one. */
+export function worktreeDot(w: WorktreeSessions, unread: ReadonlySet<string>): Dot {
+  const unreadOne = w.sessions.some((s) => unread.has(unreadKey(w.machine.id, s.sessionId)));
+  if (!w.machine.connected) return { status: "unknown", unread: unreadOne };
+  if (w.sessions.length === 0) return { status: "none", unread: false };
+  return { status: worktreeStatus(w), unread: unreadOne };
+}
+
 const byStart = (a: SessionInfo, b: SessionInfo) => (a.startedAt ?? 0) - (b.startedAt ?? 0) || a.sessionId.localeCompare(b.sessionId);
 
 /** When a session was last used: its latest activity, or for one with no conversation yet, when it started. */
@@ -145,8 +174,9 @@ export function worktreesByLastUse(machines: MachineInfo[], remembered: Remember
 }
 
 /**
- * A worktree's state in the sidebar (its row's dot): that of its most pressing session, waiting for an answer, then
- * working, then idle. "unknown" while its working server is offline, and without sessions.
+ * A worktree's state in the sidebar: that of its most pressing session, waiting for an answer, then working, then idle.
+ * "unknown" while its working server is offline, and without sessions (whose dot worktreeDot tells apart, "none").
+ * Its row's dot (worktreeDot) and a grouping's context (docs/plugins.md, P18) take it from here.
  */
 export function worktreeStatus(w: Pick<WorktreeSessions, "machine" | "sessions">): SessionStatus {
   if (!w.machine.connected) return "unknown";

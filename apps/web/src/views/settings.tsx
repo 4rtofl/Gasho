@@ -3,7 +3,6 @@
 import { Check, CircleAlert, Copy, Info, RotateCcw, Type } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { TranscriptEntry } from "@gasho/protocol";
-import { UPDATES_ID } from "@/components/daemon-updates";
 import { TranscriptSample } from "@/components/transcript";
 import { Badge } from "@/components/ui/badge";
 import { MorphingButton, type MorphingButtonStatus } from "@/components/ui/morphing-button";
@@ -143,13 +142,6 @@ export function SettingsView() {
 /** How long the copy button says how the copy went. */
 const COPIED_MS = 2000;
 
-/** Scrolls to the element `id` once the screen just opened draws it (not yet on the next frame, at times). */
-function scrollToWhenShown(id: string, frames = 30): void {
-  const el = document.getElementById(id);
-  if (el) el.scrollIntoView({ block: "start" });
-  else if (frames > 0) requestAnimationFrame(() => scrollToWhenShown(id, frames - 1));
-}
-
 /** The versions running now, a newer one published taking to the updates on the 端末 screen, and a copy of them all. */
 function VersionsSection() {
   const { server, machines, latest } = useAppState();
@@ -160,10 +152,7 @@ function VersionsSection() {
     const timer = setTimeout(() => setCopied("idle"), COPIED_MS);
     return () => clearTimeout(timer);
   }, [copied]);
-  const openUpdates = () => {
-    go({ name: "devices" });
-    scrollToWhenShown(UPDATES_ID);
-  };
+  const openUpdates = () => go({ name: "devices", section: "updates" });
 
   return (
     <section aria-labelledby="versions" className="space-y-3 rounded-2xl border border-border bg-surface/40 p-4">

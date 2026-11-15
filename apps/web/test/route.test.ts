@@ -6,6 +6,7 @@ test("routes survive a round trip through the URL, including a session's panel a
   const routes: Route[] = [
     { name: "home" },
     { name: "devices" },
+    { name: "devices", section: "updates" },
     { name: "settings" },
     { name: "session", machine: "m1", sessionId: "s/1" },
     { name: "session", machine: "m1", sessionId: "s1", panel: { kind: "graph" } },

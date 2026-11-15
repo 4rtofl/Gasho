@@ -62,7 +62,8 @@ const encodePath = (path: string): string => path.split("/").map(encodeURICompon
 /** `machine` is a machine id. */
 export type Route =
   | { name: "home" }
-  | { name: "devices" }
+  /** `section`: the section to scroll to once it is shown (#/devices/updates). */
+  | { name: "devices"; section?: "updates" }
   | { name: "settings" }
   /** The plugins screen (docs/plugins.md). */
   | { name: "plugins" }
@@ -77,6 +78,7 @@ export type Route =
 
 export function parseHash(hash: string): Route {
   if (hash === "#/devices") return { name: "devices" };
+  if (hash === "#/devices/updates") return { name: "devices", section: "updates" };
   if (hash === "#/settings") return { name: "settings" };
   if (hash === "#/plugins") return { name: "plugins" };
   // A plugin's page, a plugin's panel of a session and a plugin's screen of a worktree: …/p/<plugin>/<id>, with the
@@ -151,7 +153,7 @@ export const isOldGitHubLink = (hash: string): boolean => /^#\/s\/[^/]+\/[^/]+\/
 
 export function hrefOf(r: Route): string {
   if (r.name === "home") return "#/";
-  if (r.name === "devices") return "#/devices";
+  if (r.name === "devices") return r.section ? `#/devices/${r.section}` : "#/devices";
   if (r.name === "settings") return "#/settings";
   if (r.name === "plugins") return "#/plugins";
   if (r.name === "plugin") return `#/p/${encodeURIComponent(r.plugin)}/${encodeURIComponent(r.page)}${queryOf(r.params)}`;

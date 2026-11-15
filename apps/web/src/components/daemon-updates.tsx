@@ -3,7 +3,7 @@
 // while it runs, and why one cannot be updated from here.
 import { CircleArrowUp, Copy, ExternalLink, LoaderCircle, RefreshCw, RotateCcw } from "lucide-react";
 import { AlertDialog } from "radix-ui";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MachineInfo, ServerInfo } from "@gasho/protocol";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG_PANEL } from "@/components/dialog-styles";
 import {
@@ -18,12 +18,10 @@ import {
 } from "@/lib/daemon-update";
 import { relativeTime } from "@/lib/format";
 import { HUB_INSTALL_COMMAND, HUB_STEP_LABEL, hubChangesUrl, hubNewerPublished, hubUpdateTo } from "@/lib/server-update";
+import { useRoute } from "@/lib/route";
 import { checkLatest, sendCommand, updateServer, useAppState } from "@/lib/store";
 import { useNow } from "@/lib/use-now";
 import { cn, copyToClipboard } from "@/lib/utils";
-
-/** The id of this section, which the settings screen's versions scroll to. */
-export const UPDATES_ID = "updates";
 
 const SMALL_BUTTON = "inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs hover:border-border-hover disabled:opacity-50";
 
@@ -50,9 +48,16 @@ export function DaemonUpdates() {
   const [askingServer, setAskingServer] = useState<string>();
   // The versions this browser updated working servers (and the Gasho server, "") to: "updated" is shown once they run them.
   const [started, setStarted] = useState<Record<string, string>>({});
+  // Opened for it (the settings screen's versions): scrolled to once drawn, however long the 端末 screen took to show.
+  const route = useRoute();
+  const opened = route.name === "devices" && route.section === "updates";
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (opened) ref.current?.scrollIntoView({ block: "start" });
+  }, [opened]);
 
   return (
-    <section id={UPDATES_ID} className="scroll-mt-4 space-y-3 rounded-2xl border border-border bg-surface/40 p-4">
+    <section ref={ref} className="scroll-mt-4 space-y-3 rounded-2xl border border-border bg-surface/40 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <h2 className="flex items-center gap-2 text-sm font-medium">

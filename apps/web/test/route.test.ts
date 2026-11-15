@@ -23,16 +23,16 @@ test("plugins' pages, panels and worktree screens keep their params in the query
     { name: "plugins" },
     { name: "plugin", plugin: "kanban", page: "board", params: {} },
     { name: "plugin", plugin: "kanban", page: "board", params: { view: "すべて", q: "a&b=c" } },
-    { name: "session", machine: "m1", sessionId: "s1", panel: { kind: "plugin", plugin: "github", id: "list", params: { kind: "pulls" } } },
-    { name: "session", machine: "m1", sessionId: "s1", panel: { kind: "plugin", plugin: "github", id: "item", params: { kind: "issues", number: "42", repo: "org/web app" } } },
+    { name: "session", machine: "m1", sessionId: "s1", panel: { kind: "plugin", plugin: "git", id: "list", params: { kind: "pulls" } } },
+    { name: "session", machine: "m1", sessionId: "s1", panel: { kind: "plugin", plugin: "git", id: "item", params: { kind: "issues", number: "42", repo: "org/web app" } } },
     { name: "worktree", machine: "m1", path: "/Users/me/Gasho issue/a?b", view: { plugin: "github-allmighty", id: "issue", params: { number: "17" } } },
     { name: "worktree", machine: "m1", path: "/src/app", view: { plugin: "kanban", id: "board", params: {} } },
   ];
   for (const r of routes) assert.deepEqual(parseHash(hrefOf(r)), r);
   assert.equal(hrefOf({ name: "plugin", plugin: "kanban", page: "board", params: { b: "2", a: "1" } }), "#/p/kanban/board?a=1&b=2");
   assert.equal(
-    hrefOf({ name: "session", machine: "m", sessionId: "s", panel: { kind: "plugin", plugin: "github", id: "list", params: { kind: "issues" } } }),
-    "#/s/m/s/p/github/list?kind=issues",
+    hrefOf({ name: "session", machine: "m", sessionId: "s", panel: { kind: "plugin", plugin: "git", id: "list", params: { kind: "issues" } } }),
+    "#/s/m/s/p/git/list?kind=issues",
   );
   assert.equal(
     hrefOf({ name: "worktree", machine: "m", path: "/src/app", view: { plugin: "gh", id: "issue", params: { number: "17" } } }),
@@ -43,12 +43,12 @@ test("plugins' pages, panels and worktree screens keep their params in the query
   }
 });
 
-test("links to Gasho's own issues and pull requests, from before the GitHub plugin, open the plugin's panels", () => {
+test("links to Gasho's own issues and pull requests, from before the GitHub plugin, open the git plugin's panels", () => {
   const panel = (id: string, params: Record<string, string>): Route => ({
     name: "session",
     machine: "m",
     sessionId: "s",
-    panel: { kind: "plugin", plugin: "github", id, params },
+    panel: { kind: "plugin", plugin: "git", id, params },
   });
   assert.deepEqual(parseHash("#/s/m/s/issues"), panel("list", { kind: "issues" }));
   assert.deepEqual(parseHash("#/s/m/s/pulls/api"), panel("list", { kind: "pulls", repo: "api" }));
@@ -59,7 +59,7 @@ test("links to Gasho's own issues and pull requests, from before the GitHub plug
   assert.deepEqual(parseHash("#/s/m/s/pull/1e3"), { name: "home" });
   // Such a link is told apart, so the address bar can get the plugin panel's URL instead.
   for (const old of ["#/s/m/s/issues", "#/s/m/s/pulls/api", "#/s/m/s/issue/42", "#/s/m/s/pull/7/api"]) assert.equal(isOldGitHubLink(old), true, old);
-  for (const now of ["#/s/m/s", "#/s/m/s/graph", "#/s/m/s/p/github/list?kind=pulls", "#/s/m/s/files/issues", "#/"]) assert.equal(isOldGitHubLink(now), false, now);
+  for (const now of ["#/s/m/s", "#/s/m/s/graph", "#/s/m/s/p/git/list?kind=pulls", "#/s/m/s/files/issues", "#/"]) assert.equal(isOldGitHubLink(now), false, now);
 });
 
 test("the files panel keeps a folder's or a file's path in the URL, slashes and all, and refuses paths that leave the folder", () => {

@@ -264,7 +264,7 @@ sidebar: [{ id: "repos", label: "リポジトリ", icon: FolderGit2, page: { id:
 
 ### ページ（P2）
 
-ページの URL は `#/p/<プラグインの ID>/<ページの ID>` で、引数はクエリにする（`#/p/github/repos?repo=4rtoflow%2FGasho`）。ページの部品は、引数を `params` で受け取る。
+ページの URL は `#/p/<プラグインの ID>/<ページの ID>` で、引数はクエリにする（`#/p/git/repos?repo=4rtoflow%2FGasho`）。ページの部品は、引数を `params` で受け取る。
 
 ページは、ホームや設定と同じく、メインの領域に出す。枠は SDK の `Page`（見出し、説明、右上のボタン）を使い、幅と余白をほかのページにそろえる。プラグインがまだ読み込まれていないあいだは「読み込み中…」を出す。プラグインが無効か、ないか、読み込めなかったときは、そのことと、プラグインの画面へのリンクを出す。
 
@@ -301,7 +301,7 @@ sidebar: [{ id: "repos", label: "リポジトリ", icon: FolderGit2, page: { id:
 
 ### セッションのパネル（P4）
 
-パネルの URL は `#/s/<working server の ID>/<セッションの ID>/p/<プラグインの ID>/<パネルの ID>` で、引数はクエリにする（`…/p/github/item?kind=pulls&number=12&repo=app`）。
+パネルの URL は `#/s/<working server の ID>/<セッションの ID>/p/<プラグインの ID>/<パネルの ID>` で、引数はクエリにする（`…/p/git/item?kind=pulls&number=12&repo=app`）。
 
 パネルの出し方は、ブランチグラフやファイルのパネルと同じにする。PC ではセッションの右に並べて、× か Esc で閉じる。スマホではセッションの代わりに出し、「セッションに戻る」で戻る。開くパネルは1つだけで、パネルを開いているときに別のパネルを開くと、ブラウザーの履歴を増やさずに入れ替える。閉じるボタンと「セッションに戻る」は Gasho が付ける。パネルの部品は、SDK の `Panel` に、見出し、副題、右上のボタン（再読み込み、GitHub で開くなど）と中身を渡す。
 
@@ -1038,7 +1038,7 @@ Gasho の CSS（Tailwind CSS）には、Gasho のコードが使うクラスし�
 
 ## GitHub の機能をプラグインに移す
 
-いまの GitHub の機能は、ほかのプラグインと同じく、GashoPlugins の `github/` に移す。Gasho 本体の `plugins/` に置き、はじめから入っているプラグインにする形も考えたが、プラグインの置き場が2つになるので採らなかった。
+いまの GitHub の機能は、ほかのプラグインと同じく、GashoPlugins の `github/`（改名のあとは `git/`）に移す。Gasho 本体の `plugins/` に置き、はじめから入っているプラグインにする形も考えたが、プラグインの置き場が2つになるので採らなかった。
 
 | いま | プラグインにしたあと |
 |---|---|
@@ -1047,7 +1047,9 @@ Gasho の CSS（Tailwind CSS）には、Gasho のコードが使うクラスし�
 | ホームの GitHub のタイル（`views/home.tsx` の `GitHubCounts`） | GitHub プラグインのタイル `repos`（`small`、最近の操作のあと） |
 | `github.list.get` と `github.item.get` の通信（protocol、hub、`lib/store.ts`） | `plugin.request` での `list` と `item` の呼び出しと、SDK の `useRequest` |
 | gasho-daemon の `github.ts`（`gh issue list`、`gh pr list`、`gh issue view`、`gh pr view`） | GitHub プラグインの daemon の部分。Gasho サーバーから gasho-daemon に渡す |
-| URL の `…/issues`、`…/pulls`、`…/issue/<番号>`、`…/pull/<番号>`（後ろにリポジトリ） | `…/p/github/list?kind=issues`、`…/p/github/item?kind=pulls&number=12`（リポジトリは `&repo=…`）。古い URL を開いたときは、新しい URL に置き換える |
+| URL の `…/issues`、`…/pulls`、`…/issue/<番号>`、`…/pull/<番号>`（後ろにリポジトリ） | `…/p/git/list?kind=issues`、`…/p/git/item?kind=pulls&number=12`（リポジトリは `&repo=…`）。古い URL を開いたときは、新しい URL に置き換える |
+
+移したあと、GashoPlugins でこのプラグインの ID を `github` から `git` に改名した（4rtoflow/GashoPlugins#96）。`github` の ID は、Actions・Projects・Packages を読む新しいプラグインに使う（4rtoflow/GashoPlugins#97）。そのため、上の表と下の説明のプラグインの ID は `git` にしてある。改名の前の URL `…/p/github/list`・`…/p/github/item` は、新しい `github` プラグインのパネルを指すので、開くと「このページはありません」になる。
 
 セッションの GitHub のリポジトリを見つけること（`SessionInfo.github`、`repos[].github`）は、Gasho の本体に残す。ヘッダーのリポジトリのリンクと、ブランチの GitHub のリンクにも使うためである。トランスクリプトから読む PR のリンク（G4）、ブランチグラフ（G1、G3）、ファイルのパネルも、本体に残す。
 
@@ -1056,7 +1058,7 @@ Gasho の CSS（Tailwind CSS）には、Gasho のコードが使うクラスし�
 - GitHub プラグインを追加するまで、Issues と Pull requests の項目とパネル、ホームの GitHub のタイルは出ない。Gasho を更新するときの手順に、GitHub プラグインを追加することを書く
 - GitHub の項目とパネルを使うには、プラグインに対応した gasho-daemon が要る。古い gasho-daemon の working server では、いまの 0.7.0 より前と同じく、ヘッダーの項目を出さない。プラグインの画面には「gasho-daemon が古い」と出す。移行のあいだだけ、Gasho サーバーが GitHub プラグインの呼び出しを古い `github.list.get` と `github.item.get` に置き換えて送る形も考えた。しかし、古い通信を Gasho サーバーに残すことになるので採らなかった
 - GitHub の処理は gasho-daemon から出ていくので、GitHub プラグインを直しても、gasho-daemon の新しい版を公開しなくてよい。直したものは、GashoPlugins に出してプラグインの画面で更新するか、開発中ならホットリロードで、画面と gasho-daemon に届く
-- ホームのタイルの ID が `github` から `github.repos` に変わる。ブラウザーが覚えている並びの `github` は `github.repos` として読み、並べた位置を保つ
+- ホームのタイルの ID が `github` から `git.repos` に変わる。ブラウザーが覚えている並びの `github` と `github.repos` は `git.repos` として読み、並べた位置を保つ
 - そのほかの見た目と動きは変えない
 
 次のものは、移したあとで、プラグインの拡張点を使って足せる。今回の移行には含めない。

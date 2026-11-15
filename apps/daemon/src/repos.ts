@@ -2,7 +2,7 @@
 // have no session. Kept in repos.json in its state folder, in the order they were registered.
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { RegisteredRepo } from "@gasho/protocol";
+import type { FolderRepo, RegisteredRepo } from "@gasho/protocol";
 import { findRepos, githubRepoOf, listWorktrees, worktreeOf } from "./git.ts";
 
 const UNREADABLE = "リポジトリを読めません。フォルダーが無くなったか、git のリポジトリではなくなっています。";
@@ -22,6 +22,16 @@ async function repoOf(dir: string): Promise<{ repo: string } | { error: string }
   return {
     error: `このフォルダーの直下には、別々のリポジトリが ${repos.length} 個あります（${names.join("、")}${more}）。登録するリポジトリのフォルダーを選んでください。`,
   };
+}
+
+/** The repositories that `folders` are in, each once, as registering one of the folders would register them. */
+export async function foldersRepos(folders: string[]): Promise<FolderRepo[]> {
+  const found = await Promise.all(folders.map((f) => repoOf(f).catch(() => undefined)));
+  const repos = [...new Set(found.flatMap((r) => (r && "repo" in r ? [r.repo] : [])))].sort();
+  const counted = await Promise.all(
+    repos.map((p) => listWorktrees(p).then((w): FolderRepo => ({ path: p, worktreeCount: w.length }), () => undefined)),
+  );
+  return counted.filter((r) => r !== undefined);
 }
 
 export class RegisteredRepos {

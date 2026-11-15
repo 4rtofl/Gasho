@@ -197,7 +197,8 @@ test("session commands are relayed to the working server and the result goes bac
   const { hub, machineId, machineToken, browserId } = setup();
   const d = fakePeer<HubToDaemon>();
   hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.2.0" });
-  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: ["/home/rg/repos/Gasho"] });
+  const folderRepos = [{ path: "/home/rg/repos/Gasho", worktreeCount: 2 }];
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: ["/home/rg/repos/Gasho"], folderRepos });
   const asking = fakePeer<HubToClient>(browserId);
   const other = fakePeer<HubToClient>(browserId);
   hub.onClientConnect(asking);
@@ -205,6 +206,7 @@ test("session commands are relayed to the working server and the result goes bac
   const snap = asking.sent[0];
   assert.ok(snap?.type === "snapshot");
   assert.deepEqual(snap.machines[0]?.folders, ["/home/rg/repos/Gasho"]);
+  assert.deepEqual(snap.machines[0]?.folderRepos, folderRepos);
 
   hub.onClientMessage(asking, { type: "session.input", requestId: "c1", machine: machineId, sessionId: "s1", text: "テスト" });
   const relayed = d.sent.at(-1);

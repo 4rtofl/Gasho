@@ -16,7 +16,7 @@ import {
   readGitGraph,
   worktreeOf,
 } from "../src/git.ts";
-import { RegisteredRepos } from "../src/repos.ts";
+import { foldersRepos, RegisteredRepos } from "../src/repos.ts";
 
 test("parseGitHubUrl handles https, ssh and credentials, and rejects other hosts", () => {
   assert.deepEqual(parseGitHubUrl("https://github.com/4rtoflow/Gasho.git\n"), {
@@ -164,7 +164,7 @@ test("nestedRepos lists the repositories inside a folder that is not one, with t
   }
 });
 
-test("worktreeOf gives every worktree of a repository the same repository, listWorktrees names them the same way, and their folder registers it", async () => {
+test("worktreeOf gives every worktree of a repository the same repository, listWorktrees names them the same way, and their folder registers it (and is offered to)", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-wt-"));
   // macOS's temporary folder is reached through a symbolic link (/var → /private/var); git names the real folders.
   const real = fs.realpathSync(dir);
@@ -215,6 +215,14 @@ test("worktreeOf gives every worktree of a repository the same repository, listW
     assert.deepEqual(await registered.register(group), { path: path.join(real, "group", "web") });
     const mixed = await registered.register(dir);
     assert.ok("error" in mixed && mixed.error.includes("別々のリポジトリが 2 個あります（app、lib）"));
+
+    // The registration dialog offers each repository once for the folders that would register it, and none for a
+    // folder that would register nothing.
+    assert.deepEqual(await foldersRepos([path.join(dir, "app-x"), main, group, dir, path.join(dir, "notes"), path.join(dir, "lib-main")]), [
+      { path: repo, worktreeCount: 3 },
+      { path: path.join(real, "group", "web"), worktreeCount: 2 },
+      { path: path.join(real, "lib.git"), worktreeCount: 1 },
+    ]);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

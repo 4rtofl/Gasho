@@ -1,5 +1,5 @@
 import { ArrowLeft, ExternalLink, FolderOpen, GitBranch, GitPullRequest } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { CommandResult, InputFeature, MachineInfo, SessionInfo, SessionModel } from "@gasho/protocol";
 import { BackgroundTasks } from "@/components/background-tasks";
 import { RepoPicker } from "@/components/repo-picker";
@@ -64,6 +64,9 @@ export function SessionView({
   useEffect(() => {
     if (worktree && shown) rememberOpened(worktree, sessionId);
   }, [worktree, shown, sessionId]);
+  // Where the conversation's images and videos are read from.
+  const online = m?.connected === true;
+  const source = useMemo(() => ({ machine, sessionId, online }), [machine, sessionId, online]);
 
   if (!m || !s || !shown) {
     return (
@@ -216,6 +219,7 @@ export function SessionView({
           onLoadOlder={() => loadTranscript(machine, sessionId, true)}
           footer={<Composer machine={m} session={s} entries={t?.total ?? 0} />}
           end={<PluginConversationEnd machine={m} session={s} />}
+          source={source}
         />
       </div>
     </div>

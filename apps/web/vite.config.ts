@@ -36,6 +36,8 @@ export default defineConfig(({ command }) => ({
       "/api": { target: hub },
       // The plugins' files (docs/plugins.md).
       "/plugins": { target: hub },
+      // Images and videos Claude sent in a session.
+      "/media": { target: hub },
     },
   },
 }));

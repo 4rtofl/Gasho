@@ -145,6 +145,16 @@ zellij を操作するときは、`--session` で対象を必ず指定する。r
 - KillMode=process では直らない。npx で起動した gasho-daemon は `npm exec` → `sh -c` → `node` の形で動き、停止のときに sh は SIGTERM を node に渡さずに終わる。同じ形の一時的な unit で試すと、unit は止まったのに node が残った
 - gasho-daemon の起動・入力・再起動・削除を、本物の Claude Code で通した（Remote Control・hooks・MCP は外した）。信頼の確認への回答を含めて起動は約2.4秒、`/rename` の入力は約0.6秒で済み、gasho-daemon を作り直しても端末を見つけてセッションを引き継ぎ、削除で Claude Code と端末が終わった
 
+## 検証8：Claude が送ったファイル（SendUserFile）の記録
+
+2026年11月15日に、この Ubuntu Server に残っている会話の記録（Claude Code 2.1.318〜2.1.325。SendUserFile の呼び出し10回、ファイル20個）で確かめた。
+
+- 別の端末から会話を追える（Remote Control につながった）セッションの Claude は、SendUserFile で利用者にファイルを送る。呼び出しの入力は、`files`（パスの配列。作業フォルダーからの相対パスでもよい）、`caption`、`status`（`normal` か `proactive`）、`display`（`render` はその場で表示、`attach` はファイルとして渡す。無いときは種類で決まる）
+- 結果の記録の `toolUseResult` には、`caption`、`display` と、ファイルごとの `attachments`（`path`、`size`、`isImage`、`media_type`、`pathValidated`、届いたときは `file_uuid`、届かなかったときは `upload_error`）が残る。結果の文は `N files delivered to user.` か `… could NOT be delivered to the user: …` になる
+- 2.1.318 では届かなかった（`not delivered: this session is not on a project thread, so it has nowhere to place a file`）。2.1.322 以降は届いていた。どちらでも、ファイルは working server に残っていた
+- 送ったファイル20個のうち17個は、UI のテストで撮った PNG だった（残りは HTML 1個と Markdown 2個）。PNG はどれも Claude の作業用のフォルダー（`/tmp/claude-<uid>/…/scratchpad/`）にあり、セッションのフォルダーの外だった。このフォルダーは、マシンを再起動すると消える
+- 会話の記録に残るのはパスだけで、ファイルの中身は残らない。Claude が Read で読んだ画像は、結果の中に base64 で残る（Gasho では「[image]」とだけ出している）
+
 ## 未確認の事項
 
 - 名前の変更が、公式アプリのセッション名に反映されるか

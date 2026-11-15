@@ -6,6 +6,7 @@ import { AlertTriangle, ArrowDown, ChevronRight, FoldVertical, Image as ImageIco
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { TranscriptBlock, TranscriptEntry } from "@gasho/protocol";
 import { MarkdownText } from "@/components/markdown";
+import { type MediaSource, SentFiles, SentFilesSource } from "@/components/sent-files";
 import { chatTextStyle, useChatTextSize } from "@/lib/chat-text";
 import { clockTime } from "@/lib/format";
 import type { PendingMessage } from "@/lib/pending";
@@ -45,7 +46,8 @@ interface ToolResultsOf {
 
 /**
  * The results of the tool calls in the loaded part of the conversation, by the id of the call. A result is shown
- * inside its call's fold; one whose call is not loaded (an older page) is shown on its own.
+ * inside its call's fold; one whose call is not loaded (an older page) is shown on its own. The result of a call that
+ * sent files is shown only when it is an error, with the files.
  */
 const ToolResults = createContext<ToolResultsOf>({
   of: () => undefined,
@@ -206,7 +208,7 @@ function BlockView({ block, markdown = false }: { block: TranscriptBlock; markdo
     case "text":
       return markdown ? <MarkdownText text={block.text} /> : <UserText text={block.text} />;
     case "tool_use":
-      return <ToolFold block={block} />;
+      return block.sent ? <SentFilesView block={block} /> : <ToolFold block={block} />;
     case "tool_result":
       // Shown inside its call's fold; on its own only while the call is not loaded.
       return <OrphanResult block={block} />;
@@ -218,6 +220,13 @@ function BlockView({ block, markdown = false }: { block: TranscriptBlock; markdo
         </span>
       );
   }
+}
+
+/** Files Claude sent (a call of SendUserFile), with why the call failed, when it did (its result says so). */
+function SentFilesView({ block }: { block: ToolUse }) {
+  const result = useContext(ToolResults).of(block.id);
+  if (!block.sent) return null;
+  return <SentFiles sent={block.sent} error={result?.isError ? result.content || "（理由は記録されていません）" : undefined} />;
 }
 
 /** A result whose call is not in the loaded part of the conversation, in the same kind of fold as a call. */
@@ -441,7 +450,7 @@ interface Anchor {
  * touch scroll goes on, a page that arrives waits for it to stop. `pending`: messages sent from here that the
  * conversation does not show yet; they come after its entries. `end`: what comes after them (the plugins' parts at the
  * end of the conversation, P13); it takes no room while it shows nothing. `onLoadOlder` asks for the page before what
- * is loaded.
+ * is loaded. `source`: the session, to read the images and videos Claude sent from.
  */
 export function Transcript({
   state,
@@ -449,12 +458,14 @@ export function Transcript({
   onLoadOlder,
   footer,
   end,
+  source,
 }: {
   state: TranscriptState | undefined;
   pending?: PendingMessage[];
   onLoadOlder: () => void;
   footer?: ReactNode;
   end?: ReactNode;
+  source?: MediaSource;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const rowsBox = useRef<HTMLDivElement>(null);
@@ -685,9 +696,11 @@ export function Transcript({
           ) : entries.length === 0 && !state.error ? (
             pendingCount === 0 && <p className="text-center text-sm text-muted-foreground">まだ会話がありません</p>
           ) : (
-            <ToolResults.Provider value={toolResults}>
-              <Rows items={items} />
-            </ToolResults.Provider>
+            <SentFilesSource.Provider value={source}>
+              <ToolResults.Provider value={toolResults}>
+                <Rows items={items} />
+              </ToolResults.Provider>
+            </SentFilesSource.Provider>
           )}
           {pending?.map((p) => (
             <PendingView key={p.id} message={p} />

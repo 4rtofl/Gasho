@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { FolderGit2, Home, KeyRound, ListRestart, LoaderCircle, Plus, Puzzle, Settings } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import type { SessionListWorktree } from "@gasho/plugin-sdk";
+import { GasshoOverlay } from "@/components/gassho";
 import { ResizeHandle } from "@/components/resize-handle";
 import { SessionHeaderToggle } from "@/components/session-header-toggle";
 import { RegisterRepos, RepoFilter } from "@/components/repo-filter";
@@ -14,6 +15,8 @@ import { updateTo } from "@/lib/daemon-update";
 import { hubUpdateToTell } from "@/lib/server-update";
 import { useChoices } from "@/lib/flag";
 import { sessionLabel } from "@/lib/format";
+import { prepareClap } from "@/lib/clap";
+import { TAPS, countTap, type GasshoFrom, type Taps } from "@/lib/gassho";
 import { DESKTOP, useMediaQuery, useWindowWidth } from "@/lib/media";
 import { arrangeSessions, rememberSessions, reorderShown, useSavedOrder } from "@/lib/order";
 import { updateCount } from "@/lib/plugin-catalog";
@@ -78,27 +81,34 @@ export const LOGO = "🙏";
 /** Gasho's site, served by Nakamaba from `nakamaba/`. */
 const SITE_URL = "https://d15rkbm4ghff09.cloudfront.net/gasho/";
 
-/** Opens Gasho's site in a new tab. Hovered as the footer's button, and the logo lines up with the items' icons. */
-function Brand() {
-  const { collapsed, showTip } = useSidebar();
-  const tip = (e: { currentTarget: HTMLElement }) => showTip(e.currentTarget, "Gasho のサイト");
+/**
+ * The logo, lined up with the items' icons. Hidden in it: tapped TAPS times, one to three seconds apart, it starts the
+ * easter egg that opens Gasho's site (components/gassho.tsx), and its 🙏 is away in the middle of the screen meanwhile.
+ */
+function Brand({ away, onGassho }: { away: boolean; onGassho: (from: GasshoFrom) => void }) {
+  const { collapsed } = useSidebar();
+  const glyph = useRef<HTMLSpanElement>(null);
+  const taps = useRef<Taps | undefined>(undefined);
   return (
-    <a
-      href={SITE_URL}
-      target="_blank"
-      rel="noreferrer"
-      aria-label="Gasho のサイトを新しいタブで開く"
-      onMouseEnter={tip}
-      onFocus={tip}
-      onMouseLeave={() => showTip(null)}
-      onBlur={() => showTip(null)}
-      className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-base font-semibold tracking-tight outline-none transition-colors hover:bg-neutral-100 focus-visible:ring-2 focus-visible:ring-neutral-400/50 dark:hover:bg-neutral-900 dark:focus-visible:ring-neutral-600/60"
+    <div
+      onClick={(e) => {
+        const el = glyph.current;
+        if (away || !el) return;
+        taps.current = countTap(taps.current, e.timeStamp);
+        if (taps.current.count < TAPS) return;
+        taps.current = undefined;
+        // From the tap, so that the clap can be heard later (lib/clap.ts).
+        prepareClap();
+        const box = el.getBoundingClientRect();
+        onGassho({ x: box.left + box.width / 2, y: box.top + box.height / 2, size: Number.parseFloat(getComputedStyle(el).fontSize) });
+      }}
+      className="flex h-9 w-full cursor-default select-none items-center gap-2 px-2.5 text-base font-semibold tracking-tight"
     >
-      <span aria-hidden className="grid size-5 shrink-0 place-items-center font-emoji text-lg leading-none">
+      <span ref={glyph} aria-hidden className={cn("grid size-5 shrink-0 place-items-center font-emoji text-lg leading-none", away && "opacity-0")}>
         {LOGO}
       </span>
       {!collapsed && <span>Gasho</span>}
-    </a>
+    </div>
   );
 }
 
@@ -183,6 +193,8 @@ export function App() {
   }, [route]);
   const { auth, me, machines, notifications, connected, plugins, catalog, latest, server, outdated } = useAppState();
   const [mobileOpen, setMobileOpen] = useState(false);
+  // The logo's easter egg while it is out (where the logo's 🙏 was when it started), drawn over everything.
+  const [gassho, setGassho] = useState<GasshoFrom | null>(null);
   // What was picked from a session tab's menu (rename, fork, remove); its dialog is open meanwhile.
   const [sessionAction, setSessionAction] = useState<SessionActionRequest | null>(null);
   // The dialog that starts a new session, opened from the "＋" of the sidebar's worktree list.
@@ -519,7 +531,7 @@ export function App() {
         onPointerInside={(inside) => {
           if (inside || !mobileOpen) holdList(inside);
         }}
-        header={<Brand />}
+        header={<Brand away={gassho !== null} onGassho={setGassho} />}
         footer={<Connection connected={connected} deviceName={me?.name} />}
       />
       <div className="flex min-w-0 flex-1 flex-col">
@@ -619,6 +631,8 @@ export function App() {
         onLaunched={() => setMobileOpen(false)}
       />
       <ReposDialog open={reposOpen} onClose={() => setReposOpen(false)} />
+      {/* Out of the sidebar: its events do not reach the drawer, and closing the drawer does not take it away. */}
+      {gassho && <GasshoOverlay from={gassho} logo={LOGO} href={SITE_URL} onClose={() => setGassho(null)} />}
     </div>
   );
 }

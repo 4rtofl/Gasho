@@ -2,27 +2,37 @@
 // the worktrees of a registered repository as git lists them, also those without a session (see worktreesByLastUse).
 import { FolderGit2, LoaderCircle, Plus, X } from "lucide-react";
 import { Dialog } from "radix-ui";
-import { useMemo, useState } from "react";
-import type { MachineInfo, SessionCommand } from "@gasho/protocol";
+import { useId, useMemo, useState } from "react";
+import type { FolderRepo, MachineInfo, SessionCommand } from "@gasho/protocol";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG_PANEL } from "@/components/dialog-styles";
-import { registeredRepoName } from "@/lib/sessions";
+import { ComboboxList, type ComboboxListOption } from "@/components/ui/combobox-list";
+import { folderRepoName, registeredRepoName } from "@/lib/sessions";
 import { sendCommand, useAppState } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
-const OTHER = "\u0000other";
 /** A little longer than the Gasho server waits. */
 const WAIT_MS = 20_000;
 const FIELD =
   "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-border-hover disabled:opacity-60";
 
 /**
- * The folders offered to register on a working server: the repositories its sessions are in (also those started
- * elsewhere), then the folders Claude Code trusts there. Registered repositories and their worktrees are left out.
+ * The repositories offered to register on a working server: those of the folders Claude Code trusts there and of its
+ * sessions' folders (MachineInfo.folderRepos), but the registered ones, by name. Undefined when gasho-daemon does not
+ * tell them.
  */
-function folderChoices(m: MachineInfo): string[] {
-  const taken = new Set((m.repos ?? []).flatMap((r) => [r.path, ...r.worktrees.map((w) => w.path)]));
-  const inSessions = m.sessions.flatMap((s) => (s.worktree ? [s.worktree.repo] : [])).sort();
-  return [...new Set([...inSessions, ...(m.folders ?? [])])].filter((f) => !taken.has(f));
+function repoOptions(m: MachineInfo): ComboboxListOption[] | undefined {
+  if (!m.folderRepos) return undefined;
+  const taken = new Set((m.repos ?? []).map((r) => r.path));
+  const option = (r: FolderRepo): ComboboxListOption => ({
+    value: r.path,
+    label: folderRepoName(r),
+    description: r.path,
+    aside: `worktree ${r.worktreeCount}`,
+  });
+  return m.folderRepos
+    .filter((r) => !taken.has(r.path))
+    .map(option)
+    .sort((a, b) => a.label.localeCompare(b.label) || a.value.localeCompare(b.value));
 }
 
 export function ReposDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -63,16 +73,14 @@ export function ReposDialog({ open, onClose }: { open: boolean; onClose: () => v
 
 function MachineRepos({ machine }: { machine: MachineInfo }) {
   const repos = machine.repos;
-  const choices = useMemo(() => folderChoices(machine), [machine]);
-  const [folder, setFolder] = useState<string>();
+  const options = useMemo(() => repoOptions(machine), [machine]);
   const [custom, setCustom] = useState("");
+  const inputId = useId();
   // The folder being registered, or the repository being taken off.
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
-  // A folder picked before it was registered meanwhile (from another browser, say) is no longer offered.
-  const picked = folder === OTHER || (folder !== undefined && choices.includes(folder)) ? folder : (choices[0] ?? OTHER);
-  const dir = picked === OTHER ? custom.trim() : picked;
+  const typed = custom.trim();
 
   const send = async (cmd: Extract<SessionCommand, { type: "repo.register" | "repo.unregister" }>, failed: string) => {
     setBusy(cmd.path);
@@ -83,14 +91,13 @@ function MachineRepos({ machine }: { machine: MachineInfo }) {
     if (!r.ok) setError(r.error ?? failed);
     return r;
   };
-  const register = async () => {
+  const register = async (dir: string) => {
     if (!dir || busy) return;
     if (!dir.startsWith("/")) return setError("フォルダーを絶対パスで入れてください。");
     const r = await send({ type: "repo.register", path: dir }, "登録できませんでした。");
     if (!r.ok) return;
     setNotice(`登録しました：${r.path ?? dir}`);
-    setFolder(undefined);
-    setCustom("");
+    if (dir === typed) setCustom("");
   };
 
   return (
@@ -137,42 +144,57 @@ function MachineRepos({ machine }: { machine: MachineInfo }) {
             </ul>
           )}
           {machine.connected && (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                void register();
-              }}
-              className="space-y-2"
-            >
-              <label className="block space-y-1.5">
-                <span className="text-xs text-muted-foreground">登録するフォルダー（worktree のフォルダーや、worktree を並べた親フォルダーなら、そのリポジトリを登録します）</span>
-                <select value={picked} disabled={busy !== undefined} onChange={(e) => setFolder(e.target.value)} className={FIELD}>
-                  {choices.map((f) => (
-                    <option key={f} value={f}>
-                      {f}
-                    </option>
-                  ))}
-                  <option value={OTHER}>ほかのフォルダーを入力する…</option>
-                </select>
-              </label>
-              {picked === OTHER && (
-                <input
-                  value={custom}
-                  disabled={busy !== undefined}
-                  onChange={(e) => setCustom(e.target.value)}
-                  placeholder="/home/rg/repos/…（絶対パス）"
-                  aria-label="登録するフォルダー（絶対パス）"
-                  className={cn(FIELD, "font-mono")}
-                  spellCheck={false}
-                  autoCapitalize="none"
-                  autoCorrect="off"
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">登録するリポジトリ</p>
+              {options === undefined ? (
+                <p className="text-xs text-muted-foreground">
+                  この working server の gasho-daemon は古いため、リポジトリの候補を出せません。gasho-daemon を更新すると候補が出ます。
+                </p>
+              ) : options.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  {machine.folderRepos?.length
+                    ? "Claude Code が信頼しているフォルダーのリポジトリは、すべて登録してあります。"
+                    : "Claude Code が信頼しているフォルダーに、git のリポジトリはありません。"}
+                </p>
+              ) : (
+                <ComboboxList
+                  options={options}
+                  onPick={(dir) => void register(dir)}
+                  busy={busy}
+                  searchPlaceholder="リポジトリの名前やパスで絞り込む"
+                  emptyText="一致するリポジトリはありません。"
+                  aria-label={`${machine.name} に登録するリポジトリ`}
                 />
               )}
-              <button type="submit" disabled={busy !== undefined || !dir} className={cn(BUTTON_PRIMARY, "gap-1.5")}>
-                {busy !== undefined && busy === dir ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
-                登録する
-              </button>
-            </form>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void register(typed);
+                }}
+                className="space-y-1.5 pt-1"
+              >
+                <label htmlFor={inputId} className="block text-xs text-muted-foreground">
+                  一覧に無いフォルダーを登録する（worktree のフォルダーや、worktree を並べた親フォルダーなら、そのリポジトリを登録します）
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    id={inputId}
+                    value={custom}
+                    disabled={busy !== undefined}
+                    onChange={(e) => setCustom(e.target.value)}
+                    placeholder="/home/rg/repos/…（絶対パス）"
+                    className={cn(FIELD, "min-w-0 flex-1 font-mono")}
+                    spellCheck={false}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                  />
+                  <button type="submit" disabled={busy !== undefined || !typed} className={cn(BUTTON_PRIMARY, "shrink-0 gap-1.5")}>
+                    {busy !== undefined && busy === typed ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
+                    登録する
+                  </button>
+                </div>
+              </form>
+            </div>
           )}
           {error && (
             <p role="alert" className="text-sm text-red-400">

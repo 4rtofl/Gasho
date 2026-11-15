@@ -7,6 +7,7 @@ import type {
   BackgroundTaskKind,
   CommandResult,
   EffortLevel,
+  FolderRepo,
   GitHubRepo,
   HubToDaemon,
   InputFeature,
@@ -97,7 +98,7 @@ import {
   sessionStatus,
 } from "./sessions.ts";
 import { SessionTerminals, Terminals } from "./terminal.ts";
-import { RegisteredRepos } from "./repos.ts";
+import { foldersRepos, RegisteredRepos } from "./repos.ts";
 import { conversationFacts, emptyMeta, pastConversations, readTranscript, TranscriptTail, type TranscriptMeta } from "./transcript.ts";
 import type { SessionWire } from "./plugin-ipc.ts";
 import { PluginRunner } from "./plugins.ts";
@@ -240,6 +241,9 @@ export class Daemon {
   private permissions = new PermissionRequests(() => this.emitSessions());
   private canLaunch = false;
   private folders: string[] = [];
+  private folderRepos: FolderRepo[] = [];
+  /** Counts the reads of the folders' repositories: a read that a later one overtook is not sent. */
+  private folderReposRead = 0;
   private registered: RegisteredRepos;
   private registeredRepos: RegisteredRepo[] = [];
   private reposSent = "";
@@ -645,10 +649,21 @@ export class Daemon {
   private async refreshFolders(): Promise<void> {
     const cwds = [...this.tracked.values()].map((t) => t.info.cwd);
     const folders = await launchableFolders(os.homedir(), cwds);
+    // Not waited for (git runs in every folder), and read again also when the folders are the same: their repositories
+    // gain and lose worktrees.
+    void this.refreshFolderRepos(folders);
     if (JSON.stringify(folders) === JSON.stringify(this.folders)) return;
     this.folders = folders;
     this.emitCapabilities();
     this.plugins.foldersChanged();
+  }
+
+  private async refreshFolderRepos(folders: string[]): Promise<void> {
+    const read = ++this.folderReposRead;
+    const repos = await foldersRepos(folders);
+    if (read !== this.folderReposRead || JSON.stringify(repos) === JSON.stringify(this.folderRepos)) return;
+    this.folderRepos = repos;
+    this.emitCapabilities();
   }
 
   private async refreshRepos(): Promise<void> {
@@ -685,6 +700,7 @@ export class Daemon {
       type: "capabilities",
       canLaunch: this.canLaunch,
       folders: this.folders,
+      folderRepos: this.folderRepos,
       models: this.models?.options,
       modelsAt: this.models?.at,
       features: [...INPUT_FEATURES],

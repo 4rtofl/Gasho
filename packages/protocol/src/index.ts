@@ -83,6 +83,17 @@ export interface RepoWorktree {
   branch?: string;
 }
 
+/**
+ * A repository that MachineInfo.folders are in (or, for a folder outside any repository, whose worktrees are directly
+ * inside it): one that repo.register would register for one of those folders.
+ */
+export interface FolderRepo {
+  /** Its folder, as SessionWorktree.repo names it. */
+  path: string;
+  /** How many worktrees `git worktree list` gives it (the main one too), as RegisteredRepo.worktrees counts them. */
+  worktreeCount: number;
+}
+
 export interface SessionInfo {
   /** Local session id (UUID). */
   sessionId: string;
@@ -318,6 +329,11 @@ export interface MachineInfo {
   canLaunch?: boolean;
   /** Folders a session can be started in (already trusted by Claude Code). */
   folders?: string[];
+  /**
+   * The repositories of `folders`, by their folder (each once): offered to register. Absent for a gasho-daemon that does
+   * not tell them.
+   */
+  folderRepos?: FolderRepo[];
   /** Models as Claude Code's /model picker names them on this machine, once gasho-daemon has seen the picker. */
   models?: ModelOption[];
   /** When gasho-daemon read `models` from the picker (ms since the epoch). */
@@ -747,6 +763,7 @@ export type DaemonToHub =
       type: "capabilities";
       canLaunch: boolean;
       folders: string[];
+      folderRepos?: FolderRepo[];
       models?: ModelOption[];
       modelsAt?: number;
       features?: InputFeature[];

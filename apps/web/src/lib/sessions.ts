@@ -1,6 +1,6 @@
 // Gasho shows only the sessions it started (from its own launcher). Others running on a working server are only listed
 // above the tabs of their worktree, to be ended there and opened again from Gasho (see outside-sessions).
-import type { GashoNotification, GitHubRepo, MachineInfo, RegisteredRepo, SessionInfo } from "@gasho/protocol";
+import type { FolderRepo, GashoNotification, GitHubRepo, MachineInfo, RegisteredRepo, SessionInfo } from "@gasho/protocol";
 import { basename } from "./format.ts";
 
 export function shownSessions(m: MachineInfo): SessionInfo[] {
@@ -174,6 +174,11 @@ export function repoChoices(worktrees: WorktreeSessions[]): RepoChoice[] {
 /** A registered repository's name, as the sidebar shows it. */
 export function registeredRepoName(r: RegisteredRepo): string {
   return repoName(r.path, r.github);
+}
+
+/** The name of a repository offered to register: its folder's. */
+export function folderRepoName(r: FolderRepo): string {
+  return repoName(r.path, undefined);
 }
 
 /** The tab to open once the open session's tab is gone: the one after it, else the one before. */

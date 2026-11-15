@@ -432,6 +432,7 @@ export class Hub {
       case "capabilities":
         m.canLaunch = msg.canLaunch;
         m.folders = msg.folders;
+        m.folderRepos = Array.isArray(msg.folderRepos) ? msg.folderRepos : undefined;
         m.models = Array.isArray(msg.models)
           ? msg.models
               .filter((o) => MODELS.has(o?.id) && typeof o.name === "string" && o.name.length > 0 && o.name.length <= 60)

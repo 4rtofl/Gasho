@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { dbFileOf, type HubConfig, loadConfig, pluginsDirOf } from "./config.ts";
 import { ghRunner, PluginCatalogSource } from "./catalog.ts";
 import { Hub, type ServerSource } from "./hub.ts";
-import { commandOf, type Install, installOf, launcherIn, type Layout, layoutOf, VERSION_RE, versionDir } from "./install.ts";
+import { commandOf, commitOf, type Install, installOf, launcherIn, type Layout, layoutOf, VERSION_RE, versionDir } from "./install.ts";
 import { switchCurrent, writeJson } from "./launcher.ts";
 import { LatestCheck, npmBin, npmLatest } from "./latest.ts";
 import { buildAllowList } from "./netallow.ts";
@@ -89,20 +89,6 @@ export function webBuildOf(webDist: string): string | undefined {
   try {
     const b = (JSON.parse(fs.readFileSync(path.join(webDist, "build.json"), "utf8")) as { build?: unknown }).build;
     return typeof b === "string" && b.length > 0 && b.length <= 100 ? b : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/** The commit a clone runs (short SHA). Read once at the start: a later git pull does not change the running code. */
-function commitOf(repo: string): string | undefined {
-  try {
-    const sha = execFileSync("git", ["-C", repo, "rev-parse", "--short", "HEAD"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 5000,
-    }).trim();
-    return /^[0-9a-f]{4,40}$/.test(sha) ? sha : undefined;
   } catch {
     return undefined;
   }
@@ -211,7 +197,14 @@ async function start(): Promise<void> {
   const latest = process.env.GASHO_LATEST_CHECK === "off" ? undefined : new LatestCheck({ lookup: (name) => npmLatest(npm, name) });
   // The Gasho server itself for browsers: its version (with a clone's commit), its plugin API, the build of the screen
   // it serves, its update.
-  const commit = install.kind === "repo" ? commitOf(install.repo) : undefined;
+  // Read once, while it starts (a later git pull does not change the running code); said to browsers once known.
+  let commit: string | undefined;
+  if (install.kind === "repo") {
+    void commitOf(install.repo).then((c) => {
+      commit = c;
+      if (c) emitServer();
+    });
+  }
   const serverSource: ServerSource = {
     info: () => {
       const web = webBuildOf(cfg.webDist);

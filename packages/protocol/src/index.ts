@@ -458,7 +458,7 @@ export interface HubUpdateInfo {
 export interface ServerInfo {
   /** Its version (a clone says the version of its source). */
   version: string;
-  /** The commit it runs (short SHA), when it runs from a clone: as it was when it started. */
+  /** The commit it runs (short SHA, "-dirty" after it with changes not committed), when it runs from a clone: as it was when it started. */
   commit?: string;
   /** The plugin API it serves (plugins written for the same major, up to this minor, load). */
   pluginApi?: string;

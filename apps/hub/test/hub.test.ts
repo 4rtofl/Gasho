@@ -649,6 +649,28 @@ test("ending sessions opened outside Gasho goes to a gasho-daemon that can, and 
   assert.deepEqual(summaries, [["Gasho:session.end", "orca-a, orca-b"]]);
 });
 
+test("a session's skills are asked of a gasho-daemon that lists them, even while an update holds commands, and are not recorded", () => {
+  const { hub, machineId, machineToken, browserId } = setup();
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.19.0" });
+  hub.onClientMessage(c, { type: "session.skills", requestId: "r0", machine: machineId, sessionId: "s1" });
+  const refused = c.sent.at(-1);
+  assert.ok(refused?.type === "command.result" && refused.requestId === "r0" && !refused.result.ok);
+  assert.match(refused.result.error ?? "", /スキルの候補を出せません/);
+
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: [], canListSkills: true });
+  hub.hold(UPDATING);
+  hub.onClientMessage(c, { type: "session.skills", requestId: "r1", machine: machineId, sessionId: "s1" });
+  const asked = d.sent.at(-1);
+  assert.ok(asked?.type === "session.skills" && asked.sessionId === "s1");
+  const skills = [{ name: "impl-review", description: "セルフレビューする" }];
+  hub.onDaemonMessage(d, { type: "command.result", requestId: asked.requestId, result: { ok: true, skills } });
+  assert.deepEqual(c.sent.at(-1), { type: "command.result", requestId: "r1", machine: machineId, result: { ok: true, skills } });
+  assert.ok(!c.sent.some((m) => m.type === "event"));
+});
+
 test("validateCommand checks an answer to a permission request", () => {
   const ok = { type: "permission.answer" as const, sessionId: "s1", permissionId: "p1", decision: "allow" as const };
   assert.equal(validateCommand(ok), undefined);

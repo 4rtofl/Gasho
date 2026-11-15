@@ -390,6 +390,8 @@ export interface MachineInfo {
   canEnd?: boolean;
   /** Whether gasho-daemon removes a worktree with its sessions (worktree.remove). */
   canRemoveWorktree?: boolean;
+  /** Whether gasho-daemon lists the skills and custom commands a session's Claude Code reads (session.skills). */
+  canListSkills?: boolean;
   /** Whether Gasho can update this gasho-daemon, and how an update goes (absent from one older than updates from Gasho). */
   update?: DaemonUpdateInfo;
   /**
@@ -869,6 +871,8 @@ export type DaemonToHub =
       canEnd?: boolean;
       /** Answers worktree.remove. */
       canRemoveWorktree?: boolean;
+      /** Answers session.skills. */
+      canListSkills?: boolean;
       /** Whether Gasho can update it, and the update under way (sent again at each step). */
       update?: DaemonUpdateInfo;
     }
@@ -1094,6 +1098,12 @@ export type SessionCommand =
    */
   | { type: "session.history"; cwd: string; subfolders?: boolean }
   /**
+   * The skills and custom commands that the session's Claude Code reads (`skills`): the person's own (~/.claude), its
+   * folder's (.claude, up to the top of its repository), its plugins' and those synced from claude.ai. Claude Code's
+   * built-in commands are not among them. Only reads; the operations log does not record it.
+   */
+  | { type: "session.skills"; sessionId: string }
+  /**
    * Opens a conversation of session.history again in its folder, as a session started from Gasho
    * (`claude --remote-control <name> --resume <id>`). Its name is the conversation's.
    */
@@ -1187,6 +1197,16 @@ export interface CommandResult {
   ended?: string[];
   /** worktree.remove without `force`: not removed because of these. */
   changes?: WorktreeChanges;
+  /** session.skills: what can be typed after "/", by name. */
+  skills?: SkillInfo[];
+}
+
+/** A skill or custom command that a session's Claude Code takes after "/". */
+export interface SkillInfo {
+  /** What follows the "/" ("impl-review", "nakamaba:nakamaba", "anthropic-skills:pdf"). */
+  name: string;
+  /** The start of its description (or of its text, when it has none), on one line. */
+  description?: string;
 }
 
 /** A conversation Claude Code keeps on a working server, which no Claude Code has open now. */

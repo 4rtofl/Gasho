@@ -365,6 +365,8 @@ export interface MachineInfo {
   connected: boolean;
   lastSeen: number;
   daemonVersion?: string;
+  /** The plugin API gasho-daemon serves (plugin.status). Absent until it says it, while offline, and from one that knows no plugins. */
+  pluginApi?: string;
   sessions: SessionInfo[];
   /** Whether Gasho can start sessions on this machine (gasho-daemon can make their terminals). */
   canLaunch?: boolean;
@@ -458,6 +460,10 @@ export interface HubUpdateInfo {
 export interface ServerInfo {
   /** Its version (a clone says the version of its source). */
   version: string;
+  /** The commit it runs (short SHA, "-dirty" after it with changes not committed), when it runs from a clone: as it was when it started. */
+  commit?: string;
+  /** The plugin API it serves (plugins written for the same major, up to this minor, load). */
+  pluginApi?: string;
   /**
    * The build of the screen it serves (web/build.json). A page whose own build differs is out of date: it reloads, or
    * says so while something is being written in it.

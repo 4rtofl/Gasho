@@ -2,6 +2,8 @@
 // GitHub Packages run through npx, as that package installed for good (npm install -g), or by `service install` in a
 // folder of its own per version (see Layout), which Gasho can update. Modeled on gasho-daemon's (apps/daemon/src/
 // install.ts): the two are published apart, so the code is not shared.
+import { execFile } from "node:child_process";
+import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -107,6 +109,34 @@ export function installOf(cli: string, versionsDirs: string[] = []): Install {
   if (parts.includes("_npx")) return { kind: "npx" };
   if (parts.includes("node_modules")) return { kind: "package", cli };
   return { kind: "repo", repo: path.resolve(path.dirname(cli), "../../..") };
+}
+
+/** git in `repo`, its output; without optional locks, so that a status does not write the index of the clone. */
+function gitIn(repo: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "git",
+      ["-C", repo, ...args],
+      { encoding: "utf8", timeout: 5000, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" } },
+      (e, out) => (e ? reject(e) : resolve(out)),
+    );
+  });
+}
+
+/**
+ * The commit a clone runs: its short SHA, with "-dirty" when a tracked file was changed (as git describe --dirty does).
+ * None when `repo` is not the top of a repository: without a .git of its own, git answers for a folder above it.
+ */
+export async function commitOf(repo: string): Promise<string | undefined> {
+  try {
+    const [top, sha] = (await gitIn(repo, ["rev-parse", "--show-toplevel", "--short", "HEAD"])).trim().split("\n");
+    if (!top || !sha || !/^[0-9a-f]{4,40}$/.test(sha)) return undefined;
+    if ((await fsp.realpath(top)) !== (await fsp.realpath(repo))) return undefined;
+    const changed = (await gitIn(repo, ["status", "--porcelain", "--untracked-files=no"])).trim() !== "";
+    return changed ? `${sha}-dirty` : sha;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The command to type for the Gasho server, in messages ("… pair", "… service install"). */

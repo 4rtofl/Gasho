@@ -346,7 +346,7 @@ export function updateServer(version: string, timeoutMs = 20_000): Promise<Comma
 }
 
 /** This page's build (vite.config.ts). */
-const OWN_BUILD = typeof __GASHO_WEB_BUILD__ === "string" ? __GASHO_WEB_BUILD__ : "dev";
+export const OWN_BUILD = typeof __GASHO_WEB_BUILD__ === "string" ? __GASHO_WEB_BUILD__ : "dev";
 /** The last reload this tab made by itself for a build (lib/server-update.ts). */
 const RELOAD_KEY = "gasho.autoReload";
 

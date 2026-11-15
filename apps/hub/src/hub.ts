@@ -464,8 +464,9 @@ export class Hub {
       m.connected = true;
       m.lastSeen = Date.now();
       m.daemonVersion = msg.daemonVersion;
-      // Said again by its capabilities; an update that ended with the restart is over.
+      // Said again by its capabilities and plugin.status; an update that ended with the restart is over.
       m.update = undefined;
+      m.pluginApi = undefined;
       this.store.saveMachine(m);
       this.store.touchDevice(device.id);
       peer.send({ type: "welcome" });
@@ -557,7 +558,16 @@ export class Hub {
         else req.client.send({ type: "file", ...where, file: msg.file, error: msg.error });
         break;
       }
-      case "plugin.status":
+      case "plugin.status": {
+        // It says this whenever its plugins change; the browsers hear of the plugin API only when it changed.
+        const api = typeof msg.api === "string" ? msg.api.slice(0, 20) : undefined;
+        if (api !== m.pluginApi) {
+          m.pluginApi = api;
+          this.broadcast({ type: "machine", machine: m });
+        }
+        this.plugins?.onDaemonMessage(id, peer, msg);
+        break;
+      }
       case "plugin.code.get":
       case "plugin.response":
       case "plugin.event":
@@ -588,6 +598,8 @@ export class Hub {
     if (m) {
       m.connected = false;
       m.lastSeen = Date.now();
+      // Not kept in the database: kept while offline, it would be shown or not as the Gasho server restarted since.
+      m.pluginApi = undefined;
       this.store.saveMachine(m);
       this.broadcast({ type: "machine", machine: m });
     }

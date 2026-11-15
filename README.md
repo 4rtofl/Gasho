@@ -212,6 +212,8 @@ npm run hub:devices                              # 一覧
 node apps/hub/src/cli.ts revoke <端末の ID>      # 取り消し（30秒以内に接続が切れる）
 ```
 
+いま動いているバージョンは、サイドバーの「設定」の「バージョン」の欄にまとめて出る。Gasho サーバー（clone から動かしているときは commit の短い SHA も）・画面のビルド・プラグインの API と、working server ごとの gasho-daemon とそのプラグインの API のバージョンを並べる。新しいバージョンが公開されているものには「〜に更新できます」が出て、押すと「端末」の画面の更新の欄へ移る。「バージョンをコピー」で、欄のバージョンをまとめてテキストでコピーできる。不具合を伝えるときに貼る。
+
 ### プラグイン
 
 Gasho の画面と gasho-daemon には、プラグインで機能を足せる。仕組みは [docs/plugins.md](docs/plugins.md) にまとめた。プラグインは [GashoPlugins](https://github.com/4rtoflow/GashoPlugins) に置く。GitHub の Issues と Pull requests のパネル、ホームの GitHub のタイルも、GitHub プラグイン（`github`）になった。

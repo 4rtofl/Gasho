@@ -3,7 +3,7 @@
 // while it runs, and why one cannot be updated from here.
 import { CircleArrowUp, Copy, ExternalLink, LoaderCircle, RefreshCw, RotateCcw } from "lucide-react";
 import { AlertDialog } from "radix-ui";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MachineInfo, ServerInfo } from "@gasho/protocol";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG_PANEL } from "@/components/dialog-styles";
 import {
@@ -18,6 +18,7 @@ import {
 } from "@/lib/daemon-update";
 import { relativeTime } from "@/lib/format";
 import { HUB_INSTALL_COMMAND, HUB_STEP_LABEL, hubChangesUrl, hubNewerPublished, hubUpdateTo } from "@/lib/server-update";
+import { useRoute } from "@/lib/route";
 import { checkLatest, sendCommand, updateServer, useAppState } from "@/lib/store";
 import { useNow } from "@/lib/use-now";
 import { cn, copyToClipboard } from "@/lib/utils";
@@ -47,9 +48,16 @@ export function DaemonUpdates() {
   const [askingServer, setAskingServer] = useState<string>();
   // The versions this browser updated working servers (and the Gasho server, "") to: "updated" is shown once they run them.
   const [started, setStarted] = useState<Record<string, string>>({});
+  // Opened for it (the settings screen's versions): scrolled to once drawn, however long the 端末 screen took to show.
+  const route = useRoute();
+  const opened = route.name === "devices" && route.section === "updates";
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (opened) ref.current?.scrollIntoView({ block: "start" });
+  }, [opened]);
 
   return (
-    <section className="space-y-3 rounded-2xl border border-border bg-surface/40 p-4">
+    <section ref={ref} className="scroll-mt-4 space-y-3 rounded-2xl border border-border bg-surface/40 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <h2 className="flex items-center gap-2 text-sm font-medium">
@@ -58,12 +66,12 @@ export function DaemonUpdates() {
           </h2>
           <p className="text-xs text-muted-foreground">
             {!latest
-              ? "この Gasho サーバーは、公開されている最新の版を調べていません。"
+              ? "この Gasho サーバーは、公開されている最新のバージョンを調べていません。"
               : latest.checking && !latest.daemon && !latest.hub
-                ? "公開されている最新の版を調べています…"
+                ? "公開されている最新のバージョンを調べています…"
                 : latest.daemon || latest.hub
-                  ? `公開されている最新の版：${[latest.hub && `Gasho サーバー ${latest.hub}`, latest.daemon && `gasho-daemon ${latest.daemon}`].filter(Boolean).join("・")}（${relativeTime(latest.checkedAt, now)}に調べました）`
-                  : "公開されている最新の版は、まだわかりません。"}
+                  ? `公開されている最新のバージョン：${[latest.hub && `Gasho サーバー ${latest.hub}`, latest.daemon && `gasho-daemon ${latest.daemon}`].filter(Boolean).join("・")}（${relativeTime(latest.checkedAt, now)}に調べました）`
+                  : "公開されている最新のバージョンは、まだわかりません。"}
           </p>
           {latest?.error && <p className="mt-1 text-xs text-red-400">{latest.error}</p>}
           {latest?.hubError && <p className="mt-1 text-xs text-muted-foreground">{latest.hubError}</p>}
@@ -151,7 +159,7 @@ function MachineRow({ machine: m, now, updated, onUpdate }: { machine: MachineIn
     status = (
       <>
         <p className="text-xs text-muted-foreground">
-          この版の gasho-daemon は、Gasho からは更新できません。working server でこのコマンドを一度実行すると、最新の版になり、これからは Gasho から更新できます。
+          このバージョンの gasho-daemon は、Gasho からは更新できません。working server でこのコマンドを一度実行すると、最新のバージョンになり、これからは Gasho から更新できます。
         </p>
         <CommandLine command={INSTALL_COMMAND} />
       </>
@@ -167,7 +175,7 @@ function MachineRow({ machine: m, now, updated, onUpdate }: { machine: MachineIn
   } else {
     status = (
       <p className={cn("text-xs", updated ? "text-emerald-500" : "text-muted-foreground")}>
-        {updated ? `${m.daemonVersion} に更新しました。` : to ? `${to} に更新できます。` : latest?.daemon ? "最新の版です。" : ""}
+        {updated ? `${m.daemonVersion} に更新しました。` : to ? `${to} に更新できます。` : latest?.daemon ? "最新のバージョンです。" : ""}
       </p>
     );
   }
@@ -177,7 +185,7 @@ function MachineRow({ machine: m, now, updated, onUpdate }: { machine: MachineIn
       <div className="min-w-0 flex-1">
         <p className="flex flex-wrap items-baseline gap-x-2 text-sm">
           <span className="font-medium">{m.name}</span>
-          <span className="font-mono text-xs text-muted-foreground">{m.daemonVersion ? `gasho-daemon ${m.daemonVersion}` : "版は不明"}</span>
+          <span className="font-mono text-xs text-muted-foreground">{m.daemonVersion ? `gasho-daemon ${m.daemonVersion}` : "バージョンは不明"}</span>
         </p>
         <div className="mt-0.5">{status}</div>
         {m.connected && u?.failed && !u.progress && (
@@ -337,7 +345,7 @@ function ServerRow({
     status = (
       <>
         <p className="text-xs text-muted-foreground">
-          この版の Gasho サーバーは、Gasho からは更新できません。Gasho サーバーのマシンでこのコマンドを一度実行すると、これからは Gasho から更新できます。
+          このバージョンの Gasho サーバーは、Gasho からは更新できません。Gasho サーバーのマシンでこのコマンドを一度実行すると、これからは Gasho から更新できます。
         </p>
         <CommandLine command={HUB_INSTALL_COMMAND} />
       </>
@@ -353,7 +361,7 @@ function ServerRow({
   } else {
     status = (
       <p className={cn("text-xs", updated ? "text-emerald-500" : "text-muted-foreground")}>
-        {updated ? `${server.version} に更新しました。` : to ? `${to} に更新できます。` : latest?.hub ? "最新の版です。" : ""}
+        {updated ? `${server.version} に更新しました。` : to ? `${to} に更新できます。` : latest?.hub ? "最新のバージョンです。" : ""}
       </p>
     );
   }
@@ -363,7 +371,7 @@ function ServerRow({
       <div className="min-w-0 flex-1">
         <p className="flex flex-wrap items-baseline gap-x-2 text-sm">
           <span className="font-medium">Gasho サーバー</span>
-          <span className="font-mono text-xs text-muted-foreground">{server ? `gasho-hub ${server.version}` : "版は不明"}</span>
+          <span className="font-mono text-xs text-muted-foreground">{server ? `gasho-hub ${server.version}` : "バージョンは不明"}</span>
         </p>
         <div className="mt-0.5">{status}</div>
         {connected && u?.rolledBack && (
@@ -408,7 +416,7 @@ function ConfirmServerUpdate({ server, version, onClose, onStarted }: { server: 
       : `${version} を取り込み、起動できるかと、データベースを開けるか（写しで）を確かめてから切り替えて、Gasho サーバーを起動し直します。うまくいかなかったときは、何も変えません。`,
     "処理中の命令（セッションへの送信、起動、プラグインの追加など）が終わるのを待ってから起動し直します。そのあいだは新しい命令を受け付けず、2分たっても終わらなければ更新をやめます。",
     "起動し直すあいだ（数秒）、Gasho につながりません。セッションは working server で動き続けます。",
-    "新しい版がうまく起動しなかったとき（1分のうちに止まったとき）は、自動で前の版に戻します。",
+    "新しいバージョンがうまく起動しなかったとき（1分のうちに止まったとき）は、自動で前のバージョンに戻します。",
     "開いているページは、つながり直すと新しい画面に読み込み直します。入力欄に書きかけがあるページは、読み込み直すかを聞きます。",
   ];
 

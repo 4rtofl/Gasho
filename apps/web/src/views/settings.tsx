@@ -1,9 +1,16 @@
 // Settings of this browser: the size of the conversation's text on the session screen, with a sample of a
-// conversation to see it by.
-import { RotateCcw, Type } from "lucide-react";
+// conversation to see it by. Then the versions of Gasho running now.
+import { Check, CircleAlert, Copy, Info, RotateCcw, Type } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { TranscriptEntry } from "@gasho/protocol";
 import { TranscriptSample } from "@/components/transcript";
+import { Badge } from "@/components/ui/badge";
+import { MorphingButton, type MorphingButtonStatus } from "@/components/ui/morphing-button";
 import { CHAT_TEXT_DEFAULT, CHAT_TEXT_MAX, CHAT_TEXT_MIN, useChatTextSize } from "@/lib/chat-text";
+import { go } from "@/lib/route";
+import { OWN_BUILD, useAppState } from "@/lib/store";
+import { copyToClipboard } from "@/lib/utils";
+import { versionRows, versionsText } from "@/lib/versions";
 import { PluginSettingsSections } from "@/plugins/parts";
 
 const STEP =
@@ -126,6 +133,79 @@ export function SettingsView() {
 
       {/* The settings of the enabled plugins (docs/plugins.md, P5). */}
       <PluginSettingsSections />
+
+      <VersionsSection />
     </div>
+  );
+}
+
+/** How long the copy button says how the copy went. */
+const COPIED_MS = 2000;
+
+/** The versions running now, a newer one published taking to the updates on the 端末 screen, and a copy of them all. */
+function VersionsSection() {
+  const { server, machines, latest } = useAppState();
+  const rows = versionRows({ server, machines, latest, build: OWN_BUILD });
+  // A new object for each copy, so that copying again while it says how the last one went starts the time over.
+  const [copied, setCopied] = useState<{ status: MorphingButtonStatus }>({ status: "idle" });
+  useEffect(() => {
+    if (copied.status === "idle") return;
+    const timer = setTimeout(() => setCopied({ status: "idle" }), COPIED_MS);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  const openUpdates = () => go({ name: "devices", section: "updates" });
+
+  return (
+    <section aria-labelledby="versions" className="space-y-3 rounded-2xl border border-border bg-surface/40 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+        <div className="min-w-0">
+          <h2 id="versions" className="flex items-center gap-2 text-sm font-medium">
+            <Info className="size-4" />
+            バージョン
+          </h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">いま動いている Gasho のバージョンです。不具合を伝えるときは、まとめてコピーして貼ってください。</p>
+        </div>
+        <MorphingButton
+          status={copied.status}
+          idleText="バージョンをコピー"
+          successText="コピーしました"
+          errorText="コピーできません"
+          idleIcon={<Copy className="size-3.5" />}
+          successIcon={<Check className="size-3.5" />}
+          errorIcon={<CircleAlert className="size-3.5" />}
+          onClick={() => void copyToClipboard(versionsText(rows)).then((ok) => setCopied({ status: ok ? "success" : "error" }))}
+        />
+      </div>
+
+      <ul className="divide-y divide-border rounded-xl border border-border bg-background">
+        {rows.map((r) => (
+          <li key={r.key} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 p-3">
+            <p className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-sm">
+              <span className="font-medium">{r.label}</span>
+              <span className="font-mono text-xs text-foreground/80">{r.value}</span>
+              {r.details.map((d) => (
+                <span key={d} className="text-xs text-muted-foreground">
+                  {d}
+                </span>
+              ))}
+            </p>
+            {r.newer && (
+              <button
+                type="button"
+                onClick={openUpdates}
+                title="端末の画面の、更新の欄を開きます"
+                className="shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+              >
+                {r.newer.updatable ? (
+                  <Badge tone="success" dot>{`${r.newer.version} に更新できます`}</Badge>
+                ) : (
+                  <Badge dot>{`${r.newer.version} が公開されています`}</Badge>
+                )}
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

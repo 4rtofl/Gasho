@@ -1,6 +1,6 @@
-// Updating the Gasho server from Gasho, and the launcher that takes a version on trial back: versions are installed
-// with a fake npm (which "installs" a package whose cli.js answers `version` and `check-db`), in a layout in a temporary
-// folder; nothing is downloaded and no process ends.
+// Updating the Gasho server from Gasho, the launcher that takes a version on trial back, and the commit a clone tells
+// of. Versions are installed with a fake npm (which "installs" a package whose cli.js answers `version` and
+// `check-db`), in a layout in a temporary folder; nothing is downloaded and no process ends.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -10,7 +10,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import type { HubUpdateInfo } from "@gasho/protocol";
-import { cliIn, type Install, launcherIn, layoutAt, type Layout, PACKAGE_NAME, versionDir } from "../src/install.ts";
+import { cliIn, commitOf, type Install, launcherIn, layoutAt, type Layout, PACKAGE_NAME, versionDir } from "../src/install.ts";
 import { currentVersionAt, launch, planLaunch, readTrial, switchCurrent, type Trial } from "../src/launcher.ts";
 import { currentVersion, HubUpdater, installedVersions, UPDATE_EXIT_CODE } from "../src/self-update.ts";
 
@@ -409,4 +409,23 @@ test("launch: a trial about another version than current is dropped; a version n
 test("the launcher run as a file only says that it loads when asked to check", () => {
   const launcher = path.resolve(import.meta.dirname, "../src/launcher.ts");
   assert.equal(execFileSync(process.execPath, ["--disable-warning=ExperimentalWarning", launcher, "--check"], { encoding: "utf8" }), "ok\n");
+});
+
+test("a clone's commit: its short SHA, -dirty once a tracked file changed, none for a folder inside another repository", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-hub-commit-"));
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", ...args], { encoding: "utf8" }).trim();
+  git("init", "-q");
+  await fs.writeFile(path.join(dir, "a.txt"), "a");
+  git("add", "a.txt");
+  git("commit", "-qm", "a");
+  const sha = git("rev-parse", "--short", "HEAD");
+  await fs.writeFile(path.join(dir, "new.txt"), "not tracked");
+  assert.equal(await commitOf(dir), sha);
+  await fs.writeFile(path.join(dir, "a.txt"), "b");
+  assert.equal(await commitOf(dir), `${sha}-dirty`);
+  // A Gasho folder without a .git of its own, in a repository such as $HOME's dotfiles.
+  await fs.mkdir(path.join(dir, "gasho"));
+  assert.equal(await commitOf(path.join(dir, "gasho")), undefined);
+  await fs.rm(dir, { recursive: true, force: true });
 });

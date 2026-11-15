@@ -2,7 +2,8 @@
 // From easyui.site (PromptInput). Changed for Gasho: user-visible strings are in Japanese, the line under the box
 // can be laid out like EasyUI's preview (`showCount`: keyboard hint on the left, character count on the right), and
 // what is typed can be kept outside the component (`draft`), so it is still there when the box is shown again. With
-// `shell`, a text that starts with "!" is shown as a shell command (Claude Code's shell mode).
+// `shell`, a text that starts with "!" is shown as a shell command (Claude Code's shell mode). With `commands`, a text
+// that starts with "/" offers Claude Code's skills above the box (SlashMenu, from EasyUI's Combobox).
 
 import {
   forwardRef,
@@ -15,6 +16,7 @@ import {
   useId,
   useImperativeHandle,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -22,6 +24,7 @@ import {
 import { createPortal } from "react-dom";
 import { AnimatePresence, animate, motion, useMotionValue, useReducedMotion } from "framer-motion";
 import { emptyShellInput, isShellInput } from "@/lib/shell";
+import { matchSlash, slashQuery, type SlashCommand, type SlashMatch } from "@/lib/slash";
 
 /* -------------------------------------------------------------------------- */
 /*  PromptInput — the chat composer. Pairs with <AIResponse /> to finish the   */
@@ -163,6 +166,15 @@ export interface PromptInputProps {
    * it as one (a "シェル" mark, a fixed-width font, an amber frame), the send button runs it, and it cannot carry files.
    */
   shell?: boolean;
+  /**
+   * Claude Code's skills and custom commands. While the text is "/" and the start of a name, those it could be are
+   * listed above the box; ↑↓ and Tab or Enter (or a tap) put "/<name> " in the box, and Esc closes the list.
+   */
+  commands?: SlashCommand[];
+  /** Shown in the list while it has no commands to offer (they are being read, or cannot be). */
+  commandsNote?: string;
+  /** The list has opened: the moment to read the commands again. */
+  onCommandsOpen?: () => void;
   className?: string;
 }
 
@@ -438,6 +450,120 @@ function ModelPicker({
 }
 
 /* ========================================================================== */
+/*  Slash menu                                                                */
+/* ========================================================================== */
+
+const glide = { type: "spring", stiffness: 520, damping: 40, mass: 0.6 } as const;
+
+/**
+ * The commands listed above the box while a "/" name is typed. EasyUI's Combobox (easyui.site/components/combobox):
+ * its panel, with one highlight that glides to the active row and the typed text underlined. Changed for Gasho: the
+ * box's text is the search (its keys move the highlight, see PromptInput), a row is a name and the start of its
+ * description on one line, and pressing a row keeps the box's focus (a phone keeps its keyboard).
+ */
+function SlashMenu({
+  id,
+  matches,
+  active,
+  typed,
+  note,
+  onHover,
+  onPick,
+}: {
+  id: string;
+  matches: SlashMatch<SlashCommand>[];
+  active: number;
+  /** How many characters were typed after the "/" (underlined in each name). */
+  typed: number;
+  note?: string;
+  onHover: (i: number) => void;
+  onPick: (name: string) => void;
+}) {
+  const reduce = useReducedMotion();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const [box, setBox] = useState<{ y: number; h: number } | null>(null);
+  // A row the pointer is on is in view already: only the keys scroll the list to the highlight.
+  const byPointer = useRef(false);
+
+  useLayoutEffect(() => {
+    const el = itemRefs.current[active];
+    const scroller = scrollRef.current;
+    if (!el || !scroller) {
+      setBox(null);
+      return;
+    }
+    setBox({ y: el.offsetTop, h: el.offsetHeight });
+    if (byPointer.current) {
+      byPointer.current = false;
+      return;
+    }
+    if (el.offsetTop < scroller.scrollTop) scroller.scrollTop = el.offsetTop - 6;
+    else if (el.offsetTop + el.offsetHeight > scroller.scrollTop + scroller.clientHeight)
+      scroller.scrollTop = el.offsetTop + el.offsetHeight - scroller.clientHeight + 6;
+  }, [active, matches]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: reduce ? 0 : 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: reduce ? 0 : 4, transition: { duration: 0.1 } }}
+      transition={{ duration: 0.14, ease: EASE_OUT }}
+      className="absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-2xl bg-white shadow-xl ring-1 ring-black/[0.08] dark:bg-popover dark:ring-white/[0.1]"
+    >
+      <div ref={scrollRef} className="max-h-64 overflow-y-auto overscroll-contain">
+        {matches.length > 0 ? (
+          <div id={id} role="listbox" aria-label="スキル" className="relative p-1.5">
+            {box && (
+              <motion.div
+                aria-hidden
+                initial={false}
+                animate={{ y: box.y, height: box.h }}
+                transition={reduce ? { duration: 0 } : glide}
+                className="pointer-events-none absolute inset-x-1.5 top-0 rounded-xl bg-black/[0.05] dark:bg-white/[0.07]"
+              />
+            )}
+            {matches.map(({ command, at }, i) => (
+              <div
+                key={command.name}
+                id={`${id}-${i}`}
+                ref={(el) => {
+                  itemRefs.current[i] = el;
+                }}
+                role="option"
+                aria-selected={i === active}
+                onMouseMove={() => {
+                  if (i === active) return;
+                  byPointer.current = true;
+                  onHover(i);
+                }}
+                // Keeps the focus in the box, so a phone keeps its keyboard up.
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() => onPick(command.name)}
+                className="relative flex min-h-[44px] cursor-pointer items-center gap-3 rounded-xl px-3 py-1.5 sm:min-h-[38px]"
+              >
+                <span className="max-w-[60%] shrink-0 truncate font-mono text-[13px] font-medium text-neutral-900 dark:text-neutral-100">
+                  /{command.name.slice(0, at)}
+                  <span className="underline decoration-neutral-400 underline-offset-[3px]">{command.name.slice(at, at + typed)}</span>
+                  {command.name.slice(at + typed)}
+                </span>
+                {command.description && (
+                  <span className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-500" title={command.description}>
+                    {command.description}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="px-4 py-3 text-[12.5px] text-neutral-500">{note}</p>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+/* ========================================================================== */
 /*  PromptInput                                                               */
 /* ========================================================================== */
 
@@ -473,6 +599,9 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
     footer,
     draft,
     shell = false,
+    commands,
+    commandsNote,
+    onCommandsOpen,
     className = "",
   },
   ref,
@@ -643,6 +772,40 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
   const histIdx = useRef(-1);
   const unsent = useRef("");
 
+  /* ------------------------------ "/" commands ----------------------------- */
+  const slash = commands && !disabled ? slashQuery(text) : undefined;
+  // What was typed after the "/" when Esc closed the list: it stays closed until that changes.
+  const [closedAt, setClosedAt] = useState<string>();
+  useEffect(() => {
+    if (slash === undefined) setClosedAt(undefined);
+  }, [slash]);
+  const slashOpen = slash !== undefined && slash !== closedAt;
+  const matches = useMemo(() => (slashOpen && commands ? matchSlash(commands, slash) : []), [commands, slash, slashOpen]);
+  const [picked, setPicked] = useState({ at: "", index: 0 });
+  // A new text starts at the first row again.
+  const slashActive = picked.at === slash ? Math.min(picked.index, matches.length - 1) : 0;
+  // Shown while the box has the focus: a click elsewhere puts the list away until the box is back. A phone may take the
+  // focus from the box when a row is tapped, before the row's click: the list stays a moment for the click.
+  const [focused, setFocused] = useState(false);
+  const blurTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(blurTimer.current), []);
+  const slashShown = slashOpen && focused && (matches.length > 0 || Boolean(commandsNote));
+  const commandsOpened = useRef(onCommandsOpen);
+  commandsOpened.current = onCommandsOpen;
+  useEffect(() => {
+    if (slashOpen) commandsOpened.current?.();
+  }, [slashOpen]);
+  const putCommand = (name: string) => {
+    const value = `/${name} `;
+    histIdx.current = -1;
+    setText(value);
+    requestAnimationFrame(() => {
+      const el = textRef.current;
+      el?.focus({ preventScroll: true });
+      el?.setSelectionRange(value.length, value.length);
+    });
+  };
+
   /* -------------------------------- sending -------------------------------- */
   // A shell command needs something after its "!".
   const canSend =
@@ -693,6 +856,27 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing || e.keyCode === 229) return; // IME composition
+    if (slashShown && slash !== undefined) {
+      const n = matches.length;
+      const plain = !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey;
+      if (e.key === "Escape") {
+        // Closes the list only; a second Esc stops the reply.
+        e.preventDefault();
+        setClosedAt(slash);
+        return;
+      }
+      if (n > 0 && plain && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+        e.preventDefault();
+        setPicked({ at: slash, index: (slashActive + (e.key === "ArrowDown" ? 1 : -1) + n) % n });
+        return;
+      }
+      const hit = matches[slashActive];
+      if (hit && plain && (e.key === "Tab" || e.key === "Enter")) {
+        e.preventDefault();
+        putCommand(hit.command.name);
+        return;
+      }
+    }
     if (e.key === "Escape" && streaming) {
       e.preventDefault();
       onStop?.();
@@ -792,6 +976,20 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
         transition={streaming && !reduce ? { repeat: Infinity, duration: 2.4, ease: "easeInOut" } : { duration: 0.3 }}
       />
 
+      <AnimatePresence>
+        {slashShown && (
+          <SlashMenu
+            id={`${uid}-commands`}
+            matches={matches}
+            active={slashActive}
+            typed={slash?.length ?? 0}
+            note={commandsNote}
+            onHover={(i) => setPicked({ at: slash ?? "", index: i })}
+            onPick={putCommand}
+          />
+        )}
+      </AnimatePresence>
+
       <div
         ref={cardRef}
         {...dragProps}
@@ -876,6 +1074,9 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
             placeholder={placeholder}
             aria-label={shellMode ? "シェルのコマンド" : "メッセージ"}
             aria-describedby={`${uid}-hint`}
+            aria-autocomplete={commands ? "list" : undefined}
+            aria-controls={slashShown && matches.length > 0 ? `${uid}-commands` : undefined}
+            aria-activedescendant={slashShown && matches.length > 0 ? `${uid}-commands-${slashActive}` : undefined}
             enterKeyHint={enter ? "send" : "enter"}
             onChange={(e) => {
               histIdx.current = -1;
@@ -883,6 +1084,13 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
             }}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
+            onFocus={() => {
+              clearTimeout(blurTimer.current);
+              setFocused(true);
+            }}
+            onBlur={() => {
+              blurTimer.current = setTimeout(() => setFocused(false), 200);
+            }}
             style={{ height: h, overflowY: atMax ? "auto" : "hidden" }}
             className={cx(
               "block w-full resize-none bg-transparent text-neutral-900 outline-none placeholder:text-neutral-400 dark:text-neutral-100 dark:placeholder:text-neutral-500",

@@ -101,6 +101,7 @@ import {
 } from "./sessions.ts";
 import { SessionTerminals, Terminals } from "./terminal.ts";
 import { foldersRepos, RegisteredRepos } from "./repos.ts";
+import { listSkills } from "./skills.ts";
 import { conversationFacts, emptyMeta, pastConversations, readTranscript, TranscriptTail, type TranscriptMeta } from "./transcript.ts";
 import type { SessionWire } from "./plugin-ipc.ts";
 import { PluginRunner } from "./plugins.ts";
@@ -708,6 +709,7 @@ export class Daemon {
       features: [...INPUT_FEATURES],
       canResume: true,
       canEnd: true,
+      canListSkills: true,
       update: this.updater.info(),
     });
   }
@@ -989,6 +991,7 @@ export class Daemon {
       case "session.fork":
       case "session.remove":
       case "session.history":
+      case "session.skills":
       case "session.resume":
       case "session.end":
       case "permission.answer":
@@ -1024,6 +1027,9 @@ export class Daemon {
               break;
             case "session.history":
               result = await this.history(m.cwd, m.subfolders === true);
+              break;
+            case "session.skills":
+              result = await this.skills(m.sessionId);
               break;
             case "session.resume":
               result = await this.resume(m.sessionId);
@@ -1433,6 +1439,19 @@ export class Daemon {
     }
     await this.refresh();
     return { ok: true, sessionId: forkId, ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}) };
+  }
+
+  /** What can be typed after "/" in a session's Claude Code (see listSkills). Only sessions this daemon tracks. */
+  private async skills(sessionId: string): Promise<CommandResult> {
+    const t = this.tracked.get(sessionId);
+    if (!t) return { ok: false, error: "このセッションは見つかりません。" };
+    const skills = await listSkills({
+      claudeDir: this.cfg.claudeDir,
+      claudeJson: path.join(os.homedir(), ".claude.json"),
+      cwd: t.info.cwd,
+      worktree: t.info.worktree,
+    });
+    return { ok: true, skills };
   }
 
   /** The conversations of a folder that no Claude Code has open now (see pastConversations). */

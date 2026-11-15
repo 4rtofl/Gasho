@@ -10,6 +10,7 @@ import type { PluginDefinition } from "@gasho/plugin-sdk";
 import { PLUGIN_API } from "@gasho/plugin-sdk/exports";
 import type { PluginInfo } from "@gasho/protocol";
 import { getAppState, subscribeAppState, useAppState } from "@/lib/store";
+import { checkWorktreeGroupings } from "@/lib/worktree-groupings";
 import { installShared } from "./sdk";
 
 /** How long a plugin's files may take to load. */
@@ -128,6 +129,8 @@ export function checkDefinition(d: unknown): PluginDefinition {
     if (!isRecord(l) || typeof l.useCategories !== "function") throw new Error("sessionList には、関数 useCategories を書いてください。");
     if (l.hideSessionTabs !== undefined && typeof l.hideSessionTabs !== "boolean") throw new Error("sessionList の hideSessionTabs は true か false にしてください。");
   }
+  const groupings = checkWorktreeGroupings(d.worktreeGroupings);
+  if (groupings) throw new Error(groupings);
   return d as PluginDefinition;
 }
 

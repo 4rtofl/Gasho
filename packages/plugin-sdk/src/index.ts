@@ -2,9 +2,9 @@
 // plugin's build (gasho-plugin build) replaces `import … from "@gasho/plugin-sdk"` with what Gasho puts on globalThis,
 // so this file only describes it (GashoSdk), for TypeScript. See docs/plugins.md of Gasho.
 import type { ComponentType, ReactNode } from "react";
-import type { GitHubRepo, MachineInfo, PluginInfo, SessionInfo, SessionRepo } from "@gasho/protocol";
+import type { GitHubRepo, MachineInfo, PluginInfo, SessionInfo, SessionRepo, SessionStatus } from "@gasho/protocol";
 
-export type { ContextWindow, GitHubRepo, MachineInfo, PlanLimits, PluginInfo, SessionInfo, SessionRepo, UsageWindow } from "@gasho/protocol";
+export type { ContextWindow, GitHubRepo, MachineInfo, PlanLimits, PluginInfo, SessionInfo, SessionRepo, SessionStatus, UsageWindow } from "@gasho/protocol";
 
 /** The arguments of a page or a panel: the query of its URL. */
 export type Params = Record<string, string>;
@@ -275,6 +275,78 @@ export interface SessionListDefinition {
   hideSessionTabs?: boolean;
 }
 
+/**
+ * A worktree as the sidebar lists it, for a plugin's grouping of the sidebar's worktrees (P18): with the state its row's
+ * dot shows and when it was last used. Plugin API 1.8.
+ */
+export interface WorktreeListWorktree extends SessionListWorktree {
+  /**
+   * The state its row's dot shows: the most pressing of its sessions' (waiting, then busy, then idle). "unknown" while its
+   * working server is offline, and for a worktree without sessions.
+   */
+  status: SessionStatus;
+  /** When the session of it used last was (ms since the epoch), as "最後に使った順" counts it. Absent without sessions. */
+  lastUsed?: number;
+}
+
+/** What a grouping of the sidebar's worktrees gets (P18). */
+export interface WorktreeListContext {
+  machines: MachineInfo[];
+  /**
+   * The worktrees the sidebar lists, narrowed to the repositories picked there: those of the sessions, the one used last
+   * first; then the other worktrees of the repositories registered with each working server; then those this browser
+   * keeps once their sessions are gone.
+   */
+  worktrees: WorktreeListWorktree[];
+}
+
+/** A worktree in a category of the sidebar (P18). */
+export interface WorktreeCategoryItem {
+  /** WorktreeListWorktree.key */
+  key: string;
+  /**
+   * The smaller line under its name. Absent: Gasho's own (its repository's name, and its working server's when there are
+   * several); "": none.
+   */
+  description?: string;
+}
+
+/** A category of the sidebar's worktrees (P18): a heading, which folds, and the worktrees under it. */
+export interface WorktreeCategory {
+  /**
+   * Unique among the categories, and the same whenever they are drawn and in the plugin's next versions: Gasho keeps the
+   * order the person dragged them into, and which are folded, by it.
+   */
+  id: string;
+  title: string;
+  /** Dimmer text after the title (the working server's name, when there are several). */
+  description?: string;
+  /** Shown on hover over the heading. */
+  hint?: string;
+  /** The key of the worktree whose folder the "＋" at the right of the heading starts a session in. No "＋" without it. */
+  launch?: string;
+  /** In the order they show by default (the person can drag them into another). */
+  worktrees: WorktreeCategoryItem[];
+}
+
+/**
+ * A way to put the sidebar's worktrees in categories (P18), picked in the menu at the right of the list's title, where
+ * every enabled plugin's groupings are offered. Gasho draws the categories and the worktrees' rows as it draws its own
+ * list; the person can fold the categories and drag them and their worktrees into another order, which Gasho keeps per
+ * browser and grouping. Plugin API 1.8.
+ */
+export interface WorktreeGrouping {
+  /** Unique among the plugin's groupings, and the same in its next versions: the browser keeps the one picked by it. */
+  id: string;
+  /** Its name in the menu (「リポジトリごと」). */
+  label: string;
+  /**
+   * A React hook, called whenever the worktrees change while this grouping is picked: the categories, in the order they
+   * show by default. A worktree left out of every category goes in one Gasho adds at the end ("その他").
+   */
+  useCategories: (ctx: WorktreeListContext) => WorktreeCategory[];
+}
+
 /** What the web part of a plugin adds to Gasho's screen (its web.js exports it as default). */
 export interface PluginDefinition {
   sidebar?: SidebarItem[];
@@ -294,6 +366,8 @@ export interface PluginDefinition {
   composerFooter?: ComposerFooterItem[];
   /** The sidebar's sessions in categories, in place of its list of worktrees (P17). Plugin API 1.7. */
   sessionList?: SessionListDefinition;
+  /** Ways to put the sidebar's worktrees in categories, picked in the menu of the list (P18). Plugin API 1.8. */
+  worktreeGroupings?: WorktreeGrouping[];
 }
 
 /** A call of a method of the plugin's daemon part (P7). */

@@ -102,8 +102,11 @@ function withPluginTiles(ids: readonly string[], tiles: readonly PluginTile[]): 
 }
 /** Where this browser keeps the order the tiles were dragged into. */
 const TILE_ORDER_KEY = "gasho.homeTiles";
-/** Gasho's own tiles that moved into a plugin, by their new ids, so a saved order keeps them where they were. */
-const MOVED_TILES: Record<string, string> = { github: "github.repos" };
+/**
+ * Tiles that moved, by their new ids, so a saved order keeps them where they were: Gasho's own GitHub tile moved into
+ * the github plugin, which was then renamed git (the github id now names another plugin).
+ */
+const MOVED_TILES: Record<string, string> = { github: "git.repos", "github.repos": "git.repos" };
 
 const NOTIFICATION_TYPE: Record<GashoNotification["kind"], NotificationItem["type"]> = {
   done: "success",

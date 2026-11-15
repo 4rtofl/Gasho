@@ -124,7 +124,7 @@ export function parseHash(hash: string): Route {
     if (f[3] === "file") return path ? { name: "session", ...ids, panel: { kind: "file", path } } : { name: "home" };
     return { name: "session", ...ids, panel: path ? { kind: "files", path } : { kind: "files" } };
   }
-  // …/graph (with /<repo>). Before the GitHub plugin, Gasho itself had …/issues and …/pulls (with /<repo>), and one
+  // …/graph (with /<repo>). Before the git plugin (first named github), Gasho itself had …/issues and …/pulls (with /<repo>), and one
   // issue or pull request at …/issue/<number> and …/pull/<number> (with /<repo>): those links open the plugin's panels.
   const m = hash.match(/^#\/s\/([^/]+)\/([^/]+)(?:\/(graph|issues|pulls)(?:\/([^/]+))?|\/(issue|pull)\/([1-9]\d{0,8})(?:\/([^/]+))?)?$/);
   if (m?.[1] && m[2]) {
@@ -133,10 +133,10 @@ export function parseHash(hash: string): Route {
       const repo = m[4] ?? m[7];
       const where: Record<string, string> = repo ? { repo: decodeURIComponent(repo) } : {};
       if (m[3] === "graph") return { name: "session", ...ids, panel: { kind: "graph", ...where } };
-      if (m[3]) return { name: "session", ...ids, panel: { kind: "plugin", plugin: "github", id: "list", params: { kind: m[3], ...where } } };
+      if (m[3]) return { name: "session", ...ids, panel: { kind: "plugin", plugin: "git", id: "list", params: { kind: m[3], ...where } } };
       if (m[5] && m[6]) {
         const params = { kind: m[5] === "issue" ? "issues" : "pulls", number: m[6], ...where };
-        return { name: "session", ...ids, panel: { kind: "plugin", plugin: "github", id: "item", params } };
+        return { name: "session", ...ids, panel: { kind: "plugin", plugin: "git", id: "item", params } };
       }
       return { name: "session", ...ids };
     } catch {

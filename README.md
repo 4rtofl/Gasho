@@ -226,6 +226,8 @@ PR と main への push のたびに、GitHub Actions（`.github/workflows/ci.ym
 
 gasho-daemon（`@4rtoflow/gasho-daemon`）とプラグインの SDK（`@4rtoflow/gasho-plugin-sdk`）は、GitHub Actions（`.github/workflows/release.yml`）が GitHub Packages に公開する。15分ごとに main を見て、前に公開してから中身が変わったパッケージだけを公開する。
 
+ワークフローを15分ごとに起動するのは、Cloudflare Worker（`infra/release-trigger`）である。GitHub Actions の `schedule` では動かなかったため、Cron Trigger から `workflow_dispatch` で起動している。Worker のデプロイと、使うトークンの作り方・替え方は、[infra/release-trigger/README.md](infra/release-trigger/README.md) に書いた。
+
 版は x.y.z の形にする。
 
 - x は変えない。gasho-daemon は 0、SDK はプラグインの API のメジャーと同じ 1

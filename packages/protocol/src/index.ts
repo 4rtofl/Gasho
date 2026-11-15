@@ -263,11 +263,52 @@ export interface TokenUsage {
   cacheRead: number;
 }
 
+/**
+ * What a file Claude sent to the person is shown as, by the extension of its name: an image or a video in the
+ * conversation, any other file by its name only.
+ */
+export type SentFileKind = "image" | "video" | "file";
+
+/** A file Claude sent to the person (Claude Code's SendUserFile tool). */
+export interface SentFile {
+  /**
+   * Where it is on the working server: an absolute path (one the call gave from the session's folder is made absolute).
+   * A path that could not be made absolute stays as the call gave it, as a "file".
+   */
+  path: string;
+  kind: SentFileKind;
+}
+
+/** The files Claude sent to the person with a call of Claude Code's SendUserFile tool. */
+export interface SentFiles {
+  files: SentFile[];
+  caption?: string;
+  /** Claude asked for them to be offered as files rather than shown (display "attach"). */
+  attach?: boolean;
+}
+
 export type TranscriptBlock =
   | { type: "text"; text: string }
-  | { type: "tool_use"; id?: string; name: string; input: string; summary?: string }
+  /**
+   * `sent`: the call sent files to the person (SendUserFile), which the screen shows instead of the call's fold (an
+   * older screen shows the fold, as for any call; an older gasho-daemon does not say). The images and videos among them
+   * are read from the working server when they are shown (media.get), so they show what the files hold then.
+   */
+  | { type: "tool_use"; id?: string; name: string; input: string; summary?: string; sent?: SentFiles }
   | { type: "tool_result"; toolUseId?: string; content: string; isError: boolean }
   | { type: "image" };
+
+/** Part of an image or a video Claude sent to the person in a session (media.get). */
+export interface MediaPart {
+  /** Its type, by the extension of its name ("image/png", "video/mp4"). */
+  mime: string;
+  /** The whole file: its size in bytes, and when it was last changed (ms since the epoch). */
+  size: number;
+  mtime: number;
+  /** Where the part starts in the file, and its bytes, base64-encoded: fewer than asked for at the end of the file. */
+  offset: number;
+  data: string;
+}
 
 export interface TranscriptEntry {
   uuid: string;
@@ -826,6 +867,8 @@ export type DaemonToHub =
   | { type: "git.graph"; requestId: string; sessionId: string; repo?: string; graph?: GitGraph; error?: string }
   | { type: "dir"; requestId: string; sessionId: string; path: string; dir?: DirListing; error?: string }
   | { type: "file"; requestId: string; sessionId: string; path: string; file?: FileContent; error?: string }
+  /** The part of a file that media.get asked for, or why it cannot be read (`notFound`: neither the session nor the file is there). */
+  | { type: "media"; requestId: string; media?: MediaPart; error?: string; notFound?: boolean }
   /** The plugin API this gasho-daemon runs plugins for ("1.0"), and its plugins' daemon parts. Sent when they change. */
   | { type: "plugin.status"; api: string; plugins: DaemonPluginStatus[] }
   /** The code of a plugin's daemon part that gasho-daemon does not have yet. */
@@ -844,6 +887,12 @@ export type HubToDaemon =
   | { type: "git.graph.get"; requestId: string; sessionId: string; repo?: string }
   | { type: "dir.get"; requestId: string; sessionId: string; path: string }
   | { type: "file.get"; requestId: string; sessionId: string; path: string }
+  /**
+   * Part of an image or a video that Claude sent to the person in a session (a "files" block's `path`): `length` bytes
+   * from `offset`, at most 1 MB; 0 asks only what the file is. gasho-daemon reads only the images and videos that the
+   * session's conversation sent. The Gasho server asks for them part by part as a browser reads them (GET /media/…).
+   */
+  | { type: "media.get"; requestId: string; sessionId: string; path: string; offset: number; length: number }
   | ({ requestId: string } & SessionCommand)
   /** The plugins with a daemon part: sent once connected, and whenever they change. */
   | { type: "plugins"; plugins: DaemonPluginEntry[] }

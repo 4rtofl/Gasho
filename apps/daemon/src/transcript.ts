@@ -8,9 +8,11 @@ import type {
   EffortLevel,
   PastConversation,
   PrLink,
+  SentFiles,
   TranscriptBlock,
   TranscriptEntry,
 } from "@gasho/protocol";
+import { SEND_FILE_TOOL, sentFiles } from "./media.ts";
 import { clip, inputSummary, str } from "./util.ts";
 
 /**
@@ -117,6 +119,11 @@ export interface TranscriptMeta {
   openCalls?: OpenCall[];
   /** Work Claude started in the background (see BackgroundTasks). */
   background?: BackgroundTasks;
+  /**
+   * The images and videos Claude sent to the person (SendUserFile), by their absolute paths, the latest last: the only
+   * files the Gasho screen may read to show them (media.get).
+   */
+  sentFiles?: Set<string>;
 }
 
 /** A tool call without a result yet (see TranscriptMeta.openCalls). */
@@ -129,6 +136,29 @@ export interface OpenCall {
 
 /** How many open calls are kept: a turn that leaves more open is not waiting on a dialog for the oldest. */
 const MAX_OPEN_CALLS = 20;
+/** How many of the files Claude sent are remembered: the latest ones, which the conversation shows. */
+const MAX_SENT_FILES = 2000;
+const MAX_CAPTION = 2000;
+
+/**
+ * The files a call of SendUserFile sent to the person (a relative path is from the folder Claude worked in, `cwd`), to
+ * show them as they are: `{ sent }`, or nothing for a call of another shape. Its images and videos are remembered as
+ * the latest the conversation sent (see TranscriptMeta.sentFiles).
+ */
+function sentOf(input: unknown, cwd: string | undefined, meta: TranscriptMeta): { sent?: SentFiles } {
+  const files = sentFiles(input, cwd);
+  if (!files) return {};
+  const remembered = (meta.sentFiles ??= new Set());
+  for (const f of files) {
+    if (f.kind === "file") continue;
+    remembered.delete(f.path);
+    remembered.add(f.path);
+  }
+  while (remembered.size > MAX_SENT_FILES) remembered.delete(remembered.values().next().value as string);
+  const { caption, display } = input as { caption?: unknown; display?: unknown };
+  const text = str(caption)?.trim();
+  return { sent: { files, ...(text ? { caption: clip(text, MAX_CAPTION) } : {}), ...(display === "attach" ? { attach: true } : {}) } };
+}
 
 export function emptyMeta(): TranscriptMeta {
   return { prLinks: [], background: new BackgroundTasks() };
@@ -457,6 +487,7 @@ export function parseRecord(rec: Record<string, unknown>, meta: TranscriptMeta):
           name: str(b.name) ?? "tool",
           input: clip(JSON.stringify(b.input ?? {}), MAX_TOOL),
           summary: inputSummary(b.input, 300),
+          ...(role === "assistant" && b.name === SEND_FILE_TOOL ? sentOf(b.input, str(rec.cwd), meta) : {}),
         });
       } else if (b.type === "tool_result") {
         if (meta.question && str(b.tool_use_id) === meta.question.toolUseId) delete meta.question;

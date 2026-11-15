@@ -2,6 +2,8 @@
 //   /api/*      registration and device management (JSON)
 //   /ws/daemon  gasho-daemon on working servers (authenticated by its hello message)
 //   /ws/client  browsers (authenticated by the device cookie)
+//   /plugins/*  the installed plugins' files (registered browsers)
+//   /media/*    images and videos Claude sent in a session, read from its working server (registered browsers)
 //   other paths the UI's static files
 // Every request must come from an allowed address (netallow.ts).
 import fs from "node:fs";
@@ -12,6 +14,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import type { ClientToHub, DaemonToHub, DeviceKind, PairRequest, PairResponse } from "@gasho/protocol";
 import { clearDeviceCookie, deviceCookie, parseDeviceCookie, RateLimiter } from "./auth.ts";
 import { CLOSE_UNAUTHORIZED, type ClientPeer, type DaemonPeer, type Hub } from "./hub.ts";
+import { serveMedia } from "./media.ts";
 import { isAllowed, normalizeAddress } from "./netallow.ts";
 import type { PluginRegistry } from "./plugins.ts";
 import type { DeviceRecord, Store } from "./store.ts";
@@ -256,6 +259,20 @@ export function createServer(opts: ServerOptions): http.Server {
         "x-content-type-options": "nosniff",
       });
       fs.createReadStream(file).pipe(res);
+      return;
+    }
+    // An image or a video Claude sent in a session: /media/<machine>/<session>?path=<file>, to registered browsers only.
+    // The working server reads it part by part (media.ts).
+    if (url.pathname.startsWith("/media/")) {
+      if (!browserDevice(req)) {
+        res.writeHead(401, { "content-type": "text/plain; charset=utf-8" }).end("this browser is not registered");
+        return;
+      }
+      serveMedia(hub, req, res, url).catch((e: unknown) => {
+        console.error("[gasho-hub] media error", e);
+        if (res.headersSent) res.destroy();
+        else res.writeHead(500, { "content-type": "text/plain; charset=utf-8" }).end("internal error");
+      });
       return;
     }
     if (!url.pathname.startsWith("/api/")) {

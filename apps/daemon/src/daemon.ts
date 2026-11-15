@@ -12,6 +12,7 @@ import type {
   HubToDaemon,
   InputFeature,
   InputFile,
+  MediaPart,
   ModelOption,
   PermissionRequestInfo,
   RegisteredRepo,
@@ -32,6 +33,7 @@ import { startHookServer, summarizeHook } from "./hooks.ts";
 import { isInside, statusLineLaunch, statusLineOf, userStatusLine } from "./statusline.ts";
 import { HubClient } from "./hub-client.ts";
 import { type Install, type Layout, layoutOf } from "./install.ts";
+import { type MediaFailed, readMediaPart } from "./media.ts";
 import { answersMessage, dialogCall, OPEN_DIALOG, OPEN_QUESTION, openPermissionRequest, openQuestionRequest, PermissionRequests, questionAnswers } from "./permissions.ts";
 import {
   atBottom,
@@ -977,6 +979,8 @@ export class Daemon {
         return this.sendDir(m);
       case "file.get":
         return this.sendFile(m);
+      case "media.get":
+        return this.sendMedia(m);
       case "session.launch":
       case "session.input":
       case "session.interrupt":
@@ -1141,6 +1145,20 @@ export class Daemon {
     const root = this.tracked.get(m.sessionId)?.info.cwd;
     const file = root ? await readFileAt(root, m.path).catch((e: unknown) => ({ error: String(e) })) : { error: "このセッションは見つかりません。" };
     this.hub.send("error" in file ? { ...reply, error: file.error } : { ...reply, file });
+  }
+
+  /**
+   * Part of an image or a video that Claude sent to the person in a session (see media.ts): only one that the session's
+   * conversation sent, wherever it is (Claude sends screenshots from its scratchpad, outside the session's folder).
+   */
+  private async sendMedia(m: Extract<HubToDaemon, { type: "media.get" }>): Promise<void> {
+    const reply = { type: "media" as const, requestId: m.requestId };
+    const t = this.tracked.get(m.sessionId);
+    let part: MediaPart | MediaFailed;
+    if (!t) part = { error: "このセッションは見つかりません。", notFound: true };
+    else if (typeof m.path !== "string" || !t.meta.sentFiles?.has(m.path)) part = { error: "この会話で Claude が送った画像や動画ではありません。" };
+    else part = await readMediaPart(m.path, m.offset, m.length).catch((e: unknown) => ({ error: String(e) }));
+    this.hub.send("error" in part ? { ...reply, ...part } : { ...reply, media: part });
   }
 
   /** Writes a text file inside a session's folder, or makes one (see files.ts). */

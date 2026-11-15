@@ -12,6 +12,7 @@ import type {
   InputFeature,
   MachineHookEvent,
   MachineInfo,
+  MediaPart,
   PermissionRequestInfo,
   ServerInfo,
   SessionCommand,
@@ -53,6 +54,25 @@ interface PendingRequest {
   path?: string;
   timer: NodeJS.Timeout;
 }
+
+/**
+ * Part of a file Claude sent in a session, as its working server read it (`bytes`: the part's data), or why there is
+ * none, as the HTTP status to answer with.
+ */
+export type MediaAnswer = { part: Omit<MediaPart, "data">; bytes: Buffer } | { status: number; error: string };
+
+/** A part of a file that the HTTP server asked a working server for (see Hub.media). */
+interface PendingMedia {
+  machine: string;
+  offset: number;
+  length: number;
+  done: (answer: MediaAnswer) => void;
+  timer: NodeJS.Timeout;
+}
+
+/** The most one part of a file holds (gasho-daemon reads no more at a time). */
+export const MAX_MEDIA_PART = 1024 * 1024;
+const MEDIA_MIME_RE = /^(?:image|video)\/[\w.+-]{1,100}$/;
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const LAUNCH_TIMEOUT_MS = 45_000;
@@ -229,6 +249,23 @@ export function answerSummary(cmd: Extract<SessionCommand, { type: "permission.a
   return `[${cmd.decision}] ${what}${message ? ` — ${message}` : ""}`.trim().slice(0, 300);
 }
 
+/**
+ * What a working server answered for a part of a file (media.get asked for `length` bytes from `offset`), kept to what
+ * can be handed to a browser as an image or a video: never another type, nor more than was asked for.
+ */
+function mediaAnswerOf(msg: Extract<DaemonToHub, { type: "media" }>, offset: number, length: number): MediaAnswer {
+  const p = msg.media;
+  if (!p) return { status: msg.notFound ? 404 : 403, error: typeof msg.error === "string" ? msg.error.slice(0, 500) : "読めませんでした。" };
+  const whole = (n: unknown): n is number => Number.isSafeInteger(n) && (n as number) >= 0;
+  if (typeof p.mime !== "string" || !MEDIA_MIME_RE.test(p.mime) || !whole(p.size) || !whole(p.mtime) || p.offset !== offset) {
+    return { status: 502, error: "working server の答えが正しくありません。" };
+  }
+  if (typeof p.data !== "string" || !BASE64_RE.test(p.data)) return { status: 502, error: "working server の答えが正しくありません。" };
+  const bytes = Buffer.from(p.data, "base64");
+  if (bytes.length > length || offset + bytes.length > p.size) return { status: 502, error: "working server の答えが正しくありません。" };
+  return { part: { mime: p.mime, size: p.size, mtime: p.mtime, offset }, bytes };
+}
+
 /** Files sent with one input: how many, and their size in all. */
 export const MAX_FILES = 5;
 export const MAX_FILES_BYTES = 10 * 1024 * 1024;
@@ -372,6 +409,7 @@ export class Hub {
   private clients = new Set<ClientPeer>();
   private pending = new Map<string, PendingRequest>();
   private commands = new Map<string, PendingCommand>();
+  private mediaParts = new Map<string, PendingMedia>();
   /** The plugins (docs/plugins.md); absent when the Gasho server was started without a plugins folder (tests). */
   private plugins: PluginHub | undefined;
   /** The latest published versions; absent when they are not looked up. */
@@ -497,6 +535,14 @@ export class Hub {
         req.client.send({ type: "git.graph", machine: id, sessionId: msg.sessionId, repo: req.repo, graph: msg.graph, error: msg.error });
         break;
       }
+      case "media": {
+        const req = this.mediaParts.get(msg.requestId);
+        if (!req || req.machine !== id) break;
+        clearTimeout(req.timer);
+        this.mediaParts.delete(msg.requestId);
+        req.done(mediaAnswerOf(msg, req.offset, req.length));
+        break;
+      }
       case "dir":
       case "file": {
         const req = this.pending.get(msg.requestId);
@@ -545,7 +591,40 @@ export class Hub {
     }
     this.failPending((req) => req.machine === id, "machine disconnected");
     this.failCommands((c) => c.machine === id, "working server との接続が切れました。");
+    this.failMedia(id, "working server との接続が切れました。");
     this.plugins?.onDaemonClose(id);
+  }
+
+  /**
+   * Part of a file that Claude sent in a session on a working server (media.get), for the HTTP server to hand to a
+   * browser: `length` bytes from `offset` (at most MAX_MEDIA_PART; 0 for only what the file is). The working server
+   * reads only images and videos that the session's conversation sent.
+   */
+  media(machine: string, sessionId: string, file: string, offset: number, length: number): Promise<MediaAnswer> {
+    if (!sessionId || sessionId.length > MAX_SESSION_ID) return Promise.resolve({ status: 400, error: "セッションの指定が正しくありません。" });
+    if (!file.startsWith("/") || file.length > MAX_FILE_PATH || file.includes("\0")) return Promise.resolve({ status: 400, error: "パスの指定が正しくありません。" });
+    if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(length) || length < 0 || length > MAX_MEDIA_PART) {
+      return Promise.resolve({ status: 400, error: "読む範囲の指定が正しくありません。" });
+    }
+    const daemon = this.daemons.get(machine);
+    if (!daemon) return Promise.resolve({ status: 503, error: "この working server はオフラインです。" });
+    return new Promise((done) => {
+      const requestId = randomUUID();
+      const timer = setTimeout(() => {
+        if (this.mediaParts.delete(requestId)) done({ status: 504, error: "working server から応答がありません。" });
+      }, REQUEST_TIMEOUT_MS).unref();
+      this.mediaParts.set(requestId, { machine, offset, length, done, timer });
+      daemon.send({ type: "media.get", requestId, sessionId, path: file, offset, length });
+    });
+  }
+
+  private failMedia(machine: string, error: string): void {
+    for (const [id, req] of this.mediaParts) {
+      if (req.machine !== machine) continue;
+      clearTimeout(req.timer);
+      this.mediaParts.delete(id);
+      req.done({ status: 503, error });
+    }
   }
 
   // ---- browsers ----
@@ -940,6 +1019,7 @@ export class Hub {
       }
       if (this.machines.delete(id)) {
         this.failPending((req) => req.machine === id, "machine was removed");
+        this.failMedia(id, "working server の登録が外されました。");
         this.broadcast({ type: "machine.removed", id });
         this.plugins?.onDaemonClose(id);
       }

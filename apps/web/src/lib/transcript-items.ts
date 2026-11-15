@@ -24,7 +24,8 @@ export type TranscriptItem =
    */
   | { kind: "compaction"; key: string; summary?: string; ts?: string };
 
-const isToolCall = (b: TranscriptBlock): b is ToolUse => b.type === "tool_use";
+/** A tool call shown as a fold: files Claude sent are shown as they are, on their own. */
+const isToolCall = (b: TranscriptBlock): b is ToolUse => b.type === "tool_use" && !b.sent;
 
 /** The text of a user message that is nothing but text, as shell-mode records are. */
 function userText(e: TranscriptEntry | undefined): string | undefined {

@@ -206,7 +206,11 @@ function VersionsSection() {
                 title="端末の画面の、更新の欄を開きます"
                 className="shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
               >
-                <Badge tone="success" dot>{`${r.newer} に更新できます`}</Badge>
+                {r.newer.updatable ? (
+                  <Badge tone="success" dot>{`${r.newer.version} に更新できます`}</Badge>
+                ) : (
+                  <Badge dot>{`${r.newer.version} が公開されています`}</Badge>
+                )}
               </button>
             )}
           </li>

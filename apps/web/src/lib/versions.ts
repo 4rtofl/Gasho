@@ -1,17 +1,23 @@
 // The versions the settings screen lists: the Gasho server, the build of the screen, the plugin API, and each working
 // server's gasho-daemon. The button that copies them writes the same rows, so that what is pasted says what is shown.
 import type { LatestVersions, MachineInfo, ServerInfo } from "@gasho/protocol";
-import { newerPublished } from "./daemon-update.ts";
-import { hubNewerPublished } from "./server-update.ts";
+import { newerPublished, updateTo } from "./daemon-update.ts";
+import { hubNewerPublished, hubUpdateTo, outOfDate } from "./server-update.ts";
 
 export interface VersionRow {
   key: string;
   label: string;
   value: string;
-  /** Said beside the version: a clone's commit, gasho-daemon's plugin API, a working server being offline. */
+  /**
+   * Said beside the version: a clone's commit, the build the Gasho server serves when this page's is another,
+   * gasho-daemon's plugin API, a working server being offline.
+   */
   details: string[];
-  /** A newer version published (the row offers the updates on the 端末 screen). */
-  newer?: string;
+  /**
+   * A newer version published (the row takes to the updates on the 端末 screen), and whether it can be updated to from
+   * Gasho now, as the 端末 screen says (else that row says why not).
+   */
+  newer?: { version: string; updatable: boolean };
 }
 
 const UNKNOWN = "不明";
@@ -24,7 +30,7 @@ export function versionRows(o: {
   build: string;
 }): VersionRow[] {
   const { server, latest } = o;
-  const hubNewer = hubNewerPublished(server, latest) ? latest?.hub : undefined;
+  const hubNewer = latest?.hub && hubNewerPublished(server, latest) ? { version: latest.hub, updatable: hubUpdateTo(server, latest) !== undefined } : undefined;
   return [
     {
       key: "hub",
@@ -33,10 +39,15 @@ export function versionRows(o: {
       details: server?.commit ? [`commit ${server.commit}`] : [],
       ...(hubNewer ? { newer: hubNewer } : {}),
     },
-    { key: "web", label: "画面のビルド", value: o.build, details: [] },
+    {
+      key: "web",
+      label: "画面のビルド",
+      value: o.build,
+      details: server?.web && outOfDate(server, o.build) ? [`Gasho サーバーは ${server.web} を配信中`] : [],
+    },
     { key: "plugin-api", label: "プラグインの API", value: server?.pluginApi ?? UNKNOWN, details: [] },
     ...o.machines.map((m): VersionRow => {
-      const newer = newerPublished(m, latest) ? latest?.daemon : undefined;
+      const newer = latest?.daemon && newerPublished(m, latest) ? { version: latest.daemon, updatable: updateTo(m, latest) !== undefined } : undefined;
       return {
         key: `daemon:${m.id}`,
         label: `gasho-daemon（${m.name}）`,

@@ -355,3 +355,28 @@ test("events of a daemon part go to every browser, and those to keep (retain) re
   await registry.scan();
   assert.deepEqual(later(), []);
 });
+
+test("while an update holds them, plugin calls and changes are refused; the calls under way are counted until answered", async () => {
+  const { client, daemon, hub, machineId } = await setup();
+  hub.onDaemonMessage(daemon, { type: "plugin.status", api: "1.2", plugins: [{ id: "hello", state: "running" }] });
+  const call = (requestId: string) => hub.onClientMessage(client, { type: "plugin.request", requestId, plugin: "hello", machine: machineId, method: "greet", params: {} });
+  call("r1");
+  const relayed = daemon.sent.find((m) => m.type === "plugin.request");
+  assert.ok(relayed?.type === "plugin.request");
+  assert.equal(hub.inFlight(), 1);
+
+  hub.hold("更新しています");
+  call("r2");
+  assert.deepEqual(client.sent.at(-1), { type: "plugin.response", requestId: "r2", error: "更新しています" });
+  hub.onClientMessage(client, { type: "plugin.enable", requestId: "e1", plugin: "hello", enabled: false });
+  assert.deepEqual(client.sent.at(-1), { type: "plugin.result", requestId: "e1", result: { ok: false, error: "更新しています" } });
+  assert.equal(daemon.sent.filter((m) => m.type === "plugin.request").length, 1);
+  // The call under way still gets its answer.
+  hub.onDaemonMessage(daemon, { type: "plugin.response", requestId: relayed.requestId, result: "hi" });
+  assert.deepEqual(client.sent.at(-1), { type: "plugin.response", requestId: "r1", result: "hi" });
+  assert.equal(hub.inFlight(), 0);
+
+  hub.hold(undefined);
+  call("r3");
+  assert.equal(daemon.sent.filter((m) => m.type === "plugin.request").length, 2);
+});

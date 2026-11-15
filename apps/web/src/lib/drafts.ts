@@ -31,6 +31,18 @@ function draftOf(key: string): Draft {
   return d;
 }
 
+/**
+ * Whether some session's chat box holds something not sent: text or files (what was sent before and what is picked
+ * are kept elsewhere too, or cheap to pick again). Reloading the page would lose it (lib/server-update.ts).
+ */
+export function hasDrafts(): boolean {
+  for (const d of drafts.values()) {
+    const v = d.prompt.get();
+    if (v.text.trim() !== "" || v.attachments.length > 0) return true;
+  }
+  return false;
+}
+
 /** The text, files and sent texts of a session's chat box (PromptInput's `draft`). */
 export function promptDraft(key: string): PromptDraftStore {
   return draftOf(key).prompt;

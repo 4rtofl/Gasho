@@ -15,7 +15,14 @@ import type {
 } from "@gasho/protocol";
 import { hashSecret, newPairingCode, newToken, normalizeCode, PAIRING_CODE_TTL_MS, sameHash } from "./auth.ts";
 
-const SCHEMA_VERSION = 3;
+/**
+ * The schema of the database (PRAGMA user_version). An older Gasho server opens a newer database as it is: going back a
+ * version after an update keeps working, so a migration only adds (tables, columns that may be NULL or have a default,
+ * indexes, fields of JSON), and drops or changes what the version before reads only a release later. A migration that
+ * cannot keep to that writes the lowest schema that may still open the database (min_schema in meta); an older Gasho
+ * server then refuses it, rather than spoil it (docs/hub-setup.md).
+ */
+export const SCHEMA_VERSION = 3;
 const EVENT_TTL_MS = 7 * 24 * 3600_000;
 const NOTIFICATION_TTL_MS = 30 * 24 * 3600_000;
 
@@ -47,6 +54,13 @@ export class Store {
   }
 
   private migrate(): void {
+    // Additive: an older Gasho server does not read it.
+    this.db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    const min = Number((this.db.prepare("SELECT value FROM meta WHERE key = 'min_schema'").get() as Row | undefined)?.value ?? 0);
+    if (min > SCHEMA_VERSION) {
+      this.db.close();
+      throw new Error(`このデータベースは、schema ${min} 以上の新しい Gasho サーバーでしか開けません（この版は schema ${SCHEMA_VERSION}）。Gasho サーバーを新しい版に戻してください。`);
+    }
     const version = Number((this.db.prepare("PRAGMA user_version").get() as Row).user_version);
     if (version >= SCHEMA_VERSION) return;
     if (version < 2) this.migrateTo2();

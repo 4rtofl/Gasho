@@ -23,6 +23,12 @@ const listeners = new Set<() => void>();
 /** Whether a draft holds changes that are not saved. */
 export const isDirty = (d: FileDraft | undefined): boolean => d !== undefined && d.value !== d.original;
 
+/** Whether some file being written holds changes that are not saved (reloading the page would lose them). */
+export function hasUnsavedFiles(): boolean {
+  for (const d of drafts.values()) if (isDirty(d)) return true;
+  return false;
+}
+
 export function getFileDraft(key: string): FileDraft | undefined {
   return drafts.get(key);
 }

@@ -1,6 +1,6 @@
 # gasho-daemon のセットアップ
 
-gasho-daemon は、Claude Code を動かすマシン（working server）ごとに1つ動かすプログラム。そのマシンのセッションの様子を Gasho サーバーに送り、Gasho から起動したセッションには指示を送る。この文書では、working server に gasho-daemon を入れて、動かし続けるまでの手順を説明する。Gasho サーバーの用意は [README](../README.md) を見る。
+gasho-daemon は、Claude Code を動かすマシン（working server）ごとに1つ動かすプログラム。そのマシンのセッションの様子を Gasho サーバーに送り、Gasho から起動したセッションには指示を送る。この文書では、working server に gasho-daemon を入れて、動かし続けるまでの手順を説明する。Gasho サーバーの用意は [hub-setup.md](hub-setup.md) を見る。
 
 手順は次の6つで、Ubuntu と Mac で違うのは 5 だけ。
 
@@ -170,7 +170,7 @@ npx @4rtoflow/gasho-daemon hooks install   # 追記する
 
 ## 更新する
 
-`service install` で常駐させた gasho-daemon は、Gasho の画面から更新できる。「端末」の画面の「gasho-daemon の更新」に、working server ごとの版と、公開されている最新の版が出る。「<版> に更新」を押すと、gasho-daemon が次の順に進め、画面にもその段階が出る。
+`service install` で常駐させた gasho-daemon は、Gasho の画面から更新できる。「端末」の画面の「Gasho サーバーと gasho-daemon の更新」に、working server ごとの版と、公開されている最新の版が出る。「<版> に更新」を押すと、gasho-daemon が次の順に進め、画面にもその段階が出る。
 
 1. 新しい版を、今の版とは別のフォルダーに npm で入れる
 2. 新しい版を一度起動して、動くことを確かめる
@@ -195,7 +195,7 @@ npx @4rtoflow/gasho-daemon@latest service install
 
 `npm install -g` で入れて `service print` で常駐させたときは、`npm install -g @4rtoflow/gasho-daemon@latest` のあと動かし直す。clone したリポジトリで動かしているときは、`git pull` のあと動かし直す。
 
-新しい機能には、Gasho サーバーと gasho-daemon の両方の更新が要ることが多いので、Gasho サーバーも同じ版にしておく。gasho-daemon の版は、ホームの「working server」のタイルに出る。
+新しい機能には、Gasho サーバーと gasho-daemon の両方の更新が要ることが多いので、Gasho サーバーも新しくしておく（同じ「端末」の画面の先頭の行。[hub-setup.md](hub-setup.md) の「更新する」）。gasho-daemon の版は、ホームの「working server」のタイルに出る。
 
 ## やめる
 

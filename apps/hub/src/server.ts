@@ -15,6 +15,7 @@ import { CLOSE_UNAUTHORIZED, type ClientPeer, type DaemonPeer, type Hub } from "
 import { isAllowed, normalizeAddress } from "./netallow.ts";
 import type { PluginRegistry } from "./plugins.ts";
 import type { DeviceRecord, Store } from "./store.ts";
+import { HUB_VERSION } from "./version.ts";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -163,7 +164,8 @@ export function createServer(opts: ServerOptions): http.Server {
 
   async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
     const route = `${req.method} ${url.pathname}`;
-    if (route === "GET /api/health") return sendJson(res, 200, { ok: true });
+    // The version too: an update checks that the new version answers (self-update.ts, cli.ts).
+    if (route === "GET /api/health") return sendJson(res, 200, { ok: true, version: HUB_VERSION });
 
     if (route === "POST /api/pair") {
       checkSameOrigin(req);

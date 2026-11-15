@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { HubToClient, HubToDaemon, SessionInfo } from "@gasho/protocol";
-import { CLOSE_INVALID_CREDENTIALS, CLOSE_UNAUTHORIZED, Hub, legacyFeatures, MAX_FILES_BYTES, MAX_WRITE_BYTES, validateCommand } from "../src/hub.ts";
+import type { HubToClient, HubToDaemon, ServerInfo, SessionInfo } from "@gasho/protocol";
+import {
+  CLOSE_INVALID_CREDENTIALS,
+  CLOSE_UNAUTHORIZED,
+  Hub,
+  legacyFeatures,
+  MAX_FILES_BYTES,
+  MAX_WRITE_BYTES,
+  type ServerSource,
+  UPDATING,
+  validateCommand,
+} from "../src/hub.ts";
 import { notificationFor } from "../src/notify.ts";
 import { Store } from "../src/store.ts";
 
@@ -834,4 +844,86 @@ test("writing a file is checked, goes to a gasho-daemon 0.11.0 or later, and the
     ["notes/a.md [new] [1KB]", "notes/a.md [1KB]"],
   );
   assert.ok(logged.every((e) => !e.summary?.includes(secret) && !e.summary?.includes("新しい本文")));
+});
+
+test("while an update holds them, commands are refused (listing past sessions goes on), and those under way are counted", () => {
+  const { hub, machineId, machineToken, browserId } = setup();
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.17.0" });
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: [], canResume: true });
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  assert.equal(hub.inFlight(), 0);
+  hub.onClientMessage(c, { type: "session.input", requestId: "a", machine: machineId, sessionId: "s1", text: "テスト" });
+  const relayed = d.sent.at(-1);
+  assert.ok(relayed?.type === "session.input");
+  assert.equal(hub.inFlight(), 1);
+
+  hub.hold(UPDATING);
+  const toDaemon = d.sent.length;
+  hub.onClientMessage(c, { type: "session.input", requestId: "b", machine: machineId, sessionId: "s1", text: "もう一つ" });
+  assert.deepEqual(c.sent.at(-1), { type: "command.result", requestId: "b", machine: machineId, result: { ok: false, error: UPDATING } });
+  hub.onClientMessage(c, { type: "daemon.update", requestId: "u", machine: machineId, version: "0.18.0" });
+  assert.deepEqual(c.sent.at(-1), { type: "command.result", requestId: "u", machine: machineId, result: { ok: false, error: UPDATING } });
+  assert.equal(d.sent.length, toDaemon);
+  hub.onClientMessage(c, { type: "session.history", requestId: "h", machine: machineId, cwd: "/home/rg/repos/Gasho" });
+  const history = d.sent.at(-1);
+  assert.ok(history?.type === "session.history");
+  assert.equal(hub.inFlight(), 2);
+
+  // What was under way still gets its answer.
+  hub.onDaemonMessage(d, { type: "command.result", requestId: relayed.requestId, result: { ok: true, queued: true } });
+  hub.onDaemonMessage(d, { type: "command.result", requestId: history.requestId, result: { ok: true, history: [] } });
+  assert.deepEqual(c.sent.at(-2), { type: "command.result", requestId: "a", machine: machineId, result: { ok: true, queued: true } });
+  assert.equal(hub.inFlight(), 0);
+
+  hub.hold(undefined);
+  hub.onClientMessage(c, { type: "session.input", requestId: "c", machine: machineId, sessionId: "s1", text: "あとで" });
+  assert.equal(d.sent.at(-1)?.type, "session.input");
+});
+
+test("the Gasho server's own version and update reach browsers; hub.update goes to its updater and is logged", () => {
+  const store = new Store(":memory:");
+  const browser = store.createDevice("browser", "iPhone");
+  let info: ServerInfo = { version: "0.1.0", web: "hub-0.1.0", update: { canUpdate: true } };
+  let listener = () => undefined as void;
+  const asked: string[] = [];
+  const server: ServerSource = {
+    info: () => info,
+    update(version) {
+      asked.push(version);
+      return version === "0.2.0" ? { ok: true } : { ok: false, error: "版の指定が正しくありません。" };
+    },
+    subscribe(l) {
+      listener = l;
+      return () => undefined;
+    },
+  };
+  const hub = new Hub(store, { server });
+  const c = fakePeer<HubToClient>(browser.device.id);
+  hub.onClientConnect(c);
+  const snap = c.sent[0];
+  assert.ok(snap?.type === "snapshot");
+  assert.deepEqual(snap.server, info);
+
+  hub.onClientMessage(c, { type: "hub.update", requestId: "u1", version: "0.2.0" });
+  assert.deepEqual(c.sent.at(-1), { type: "server.result", requestId: "u1", result: { ok: true } });
+  const logged = store.recentEvents().find((e) => e.event === "Gasho:hub.update");
+  assert.equal(logged?.summary, `Gasho サーバー 0.1.0 → 0.2.0 (by ${browser.device.id})`);
+  hub.onClientMessage(c, { type: "hub.update", requestId: "u2", version: "latest" });
+  assert.deepEqual(c.sent.at(-1), { type: "server.result", requestId: "u2", result: { ok: false, error: "版の指定が正しくありません。" } });
+  assert.deepEqual(asked, ["0.2.0", "latest"]);
+  assert.equal(store.recentEvents().filter((e) => e.event === "Gasho:hub.update").length, 1);
+
+  info = { ...info, update: { canUpdate: true, progress: { version: "0.2.0", step: "install", at: 1 } } };
+  listener();
+  assert.deepEqual(c.sent.at(-1), { type: "server", server: info });
+
+  // A Gasho server without an updater (an embedding, the tests) says so.
+  const plain = setup();
+  const p = fakePeer<HubToClient>(plain.browserId);
+  plain.hub.onClientConnect(p);
+  assert.ok(p.sent[0]?.type === "snapshot" && p.sent[0].server === undefined);
+  plain.hub.onClientMessage(p, { type: "hub.update", requestId: "u3", version: "0.2.0" });
+  assert.deepEqual(p.sent.at(-1), { type: "server.result", requestId: "u3", result: { ok: false, error: "この Gasho サーバーは、Gasho からは更新できません。" } });
 });

@@ -171,8 +171,40 @@ test("parseCatalog keeps the right entries and names the others", () => {
   const r = parseCatalog({ plugins: [good, { ...good, id: "x/y" }, { ...good, id: "other", release: "evil" }, { ...good, sha256: "nope" }, good] });
   assert.ok("plugins" in r);
   assert.deepEqual(r.plugins, [good]);
+  assert.deepEqual(r.genres, []);
   assert.equal(r.skipped.length, 3);
   assert.ok("error" in parseCatalog({ nope: true }));
+});
+
+test("parseCatalog keeps the genres in their order, and a plugin's genre when it is of the right form", () => {
+  const good = release("1.0.0").entry;
+  const r = parseCatalog({
+    genres: [
+      { id: "integration", name: " 連携 " },
+      { id: "Bad Id", name: "x" },
+      { id: "workflow", name: "" },
+      { id: "devtools", name: "開発ツール" },
+      { id: "integration", name: "again" },
+      "theme",
+    ],
+    plugins: [
+      { ...good, genre: "integration" },
+      { ...good, id: "odd", release: "odd-v1.0.0", file: "odd-1.0.0.tgz", genre: "Not An Id" },
+    ],
+  });
+  assert.ok("plugins" in r);
+  assert.deepEqual(r.genres, [
+    { id: "integration", name: "連携" },
+    { id: "devtools", name: "開発ツール" },
+  ]);
+  assert.deepEqual(
+    r.plugins.map((p) => [p.id, p.genre]),
+    [
+      ["hello", "integration"],
+      ["odd", undefined],
+    ],
+  );
+  assert.equal(r.skipped.length, 3);
 });
 
 async function setup(assets: Map<string, Buffer>) {
@@ -242,6 +274,23 @@ test("the catalog is read with gh when a browser asks (at most every 10 minutes)
   assert.match(lastCatalog(client.sent)?.error ?? "", /JSON/);
 });
 
+test("the genres of the catalog reach browsers with it, and a catalog that names none has no genres", async () => {
+  const one = release("1.0.0");
+  const withGenres = { repo: "o/plugins", genres: [{ id: "devtools", name: "開発ツール" }], plugins: [{ ...one.entry, genre: "devtools" }] };
+  const assets = new Map([["catalog/catalog.json", Buffer.from(JSON.stringify(withGenres))]]);
+  const { client, catalog } = await setup(assets);
+  await catalog.read(0);
+  const read = lastCatalog(client.sent);
+  assert.deepEqual(read?.genres, [{ id: "devtools", name: "開発ツール" }]);
+  assert.equal(read?.plugins[0]?.genre, "devtools");
+
+  assets.set("catalog/catalog.json", catalogJson([one.entry]));
+  await catalog.read(0);
+  const again = lastCatalog(client.sent);
+  assert.equal(again?.plugins[0]?.genre, undefined);
+  assert.equal(again && "genres" in again, false);
+});
+
 test("a plugin of the catalog is added, updated and removed from a browser, and each is recorded", async () => {
   const one = release("1.0.0");
   const assets = new Map([
@@ -251,18 +300,17 @@ test("a plugin of the catalog is added, updated and removed from a browser, and 
   const { dir, client, hub, catalog, store, result } = await setup(assets);
   await catalog.read(0);
 
-  hub.onClientMessage(client, { type: "plugin.install", requestId: "i1", plugin: "hello", machines: ["m1"] });
+  hub.onClientMessage(client, { type: "plugin.install", requestId: "i1", plugin: "hello" });
   assert.deepEqual(await result("i1"), { ok: true });
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "hello", "gasho-plugin.json"), "utf8")).version, "1.0.0");
   const installed = lastPlugins(client.sent)?.find((p) => p.id === "hello");
   assert.equal(installed?.manifest.version, "1.0.0");
   assert.equal(installed?.enabled, true);
-  assert.deepEqual(installed?.machines, ["m1"]);
   assert.ok(store.recentEvents().some((e) => e.event === "Gasho:plugin.install" && e.summary?.startsWith("Hello 1.0.0")));
   assert.deepEqual(fs.readdirSync(dir), ["hello"]);
 
   // Twice: it is there already.
-  hub.onClientMessage(client, { type: "plugin.install", requestId: "i2", plugin: "hello", machines: "all" });
+  hub.onClientMessage(client, { type: "plugin.install", requestId: "i2", plugin: "hello" });
   assert.match((await result("i2")).error ?? "", /すでに入っています/);
 
   // Nothing newer to update to; then a newer version, whose file does not match the catalog; then one that does.
@@ -276,6 +324,7 @@ test("a plugin of the catalog is added, updated and removed from a browser, and 
   assert.match((await result("u2")).error ?? "", /SHA-256/);
   assert.equal(lastPlugins(client.sent)?.find((p) => p.id === "hello")?.manifest.version, "1.0.0");
   store.setPluginSetting("hello", "interval", 30);
+  hub.onClientMessage(client, { type: "plugin.enable", requestId: "e1", plugin: "hello", enabled: false });
   assets.set("catalog/catalog.json", catalogJson([two.entry]));
   await catalog.read(0);
   hub.onClientMessage(client, { type: "plugin.update", requestId: "u3", plugin: "hello" });
@@ -283,7 +332,7 @@ test("a plugin of the catalog is added, updated and removed from a browser, and 
   const updated = lastPlugins(client.sent)?.find((p) => p.id === "hello");
   assert.equal(updated?.manifest.version, "1.1.0");
   // What was chosen for it stays.
-  assert.deepEqual(updated?.machines, ["m1"]);
+  assert.equal(updated?.enabled, false);
   assert.deepEqual(updated?.values, { interval: 30 });
   assert.ok(store.recentEvents().some((e) => e.event === "Gasho:plugin.update" && e.summary?.startsWith("Hello 1.0.0 → 1.1.0")));
   assert.deepEqual(fs.readdirSync(dir), ["hello"]);
@@ -312,7 +361,7 @@ test("adding a theme from the catalog disables the theme enabled before, and bro
   await registry.scan();
   await catalog.read(0);
   const from = client.sent.length;
-  hub.onClientMessage(client, { type: "plugin.install", requestId: "i1", plugin: "vscode-dark", machines: "all" });
+  hub.onClientMessage(client, { type: "plugin.install", requestId: "i1", plugin: "vscode-dark" });
   assert.deepEqual(await result("i1"), { ok: true });
   const told = client.sent.slice(from).flatMap((m) => (m.type === "plugins" ? [m.plugins] : []));
   assert.ok(told.length > 0);
@@ -328,16 +377,16 @@ test("a release that is not what the catalog says, or needs a newer plugin API, 
   const { dir, client, hub, catalog, store, result } = await setup(assets);
   assets.set("catalog/catalog.json", catalogJson([{ ...release("1.0.0").entry, sha256: sha256(wrongId), size: wrongId.length }]));
   await catalog.read(0);
-  hub.onClientMessage(client, { type: "plugin.install", requestId: "i1", plugin: "hello", machines: "all" });
+  hub.onClientMessage(client, { type: "plugin.install", requestId: "i1", plugin: "hello" });
   assert.match((await result("i1")).error ?? "", /id（other）/);
   assert.deepEqual(fs.readdirSync(dir), []);
   assert.equal(store.pluginState("hello"), undefined);
 
   assets.set("catalog/catalog.json", catalogJson([{ ...newApi.entry, api: "1.99" }]));
   await catalog.read(0);
-  hub.onClientMessage(client, { type: "plugin.install", requestId: "i2", plugin: "hello", machines: "all" });
+  hub.onClientMessage(client, { type: "plugin.install", requestId: "i2", plugin: "hello" });
   assert.match((await result("i2")).error ?? "", /API 1\.99/);
-  hub.onClientMessage(client, { type: "plugin.install", requestId: "i3", plugin: "nope", machines: "all" });
+  hub.onClientMessage(client, { type: "plugin.install", requestId: "i3", plugin: "nope" });
   assert.match((await result("i3")).error ?? "", /カタログにこのプラグインはありません/);
 });
 

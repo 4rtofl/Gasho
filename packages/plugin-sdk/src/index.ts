@@ -456,6 +456,42 @@ export type LaunchResult =
   | { ok: false; error: string; needsTrust?: boolean; trustWarnings?: string[] };
 
 /**
+ * Removing a worktree with the sessions in it (useRemoveWorktree, plugin API 1.10), as "削除…" of its row in the
+ * sidebar does.
+ */
+export interface RemoveWorktreeInput {
+  machine: string;
+  /** Its top folder (WorktreeInfo.path): a worktree that git lists, not the repository's main worktree. */
+  path: string;
+  /** Also delete this local branch once the worktree is gone: the branch the worktree has checked out, or it is refused. */
+  branch?: string;
+  /** Remove it also with uncommitted changes, or with commits that no remote has. */
+  force?: boolean;
+  /**
+   * Commits (their SHAs, 7 to 40 hex digits; up to 100) counted as pushed, with those before them: such as the head of
+   * a pull request merged by squashing, whose branch on GitHub was then deleted.
+   */
+  pushed?: string[];
+}
+
+/** What keeps a worktree from being removed without `force`. */
+export interface WorktreeChanges {
+  /** Uncommitted changes: files changed, staged or untracked (`git status --porcelain`). */
+  uncommitted: number;
+  /** Commits of its HEAD that no remote branch has, nor any of `pushed`. */
+  unpushed: number;
+}
+
+/**
+ * What removing a worktree gave. `sessions`: the sessions it ended (and took off Gasho), also those ended before it
+ * failed. `changes`: only when it was not removed because of them; `force: true` removes it all the same. `warning`:
+ * the worktree is gone, but something asked for did not happen (the branch could not be deleted, say).
+ */
+export type RemoveWorktreeResult =
+  | { ok: true; sessions: string[]; warning?: string }
+  | { ok: false; error: string; changes?: WorktreeChanges; sessions?: string[] };
+
+/**
  * What a session is working on, read from Claude Code's hooks and the session's conversation as Gasho's screen has
  * them (plugin API 1.2). Empty while the session is neither working nor waiting for an answer.
  */
@@ -534,6 +570,18 @@ export interface GashoSdk {
    * セッション" does. Plugin API 1.1.
    */
   useLaunchSession(): (input: { machine: string; cwd: string; name?: string; trust?: boolean }) => Promise<LaunchResult>;
+  /**
+   * Removes a worktree with the sessions in it (needs the permission "worktree.remove"), as "削除…" of its row in the
+   * sidebar does: the sessions end (those started from Gasho are taken off it), then `git worktree remove`. Once it is
+   * gone, the sidebar forgets it, and when the screen shows that worktree (one of its sessions, or its tabs, a plugin's
+   * worktree view included) Gasho goes to the home screen and shows a `warning` there. Plugin API 1.10.
+   */
+  useRemoveWorktree(): (input: RemoveWorktreeInput) => Promise<RemoveWorktreeResult>;
+  /**
+   * Why a worktree cannot be removed, for people (undefined when it can): outside a repository, the repository's main
+   * worktree (`path` is `repo`), its working server offline, or a gasho-daemon too old. Plugin API 1.10.
+   */
+  removeWorktreeProblem(machine: MachineInfo, worktree: { path: string; repo?: string }): string | undefined;
   /** What a session is working on: since when, and with which tool (plugin API 1.2). */
   useSessionActivity(machine: string, sessionId: string): SessionActivity;
   /**
@@ -582,6 +630,8 @@ export declare const useSharedState: GashoSdk["useSharedState"];
 export declare const useNavigation: GashoSdk["useNavigation"];
 export declare const useSendInput: GashoSdk["useSendInput"];
 export declare const useLaunchSession: GashoSdk["useLaunchSession"];
+export declare const useRemoveWorktree: GashoSdk["useRemoveWorktree"];
+export declare const removeWorktreeProblem: GashoSdk["removeWorktreeProblem"];
 export declare const useSessionActivity: GashoSdk["useSessionActivity"];
 export declare const useEvent: GashoSdk["useEvent"];
 export declare const useNow: GashoSdk["useNow"];

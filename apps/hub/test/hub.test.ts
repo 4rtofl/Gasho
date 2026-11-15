@@ -927,3 +927,36 @@ test("the Gasho server's own version and update reach browsers; hub.update goes 
   plain.hub.onClientMessage(p, { type: "hub.update", requestId: "u3", version: "0.2.0" });
   assert.deepEqual(p.sent.at(-1), { type: "server.result", requestId: "u3", result: { ok: false, error: "この Gasho サーバーは、Gasho からは更新できません。" } });
 });
+
+test("removing a worktree goes to a gasho-daemon that can, checked, and the record keeps its sessions' names", () => {
+  const { hub, machineId, machineToken, browserId } = setup();
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.19.0" });
+  const session = (sessionId: string, cwd: string, name: string) => ({ sessionId, cwd, name, status: "idle" as const, rcMode: "none" as const, prLinks: [] });
+  hub.onDaemonMessage(d, { type: "sessions", sessions: [session("s1", "/r/app-x", "fix"), session("s2", "/r/app-x/web", "web"), session("s3", "/r/app-xy", "other")] });
+  const cmd = { type: "worktree.remove" as const, path: "/r/app-x", branch: "feat/x" };
+  hub.onClientMessage(c, { ...cmd, requestId: "r0", machine: machineId });
+  let reply = c.sent.at(-1);
+  assert.ok(reply?.type === "command.result" && !reply.result.ok);
+  assert.match(reply.result.error ?? "", /worktree を削除できません/);
+  assert.notEqual(d.sent.at(-1)?.type, "worktree.remove");
+
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: [], canRemoveWorktree: true });
+  for (const [i, wrong] of [{ path: "app-x" }, { branch: "-D" }, { branch: "a b" }, { force: "yes" }, { pushed: ["xyz"] }, { pushed: "abcdef0" }, { via: "Bad" }].entries()) {
+    hub.onClientMessage(c, { ...cmd, ...(wrong as object), requestId: `w${i}`, machine: machineId });
+    reply = c.sent.at(-1);
+    assert.ok(reply?.type === "command.result" && !reply.result.ok, JSON.stringify(wrong));
+  }
+  hub.onClientMessage(c, { ...cmd, force: true, pushed: ["abcdef0"], via: "github-almighty", requestId: "r1", machine: machineId });
+  const sent = d.sent.at(-1);
+  assert.ok(sent?.type === "worktree.remove");
+  assert.deepEqual({ ...sent, requestId: undefined }, { ...cmd, force: true, pushed: ["abcdef0"], via: "github-almighty", requestId: undefined });
+  const summaries = c.sent.flatMap((m) => (m.type === "event" ? [[m.event.event, m.event.summary?.replace(/ \(by .*\)$/, "")]] : []));
+  assert.deepEqual(summaries, [["Gasho:worktree.remove", "/r/app-x [branch: feat/x] [force] [sessions: fix, web] [via: github-almighty]"]]);
+  hub.onDaemonMessage(d, { type: "command.result", requestId: sent.requestId, result: { ok: false, error: "x", changes: { uncommitted: 1, unpushed: 2 } } });
+  reply = c.sent.at(-1);
+  assert.ok(reply?.type === "command.result" && reply.requestId === "r1");
+  assert.deepEqual(reply.result.changes, { uncommitted: 1, unpushed: 2 });
+});

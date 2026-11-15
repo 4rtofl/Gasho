@@ -90,6 +90,14 @@ const FORK_TIMEOUT_MS = 90_000;
 const RENAME_TIMEOUT_MS = 45_000;
 /** Removing waits for Claude Code to end (it is stopped harder after a while). */
 const REMOVE_TIMEOUT_MS = 30_000;
+/**
+ * Removing a worktree ends its sessions (as session.end, then as session.remove, each waiting for Claude Code to end),
+ * then deletes its files (`git worktree remove`, up to 90 s for a large folder).
+ */
+const WORKTREE_REMOVE_TIMEOUT_MS = 150_000;
+/** Commits counted as pushed by one worktree.remove. */
+const MAX_PUSHED = 100;
+const SHA_RE = /^[0-9a-f]{7,40}$/i;
 /** gasho-daemon stops a clone after 10 minutes, and gives it a few seconds to end. */
 const CLONE_TIMEOUT_MS = 630_000;
 /**
@@ -374,6 +382,18 @@ export function validateCommand(cmd: SessionCommand): string | undefined {
       return undefined;
     case "daemon.update":
       return typeof cmd.version === "string" && VERSION_RE.test(cmd.version) ? undefined : "版の指定が正しくありません。";
+    case "worktree.remove":
+      if (typeof cmd.path !== "string" || !cmd.path.startsWith("/") || cmd.path.length > MAX_PATH) return "worktree のフォルダーを絶対パスで指定してください。";
+      // git would read a leading "-" as an option.
+      if (cmd.branch !== undefined && (typeof cmd.branch !== "string" || !cmd.branch || cmd.branch.length > 250 || cmd.branch.startsWith("-") || /\s|\p{Cc}/u.test(cmd.branch))) {
+        return "ブランチの指定が正しくありません。";
+      }
+      if (cmd.force !== undefined && typeof cmd.force !== "boolean") return "force の指定が正しくありません。";
+      if (cmd.pushed !== undefined && (!Array.isArray(cmd.pushed) || cmd.pushed.length > MAX_PUSHED || cmd.pushed.some((c) => typeof c !== "string" || !SHA_RE.test(c)))) {
+        return "push 済みとして数える commit の指定が正しくありません。";
+      }
+      if (cmd.via !== undefined && (typeof cmd.via !== "string" || !/^[a-z][a-z0-9-]{1,31}$/.test(cmd.via))) return "送ったプラグインの指定が正しくありません。";
+      return undefined;
     case "file.write": {
       const wrong = filePathError(cmd.path, true);
       if (wrong) return wrong;
@@ -503,6 +523,7 @@ export class Hub {
         m.features = Array.isArray(msg.features) ? [...new Set(msg.features.filter((f) => FEATURES.has(f)))] : undefined;
         m.canResume = msg.canResume === true || undefined;
         m.canEnd = msg.canEnd === true || undefined;
+        m.canRemoveWorktree = msg.canRemoveWorktree === true || undefined;
         m.update = updateInfoOf(msg.update);
         this.broadcast({ type: "machine", machine: m });
         break;
@@ -773,6 +794,7 @@ export class Hub {
       case "repo.register":
       case "repo.unregister":
       case "file.write":
+      case "worktree.remove":
       case "daemon.update": {
         const { requestId: clientRequestId, machine, ...cmd } = msg;
         this.relayCommand(peer, clientRequestId, machine, cmd);
@@ -819,6 +841,7 @@ export class Hub {
       "repo.register": REQUEST_TIMEOUT_MS,
       "repo.unregister": REQUEST_TIMEOUT_MS,
       "file.write": REQUEST_TIMEOUT_MS,
+      "worktree.remove": WORKTREE_REMOVE_TIMEOUT_MS,
       // Answered as soon as the update has begun; its steps follow with the capabilities.
       "daemon.update": REQUEST_TIMEOUT_MS,
     }[cmd.type];
@@ -894,6 +917,19 @@ export class Hub {
         const task = this.machines.get(machine)?.sessions.find((x) => x.sessionId === cmd.sessionId)?.background?.find((x) => x.id === cmd.taskId);
         return task ? `${task.title.slice(0, 300)} [${task.kind}]` : cmd.taskId;
       }
+      case "worktree.remove": {
+        // Once removed, its sessions are gone from the list: the record keeps their names.
+        const inside = (this.machines.get(machine)?.sessions ?? []).filter((x) => x.cwd === cmd.path || x.cwd.startsWith(`${cmd.path}/`));
+        return [
+          cmd.path.slice(0, 300),
+          cmd.branch && `[branch: ${cmd.branch.slice(0, 100)}]`,
+          cmd.force && "[force]",
+          inside.length > 0 && `[sessions: ${inside.map((x) => x.name || x.title || x.sessionId.slice(0, 8)).join(", ").slice(0, 300)}]`,
+          cmd.via && `[via: ${cmd.via}]`,
+        ]
+          .filter(Boolean)
+          .join(" ");
+      }
       case "daemon.update":
         // From which version to which.
         return `${this.machines.get(machine)?.daemonVersion ?? "?"} → ${cmd.version}`;
@@ -919,6 +955,9 @@ export class Hub {
     if (cmd.type === "repo.register" || cmd.type === "repo.unregister") {
       // A gasho-daemon that registers repositories sends them as soon as it connects.
       return !m?.connected || m.repos ? undefined : "この working server の gasho-daemon は古いため、リポジトリを登録できません。gasho-daemon を更新してください。";
+    }
+    if (cmd.type === "worktree.remove") {
+      return !m || m.canRemoveWorktree ? undefined : "この working server の gasho-daemon は古いため、worktree を削除できません。gasho-daemon を更新してください。";
     }
     if (cmd.type === "session.end") {
       return !m || m.canEnd ? undefined : "この working server の gasho-daemon は古いため、Gasho の外で開いている会話を終了できません。gasho-daemon を更新してください。";

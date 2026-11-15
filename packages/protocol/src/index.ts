@@ -388,6 +388,8 @@ export interface MachineInfo {
   canResume?: boolean;
   /** Whether gasho-daemon ends the Claude Codes started outside Gasho (session.end). */
   canEnd?: boolean;
+  /** Whether gasho-daemon removes a worktree with its sessions (worktree.remove). */
+  canRemoveWorktree?: boolean;
   /** Whether Gasho can update this gasho-daemon, and how an update goes (absent from one older than updates from Gasho). */
   update?: DaemonUpdateInfo;
   /**
@@ -622,8 +624,11 @@ export interface TranscriptPage {
 
 // ---- plugins (docs/plugins.md) ----
 
-/** What a plugin's web part may do besides reading and showing: send messages to sessions. */
-export type PluginPermission = "session.input" | "session.launch";
+/**
+ * What a plugin's web part may do besides reading and showing: send messages to sessions, start them, remove worktrees
+ * with their sessions.
+ */
+export type PluginPermission = "session.input" | "session.launch" | "worktree.remove";
 
 /** A method of a plugin's daemon part, which its web part can call. */
 export interface PluginMethodSpec {
@@ -862,6 +867,8 @@ export type DaemonToHub =
       canResume?: boolean;
       /** Answers session.end. */
       canEnd?: boolean;
+      /** Answers worktree.remove. */
+      canRemoveWorktree?: boolean;
       /** Whether Gasho can update it, and the update under way (sent again at each step). */
       update?: DaemonUpdateInfo;
     }
@@ -1125,7 +1132,25 @@ export type SessionCommand =
    * as soon as the update has begun; `update.progress` follows it, and the new version's connection ends it (or
    * `update.failed`, with nothing changed).
    */
-  | { type: "daemon.update"; version: string };
+  | { type: "daemon.update"; version: string }
+  /**
+   * Removes a worktree of a repository (`git worktree remove`), with the sessions in it (canRemoveWorktree). `path`: its
+   * top folder, one that `git worktree list` lists and not the repository's main worktree. Sessions whose folder is in
+   * it end first: those started from Gasho as with session.remove, the others as with session.end; if one does not
+   * end, nothing is removed. A worktree with uncommitted changes, or with commits that no remote has, is not removed
+   * unless `force`: the result says how many (`changes`). `pushed`: commits counted as pushed (such as the head of a
+   * merged pull request, whose branch on GitHub may be gone). `branch`: the branch the worktree has checked out, also
+   * deleted (`git branch -D`) once the worktree is gone. `via`: sent by a plugin (its id), for the operations log.
+   */
+  | { type: "worktree.remove"; path: string; branch?: string; force?: boolean; pushed?: string[]; via?: string };
+
+/** What keeps a worktree from being removed without `force` (worktree.remove). */
+export interface WorktreeChanges {
+  /** Uncommitted changes: files changed, staged or untracked (`git status --porcelain`). */
+  uncommitted: number;
+  /** Commits of its HEAD that no remote branch has, nor any of the commits given as `pushed`. */
+  unpushed: number;
+}
 
 export interface CommandResult {
   ok: boolean;
@@ -1155,8 +1180,13 @@ export interface CommandResult {
   conflict?: boolean;
   /** session.history: the conversations, the latest first. */
   history?: PastConversation[];
-  /** session.end: the sessions whose Claude Code has ended (or had ended already). */
+  /**
+   * session.end: the sessions whose Claude Code has ended (or had ended already). worktree.remove: the sessions it
+   * ended (also when it then failed).
+   */
   ended?: string[];
+  /** worktree.remove without `force`: not removed because of these. */
+  changes?: WorktreeChanges;
 }
 
 /** A conversation Claude Code keeps on a working server, which no Claude Code has open now. */

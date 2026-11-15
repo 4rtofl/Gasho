@@ -18,6 +18,7 @@ import type {
   PluginDefinition,
   PopoverProps,
   RequestOptions,
+  RemoveWorktreeResult,
   RequestTarget,
   SessionActivity,
   SessionContext,
@@ -25,6 +26,8 @@ import type {
 import { PLUGIN_API, SDK_EXPORTS } from "@gasho/plugin-sdk/exports";
 import type { PluginInfo, PluginSettingSpec, SessionInfo } from "@gasho/protocol";
 import { MarkdownText } from "@/components/markdown";
+import { removeWorktree } from "@/components/worktree-menu";
+import { removeWorktreeProblem } from "@/lib/worktree-remove";
 import { PANEL_BUTTON, panelRepo, RepoTabs, SidePanel } from "@/components/side-panel";
 import { TILE, TILE_SHADOW } from "@/components/ui/stat-card";
 import { sessionActivity } from "@/lib/activity";
@@ -396,6 +399,16 @@ export const sdk: GashoSdk = {
       return { ok: false, error: r.error ?? "起動できませんでした。" };
     };
   },
+  useRemoveWorktree: () => {
+    const info = usePluginInfo();
+    return async (input): Promise<RemoveWorktreeResult> => {
+      if (!info.manifest.permissions?.includes("worktree.remove")) {
+        return { ok: false, error: `${info.manifest.name} には、worktree を削除する権限がありません（gasho-plugin.json の permissions）。` };
+      }
+      return removeWorktree(input, { via: info.id });
+    };
+  },
+  removeWorktreeProblem,
   useSessionActivity,
   useEvent: <T,>(topic: string, options: { machine: string }) => useEventFor<T>(useContext(PluginScopeContext) ?? "", options?.machine ?? "", topic),
   useNow,

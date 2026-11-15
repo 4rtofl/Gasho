@@ -30,9 +30,9 @@ const REF_FORMAT = "%(refname)%00%(objectname)%00%(*objectname)%00%(upstream:sho
 const LOG_FORMAT = "%H%x00%P%x00%an%x00%at%x00%s";
 
 /** Read-only git: no optional locks (git status would otherwise refresh the index), stable English output. */
-async function git(cwd: string, args: string[]): Promise<string> {
+export async function git(cwd: string, args: string[], timeoutMs = 15_000): Promise<string> {
   const env = { ...process.env, GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" };
-  const { stdout } = await execFileP("git", ["-C", cwd, ...args], { timeout: 15_000, maxBuffer: 32 * 1024 * 1024, env });
+  const { stdout } = await execFileP("git", ["-C", cwd, ...args], { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024, env });
   return stdout;
 }
 

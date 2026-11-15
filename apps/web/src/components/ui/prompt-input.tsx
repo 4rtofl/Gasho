@@ -168,7 +168,8 @@ export interface PromptInputProps {
   shell?: boolean;
   /**
    * Claude Code's skills and custom commands. While the text is "/" and the start of a name, those it could be are
-   * listed above the box; ↑↓ and Tab or Enter (or a tap) put "/<name> " in the box, and Esc closes the list.
+   * listed above the box; Tab puts the first one's "/<name> " in the box, ↑↓ choose another for Tab or Enter (or a tap
+   * puts it), and Esc closes the list.
    */
   commands?: SlashCommand[];
   /** Shown in the list while it has no commands to offer (they are being read, or cannot be). */
@@ -781,9 +782,16 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
   }, [slash]);
   const slashOpen = slash !== undefined && slash !== closedAt;
   const matches = useMemo(() => (slashOpen && commands ? matchSlash(commands, slash) : []), [commands, slash, slashOpen]);
-  const [picked, setPicked] = useState({ at: "", index: 0 });
-  // A new text starts at the first row again.
-  const slashActive = picked.at === slash ? Math.min(picked.index, matches.length - 1) : 0;
+  // No row is chosen until ↑↓ (or the pointer) choose one, and any change of the text drops the choice: Enter sends what
+  // was typed unless a row is chosen, since Claude Code's own commands (/review, /help) are not in the list and the list
+  // may still offer rows for them ("impl-review", "anthropic-skills:help"). Tab puts the chosen row, or the first.
+  const [picked, setPicked] = useState(-1);
+  const [pickedFor, setPickedFor] = useState(slash);
+  if (pickedFor !== slash) {
+    setPickedFor(slash);
+    setPicked(-1);
+  }
+  const slashActive = Math.min(picked, matches.length - 1);
   // Shown while the box has the focus: a click elsewhere puts the list away until the box is back. A phone may take the
   // focus from the box when a row is tapped, before the row's click: the list stays a moment for the click.
   const [focused, setFocused] = useState(false);
@@ -860,18 +868,21 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
       const n = matches.length;
       const plain = !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey;
       if (e.key === "Escape") {
-        // Closes the list only; a second Esc stops the reply.
-        e.preventDefault();
         setClosedAt(slash);
-        return;
+        // Closes the rows only, and a second Esc stops the reply. A note has nothing to close: the Esc also stops it.
+        if (n > 0) {
+          e.preventDefault();
+          return;
+        }
       }
       if (n > 0 && plain && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
         e.preventDefault();
-        setPicked({ at: slash, index: (slashActive + (e.key === "ArrowDown" ? 1 : -1) + n) % n });
+        const down = e.key === "ArrowDown";
+        setPicked(slashActive < 0 ? (down ? 0 : n - 1) : (slashActive + (down ? 1 : -1) + n) % n);
         return;
       }
-      const hit = matches[slashActive];
-      if (hit && plain && (e.key === "Tab" || e.key === "Enter")) {
+      const hit = e.key === "Tab" ? matches[Math.max(slashActive, 0)] : e.key === "Enter" ? matches[slashActive] : undefined;
+      if (hit && plain) {
         e.preventDefault();
         putCommand(hit.command.name);
         return;
@@ -984,7 +995,7 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
             active={slashActive}
             typed={slash?.length ?? 0}
             note={commandsNote}
-            onHover={(i) => setPicked({ at: slash ?? "", index: i })}
+            onHover={setPicked}
             onPick={putCommand}
           />
         )}
@@ -1076,7 +1087,7 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
             aria-describedby={`${uid}-hint`}
             aria-autocomplete={commands ? "list" : undefined}
             aria-controls={slashShown && matches.length > 0 ? `${uid}-commands` : undefined}
-            aria-activedescendant={slashShown && matches.length > 0 ? `${uid}-commands-${slashActive}` : undefined}
+            aria-activedescendant={slashShown && slashActive >= 0 ? `${uid}-commands-${slashActive}` : undefined}
             enterKeyHint={enter ? "send" : "enter"}
             onChange={(e) => {
               histIdx.current = -1;

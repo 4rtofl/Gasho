@@ -1,7 +1,8 @@
-// The home screen: a dashboard of tiles of several sizes (a bento grid). On a computer, four columns: the states of
-// the sessions and the instructions sent lately as number tiles, the sessions as the largest tile, the notifications,
-// the tokens used, then the latest operations and the working servers, with the plugins' tiles among them. On a
-// phone, the number tiles two by two and the rest one under the other. Only sessions started from Gasho are shown.
+// The home screen: a dashboard of tiles of several sizes (a bento grid): the states of the sessions and the
+// instructions sent lately as number tiles, the sessions as the largest tile, the notifications, the tokens used, then
+// the latest operations and the working servers, with the plugins' tiles among them. As many columns as the home's
+// width holds (TILE_COLUMNS), from two (on a phone, the number tiles two by two and the rest one under the other) to
+// five. Only sessions started from Gasho are shown.
 // A tile can be put elsewhere by dragging the handle at the middle of its top edge, or with the arrow keys once the
 // handle has the focus; this browser keeps the order.
 import { motion, useTransform } from "framer-motion";
@@ -35,6 +36,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
+import type { TileSize } from "@gasho/plugin-sdk";
 import type {
   GashoNotification,
   MachineHookEvent,
@@ -63,6 +65,26 @@ interface Row {
   machine: MachineInfo;
   s: SessionInfo;
 }
+
+/**
+ * The grid's columns, by the home's width (a container query on the home, not the window's width, which the sidebar
+ * shares): as many as hold 210px each (easyui's StatGrid) with the 16px gaps between them, two at the least.
+ */
+const TILE_COLUMNS = "grid-cols-2 @min-[662px]/home:grid-cols-3 @min-[888px]/home:grid-cols-4 @min-[1114px]/home:grid-cols-5";
+/**
+ * The columns a tile takes (docs/plugins.md, P6): with two columns, the number tiles one and the others both; from
+ * three, a small tile one, a medium one two, and a large one all but the column of the notifications beside it.
+ */
+const TILE_SPANS: Record<TileSize, string> = {
+  stat: "",
+  small: "col-span-2 @min-[662px]/home:col-span-1",
+  medium: "col-span-2",
+  large: "col-span-2 @min-[888px]/home:col-span-3 @min-[1114px]/home:col-span-4",
+};
+/** Two rows high, from three columns. */
+const TALL = "@min-[662px]/home:row-span-2";
+/** A plugin may name a size Gasho does not know (yet): it is then small. */
+const tileClass = (size: TileSize, tall?: boolean) => cn(TILE_SPANS[size] ?? TILE_SPANS.small, tall && TALL);
 
 /** The tiles, in their default order, with the names their handles are read out with. */
 const TILE_NAMES = {
@@ -176,9 +198,10 @@ export function HomeView() {
   });
 
   // The tiles by id, with their sizes; the grid shows them in the order they were put in.
-  const tiles: Record<TileId, { className?: string; content: ReactNode }> = {
+  const tiles: Record<TileId, { size: TileSize; tall?: boolean; content: ReactNode }> = {
     // The meters: each state's share of the sessions, in the colors of the state dots elsewhere in Gasho.
     busy: {
+      size: "stat",
       content: (
         <StatCard
           label="作業中"
@@ -191,6 +214,7 @@ export function HomeView() {
       ),
     },
     waiting: {
+      size: "stat",
       content: (
         <StatCard
           label="確認待ち"
@@ -204,6 +228,7 @@ export function HomeView() {
       ),
     },
     idle: {
+      size: "stat",
       content: (
         <StatCard
           label="待機中"
@@ -216,6 +241,7 @@ export function HomeView() {
       ),
     },
     sent: {
+      size: "stat",
       content: (
         <StatCard
           label="送った指示"
@@ -232,7 +258,7 @@ export function HomeView() {
       ),
     },
     sessions: {
-      className: "col-span-2 lg:col-span-3",
+      size: "large",
       content: (
         <Tile title="セッション" icon={<Layers className="size-4" />}>
           <Sessions rows={rows} now={now} onLaunch={() => setLaunching(true)} />
@@ -240,7 +266,8 @@ export function HomeView() {
       ),
     },
     notifications: {
-      className: "col-span-2 lg:col-span-1 lg:row-span-2",
+      size: "small",
+      tall: true,
       content: (
         <Tile>
           <NotificationStack
@@ -263,7 +290,7 @@ export function HomeView() {
       ),
     },
     tokens: {
-      className: "col-span-2 lg:col-span-1",
+      size: "small",
       content: (
         <StatCard
           label="トークン"
@@ -281,7 +308,7 @@ export function HomeView() {
       ),
     },
     tokenBreakdown: {
-      className: "col-span-2",
+      size: "medium",
       content: (
         <Tile title="トークンの内訳（過去24時間）" icon={<Cpu className="size-4" />}>
           <TokenBreakdown tokens={tokens} />
@@ -289,7 +316,7 @@ export function HomeView() {
       ),
     },
     operations: {
-      className: "col-span-2",
+      size: "medium",
       content: (
         <Tile title="最近の操作" icon={<CircleDot className="size-4" />}>
           <Operations events={events} machines={machines} now={now} />
@@ -297,7 +324,7 @@ export function HomeView() {
       ),
     },
     machines: {
-      className: "col-span-2 lg:col-span-1",
+      size: "small",
       content: (
         <Tile title="working server" icon={<Server className="size-4" />}>
           <Machines machines={machines} now={now} />
@@ -307,7 +334,7 @@ export function HomeView() {
   };
 
   return (
-    <div className="mx-auto flex max-w-7xl flex-col gap-4 p-4 md:p-6">
+    <div className="@container/home mx-auto flex max-w-7xl flex-col gap-4 p-4 md:p-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">ホーム</h1>
@@ -343,18 +370,18 @@ export function HomeView() {
       {launching && <LaunchPanel onClose={() => setLaunching(false)} />}
 
       {/* Positioned: the tiles' places are measured from it while one is dragged. */}
-      <div className="relative grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+      <div className={cn("relative grid gap-3 sm:gap-4", TILE_COLUMNS)}>
         {sort.order.map((id) => {
           if (isTile(id)) {
             return (
-              <BentoItem key={id} id={id} name={TILE_NAMES[id]} sort={sort} className={tiles[id].className}>
+              <BentoItem key={id} id={id} name={TILE_NAMES[id]} sort={sort} className={tileClass(tiles[id].size, tiles[id].tall)}>
                 {tiles[id].content}
               </BentoItem>
             );
           }
           const t = pluginById.get(id);
           return t ? (
-            <BentoItem key={id} id={id} name={t.name} sort={sort} className={t.className}>
+            <BentoItem key={id} id={id} name={t.name} sort={sort} className={tileClass(t.size, t.tall)}>
               {t.content}
             </BentoItem>
           ) : null;

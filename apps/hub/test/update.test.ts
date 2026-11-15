@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { HubToClient, HubToDaemon } from "@gasho/protocol";
 import { Hub, updateInfoOf, validateCommand } from "../src/hub.ts";
-import { DAEMON_PACKAGE, LatestCheck } from "../src/latest.ts";
+import { DAEMON_PACKAGE, HUB_PACKAGE, LatestCheck } from "../src/latest.ts";
 import { Store } from "../src/store.ts";
 
 function fakePeer<T>(deviceId = "") {
@@ -118,12 +118,16 @@ test("a new connection of the working server clears what the old one said about 
 });
 
 test("the latest versions are in the snapshot, looked up again when a browser asks, and kept when a look-up fails", async () => {
-  const answers: (string | Error)[] = ["0.16.0", new Error("npm error code E401"), "0.16.1"];
+  const answers: Record<string, (string | Error)[]> = {
+    [DAEMON_PACKAGE]: ["0.16.0", new Error("npm error code E401"), "0.16.1"],
+    // Not published before its first release; then a look-up that fails on its own.
+    [HUB_PACKAGE]: [new Error("npm error code E404\nnpm error 404 Not Found - GET https://npm.pkg.github.com/@4rtoflow%2fgasho-hub"), "0.1.0", new Error("npm error code ETIMEDOUT")],
+  };
   const asked: string[] = [];
   const latest = new LatestCheck({
     lookup: async (name) => {
       asked.push(name);
-      const a = answers.shift();
+      const a = answers[name]?.shift();
       if (a instanceof Error || a === undefined) throw a ?? new Error("no more");
       return a;
     },
@@ -133,20 +137,25 @@ test("the latest versions are in the snapshot, looked up again when a browser as
   const snap = c.sent[0];
   assert.ok(snap?.type === "snapshot");
   assert.equal(snap.latest?.daemon, "0.16.0");
-  assert.deepEqual(asked, [DAEMON_PACKAGE]);
+  assert.equal(snap.latest?.error, undefined);
+  assert.equal(snap.latest?.hub, undefined);
+  assert.equal(snap.latest?.hubError, "Gasho サーバーの版は、まだ公開されていません。");
+  assert.deepEqual(asked, [DAEMON_PACKAGE, HUB_PACKAGE]);
 
   // Just looked up: a browser's "check now" is answered with what is known.
   hub.onClientMessage(c, { type: "latest.check" });
   await new Promise((r) => setImmediate(r));
-  assert.equal(asked.length, 1);
+  assert.equal(asked.length, 2);
   const known = c.sent.at(-1);
   assert.ok(known?.type === "latest" && known.latest.daemon === "0.16.0");
 
-  // A failed look-up keeps the version known before, and says why.
+  // A failed look-up keeps the version known before, and says why; each package on its own.
   await latest.check();
   const failed = latest.latest();
   assert.equal(failed.daemon, "0.16.0");
   assert.match(failed.error ?? "", /最新の版を調べられませんでした：npm error code E401/);
+  assert.equal(failed.hub, "0.1.0");
+  assert.equal(failed.hubError, undefined);
   assert.equal(failed.checking, undefined);
   const steps = c.sent.filter((m) => m.type === "latest").map((m) => (m.type === "latest" ? m.latest.checking === true : false));
   assert.deepEqual(steps, [false, true, false]);
@@ -154,4 +163,6 @@ test("the latest versions are in the snapshot, looked up again when a browser as
   await latest.check();
   assert.deepEqual(latest.latest().daemon, "0.16.1");
   assert.equal(latest.latest().error, undefined);
+  assert.equal(latest.latest().hub, "0.1.0");
+  assert.equal(latest.latest().hubError, "Gasho サーバーの最新の版を調べられませんでした：npm error code ETIMEDOUT");
 });

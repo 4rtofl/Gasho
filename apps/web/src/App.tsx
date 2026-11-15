@@ -12,6 +12,7 @@ import { LAUNCH_WAIT_MS } from "@/components/session-tabs";
 import { StatusDot } from "@/components/status-badge";
 import { Sidebar, SidebarTrigger, useSidebar, type SidebarGroup, type SidebarItem, type SidebarSection } from "@/components/ui/sidebar";
 import { updateTo } from "@/lib/daemon-update";
+import { hubUpdateToTell } from "@/lib/server-update";
 import { useChoices } from "@/lib/flag";
 import { sessionLabel } from "@/lib/format";
 import { DESKTOP, useMediaQuery, useWindowWidth } from "@/lib/media";
@@ -46,7 +47,7 @@ import {
   worktreesByLastUse,
   type WorktreeSessions,
 } from "@/lib/sessions";
-import { sendCommand, useAppState } from "@/lib/store";
+import { reloadToNewBuild, sendCommand, useAppState } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { PANEL_WIDTH_MAX, PANEL_WIDTH_MIN, clampPanelWidth, defaultPanelWidth, usePanelWidth } from "@/lib/widths";
 import { PluginBadgeProbes, PluginPageView, PluginPanelView, usePluginBadges } from "@/plugins/parts";
@@ -167,7 +168,7 @@ export function App() {
   useEffect(() => {
     if (isOldGitHubLink(location.hash)) go(route, { replace: true });
   }, [route]);
-  const { auth, me, machines, notifications, connected, plugins, catalog, latest } = useAppState();
+  const { auth, me, machines, notifications, connected, plugins, catalog, latest, server, outdated } = useAppState();
   const [mobileOpen, setMobileOpen] = useState(false);
   // What was picked from a session tab's menu (rename, fork, remove); its dialog is open meanwhile.
   const [sessionAction, setSessionAction] = useState<SessionActionRequest | null>(null);
@@ -350,7 +351,13 @@ export function App() {
       items: [
         { id: "home", label: "ホーム", icon: <Home />, badge: unread || undefined },
         ...pluginItems.map(({ id, label, icon, badge }) => ({ id, label, icon, badge })),
-        { id: "devices", label: "端末", icon: <KeyRound />, badge: machines.some((m) => updateTo(m, latest)) ? "更新" : undefined },
+        {
+          id: "devices",
+          label: "端末",
+          icon: <KeyRound />,
+          // gasho-daemon on a working server, or the Gasho server itself, can be updated.
+          badge: machines.some((m) => updateTo(m, latest)) || hubUpdateToTell(server, latest) ? "更新" : undefined,
+        },
         // The plugins that the catalog has a newer version of.
         { id: "plugins", label: "プラグイン", icon: <Puzzle />, badge: updateCount(plugins, catalog) || undefined },
         { id: "settings", label: "設定", icon: <Settings /> },
@@ -407,6 +414,17 @@ export function App() {
         footer={<Connection connected={connected} deviceName={me?.name} />}
       />
       <div className="flex min-w-0 flex-1 flex-col">
+        {/* The Gasho server serves a new build of the screen, and this page did not reload itself: something is being written in it. */}
+        {outdated && (
+          <div role="status" className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs md:px-4">
+            <span className="min-w-0 flex-1 text-amber-200">
+              Gasho が新しい版になりました。書きかけの文やファイルを送るか写してから、読み込み直してください（読み込み直すと、書きかけは消えます）。
+            </span>
+            <button type="button" onClick={reloadToNewBuild} className="shrink-0 rounded-md border border-amber-500/40 px-2.5 py-1 font-medium text-amber-100 hover:bg-amber-500/10">
+              読み込み直す
+            </button>
+          </div>
+        )}
         <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3 md:hidden">
           <SidebarTrigger
             onClick={() => {

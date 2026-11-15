@@ -1,8 +1,9 @@
-// Publishes gasho-daemon (@4rtoflow/gasho-daemon) and the plugin SDK (@4rtoflow/gasho-plugin-sdk) from main. The
-// workflow .github/workflows/release.yml runs it every 15 minutes. A package is released when what goes into it changed
-// since its last tag (daemon-v<version>, plugin-sdk-v<version>).
+// Publishes gasho-daemon (@4rtoflow/gasho-daemon), the Gasho server with its screen (@4rtoflow/gasho-hub) and the plugin
+// SDK (@4rtoflow/gasho-plugin-sdk) from main. The workflow .github/workflows/release.yml runs it every 15 minutes. A
+// package is released when what goes into it changed since its last tag (daemon-v<version>, hub-v<version>,
+// plugin-sdk-v<version>); a package without any tag yet is released at the version in its source (its first release).
 //
-// Versions are x.y.z. x is fixed: 0 for gasho-daemon, and for the SDK the plugin API's major (1). y goes up for a new
+// Versions are x.y.z. x is fixed: 0 for gasho-daemon and gasho-hub, and for the SDK the plugin API's major (1). y goes up for a new
 // feature and z for a fix; z goes back to 0 when y goes up. A release is a feature when a pull request merged since the
 // last tag has the label "enhancement", or when the plugin API's version (PLUGIN_API) changed. Pull requests do not
 // touch versions: the release writes them into the source, commits that to main and tags the commit.
@@ -25,10 +26,10 @@ const root = path.resolve(import.meta.dirname, "..");
 /** The label that makes a merged pull request a new feature (y goes up) instead of a fix (z goes up). */
 export const FEATURE_LABEL = "enhancement";
 
-export type Bump = "minor" | "patch";
+export type Bump = "minor" | "patch" | "first";
 
 interface Package {
-  id: "daemon" | "sdk";
+  id: "daemon" | "hub" | "sdk";
   /** The name in messages and in the commit. */
   title: string;
   /** The name on GitHub Packages. */
@@ -53,8 +54,21 @@ interface Package {
 
 const DAEMON_TS = "apps/daemon/src/daemon.ts";
 const DAEMON_VERSION_RE = /^export const DAEMON_VERSION = "([^"]*)";$/m;
+const HUB_TS = "apps/hub/src/version.ts";
+const HUB_VERSION_RE = /^export const HUB_VERSION = "([^"]*)";$/m;
 const SDK_JSON = "packages/plugin-sdk/package.json";
 const LOCK = "package-lock.json";
+
+/** The versions of the packages from the registry in a lockfile (not the workspace's own), to tell when they changed. */
+export function registryPackages(lockText: string): string | undefined {
+  try {
+    const lock = JSON.parse(lockText) as { packages?: Record<string, { version?: string; link?: boolean }> };
+    const entries = Object.entries(lock.packages ?? {}).filter(([key, p]) => key.startsWith("node_modules/") && !p.link);
+    return JSON.stringify(entries.map(([key, p]) => [key, p.version ?? ""]).sort());
+  } catch {
+    return undefined;
+  }
+}
 
 export const PACKAGES: Package[] = [
   {
@@ -75,6 +89,46 @@ export const PACKAGES: Package[] = [
     },
     packScript: "apps/daemon/scripts/pack.ts",
     out: "apps/daemon/dist/package",
+  },
+  {
+    id: "hub",
+    title: "gasho-hub",
+    name: "@4rtoflow/gasho-hub",
+    tagPrefix: "hub-v",
+    major: 0,
+    // The Gasho server and the screen it serves (built into the package); @gasho/protocol is only types. The screen
+    // takes the SDK's names (exports.js) and its theme (theme.css).
+    sources: [
+      "apps/hub/src",
+      "apps/hub/scripts",
+      "apps/hub/package.json",
+      "apps/hub/tsconfig.json",
+      "apps/hub/tsconfig.build.json",
+      "apps/web/src",
+      "apps/web/public",
+      "apps/web/index.html",
+      "apps/web/package.json",
+      "apps/web/vite.config.ts",
+      "apps/web/tsconfig.json",
+      "packages/plugin-sdk/src",
+      "packages/plugin-sdk/theme.css",
+      "tsconfig.base.json",
+    ],
+    // The hub's own PLUGIN_API is made from two numbers; the SDK's exports.js holds the same version as a string.
+    apiFile: "packages/plugin-sdk/src/exports.js",
+    versionFiles: [HUB_TS],
+    readVersion: () => HUB_VERSION_RE.exec(read(HUB_TS))?.[1] ?? fail(`HUB_VERSION not found in ${HUB_TS}`),
+    writeVersion(version) {
+      const text = read(HUB_TS);
+      if (!HUB_VERSION_RE.test(text)) fail(`HUB_VERSION not found in ${HUB_TS}`);
+      write(HUB_TS, text.replace(HUB_VERSION_RE, `export const HUB_VERSION = "${version}";`));
+    },
+    packScript: "apps/hub/scripts/pack.ts",
+    out: "apps/hub/dist/package",
+    // The packages from the registry decide what goes into the screen's bundle and the server's dependencies.
+    otherChanges(tag) {
+      return registryPackages(showIfThere(tag, LOCK)) === registryPackages(show("HEAD", LOCK)) ? [] : [LOCK];
+    },
   },
   {
     id: "sdk",
@@ -182,7 +236,15 @@ function makePlan(): Plan {
   const releases: Release[] = [];
   const pending: string[] = [];
   for (const pkg of PACKAGES) {
-    const tag = latestTag(tags, pkg.tagPrefix) ?? fail(`no tag ${pkg.tagPrefix}<x.y.z> on main`);
+    const tag = latestTag(tags, pkg.tagPrefix);
+    if (!tag) {
+      // Its first release: the version in its source, as it is (nothing to compare with).
+      const version = pkg.readVersion();
+      if (publishedVersions(pkg.name).includes(version)) fail(`${pkg.name}@${version} is published but has no tag ${pkg.tagPrefix}${version} on main: tag it`);
+      releases.push({ id: pkg.id, from: "", version, tag: pkg.tagPrefix + version, bump: "first", why: "最初の公開", pulls: [] });
+      console.log(`${pkg.title}: no tag yet; first release ${version}`);
+      continue;
+    }
     const from = tag.slice(pkg.tagPrefix.length);
     if (!publishedVersions(pkg.name).includes(from)) pending.push(tag);
     const source = pkg.readVersion();
@@ -241,8 +303,17 @@ function pullRequests(tag: string, paths: string[]): Pull[] {
   return [...pulls.values()].sort((a, b) => a.number - b.number);
 }
 
+/** The versions of a package on GitHub Packages; none for a package not published yet (npm's E404). */
 function publishedVersions(name: string): string[] {
-  const out = run("npm", ["view", name, "versions", "--json"]);
+  let out: string;
+  try {
+    out = execFileSync("npm", ["view", name, "versions", "--json"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 << 20 });
+  } catch (e) {
+    const said = `${(e as { stdout?: unknown }).stdout ?? ""}\n${(e as { stderr?: unknown }).stderr ?? ""}`;
+    if (/\bE404\b/.test(said)) return [];
+    process.stderr.write(said);
+    throw e;
+  }
   const versions = JSON.parse(out) as string | string[];
   return Array.isArray(versions) ? versions : [versions];
 }
@@ -269,7 +340,7 @@ function commit(plan: Plan): string[] {
   const titles = plan.releases.map((r) => `${pkgOf(r.id).title} ${r.version}`);
   const lines = plan.releases.map((r) => {
     const pulls = r.pulls.length ? `：${r.pulls.map((n) => `#${n}`).join(" ")}` : "";
-    return `${pkgOf(r.id).title} ${r.from} → ${r.version}（${r.why}）${pulls}`;
+    return r.bump === "first" ? `${pkgOf(r.id).title} ${r.version}（${r.why}）` : `${pkgOf(r.id).title} ${r.from} → ${r.version}（${r.why}）${pulls}`;
   });
   // A pull request may have written the versions already (as before the releases were automatic): then there is
   // nothing to commit, and the tags go on the commit the plan was made on.
@@ -376,6 +447,7 @@ if (import.meta.main) {
       plan: JSON.stringify(plan),
       release: String(plan.releases.length > 0),
       daemon: String(plan.releases.some((r) => r.id === "daemon")),
+      hub: String(plan.releases.some((r) => r.id === "hub")),
       todo: String(plan.releases.length > 0 || plan.pending.length > 0),
     });
   } else if (step === "apply") {

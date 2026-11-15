@@ -25,20 +25,35 @@ Node.js 24 以上が要る。TypeScript はビルドせずにそのまま実行�
 
 ### Gasho サーバー（Ubuntu Server）
 
+Gasho サーバーは、GitHub Packages の npm パッケージ `@4rtoflow/gasho-hub` として配っている。画面も入っているので、リポジトリの clone も `npm install` も要らない。手順は [docs/hub-setup.md](docs/hub-setup.md) にまとめた。
+
+```bash
+# GitHub Packages から入れる設定（初めてのときだけ。gasho-daemon と同じもの）
+gh auth refresh -s read:packages
+npm config set @4rtoflow:registry https://npm.pkg.github.com
+npm config set //npm.pkg.github.com/:_authToken "$(gh auth token)"
+
+npx @4rtoflow/gasho-hub@latest service install   # 常駐させる（Ubuntu は systemd、Mac は launchd）。LAN 側の 0.0.0.0:7740 で待ち受ける
+```
+
+こうして常駐させた Gasho サーバーは、Gasho の「端末」の画面から更新できる。新しい版がうまく起動しなかったときは、自動で前の版に戻す。
+
+起動すると、LAN から開くときの URL がログに出る。受け付ける接続元は、既定ではこのマシンと LAN のプライベートアドレスだけで、それ以外からのリクエストは断る。
+
+開発するときは、clone から動かす。clone から動かしている Gasho サーバーは、Gasho の画面からは更新できない（`git pull` のあと動かし直す）。
+
 ```bash
 npm install
 npm run web:build
 npm run hub        # LAN 側の 0.0.0.0:7740 で待ち受ける
 ```
 
-起動すると、LAN から開くときの URL がログに出る。受け付ける接続元は、既定ではこのマシンと LAN のプライベートアドレスだけで、それ以外からのリクエストは断る。
-
 ### ブラウザを登録する
 
 Gasho は、登録した端末からしか使えない。
 
 ```bash
-npm run hub:pair   # 登録コード（10分間有効、1回だけ使える）を出す
+npx @4rtoflow/gasho-hub pair   # 登録コード（10分間有効、1回だけ使える）を出す。clone では npm run hub:pair
 ```
 
 ブラウザで `http://<Gasho サーバーの IP アドレス>:7740` を開き、登録の画面にコードを入れる。2台目からは、登録済みの端末の「端末」画面でもコードを出せる。
@@ -228,19 +243,19 @@ PR と main への push のたびに、GitHub Actions（`.github/workflows/ci.ym
 
 ### 公開
 
-gasho-daemon（`@4rtoflow/gasho-daemon`）とプラグインの SDK（`@4rtoflow/gasho-plugin-sdk`）は、GitHub Actions（`.github/workflows/release.yml`）が GitHub Packages に公開する。15分ごとに main を見て、前に公開してから中身が変わったパッケージだけを公開する。
+gasho-daemon（`@4rtoflow/gasho-daemon`）、Gasho サーバー（`@4rtoflow/gasho-hub`。画面も入る）、プラグインの SDK（`@4rtoflow/gasho-plugin-sdk`）は、GitHub Actions（`.github/workflows/release.yml`）が GitHub Packages に公開する。15分ごとに main を見て、前に公開してから中身が変わったパッケージだけを公開する。まだ一度も公開していないパッケージ（タグが無いもの）は、ソースに書いてある版のまま公開する。
 
 ワークフローを15分ごとに起動するのは、Cloudflare Worker（`infra/release-trigger`）である。GitHub Actions の `schedule` では動かなかったため、Cron Trigger から `workflow_dispatch` で起動している。Worker のデプロイと、使うトークンの作り方・替え方は、[infra/release-trigger/README.md](infra/release-trigger/README.md) に書いた。
 
 版は x.y.z の形にする。
 
-- x は変えない。gasho-daemon は 0、SDK はプラグインの API のメジャーと同じ 1
+- x は変えない。gasho-daemon と Gasho サーバーは 0、SDK はプラグインの API のメジャーと同じ 1
 - 機能を足したときは y を上げ、z を 0 に戻す。前に公開してからマージした PR に `enhancement` のラベルが付いているとき、またはプラグインの API の版（`PLUGIN_API`）が変わったときを、機能の追加とする
 - それ以外は直しとして、z を上げる
 
-機能を足す PR には `enhancement` のラベルを付ける。PR では版を変えない。公開するときに、GitHub Actions が新しい版を `apps/daemon/src/daemon.ts` の `DAEMON_VERSION` と `packages/plugin-sdk/package.json` に書いて main にコミットし、そのコミットに `daemon-v<版>`・`plugin-sdk-v<版>` のタグを付けてから公開する。タグを付けたあとで公開に失敗したときは、次の回にそのタグから公開し直す。
+機能を足す PR には `enhancement` のラベルを付ける。PR では版を変えない。公開するときに、GitHub Actions が新しい版を `apps/daemon/src/daemon.ts` の `DAEMON_VERSION`、`apps/hub/src/version.ts` の `HUB_VERSION`、`packages/plugin-sdk/package.json` に書いて main にコミットし、そのコミットに `daemon-v<版>`・`hub-v<版>`・`plugin-sdk-v<版>` のタグを付けてから公開する。タグを付けたあとで公開に失敗したときは、次の回にそのタグから公開し直す。Gasho サーバーは、画面（`apps/web`）や SDK の名前と見た目（`packages/plugin-sdk` の `src` と `theme.css`）が変わったときと、`package-lock.json` で外の依存の版が変わったときにも公開する。
 
-15分を待たずに公開するときは、`gh workflow run release.yml` で動かす。次に何が公開されるかは、最新の main を checkout して `node scripts/release.ts plan` を実行すると見られる（何も変えない）。パッケージの中身を確かめるときは、`npm run pack -w @gasho/daemon`、`npm run pack -w @gasho/plugin-sdk` で、それぞれの `dist/package` に作る。
+15分を待たずに公開するときは、`gh workflow run release.yml` で動かす。次に何が公開されるかは、最新の main を checkout して `node scripts/release.ts plan` を実行すると見られる（何も変えない）。パッケージの中身を確かめるときは、`npm run pack -w @gasho/daemon`、`npm run pack -w @gasho/hub`、`npm run pack -w @gasho/plugin-sdk` で、それぞれの `dist/package` に作る。
 
 ## 環境変数
 
@@ -249,11 +264,14 @@ gasho-daemon（`@4rtoflow/gasho-daemon`）とプラグインの SDK（`@4rtoflow
 | `GASHO_HUB_HOST` / `GASHO_HUB_PORT` | hub | `0.0.0.0` / `7740` |
 | `GASHO_ALLOW_NETS` | hub | `lan`（このマシンと LAN のプライベートアドレス）。CIDR と `lan`・`tailscale` をカンマで並べる |
 | `GASHO_DB` | hub | `~/.local/share/gasho/hub.db` |
-| `GASHO_WEB_DIST` | hub | `apps/web/dist` |
+| `GASHO_WEB_DIST` | hub | パッケージでは、その中の `web`。clone では `apps/web/dist` |
 | `GASHO_PLUGINS_DIR` | hub | `~/.local/share/gasho/plugins`（入れたプラグイン） |
 | `GASHO_PLUGIN_CACHE` | hub | `~/.cache/gasho/hub-plugins`（配るプラグインの版ごとの写し） |
 | `GASHO_PLUGIN_REPO` | hub | `4rtoflow/GashoPlugins`（プラグインを追加するリポジトリ） |
-| `GASHO_LATEST_CHECK` | hub | なし。`off` にすると、公開されている gasho-daemon の最新の版を調べない |
+| `GASHO_LATEST_CHECK` | hub | なし。`off` にすると、公開されている gasho-daemon と Gasho サーバーの最新の版を調べない |
+| `GASHO_HUB_HOME` | hub | `~/.local/share/gasho/hub`（`service install` と更新が、版ごとに Gasho サーバーを入れるフォルダー） |
+| `GASHO_HUB_PROBATION_MS` | hub | `60000`（更新したあとの試しの期間。そのうちに止まった版は、前の版に戻す） |
+| `GASHO_HUB_ENV` | hub | `~/.config/gasho/hub.env`（起動するときに読む設定のファイル）。`off` にすると読まない |
 | `GASHO_NPM_BIN` | hub・daemon | Node.js と同じフォルダーの `npm`（最新の版を調べる、更新で入れる） |
 | `GASHO_DAEMON_CONFIG` | daemon | `~/.config/gasho/daemon.json` |
 | `GASHO_HUB_URL` | daemon | 登録した Gasho サーバーから決める |
@@ -265,7 +283,7 @@ gasho-daemon（`@4rtoflow/gasho-daemon`）とプラグインの SDK（`@4rtoflow
 | `GASHO_PLUGINS` | daemon | なし。`none` にすると、この working server ではプラグインの daemon の部分を動かさない |
 | `GASHO_DAEMON_HOME` | daemon | `~/.local/share/gasho/daemon`（`service install` と更新が、版ごとに gasho-daemon を入れるフォルダー） |
 
-gasho-daemon の変数は、`~/.config/gasho/daemon.env` に `名前=値` の形で書いておくこともできる。gasho-daemon のコマンドは、起動するときにこのファイルを読む。端末で設定した値のほうが優先される。
+gasho-daemon の変数は `~/.config/gasho/daemon.env` に、hub の変数は `~/.config/gasho/hub.env` に、`名前=値` の形で書いておくこともできる。どちらも、コマンドが起動するときにこのファイルを読む。端末で設定した値のほうが優先される。
 
 ## フォントとアイコン
 

@@ -365,10 +365,56 @@ export interface DaemonUpdateInfo {
   failed?: { version: string; error: string; at: number };
 }
 
+/**
+ * A step of an update of the Gasho server (hub.update), in order: installing the version beside the running one,
+ * checking it (it starts, and migrates a copy of the database), waiting for the commands under way, restarting, and the
+ * trial of the new version (it goes back to the previous one by itself when it ends before the trial is over).
+ */
+export type HubUpdateStep = "install" | "check" | "drain" | "restart" | "trial";
+
+/**
+ * Updating the Gasho server from Gasho (hub.update), as gasho-daemon is updated: each version in a folder of its own,
+ * the service (systemd, launchd) running the one chosen (`gasho-hub service install`, docs/hub-setup.md).
+ */
+export interface HubUpdateInfo {
+  /** Whether hub.update can be sent. */
+  canUpdate: boolean;
+  /** Why it cannot, for people. */
+  reason?: string;
+  /** What to run on the Gasho server's machine to make it updatable from Gasho. */
+  command?: string;
+  /** The versions installed beside the running one, which hub.update switches to without downloading them. */
+  installed?: string[];
+  /** The version this one replaced, when it was started by an update: the one to go back to. */
+  previous?: string;
+  /** An update under way, or the trial of this version after one (step "trial"). */
+  progress?: { version: string; step: HubUpdateStep; at: number };
+  /** The last update, when it failed before the switch; nothing was changed. */
+  failed?: { version: string; error: string; at: number };
+  /** The last update that went back by itself: the version that did not start, and why. */
+  rolledBack?: { from: string; to: string; error?: string; at: number };
+}
+
+/** The Gasho server itself, as browsers see it. */
+export interface ServerInfo {
+  /** Its version (a clone says the version of its source). */
+  version: string;
+  /**
+   * The build of the screen it serves (web/build.json). A page whose own build differs is out of date: it reloads, or
+   * says so while something is being written in it.
+   */
+  web?: string;
+  update: HubUpdateInfo;
+}
+
 /** The latest published versions, as the Gasho server last looked them up on the package registry. */
 export interface LatestVersions {
   /** gasho-daemon (@4rtoflow/gasho-daemon). */
   daemon?: string;
+  /** The Gasho server (@4rtoflow/gasho-hub). */
+  hub?: string;
+  /** Why the Gasho server's version could not be looked up (it is published later than gasho-daemon). */
+  hubError?: string;
   /** When they were last looked up (ms since the epoch). */
   checkedAt?: number;
   /** Why the last look-up failed. */
@@ -807,8 +853,14 @@ export type HubToClient =
       pluginEvents?: PluginEvent[];
       /** The latest published versions (absent from a Gasho server that does not look them up). */
       latest?: LatestVersions;
+      /** The Gasho server itself (absent from one older than updates from Gasho). */
+      server?: ServerInfo;
     }
   | { type: "machine"; machine: MachineInfo }
+  /** The Gasho server itself, whenever its update or the build of the screen it serves changed. */
+  | { type: "server"; server: ServerInfo }
+  /** The answer to hub.update: whether the update has begun (its steps follow with server). */
+  | { type: "server.result"; requestId: string; result: CommandResult }
   /** The latest published versions, whenever they were looked up again. */
   | { type: "latest"; latest: LatestVersions }
   | { type: "machine.removed"; id: string }
@@ -845,6 +897,8 @@ export type ClientToHub =
   | { type: "notification.read"; ids: string[] }
   /** Looks up the latest published versions now (answered with latest). */
   | { type: "latest.check" }
+  /** Updates the Gasho server to `version`, or goes back to it (answered with server.result). */
+  | { type: "hub.update"; requestId: string; version: string }
   | ({ requestId: string; machine: string } & SessionCommand)
   /**
    * Calls a method of a plugin's daemon part on a working server (answered with plugin.response). `summary`: what the

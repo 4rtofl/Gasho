@@ -15,10 +15,14 @@ import type {
   PluginCatalog,
   PluginCommand,
   PluginInfo,
+  ServerInfo,
   SessionCommand,
   TranscriptEntry,
 } from "@gasho/protocol";
 import { fetchMe } from "./api";
+import { hasDrafts } from "./drafts";
+import { hasUnsavedFiles } from "./file-drafts";
+import { type AutoReload, onOutOfDate, outOfDate } from "./server-update";
 
 /** Close code the Gasho server uses when this browser is not (or no longer) registered. */
 const CLOSE_UNAUTHORIZED = 4401;
@@ -80,6 +84,13 @@ export interface State {
   latest?: LatestVersions;
   /** Whether the Gasho server's first snapshot came: before it, the lists above are empty for not being known yet. */
   synced: boolean;
+  /** The Gasho server itself: its version, the build of the screen it serves, its update (absent from an older one). */
+  server?: ServerInfo;
+  /**
+   * The build the Gasho server serves, when this page is of another one and did not reload itself (something is being
+   * written in it): a band offers to reload.
+   */
+  outdated?: string;
 }
 
 const PAGE_SIZE = 80;
@@ -199,12 +210,23 @@ export function becomeUnregistered(): void {
   for (const l of listeners) l();
 }
 
+/**
+ * How long a connection may take to open. Something that takes it and never answers (a Gasho server that hangs, or
+ * another program on its port while it restarts) would otherwise keep the page waiting for ever.
+ */
+const OPEN_TIMEOUT_MS = 10_000;
+
 function connect(): void {
   if (socket) return; // already connecting or connected
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/ws/client`);
   socket = ws;
+  // Closing it ends as a dropped connection does: onclose tries again after the back-off.
+  const opening = setTimeout(() => {
+    if (ws.readyState === WebSocket.CONNECTING) ws.close();
+  }, OPEN_TIMEOUT_MS);
   ws.onopen = () => {
+    clearTimeout(opening);
     backoff = 1000;
     update({ connected: true });
     for (const l of connectedListeners) l();
@@ -235,6 +257,7 @@ function connect(): void {
     }
   };
   ws.onclose = (ev) => {
+    clearTimeout(opening);
     if (socket !== ws) return; // replaced or closed on purpose
     socket = undefined;
     if (ev.code === CLOSE_UNAUTHORIZED) {
@@ -299,6 +322,72 @@ export function sendPluginCommand(cmd: PluginCommand, timeoutMs = 20_000): Promi
   });
 }
 
+const serverResults = new Map<string, (r: CommandResult) => void>();
+
+/** Updates the Gasho server to `version`, or takes it back to it (hub.update); the result says whether it has begun. */
+export function updateServer(version: string, timeoutMs = 20_000): Promise<CommandResult> {
+  return new Promise((resolve) => {
+    const id = requestId();
+    const timer = setTimeout(() => {
+      serverResults.delete(id);
+      resolve({ ok: false, error: "応答がありませんでした。" });
+    }, timeoutMs);
+    serverResults.set(id, (r) => {
+      clearTimeout(timer);
+      resolve(r);
+    });
+    if (!sendToHub({ type: "hub.update", requestId: id, version })) {
+      clearTimeout(timer);
+      serverResults.delete(id);
+      resolve({ ok: false, error: "Gasho サーバーにつながっていません。" });
+    }
+  });
+}
+
+/** This page's build (vite.config.ts). */
+const OWN_BUILD = typeof __GASHO_WEB_BUILD__ === "string" ? __GASHO_WEB_BUILD__ : "dev";
+/** The last reload this tab made by itself for a build (lib/server-update.ts). */
+const RELOAD_KEY = "gasho.autoReload";
+
+/** Something not sent or not saved is being written: a reload would lose it. */
+function busyWriting(): boolean {
+  if (hasDrafts() || hasUnsavedFiles()) return true;
+  // A dialog open (a name being typed, an update being confirmed), or a field being typed in.
+  if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return true;
+  const a = document.activeElement;
+  return (a instanceof HTMLInputElement || a instanceof HTMLTextAreaElement) && a.value.trim() !== "";
+}
+
+/** Takes in what the Gasho server says about itself; a page of another build reloads, or offers to (outdated). */
+function takeServer(server: ServerInfo | undefined): void {
+  if (!server || !outOfDate(server, OWN_BUILD) || !server.web) {
+    update({ server, outdated: undefined });
+    return;
+  }
+  let last: AutoReload | undefined;
+  try {
+    last = JSON.parse(sessionStorage.getItem(RELOAD_KEY) ?? "null") ?? undefined;
+  } catch {
+    last = undefined;
+  }
+  if (onOutOfDate({ build: server.web, busy: busyWriting(), last, now: Date.now() }) === "band") {
+    update({ server, outdated: server.web });
+    return;
+  }
+  try {
+    sessionStorage.setItem(RELOAD_KEY, JSON.stringify({ build: server.web, at: Date.now() } satisfies AutoReload));
+  } catch {
+    // reloads anyway: the band shows if it is still out of date
+  }
+  update({ server });
+  location.reload();
+}
+
+/** Reloads this page to the build the Gasho server serves (the band's button). */
+export function reloadToNewBuild(): void {
+  location.reload();
+}
+
 function send(m: ClientToHub): void {
   if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(m));
 }
@@ -340,6 +429,13 @@ function handle(m: HubToClient): void {
     case "plugins":
       update({ plugins: m.plugins });
       break;
+    case "server":
+      takeServer(m.server);
+      break;
+    case "server.result":
+      serverResults.get(m.requestId)?.(m.result);
+      serverResults.delete(m.requestId);
+      break;
     case "plugin.result":
       pluginResults.get(m.requestId)?.(m.result);
       pluginResults.delete(m.requestId);
@@ -357,6 +453,8 @@ function handle(m: HubToClient): void {
         latest: m.latest,
         synced: true,
       });
+      // After the lists: a page that reloads itself does so once it knows what it is in.
+      takeServer(m.server);
       break;
     case "latest":
       update({ latest: m.latest });

@@ -93,6 +93,8 @@ export class PluginHub {
   private lastInfos = "";
   /** Plugins being added, updated or removed (one thing at a time for each). */
   private busy = new Set<string>();
+  /** While the Gasho server is about to restart for an update: new calls and changes are refused (Hub.hold). */
+  private holding: string | undefined;
   /** The kept events (retain), by "<plugin>\0<machine>\0<topic>", with the version of the plugin that sent each. */
   private retained = new Map<string, { event: PluginEvent; hash: string }>();
 
@@ -185,6 +187,11 @@ export class PluginHub {
       return;
     }
     if (typeof msg.requestId !== "string" || !msg.requestId || msg.requestId.length > 100) return;
+    if (this.holding !== undefined) {
+      if (msg.type === "plugin.request") peer.send({ type: "plugin.response", requestId: msg.requestId, error: this.holding });
+      else peer.send({ type: "plugin.result", requestId: msg.requestId, result: { ok: false, error: this.holding } });
+      return;
+    }
     if (msg.type === "plugin.request") {
       this.call(peer, msg);
       return;
@@ -196,6 +203,16 @@ export class PluginHub {
     }
     const result = this.command(peer, msg);
     peer.send({ type: "plugin.result", requestId: msg.requestId, result });
+  }
+
+  /** Refuses new calls and changes with `why` (undefined: takes them again), while an update waits for those under way. */
+  hold(why: string | undefined): void {
+    this.holding = why;
+  }
+
+  /** The calls waiting for a working server's answer, and the plugins being added, updated or removed. */
+  inFlight(): number {
+    return this.calls.size + this.busy.size;
   }
 
   onClientClose(peer: ClientPeer): void {

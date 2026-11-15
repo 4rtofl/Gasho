@@ -13,6 +13,7 @@ import type {
   MachineHookEvent,
   MachineInfo,
   PermissionRequestInfo,
+  ServerInfo,
   SessionCommand,
 } from "@gasho/protocol";
 import type { LatestCheck } from "./latest.ts";
@@ -350,6 +351,20 @@ export function validateCommand(cmd: SessionCommand): string | undefined {
   }
 }
 
+/**
+ * The Gasho server itself for browsers (cli.ts): its version, the build of the screen it serves, and its update
+ * (self-update.ts). `subscribe` hears whenever info() changes.
+ */
+export interface ServerSource {
+  info(): ServerInfo;
+  /** Begins an update to `version` (hub.update); the result says whether it has begun. */
+  update(version: string): CommandResult;
+  subscribe(l: () => void): () => void;
+}
+
+/** Said to a browser whose command comes while the Gasho server waits to restart for an update. */
+export const UPDATING = "Gasho サーバーを更新しています。起動し直したら、もう一度試してください。";
+
 export class Hub {
   private store: Store;
   private machines = new Map<string, MachineInfo>();
@@ -361,11 +376,19 @@ export class Hub {
   private plugins: PluginHub | undefined;
   /** The latest published versions; absent when they are not looked up. */
   private latest: LatestCheck | undefined;
+  /** The Gasho server itself; absent in tests and from an embedding without updates. */
+  private server: ServerSource | undefined;
+  /** Why new commands are refused (an update waits for those under way to end); undefined: they are taken. */
+  private holding: string | undefined;
 
-  constructor(store: Store, opts: { plugins?: PluginRegistry; catalog?: PluginCatalogSource; latest?: LatestCheck } = {}) {
+  constructor(store: Store, opts: { plugins?: PluginRegistry; catalog?: PluginCatalogSource; latest?: LatestCheck; server?: ServerSource } = {}) {
     this.store = store;
     this.latest = opts.latest;
+    this.server = opts.server;
     opts.latest?.subscribe((latest) => this.broadcast({ type: "latest", latest }));
+    opts.server?.subscribe(() => {
+      if (this.server) this.broadcast({ type: "server", server: this.server.info() });
+    });
     for (const m of store.loadMachines()) this.machines.set(m.id, m);
     if (opts.plugins) {
       this.plugins = new PluginHub({
@@ -537,7 +560,22 @@ export class Hub {
       ...(this.plugins ? { plugins: this.plugins.infos(), pluginEvents: this.plugins.retainedEvents() } : {}),
       ...(this.plugins?.catalog() ? { catalog: this.plugins.catalog() } : {}),
       ...(this.latest ? { latest: this.latest.latest() } : {}),
+      ...(this.server ? { server: this.server.info() } : {}),
     });
+  }
+
+  /**
+   * Refuses the commands that change something (relayed to working servers, and the plugins' calls and changes) with
+   * `why`, or (undefined) takes them again: an update holds them while it waits for those under way.
+   */
+  hold(why: string | undefined): void {
+    this.holding = why;
+    this.plugins?.hold(why);
+  }
+
+  /** The commands under way that an update waits for: relayed ones awaiting their answer, and the plugins'. */
+  inFlight(): number {
+    return this.commands.size + (this.plugins?.inFlight() ?? 0);
   }
 
   onClientMessage(peer: ClientPeer, msg: ClientToHub): void {
@@ -605,6 +643,26 @@ export class Hub {
       case "latest.check":
         if (this.latest) void this.latest.check(true);
         break;
+      case "hub.update": {
+        if (typeof msg.requestId !== "string" || !msg.requestId || msg.requestId.length > 100) return;
+        const result: CommandResult = this.server
+          ? this.server.update(typeof msg.version === "string" ? msg.version : "")
+          : { ok: false, error: "この Gasho サーバーは、Gasho からは更新できません。" };
+        if (result.ok && this.server) {
+          // The operations log: which version the Gasho server went to, and who asked.
+          const event: MachineHookEvent = {
+            machine: "",
+            sessionId: "",
+            event: "Gasho:hub.update",
+            at: Date.now(),
+            summary: `Gasho サーバー ${this.server.info().version} → ${msg.version} (by ${peer.deviceId})`,
+          };
+          this.store.addEvent(event);
+          this.broadcast({ type: "event", event });
+        }
+        peer.send({ type: "server.result", requestId: msg.requestId, result });
+        break;
+      }
       case "plugin.catalog.get":
         this.plugins?.onClientMessage(peer, msg);
         break;
@@ -644,6 +702,8 @@ export class Hub {
 
   private relayCommand(peer: ClientPeer, clientRequestId: string, machine: string, cmd: SessionCommand): void {
     const reply = (result: CommandResult) => peer.send({ type: "command.result", requestId: clientRequestId, machine, result });
+    // A listing changes nothing: it goes on while an update waits.
+    if (this.holding !== undefined && cmd.type !== "session.history") return reply({ ok: false, error: this.holding });
     const invalid = validateCommand(cmd) ?? this.unsupported(machine, cmd);
     if (invalid) return reply({ ok: false, error: invalid });
     const daemon = this.daemons.get(machine);

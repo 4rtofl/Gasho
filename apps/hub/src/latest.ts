@@ -1,6 +1,6 @@
 // The latest published versions, looked up on the package registry with npm (`npm view`, which reads the registry and
 // its token from the user's .npmrc, as `npx @4rtoflow/gasho-daemon` does). Browsers show them beside what each working
-// server runs, and offer the update (daemon.update).
+// server runs and what the Gasho server runs, and offer the updates (daemon.update, hub.update).
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -8,6 +8,8 @@ import type { LatestVersions } from "@gasho/protocol";
 
 /** The package gasho-daemon is published as (apps/daemon/src/install.ts). */
 export const DAEMON_PACKAGE = "@4rtoflow/gasho-daemon";
+/** The package the Gasho server is published as (install.ts). */
+export const HUB_PACKAGE = "@4rtoflow/gasho-hub";
 /** How often the versions are looked up (the release workflow runs every 15 minutes). */
 export const LATEST_INTERVAL_MS = 30 * 60_000;
 /** A browser's "check now" does not look them up again sooner than this after the last time. */
@@ -84,13 +86,22 @@ export class LatestCheck {
     }
     this.state = { ...this.state, checking: true };
     this.emit();
-    try {
-      const daemon = await this.lookup(DAEMON_PACKAGE);
-      this.state = { daemon, checkedAt: Date.now() };
-    } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
-      this.state = { ...this.state, checking: undefined, checkedAt: Date.now(), error: `最新の版を調べられませんでした：${error}` };
+    // Each on its own: the Gasho server's package is not there until its first release (404).
+    const [daemon, hub] = await Promise.allSettled([this.lookup(DAEMON_PACKAGE), this.lookup(HUB_PACKAGE)]);
+    const why = (r: PromiseRejectedResult) => (r.reason instanceof Error ? r.reason.message : String(r.reason));
+    const next: LatestVersions = { checkedAt: Date.now() };
+    if (daemon.status === "fulfilled") next.daemon = daemon.value;
+    else {
+      if (this.state.daemon) next.daemon = this.state.daemon;
+      next.error = `最新の版を調べられませんでした：${why(daemon)}`;
     }
+    if (hub.status === "fulfilled") next.hub = hub.value;
+    else {
+      if (this.state.hub) next.hub = this.state.hub;
+      const said = why(hub);
+      next.hubError = /\bE404\b|404 Not Found/.test(said) ? "Gasho サーバーの版は、まだ公開されていません。" : `Gasho サーバーの最新の版を調べられませんでした：${said}`;
+    }
+    this.state = next;
     this.emit();
   }
 

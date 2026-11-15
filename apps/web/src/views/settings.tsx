@@ -171,13 +171,13 @@ function VersionsSection() {
         <div className="min-w-0">
           <h2 id="versions" className="flex items-center gap-2 text-sm font-medium">
             <Info className="size-4" />
-            版
+            バージョン
           </h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">いま動いている Gasho の版です。不具合を伝えるときは、まとめてコピーして貼ってください。</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">いま動いている Gasho のバージョンです。不具合を伝えるときは、まとめてコピーして貼ってください。</p>
         </div>
         <MorphingButton
           status={copied}
-          idleText="版をコピー"
+          idleText="バージョンをコピー"
           successText="コピーしました"
           errorText="コピーできません"
           idleIcon={<Copy className="size-3.5" />}

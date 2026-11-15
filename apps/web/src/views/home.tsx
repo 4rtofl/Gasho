@@ -518,7 +518,7 @@ function TokenBreakdown({ tokens }: { tokens: TokenTrend }) {
   if (tokens.total === 0) return <p className="text-sm text-muted-foreground">過去24時間に使ったトークンはありません。</p>;
   const max = tokens.bySession[0]?.total ?? 0;
   return (
-    <div className="grid gap-5 @xl:grid-cols-2">
+    <div className="grid grid-cols-1 gap-5 @xl:grid-cols-2">
       <div className="space-y-3">
         {/* The whole, split by kind: a 2px gap of the surface between the parts, no text on the bar. */}
         <div className="flex h-2 gap-[2px] overflow-hidden rounded-full" aria-hidden>
@@ -603,7 +603,7 @@ function Sessions({ rows, now, onLaunch }: { rows: Row[]; now: number; onLaunch:
   const shown = all ? rows : rows.slice(0, SESSIONS_SHOWN);
   return (
     <>
-      <ul className="grid gap-3 @lg:grid-cols-2 @4xl:grid-cols-3">
+      <ul className="grid grid-cols-1 gap-3 @lg:grid-cols-2 @4xl:grid-cols-3">
         {shown.map((r) => (
           <li key={`${r.machine.id}/${r.s.sessionId}`}>
             <SessionCard row={r} now={now} />

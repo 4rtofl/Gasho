@@ -749,6 +749,7 @@ export class Hub {
       case "plugin.request":
       case "plugin.enable":
       case "plugin.setting":
+      case "plugin.shared":
       case "plugin.install":
       case "plugin.update":
       case "plugin.remove":

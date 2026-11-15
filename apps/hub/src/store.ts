@@ -22,7 +22,7 @@ import { hashSecret, newPairingCode, newToken, normalizeCode, PAIRING_CODE_TTL_M
  * cannot keep to that writes the lowest schema that may still open the database (min_schema in meta); an older Gasho
  * server then refuses it, rather than spoil it (docs/hub-setup.md).
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 const EVENT_TTL_MS = 7 * 24 * 3600_000;
 const NOTIFICATION_TTL_MS = 30 * 24 * 3600_000;
 
@@ -78,6 +78,16 @@ export class Store {
         PRIMARY KEY (plugin, key)
       );
       PRAGMA user_version = 3;
+    `);
+    // Version 4 adds the JSON values that plugins' web parts keep for every browser (useSharedState).
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS plugin_shared (
+        plugin TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        PRIMARY KEY (plugin, key)
+      );
+      PRAGMA user_version = 4;
     `);
   }
 
@@ -276,10 +286,34 @@ export class Store {
       .run(id, key, JSON.stringify(value));
   }
 
-  /** Forgets a removed plugin: its state and its settings. */
+  /** The JSON values a plugin's web part keeps for every browser (useSharedState), as saved. */
+  pluginShared(id: string): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const r of this.db.prepare("SELECT key, value FROM plugin_shared WHERE plugin = ?").all(id) as Row[]) {
+      try {
+        out[String(r.key)] = JSON.parse(String(r.value)) as unknown;
+      } catch {
+        // left out: the web part's initial value applies
+      }
+    }
+    return out;
+  }
+
+  /** Saves a value as JSON text that is already checked (`json`), so that its size is what was counted. */
+  setPluginShared(id: string, key: string, json: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO plugin_shared (plugin, key, value) VALUES (?, ?, ?)
+         ON CONFLICT(plugin, key) DO UPDATE SET value = excluded.value`,
+      )
+      .run(id, key, json);
+  }
+
+  /** Forgets a removed plugin: its state, its settings and its shared values. */
   forgetPlugin(id: string): void {
     this.db.prepare("DELETE FROM plugins WHERE id = ?").run(id);
     this.db.prepare("DELETE FROM plugin_settings WHERE plugin = ?").run(id);
+    this.db.prepare("DELETE FROM plugin_shared WHERE plugin = ?").run(id);
   }
 
   // ---- events and notifications ----

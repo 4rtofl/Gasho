@@ -744,6 +744,8 @@ export interface PluginInfo {
   web?: { js: string; css?: string };
   /** The values of its settings that the Gasho server keeps (scope "server"), defaults included. */
   values: Record<string, unknown>;
+  /** The JSON values its web part keeps on the Gasho server for every browser (useSharedState, plugin API 1.9), by key. */
+  shared: Record<string, unknown>;
   /** Why the plugin, or its newest files, cannot be used. */
   error?: string;
   /** Plugins with a daemon part: its state on each working server, by machine id. */
@@ -753,11 +755,13 @@ export interface PluginInfo {
 /**
  * Managing the plugins from a browser (answered with plugin.result). plugin.install: adds a plugin of the catalog and
  * enables it. plugin.update: replaces an installed plugin with the catalog's newer version. plugin.remove: removes its
- * files (only the link, for one being developed) and the settings the Gasho server keeps for it.
+ * files (only the link, for one being developed) and the settings the Gasho server keeps for it. plugin.shared: keeps a
+ * JSON value of the plugin's web part for every browser (useSharedState).
  */
 export type PluginCommand =
   | { type: "plugin.enable"; plugin: string; enabled: boolean }
   | { type: "plugin.setting"; plugin: string; key: string; value: unknown }
+  | { type: "plugin.shared"; plugin: string; key: string; value: unknown }
   | { type: "plugin.install"; plugin: string }
   | { type: "plugin.update"; plugin: string }
   | { type: "plugin.remove"; plugin: string };

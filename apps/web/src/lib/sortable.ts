@@ -2,7 +2,8 @@
 // them with the keyboard. While dragging, the item follows the pointer and the others make room for it (they slide
 // with framer-motion's layout animation); near the top or bottom of the list or page, it scrolls; Esc puts everything
 // back. The new order is reported once, when the item is dropped, and the item then settles into its place. The home
-// screen's tiles and the sidebar's sessions use it.
+// screen's tiles and the sidebar's sessions use it. Groups of items under headings can be one list, with the headings
+// fixed in it: an item then goes from one group to another (itemsByGroup, groupDrop).
 import {
   animate,
   motionValue,
@@ -76,6 +77,52 @@ export function gridIndex(rects: readonly Rect[], from: number, p: Point, gridWi
   return after ? at + 1 : at;
 }
 
+/**
+ * The items of a list of groups dragged as one list (`order`: each group's heading, then its items), by group: an item
+ * is in the group of the heading above it. An item above every heading (one that came while dragging) is in the group
+ * `home` gives it.
+ */
+export function itemsByGroup(
+  order: readonly string[],
+  headingOf: (id: string) => string | undefined,
+  home: (id: string) => string | undefined,
+): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const add = (group: string | undefined, id: string) => {
+    if (group === undefined) return;
+    const list = out.get(group);
+    if (list) list.push(id);
+    else out.set(group, [id]);
+  };
+  let current: string | undefined;
+  for (const id of order) {
+    const heading = headingOf(id);
+    if (heading !== undefined) {
+      current = heading;
+      if (!out.has(heading)) out.set(heading, []);
+    } else add(current ?? home(id), id);
+  }
+  return out;
+}
+
+/** What a drop in a list of groups did: an item went into another group, or one group's items went into another order. */
+export type GroupDrop = { kind: "move"; id: string; from: string; to: string; ids: string[] } | { kind: "reorder"; group: string; ids: string[] };
+
+/** `groups`: their items before the drop; `after`: by group, after it (itemsByGroup). */
+export function groupDrop(groups: readonly { id: string; items: readonly string[] }[], after: ReadonlyMap<string, readonly string[]>): GroupDrop | undefined {
+  const home = new Map(groups.flatMap((g) => g.items.map((id) => [id, g.id] as const)));
+  for (const g of groups) {
+    const ids = after.get(g.id) ?? [];
+    const came = ids.find((id) => home.has(id) && home.get(id) !== g.id);
+    if (came !== undefined) return { kind: "move", id: came, from: home.get(came)!, to: g.id, ids: [...ids] };
+  }
+  for (const g of groups) {
+    const ids = after.get(g.id) ?? [];
+    if (!same(ids, g.items)) return { kind: "reorder", group: g.id, ids: [...ids] };
+  }
+  return undefined;
+}
+
 const same = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((id, i) => id === b[i]);
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
@@ -118,6 +165,13 @@ export interface SortableOptions {
   onCommit: (ids: string[]) => void;
   /** The item's name, read out after it moved. */
   label: (id: string) => string;
+  /**
+   * Items that stay where they are and are not dragged: the headings of groups dragged as one list. An item is not
+   * dragged above the first of them. Each needs its element too (`item(id).ref`), as its place counts.
+   */
+  fixed?: (id: string) => boolean;
+  /** What is read out after an item moved; by default, its place in the list. */
+  describe?: (id: string, order: string[]) => string;
 }
 
 export interface SortableItem {
@@ -213,6 +267,8 @@ class Sorter {
   mode: SortableOptions["mode"] = "list";
   commit: (ids: string[]) => void = () => {};
   label: (id: string) => string = (id) => id;
+  fixed: (id: string) => boolean = () => false;
+  describe: ((id: string, order: string[]) => string) | undefined;
   reduce = false;
   private readonly set: Setters;
   private readonly elements = new Map<string, HTMLElement>();
@@ -223,8 +279,11 @@ class Sorter {
   private active: string | null = null;
   /** A dropped item, to settle into its place once the final order is drawn. */
   private settling: { id: string; shown: Point } | null = null;
-  /** An item moved with the keyboard, to scroll into view once drawn. */
-  private reveal: string | null = null;
+  /**
+   * An item moved with the keyboard, to scroll into view once drawn, and whether the focus was in it: one that went
+   * into another group is drawn anew there, and gets the focus back.
+   */
+  private reveal: { id: string; focused: boolean } | null = null;
   private animations: AnimationPlaybackControls[] = [];
   /** Counts the settlings: one that was cut short by another drag does not end it. */
   private settlings = 0;
@@ -258,21 +317,26 @@ class Sorter {
   /** After each render: the order on screen, and what waits for it (settling a dropped item, showing a moved one). */
   drawn(order: string[]): void {
     this.order = order;
+    // The dragged item may have been drawn in another place, or in another group: it is put under the pointer again
+    // before the screen shows it.
+    const d = this.drag;
+    if (d?.started && this.elements.has(d.id)) this.follow(d, order.indexOf(d.id));
     const s = this.settling;
     if (s) {
       this.settling = null;
       this.settle(s.id, s.shown);
     }
-    const id = this.reveal;
-    if (id) {
+    const r = this.reveal;
+    if (r) {
       this.reveal = null;
-      const el = this.elements.get(id);
+      const el = this.elements.get(r.id);
       if (el) this.scrollIntoView(el);
+      if (el && r.focused && !el.contains(document.activeElement)) el.querySelector<HTMLElement>("button, a, [tabindex]")?.focus();
     }
   }
 
   start = (id: string, e: ReactPointerEvent): void => {
-    if (this.drag || e.button !== 0 || !e.isPrimary) return;
+    if (this.drag || e.button !== 0 || !e.isPrimary || this.fixed(id)) return;
     const el = this.elements.get(id);
     if (!el || !this.order.includes(id)) return;
     const r = el.getBoundingClientRect();
@@ -301,10 +365,10 @@ class Sorter {
   moveTo = (id: string, index: number): void => {
     if (this.drag?.started) return;
     const from = this.order.indexOf(id);
-    const to = Math.max(0, Math.min(this.order.length - 1, index));
-    if (from < 0 || from === to) return;
+    const to = Math.max(this.first(), Math.min(this.order.length - 1, index));
+    if (from < 0 || from === to || this.fixed(id)) return;
     const next = arrayMove(this.order, from, to);
-    this.reveal = id;
+    this.reveal = { id, focused: this.elements.get(id)?.contains(document.activeElement) ?? false };
     this.commit(next);
     this.announce(id, next);
   };
@@ -379,13 +443,26 @@ class Sorter {
     // The item went away while being dragged (its session was removed).
     if (from < 0 || !this.elements.has(d.id)) return this.finish(false);
     this.autoScroll(d);
+    const placed = this.follow(d, from);
+    if (placed) this.reorder(d, from, placed.rects, placed.top);
+  };
+
+  /** The first place an item can be dragged to: below the first fixed item, if there is one. */
+  private first(): number {
+    const i = this.order.findIndex((id) => this.fixed(id));
+    return i < 0 ? 0 : i + 1;
+  }
+
+  /** Shows the dragged item (at `from` in the order) under the pointer; the items' places, and its top as shown. */
+  private follow(d: Drag, from: number): { rects: Rect[]; top: number } | undefined {
     const rects: Rect[] = [];
     for (const id of this.order) {
       const el = this.elements.get(id);
-      if (!el) return;
+      if (!el) return undefined;
       rects.push(layoutRect(el));
     }
-    const box = rects[from]!;
+    const box = rects[from];
+    if (!box) return undefined;
     // The item follows the pointer within the area the items take up. Past it, the item would make the list or page
     // longer (or wider), and scrolling at its edge would go on into empty space.
     const area = union(rects);
@@ -396,8 +473,8 @@ class Sorter {
     m.x.set(x);
     m.y.set(top - box.top);
     d.shown = { x: box.left + x, y: top };
-    this.reorder(d, from, rects, top);
-  };
+    return { rects, top };
+  }
 
   private autoScroll(d: Drag): void {
     const s = d.scroller;
@@ -426,7 +503,7 @@ class Sorter {
       const to = gridIndex(places, start, p, grid.clientWidth);
       if (to === undefined) return;
       next = arrayMove(d.before, start, to);
-    } else next = arrayMove(this.order, from, listIndex(rects, from, top));
+    } else next = arrayMove(this.order, from, Math.max(this.first(), listIndex(rects, from, top)));
     if (same(next, this.order)) return;
     d.moved = now;
     this.set.preview(next);
@@ -486,7 +563,7 @@ class Sorter {
   }
 
   private announce(id: string, order: string[]): void {
-    this.set.announce(`「${this.label(id)}」を ${order.indexOf(id) + 1} 番目に移動しました（全 ${order.length} 件）`);
+    this.set.announce(this.describe?.(id, order) ?? `「${this.label(id)}」を ${order.indexOf(id) + 1} 番目に移動しました（全 ${order.length} 件）`);
   }
 
   private removeListeners(): void {
@@ -500,7 +577,7 @@ class Sorter {
   }
 }
 
-export function useSortable({ ids, mode, onCommit, label }: SortableOptions): Sortable {
+export function useSortable({ ids, mode, onCommit, label, fixed, describe }: SortableOptions): Sortable {
   const reduce = useReducedMotion() ?? false;
   const [preview, setPreview] = useState<string[] | null>(null);
   const [active, setActive] = useState<string | null>(null);
@@ -522,6 +599,8 @@ export function useSortable({ ids, mode, onCommit, label }: SortableOptions): So
     sorter.mode = mode;
     sorter.commit = onCommit;
     sorter.label = label;
+    sorter.fixed = fixed ?? (() => false);
+    sorter.describe = describe;
     sorter.reduce = reduce;
     sorter.drawn(order);
   });

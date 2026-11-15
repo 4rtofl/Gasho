@@ -15,7 +15,7 @@ const plugin = (id: string, genre?: string): CatalogPlugin => ({
   size: 1,
   ...(genre ? { genre } : {}),
 });
-const info = (id: string, genre?: string): PluginInfo => ({ id, manifest: { id, name: id, version: "1.0.0", api: "1.0", ...(genre ? { genre } : {}) }, dev: false, enabled: true, values: {} });
+const info = (id: string, genre?: string): PluginInfo => ({ id, manifest: { id, name: id, version: "1.0.0", api: "1.0", ...(genre ? { genre } : {}) }, dev: false, enabled: true, values: {}, shared: {} });
 const genres = [
   { id: "integration", name: "連携" },
   { id: "workflow", name: "作業の管理" },

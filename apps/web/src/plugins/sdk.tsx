@@ -164,6 +164,54 @@ function usePluginState<T>(key: string, initial: T): [T, (value: T | ((prev: T) 
   return [value, set];
 }
 
+/**
+ * Values written here that the Gasho server has not answered yet, by "<plugin>\0<key>": they show at once, and the
+ * next write that builds on the one before (a function of it) builds on them.
+ */
+const unanswered = new Map<string, { value: unknown }>();
+const unansweredListeners = new Set<() => void>();
+
+function setUnanswered(k: string, entry: { value: unknown } | undefined): void {
+  if (entry) unanswered.set(k, entry);
+  else unanswered.delete(k);
+  for (const l of unansweredListeners) l();
+}
+
+/** The value of `key` as this browser knows it now: written and not answered yet, else the Gasho server's. */
+function sharedNow(plugin: string, key: string, initial: unknown): unknown {
+  const own = unanswered.get(`${plugin}\0${key}`);
+  if (own) return own.value;
+  const shared = getAppState().plugins.find((p) => p.id === plugin)?.shared ?? {};
+  return Object.hasOwn(shared, key) ? shared[key] : initial;
+}
+
+/** A JSON value the Gasho server keeps for the plugin being drawn, the same in every browser (plugin API 1.9). */
+function useSharedState<T>(key: string, initial: T): [T, (value: T | ((prev: T) => T)) => Promise<void>] {
+  const info = usePluginInfo();
+  const k = `${info.id}\0${key}`;
+  const own = useSyncExternalStore(
+    (l) => {
+      unansweredListeners.add(l);
+      return () => unansweredListeners.delete(l);
+    },
+    () => unanswered.get(k),
+  );
+  const value = (own ? own.value : Object.hasOwn(info.shared, key) ? info.shared[key] : initial) as T;
+  const set = async (v: T | ((prev: T) => T)) => {
+    const next = typeof v === "function" ? (v as (p: T) => T)(sharedNow(info.id, key, initial) as T) : v;
+    const entry = { value: next };
+    setUnanswered(k, entry);
+    try {
+      const r = await sendPluginCommand({ type: "plugin.shared", plugin: info.id, key, value: next });
+      if (!r.ok) throw new Error(r.error ?? "値を保存できませんでした。");
+    } finally {
+      // The Gasho server sent the value to every browser before it answered (or it refused it): its own is in place.
+      if (unanswered.get(k) === entry) setUnanswered(k, undefined);
+    }
+  };
+  return [value, set];
+}
+
 // ---- moving between pages and panels ----
 
 function useNavigation(): Navigation {
@@ -315,6 +363,7 @@ export const sdk: GashoSdk = {
   },
   useSetting,
   usePluginState,
+  useSharedState,
   useNavigation,
   useSendInput: () => {
     const info = usePluginInfo();

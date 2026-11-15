@@ -3,9 +3,10 @@
 // Its hook runs once, out of sight (PluginWorktreeGroupingProbe, beside P17's), in its plugin's scope and error
 // boundary; what it answers is checked (lib/worktree-groupings) and published here, and the sidebar draws that, outside
 // the boundary: an error of the plugin's brings Gasho's own list of worktrees back, and one of Gasho's is not taken for
-// the plugin's.
+// the plugin's. Its useOnMove, if it has one, is called with it, and the function it gives is kept here for the
+// sidebar to call when a row is dropped in another category (moveWorktree).
 import { Suspense, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
-import type { WorktreeGrouping, WorktreeListContext } from "@gasho/plugin-sdk";
+import type { WorktreeGrouping, WorktreeListContext, WorktreeMove } from "@gasho/plugin-sdk";
 import { countChange, MAX_CHANGES } from "@/lib/session-list";
 import { chooseGrouping, useGroupingChoice } from "@/lib/session-list-prefs";
 import { useAppState } from "@/lib/store";
@@ -37,6 +38,9 @@ function unpublish(plugin: string, version: string, grouping: string): void {
   if (published?.plugin === plugin && published.version === version && published.grouping === grouping) publish(undefined);
 }
 
+/** What the useOnMove of the grouping in use gave when the probe was drawn last. */
+let mover: { plugin: string; version: string; grouping: string; onMove: unknown } | undefined;
+
 function usePublished(): PublishedGrouping | undefined {
   return useSyncExternalStore(
     (l) => {
@@ -65,6 +69,11 @@ export interface WorktreeGroupings {
   pick: (key: string | undefined) => void;
   /** Which list of worktrees the sidebar shows. */
   mode: WorktreeListMode;
+  /**
+   * While the grouping in use has useOnMove: tells its plugin that a worktree was dropped in another category. Rejects
+   * with what to tell the person when it failed.
+   */
+  move?: (move: WorktreeMove) => Promise<void>;
 }
 
 export function useWorktreeGroupings(): WorktreeGroupings {
@@ -87,7 +96,17 @@ export function useWorktreeGroupings(): WorktreeGroupings {
     const o = options.find((x) => x.key === key);
     chooseGrouping(o ? { plugin: o.plugin, grouping: o.grouping } : "none");
   };
-  return { options, picked, pick, mode };
+  const shown = mode.kind === "grouped" ? mode : undefined;
+  const movable = shown && parts.find((p) => p.info.id === shown.plugin)?.def.worktreeGroupings?.find((g) => g.id === shown.grouping)?.useOnMove;
+  return { options, picked, pick, mode, ...(shown && movable ? { move: (m: WorktreeMove) => moveWorktree(shown.plugin, shown.grouping, m) } : {}) };
+}
+
+/** Calls the function that the useOnMove of a grouping gave, if that grouping is the one in use. */
+async function moveWorktree(plugin: string, grouping: string, move: WorktreeMove): Promise<void> {
+  const m = mover;
+  if (m?.plugin !== plugin || m.grouping !== grouping) throw new Error("この分け方では、worktree を移せません。");
+  if (typeof m.onMove !== "function") throw new Error("useOnMove が関数を返していません。");
+  await (m.onMove as (move: WorktreeMove) => unknown)(move);
 }
 
 /**
@@ -122,6 +141,8 @@ export function PluginWorktreeGroupingProbe({ ctx, off }: { ctx: WorktreeListCon
 
 function Probe({ part, grouping, ctx }: { part: PluginPart; grouping: WorktreeGrouping; ctx: WorktreeListContext }) {
   const categories = normalizeWorktreeCategories(grouping.useCategories(ctx), ctx);
+  // A hook: a grouping of one version has it or not on every draw (Part draws the probe anew for another version).
+  const onMove: unknown = grouping.useOnMove?.(ctx);
   const json = JSON.stringify(categories);
   const plugin = part.info.id;
   const version = part.version;
@@ -139,8 +160,17 @@ function Probe({ part, grouping, ctx }: { part: PluginPart; grouping: WorktreeGr
     }
     publish({ plugin, version, grouping: id, categories, json });
   });
+  useLayoutEffect(() => {
+    mover = grouping.useOnMove ? { plugin, version, grouping: id, onMove } : undefined;
+  });
   // Another grouping picked, the plugin disabled, removed, or replaced by another version: its categories go with it.
-  useLayoutEffect(() => () => unpublish(plugin, version, id), [plugin, version, id]);
+  useLayoutEffect(
+    () => () => {
+      unpublish(plugin, version, id);
+      if (mover?.plugin === plugin && mover.version === version && mover.grouping === id) mover = undefined;
+    },
+    [plugin, version, id],
+  );
   return null;
 }
 

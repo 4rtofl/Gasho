@@ -32,6 +32,17 @@ npx wrangler secret put GITHUB_TOKEN   # 1 で作ったトークンを貼る
 
 `npx wrangler tail` を開いておくと、次の15分の区切りで起動したことがわかる。GitHub 側では `gh run list --workflow release.yml` に、`workflow_dispatch` の実行が15分ごとに並ぶ。
 
+## 公開を止める
+
+main にマージすると、最長15分で公開される。マージしても公開したくないときは、ワークフローを止める。
+
+```sh
+gh workflow disable release.yml   # 止める
+gh workflow enable release.yml    # 戻す
+```
+
+止めているあいだも Worker は起動を頼むが、GitHub が断るので Cloudflare のログに失敗が出る。長く止めるときは、Cloudflare のダッシュボードでこの Worker の Cron を外す。
+
 ## トークンを替える
 
 期限が来る前に、1 と同じ手順で新しいトークンを作り、`npx wrangler secret put GITHUB_TOKEN` で入れ替える。期限が切れると、Release ワークフローは起動しなくなる（Cloudflare のログに `HTTP 401` が出る）。

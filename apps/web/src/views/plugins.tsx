@@ -18,6 +18,7 @@ import { requestCatalog, sendPluginCommand, useAppState } from "@/lib/store";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
 import { apiSupported, usePluginRegistry } from "@/plugins/registry";
+import { useSessionListMode } from "@/plugins/session-list";
 import { enabledThemes } from "@/plugins/theme";
 
 const STATE: Record<PluginDaemonState, { label: string; className: string; dot: string }> = {
@@ -58,14 +59,18 @@ export function PluginsView() {
   const available = (catalog?.plugins ?? []).filter((p) => !installed.has(p.id)).sort((a, b) => a.name.localeCompare(b.name, "ja"));
   const groups = byGenre(available, catalog?.genres);
   const [themeInUse, ...othersEnabled] = enabledThemes(infos);
-  // The sidebar's session list is the first such plugin's (P17); another's is not used.
+  // The sidebar's session list is the first such plugin's (P17); another's is not used. While it shows, the worktrees'
+  // groupings (P18) are not used either.
   const [listInUse, ...otherLists] = parts.filter((p) => p.def.sessionList);
+  const listMode = useSessionListMode();
   const noteOf = (info: PluginInfo) =>
     themeInUse && othersEnabled.some((t) => t.id === info.id)
       ? `テーマが2つ以上有効です。当てているのは ${themeInUse.manifest.name} です。使わないテーマを無効にしてください。`
       : listInUse && otherLists.some((p) => p.info.id === info.id)
         ? `サイドバーのセッションの一覧を決めるプラグインが2つ以上有効です。使っているのは ${listInUse.info.manifest.name} の一覧です。`
-        : undefined;
+        : listInUse && listMode.kind !== "gasho" && parts.some((p) => p.info.id === info.id && p.def.worktreeGroupings?.length && !p.def.sessionList)
+          ? `${listInUse.info.manifest.name} がサイドバーをセッションの一覧にしているので、worktree の分け方は使っていません。`
+          : undefined;
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 p-4 md:p-6">
       <div className="flex items-start justify-between gap-3">

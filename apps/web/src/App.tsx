@@ -34,12 +34,12 @@ import {
   type HeldOrder,
   type ListedSession,
 } from "@/lib/session-list";
-import { useSessionListPrefs } from "@/lib/session-list-prefs";
+import { useGroupingPrefs, useSessionListPrefs } from "@/lib/session-list-prefs";
 import {
+  narrowWorktrees,
   notificationShown,
   rememberedOf,
   repoChoices,
-  repoKeyOf,
   sessionDot,
   sessionToOpen,
   unreadSessions,
@@ -47,13 +47,16 @@ import {
   worktreeId,
   worktreeKey,
   worktreesByLastUse,
+  type WorktreeSessions,
 } from "@/lib/sessions";
 import { reloadToNewBuild, sendCommand, useAppState, useReadWhileOpen } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import { arrangeWorktreeCategories, groupingKey, holdWorktreeList, worktreeListContext, type HeldWorktreeList } from "@/lib/worktree-groupings";
 import { PANEL_WIDTH_MAX, PANEL_WIDTH_MIN, clampPanelWidth, defaultPanelWidth, usePanelWidth } from "@/lib/widths";
 import { PluginBadgeProbes, PluginPageView, PluginPanelView, usePluginBadges } from "@/plugins/parts";
 import { usePluginRegistry } from "@/plugins/registry";
 import { PluginSessionListProbe, useSessionListMode } from "@/plugins/session-list";
+import { PluginWorktreeGroupingProbe, useWorktreeGroupings } from "@/plugins/worktree-groupings";
 import { DevicesView } from "@/views/devices";
 import { FilePanel, FolderPanel } from "@/views/files";
 import { GraphPanel } from "@/views/graph";
@@ -188,6 +191,27 @@ export function App() {
   const listMode = useSessionListMode();
   const [listPrefs, changeListPrefs] = useSessionListPrefs(listMode.kind === "gasho" ? undefined : listMode.plugin);
   const [heldOrder, setHeldOrder] = useState<HeldOrder | null>(null);
+  // The worktrees the sidebar lists, with those only this browser keeps (the one used last first), and the repositories
+  // they are narrowed to (one picked may come back: its working server reconnects, say).
+  const allWorktrees = useMemo(() => worktreesByLastUse(machines, remembered), [machines, remembered]);
+  const repos = useMemo(() => repoChoices(allWorktrees), [allWorktrees]);
+  const narrowed = useMemo(() => repos.filter((r) => repoKeys.includes(r.key)), [repos, repoKeys]);
+  // A plugin's grouping of the worktrees (docs/plugins.md, P18): what its hook gets (those narrowed to, in the order of
+  // last use, not the one dragged into), which list shows, the grouping's order dragged into and its folded categories,
+  // and what is held while the pointer is over the list.
+  const groupingContext = useMemo(() => worktreeListContext(narrowWorktrees(allWorktrees, narrowed), machines), [allWorktrees, narrowed, machines]);
+  const groupings = useWorktreeGroupings();
+  const shownGrouping = groupings.mode.kind === "flat" ? undefined : groupingKey(groupings.mode.plugin, groupings.mode.grouping);
+  const [groupingPrefs, changeGroupingPrefs] = useGroupingPrefs(shownGrouping);
+  const [heldWorktrees, setHeldWorktrees] = useState<HeldWorktreeList | null>(null);
+  // The drawer is a phone's: once the window is wide, it is hidden, so it is closed, and the list it held is let go
+  // (else the list would stay held while the pointer comes and goes on a computer).
+  useEffect(() => {
+    if (!desktop) return;
+    setMobileOpen(false);
+    setHeldOrder(null);
+    setHeldWorktrees(null);
+  }, [desktop]);
   // The category whose "＋" is starting a session, and what the dialog opens with when that did not work.
   const [launchingIn, setLaunchingIn] = useState<string>();
   const [launchInitial, setLaunchInitial] = useState<LaunchInitial>();
@@ -201,12 +225,21 @@ export function App() {
   const unreadOnes = unreadSessions(notifications);
   // The worktrees of all working servers in one list: the one used last first, then those without sessions, or in the
   // order they were dragged into (worktrees that got their first session since then come first).
-  const byId = new Map(worktreesByLastUse(machines, remembered).map((w) => [w.id, w]));
+  const byId = new Map(allWorktrees.map((w) => [w.id, w]));
   const worktrees = arrangeSessions([...byId.keys()], worktreeOrder).flatMap((id) => byId.get(id) ?? []);
-  // Narrowed to the repositories picked that are in the list (one may come back: its working server reconnects, say).
-  const repos = repoChoices(worktrees);
-  const narrowed = repos.filter((r) => repoKeys.includes(r.key));
-  const listed = narrowed.length > 0 ? worktrees.filter((w) => narrowed.some((r) => r.key === repoKeyOf(w))) : worktrees;
+  // Narrowed to the repositories picked.
+  const listed = narrowWorktrees(worktrees, narrowed);
+  const openSession =
+    route.name === "session" ? machines.find((m) => m.id === route.machine)?.sessions.find((s) => s.sessionId === route.sessionId) : undefined;
+  // The worktree whose row is the open one (a folded category of a grouping still shows it).
+  const openWorktree =
+    route.name === "session"
+      ? openSession
+        ? worktreeId(route.machine, openSession)
+        : undefined
+      : route.name === "worktree"
+        ? worktreeKey(route.machine, route.path)
+        : undefined;
   // The plugins' sidebar items: between ホーム and 端末, in the plugins' order. Each opens a page of its plugin.
   const pluginItems = parts.flatMap(({ info, def }) =>
     (def.sidebar ?? []).map((item) => {
@@ -222,9 +255,19 @@ export function App() {
 
   // The plugin's categories, in the order dragged into (or held), each with its sessions as rows.
   const categories = listMode.kind === "plugin" ? arrangeCategories(listMode.categories, listPrefs, heldOrder) : [];
+  // The grouping's categories of the worktrees, in the order dragged into, or as held.
+  const worktreeCategories =
+    groupings.mode.kind === "grouped"
+      ? arrangeWorktreeCategories(groupings.mode.categories, groupingPrefs, heldWorktrees?.grouping === shownGrouping ? heldWorktrees : null)
+      : [];
   // While the pointer is over the list (on a phone, while the drawer is open), the order shown stays: the time a
-  // session was last used changes as Claude works, and its row would move away from under the pointer.
-  const holdList = (on: boolean) => setHeldOrder(on ? holdOrder(categories) : null);
+  // session was last used changes as Claude works, and its row would move away from under the pointer. A grouping's
+  // worktrees also stay in the categories they showed in: their state, and with it their category, changes as Claude
+  // works. What shows while waiting for the categories is not held.
+  const holdList = (on: boolean) => {
+    setHeldOrder(on ? holdOrder(categories) : null);
+    setHeldWorktrees(on && shownGrouping && groupings.mode.kind === "grouped" ? holdWorktreeList(shownGrouping, worktreeCategories) : null);
+  };
   const openKey = route.name === "session" ? sessionKey(route.machine, route.sessionId) : undefined;
   const shownByKey = new Map(machines.flatMap((m) => m.sessions.filter((s) => s.managed).map((s) => [sessionKey(m.id, s.sessionId), { m, s }] as const)));
   const listWorktrees = new Map(listContext.worktrees.map((w) => [w.key, w]));
@@ -301,14 +344,72 @@ export function App() {
     };
   });
 
+  // A worktree's row, in Gasho's list and in a grouping's categories: its state (a bell in its place while a session
+  // has a notification not read), its name, the line under it (its repository, and its working server when there are
+  // several, unless the grouping gave another or none), and whether it waits for an answer or is offline.
+  const worktreeRow = (w: WorktreeSessions, line?: string): SidebarItem => ({
+    id: w.id,
+    label: w.label,
+    description: line === undefined ? [w.repo, machines.length > 1 ? w.machine.name : undefined].filter(Boolean).join(" · ") || undefined : line || undefined,
+    icon: <StatusDot {...worktreeDot(w, unreadOnes)} />,
+    badge: !w.machine.connected ? "オフライン" : w.sessions.some((s) => s.status === "waiting") ? "確認" : undefined,
+  });
+  const groupingWorktrees = new Map(groupingContext.worktrees.map((w) => [w.key, w]));
+  const groupingFolded = new Set(groupingPrefs.folded ?? []);
+  const worktreeGroups: SidebarGroup[] = worktreeCategories.map((c) => {
+    const isFolded = groupingFolded.has(c.id);
+    const rows = c.worktrees.flatMap((item) => {
+      const w = byId.get(item.key);
+      return w ? [{ item, w }] : [];
+    });
+    const waiting = rows.filter(({ w }) => w.machine.connected && w.sessions.some((s) => s.status === "waiting")).length;
+    const target = c.launch ? groupingWorktrees.get(c.launch) : undefined;
+    const canLaunch = target !== undefined && target.machine.connected && target.machine.canLaunch === true;
+    return {
+      id: c.id,
+      title: c.title,
+      description: c.description,
+      hint: c.hint,
+      // Folded, a category still tells that a worktree in it waits for an answer.
+      badge: isFolded && waiting > 0 ? `確認 ${waiting}` : undefined,
+      icon: <FolderGit2 />,
+      action: canLaunch
+        ? {
+            label: `${c.title} で新しいセッションを起動`,
+            icon: launchingIn === target.key ? <LoaderCircle className="animate-spin" /> : <Plus />,
+            onClick: () => void launchIn(target),
+          }
+        : undefined,
+      folded: isFolded,
+      onFoldedChange: (f) => changeGroupingPrefs((p) => withFolded(p, c.id, f)),
+      // Folded, only the open worktree's row shows (where the person is).
+      items: rows.filter(({ w }) => !isFolded || w.id === openWorktree).map(({ item, w }) => worktreeRow(w, item.description)),
+      sort: isFolded
+        ? undefined
+        : { onReorder: (keys) => changeGroupingPrefs((p) => withSessionOrder(p, c.id, keys, worktreeCategories.map((x) => x.id))) },
+    };
+  });
+  // A grouping's categories show in place of the rows (none yet while waiting for them); the order dragged into and
+  // "最後に使った順に戻す" are then the grouping's.
+  const grouped = groupings.mode.kind !== "flat";
+  const notices = [
+    listMode.kind === "gasho" && listMode.failed ? `${listMode.failed} の一覧を出せないので、worktree を並べています（理由はプラグインの画面に）。` : undefined,
+    groupings.mode.kind === "flat" && groupings.mode.failed
+      ? `${groupings.mode.failed} の分け方を使えないので、worktree を分けずに並べています（理由はプラグインの画面に）。`
+      : undefined,
+  ].filter(Boolean);
   const worktreeSection: SidebarSection = {
     // Shown even without sessions, for its "＋".
     title: narrowed.length > 0 ? `worktree · ${narrowed.map((r) => r.name).join("、")}` : "worktree",
-    notice: listMode.kind === "gasho" && listMode.failed ? `${listMode.failed} の一覧を出せないので、worktree を並べています（理由はプラグインの画面に）。` : undefined,
+    notice: notices.length > 0 ? notices.join(" ") : undefined,
     action: { label: "新しいセッション", icon: <Plus />, onClick: () => openLaunch() },
-    secondaryAction: worktreeOrder
-      ? { label: "最後に使った順に戻す", icon: <ListRestart />, onClick: () => setWorktreeOrder(undefined) }
-      : undefined,
+    secondaryAction: grouped
+      ? hasOrder(groupingPrefs)
+        ? { label: "最後に使った順に戻す", icon: <ListRestart />, onClick: () => changeGroupingPrefs(withoutOrder) }
+        : undefined
+      : worktreeOrder
+        ? { label: "最後に使った順に戻す", icon: <ListRestart />, onClick: () => setWorktreeOrder(undefined) }
+        : undefined,
     tools: (
       <RepoFilter
         choices={repos}
@@ -316,19 +417,19 @@ export function App() {
         onPick={setRepoKeys}
         onRegister={() => setReposOpen(true)}
         machineNames={machines.length > 1}
+        groupings={groupings.options}
+        grouping={groupings.picked}
+        onGroup={groupings.pick}
       />
     ),
-    sort: {
-      onReorder: (ids) => setWorktreeOrder(rememberSessions(reorderShown(worktrees.map((w) => w.id), ids), worktreeOrder)),
-    },
-    items: listed.map((w) => ({
-      id: w.id,
-      label: w.label,
-      // The working server too, when there are several.
-      description: [w.repo, machines.length > 1 ? w.machine.name : undefined].filter(Boolean).join(" · ") || undefined,
-      icon: <StatusDot {...worktreeDot(w, unreadOnes)} />,
-      badge: !w.machine.connected ? "オフライン" : w.sessions.some((s) => s.status === "waiting") ? "確認" : undefined,
-    })),
+    sort: grouped
+      ? undefined
+      : {
+          onReorder: (ids) => setWorktreeOrder(rememberSessions(reorderShown(worktrees.map((w) => w.id), ids), worktreeOrder)),
+        },
+    items: grouped ? [] : listed.map((w) => worktreeRow(w)),
+    groups: grouped ? worktreeGroups : undefined,
+    groupSort: grouped ? { onReorder: (ids) => changeGroupingPrefs((p) => withCategoryOrder(p, ids)) } : undefined,
   };
   // The plugin's categories (none yet while waiting for it). The repositories need no narrowing there; registering
   // them stays.
@@ -362,15 +463,11 @@ export function App() {
     },
     listMode.kind === "gasho" ? worktreeSection : categorySection,
   ];
-  const openSession =
-    route.name === "session" ? machines.find((m) => m.id === route.machine)?.sessions.find((s) => s.sessionId === route.sessionId) : undefined;
   const activeId =
     route.name === "session"
       ? listMode.kind !== "gasho"
         ? sessionKey(route.machine, route.sessionId)
-        : openSession
-          ? worktreeId(route.machine, openSession)
-          : ""
+        : (openWorktree ?? "")
       : route.name === "worktree"
         ? worktreeKey(route.machine, route.path)
         : route.name === "plugin"
@@ -484,6 +581,7 @@ export function App() {
       </div>
       <PluginBadgeProbes />
       <PluginSessionListProbe ctx={listContext} />
+      <PluginWorktreeGroupingProbe ctx={groupingContext} off={listMode.kind !== "gasho"} />
       <SessionActionDialog
         request={sessionAction}
         onClose={() => setSessionAction(null)}

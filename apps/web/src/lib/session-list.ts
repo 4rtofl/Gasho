@@ -1,7 +1,9 @@
 // The sidebar's sessions in a plugin's categories, in place of the list of worktrees (docs/plugins.md, P17): what the
 // plugin gets (sessionListContext), what of its answer is kept (normalizeCategories), the order the person dragged
 // things into put over the plugin's (arrangeCategories), and which list the sidebar shows meanwhile (sessionListMode).
-// Pure, so that it can be tested; plugins/session-list.tsx runs the plugin's hook, App draws the result.
+// Pure, so that it can be tested; plugins/session-list.tsx runs the plugin's hook, App draws the result. The checks of
+// the answer's text, the preferences and their changes, and the count of changes serve the worktrees' categories of
+// P18 too (lib/worktree-groupings).
 import type { SessionListContext, SessionListSession, SessionListWorktree } from "@gasho/plugin-sdk";
 import type { MachineInfo } from "@gasho/protocol";
 import { arrangeSessions, rememberSessions } from "./order.ts";
@@ -32,9 +34,9 @@ export interface ListedSession {
   description?: string;
 }
 
-/** What a plugin gets: Gasho's worktrees (as worktreesByLastUse gives them, without those only this browser keeps). */
-export function sessionListContext(worktrees: readonly WorktreeSessions[], machines: MachineInfo[]): SessionListContext {
-  const listed: SessionListWorktree[] = worktrees.map((w) => ({
+/** A worktree as plugins get it (P17, and P18's lib/worktree-groupings). */
+export function listWorktreeOf(w: WorktreeSessions): SessionListWorktree {
+  return {
     key: w.id,
     machine: w.machine,
     path: w.path,
@@ -44,7 +46,12 @@ export function sessionListContext(worktrees: readonly WorktreeSessions[], machi
     sessions: w.sessions,
     ...(w.repo ? { repoName: w.repo } : {}),
     registered: w.registered,
-  }));
+  };
+}
+
+/** What a plugin gets: Gasho's worktrees (as worktreesByLastUse gives them, without those only this browser keeps). */
+export function sessionListContext(worktrees: readonly WorktreeSessions[], machines: MachineInfo[]): SessionListContext {
+  const listed = worktrees.map(listWorktreeOf);
   const sessions: SessionListSession[] = worktrees
     .flatMap((w) => w.sessions.map((session) => ({ machine: w.machine, session, worktree: w.id, lastUsed: lastUsed(session) })))
     .sort((a, b) => b.lastUsed - a.lastUsed || sessionKey(a.machine.id, a.session.sessionId).localeCompare(sessionKey(b.machine.id, b.session.sessionId)));
@@ -52,14 +59,14 @@ export function sessionListContext(worktrees: readonly WorktreeSessions[], machi
 }
 
 /** At most this many categories are kept; a category's id, title and descriptions at most this long. */
-const MAX_CATEGORIES = 200;
-const MAX_ID = 500;
-const MAX_TITLE = 80;
-const MAX_HINT = 300;
+export const MAX_CATEGORIES = 200;
+export const MAX_ID = 500;
+export const MAX_TITLE = 80;
+export const MAX_HINT = 300;
 
-const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+export const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 /** A string of one line, clipped; undefined when there is none. */
-function text(v: unknown, max: number): string | undefined {
+export function text(v: unknown, max: number): string | undefined {
   if (typeof v !== "string") return undefined;
   const line = v.replace(/[\p{Cc}\s]+/gu, " ").trim();
   return line ? Array.from(line).slice(0, max).join("") : undefined;
@@ -109,14 +116,23 @@ export function normalizeCategories(given: unknown, ctx: SessionListContext): Li
   return out;
 }
 
-/** What this browser keeps of the plugin's list: the orders the person dragged things into, and the folded categories. */
-export interface SessionListPrefs {
+/**
+ * What this browser keeps of a list in categories (P17's sessions, P18's worktrees): the orders the person dragged things
+ * into, and the folded categories.
+ */
+export interface CategoryPrefs {
   /** Category ids, in the order dragged into. */
   categories?: string[];
-  /** Per category id: its session keys, in the order dragged into. */
+  /**
+   * Per category id: the keys of its rows (sessions in P17, worktrees in P18), in the order dragged into. Named after
+   * P17's rows, as its saved preferences have it.
+   */
   sessions?: Record<string, string[]>;
   folded?: string[];
 }
+
+/** What this browser keeps of the plugin's session list (P17). */
+export type SessionListPrefs = CategoryPrefs;
 
 /** An order to keep for a while, as the list showed it (while the pointer is over it): category ids, and session keys per category. */
 export interface HeldOrder {
@@ -153,12 +169,12 @@ export function holdOrder(shown: readonly ListedCategory[]): HeldOrder {
 const MAX_SAVED_CATEGORIES = 100;
 
 /** The preferences once the categories were dragged into the order `ids` (all of them are shown). */
-export function withCategoryOrder(prefs: SessionListPrefs, ids: readonly string[]): SessionListPrefs {
+export function withCategoryOrder(prefs: CategoryPrefs, ids: readonly string[]): CategoryPrefs {
   return { ...prefs, categories: rememberSessions(ids, prefs.categories) };
 }
 
-/** The preferences once the sessions of a category were dragged into the order `keys`. `current`: the categories now. */
-export function withSessionOrder(prefs: SessionListPrefs, category: string, keys: readonly string[], current: readonly string[]): SessionListPrefs {
+/** The preferences once the rows of a category were dragged into the order `keys`. `current`: the categories now. */
+export function withSessionOrder(prefs: CategoryPrefs, category: string, keys: readonly string[], current: readonly string[]): CategoryPrefs {
   const sessions = { ...prefs.sessions, [category]: rememberSessions(keys, prefs.sessions?.[category]) };
   const saved = Object.keys(sessions);
   if (saved.length > MAX_SAVED_CATEGORIES) {
@@ -170,17 +186,17 @@ export function withSessionOrder(prefs: SessionListPrefs, category: string, keys
   return { ...prefs, sessions };
 }
 
-export function withFolded(prefs: SessionListPrefs, category: string, folded: boolean): SessionListPrefs {
+export function withFolded(prefs: CategoryPrefs, category: string, folded: boolean): CategoryPrefs {
   const rest = (prefs.folded ?? []).filter((id) => id !== category);
   return { ...prefs, folded: folded ? [...rest, category].slice(-MAX_CATEGORIES) : rest };
 }
 
 /** "最後に使った順に戻す": the dragged orders go; the folded categories stay. */
-export function withoutOrder(prefs: SessionListPrefs): SessionListPrefs {
+export function withoutOrder(prefs: CategoryPrefs): CategoryPrefs {
   return prefs.folded?.length ? { folded: prefs.folded } : {};
 }
 
-export function hasOrder(prefs: SessionListPrefs): boolean {
+export function hasOrder(prefs: CategoryPrefs): boolean {
   return Boolean(prefs.categories?.length || Object.keys(prefs.sessions ?? {}).length);
 }
 

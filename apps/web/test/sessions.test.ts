@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { GashoNotification, MachineInfo, SessionInfo } from "@gasho/protocol";
 import {
+  narrowWorktrees,
   rememberedOf,
   repoChoices,
   repoKeyOf,
@@ -9,7 +10,9 @@ import {
   tabAfterRemoval,
   unreadSessions,
   worktreeDot,
+  worktreeLastUsed,
   worktreesByLastUse,
+  worktreeStatus,
 } from "../src/lib/sessions.ts";
 
 const session = (sessionId: string, extra: Partial<SessionInfo> = {}): SessionInfo => ({
@@ -155,6 +158,38 @@ test("a registered repository's other worktrees follow those with sessions, and 
       [repoKeyOf(list[4]!), "lib"],
     ],
   );
+});
+
+test("a worktree's state is its most pressing session's, unknown offline or without sessions; its last use, its session used last", () => {
+  const w = (statuses: SessionInfo["status"][], connected = true) => ({
+    machine: { ...machine("mac", []), connected },
+    sessions: statuses.map((status, i) => session(`s${i}`, { status, startedAt: i, lastActivityAt: 100 + i })),
+  });
+  assert.equal(worktreeStatus(w(["idle", "busy"])), "busy");
+  assert.equal(worktreeStatus(w(["busy", "waiting", "idle"])), "waiting");
+  assert.equal(worktreeStatus(w(["idle"])), "idle");
+  assert.equal(worktreeStatus(w(["unknown"])), "unknown");
+  assert.equal(worktreeStatus(w([])), "unknown");
+  assert.equal(worktreeStatus(w(["waiting"], false)), "unknown");
+  assert.equal(worktreeLastUsed(w(["idle", "busy", "idle"])), 102);
+  assert.equal(worktreeLastUsed(w([])), undefined);
+});
+
+test("the worktrees narrowed to the repositories picked keep their order; none picked keeps them all", () => {
+  const app = { path: "/src/app", repo: "/src/app", branch: "main" };
+  const machines = [
+    machine("mac", [
+      session("a", { worktree: app, lastActivityAt: 300 }),
+      session("b", { cwd: "/src/lib", worktree: { path: "/src/lib", repo: "/src/lib", branch: "main" }, lastActivityAt: 200 }),
+      // Outside a repository: never in a repository picked.
+      session("c", { cwd: "/tmp/notes", lastActivityAt: 100 }),
+    ]),
+  ];
+  const all = worktreesByLastUse(machines);
+  const choices = repoChoices(all);
+  assert.deepEqual(narrowWorktrees(all, []).map((w) => w.path), ["/src/app", "/src/lib", "/tmp/notes"]);
+  assert.deepEqual(narrowWorktrees(all, choices.filter((r) => r.name === "lib")).map((w) => w.path), ["/src/lib"]);
+  assert.deepEqual(narrowWorktrees([...all].reverse(), choices).map((w) => w.path), ["/src/lib", "/src/app"]);
 });
 
 test("a worktree's dot is its most pressing session's, gray without sessions, and a bell while a session of it has an unread notification", () => {

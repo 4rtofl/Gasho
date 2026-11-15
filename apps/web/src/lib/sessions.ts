@@ -33,8 +33,7 @@ export function worktreeDot(w: WorktreeSessions, unread: ReadonlySet<string>): D
   const unreadOne = w.sessions.some((s) => unread.has(unreadKey(w.machine.id, s.sessionId)));
   if (!w.machine.connected) return { status: "unknown", unread: unreadOne };
   if (w.sessions.length === 0) return { status: "none", unread: false };
-  const status = (["waiting", "busy", "idle"] as const).find((st) => w.sessions.some((s) => s.status === st)) ?? "unknown";
-  return { status, unread: unreadOne };
+  return { status: worktreeStatus(w), unread: unreadOne };
 }
 
 const byStart = (a: SessionInfo, b: SessionInfo) => (a.startedAt ?? 0) - (b.startedAt ?? 0) || a.sessionId.localeCompare(b.sessionId);
@@ -136,7 +135,7 @@ export function worktreesByLastUse(machines: MachineInfo[], remembered: Remember
   }
   const worktrees = [...byId.values()];
   for (const w of worktrees) w.sessions.sort(byStart);
-  const latest = (w: WorktreeSessions) => Math.max(...w.sessions.map(lastUsed));
+  const latest = (w: WorktreeSessions) => worktreeLastUsed(w) ?? 0;
   worktrees.sort((a, b) => latest(b) - latest(a) || a.id.localeCompare(b.id));
   for (const machine of machines) {
     for (const r of machine.repos ?? []) {
@@ -174,6 +173,21 @@ export function worktreesByLastUse(machines: MachineInfo[], remembered: Remember
   return worktrees;
 }
 
+/**
+ * A worktree's state in the sidebar: that of its most pressing session, waiting for an answer, then working, then idle.
+ * "unknown" while its working server is offline, and without sessions (whose dot worktreeDot tells apart, "none").
+ * Its row's dot (worktreeDot) and a grouping's context (docs/plugins.md, P18) take it from here.
+ */
+export function worktreeStatus(w: Pick<WorktreeSessions, "machine" | "sessions">): SessionStatus {
+  if (!w.machine.connected) return "unknown";
+  return (["waiting", "busy", "idle"] as const).find((st) => w.sessions.some((s) => s.status === st)) ?? "unknown";
+}
+
+/** When a worktree was last used: when its session used last was. Undefined without sessions. */
+export function worktreeLastUsed(w: Pick<WorktreeSessions, "sessions">): number | undefined {
+  return w.sessions.length > 0 ? Math.max(...w.sessions.map(lastUsed)) : undefined;
+}
+
 /** What the sidebar keeps of a worktree once its sessions are gone. */
 export function rememberedOf(w: WorktreeSessions): RememberedWorktree {
   return { machine: w.machine.id, path: w.path, label: w.label, subfolders: w.subfolders, ...known(w) };
@@ -199,6 +213,16 @@ export function repoChoices(worktrees: WorktreeSessions[]): RepoChoice[] {
     if (key && !byKey.has(key)) byKey.set(key, { key, name: w.repo ?? basename(w.repoFolder ?? ""), machine: w.machine });
   }
   return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name) || a.machine.name.localeCompare(b.machine.name));
+}
+
+/** The worktrees in the repositories `picked` (of repoChoices), in the order given; all of them when none is picked. */
+export function narrowWorktrees<W extends WorktreeSessions>(worktrees: readonly W[], picked: readonly RepoChoice[]): W[] {
+  if (picked.length === 0) return [...worktrees];
+  const keys = new Set(picked.map((r) => r.key));
+  return worktrees.filter((w) => {
+    const key = repoKeyOf(w);
+    return key !== undefined && keys.has(key);
+  });
 }
 
 /** A registered repository's name, as the sidebar shows it. */

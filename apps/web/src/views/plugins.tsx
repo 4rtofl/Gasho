@@ -37,7 +37,7 @@ const permissionsText = (permissions: readonly string[] | undefined) =>
 const needsApi = (api: string) => `この Gasho では使えません（プラグインの API ${api} が要ります）。`;
 
 export function PluginsView() {
-  const { infos, errors, loading } = usePluginRegistry();
+  const { infos, parts, errors, loading } = usePluginRegistry();
   const { machines, catalog, connected } = useAppState();
   const [adding, setAdding] = useState<CatalogPlugin>();
   const [removing, setRemoving] = useState<PluginInfo>();
@@ -50,6 +50,14 @@ export function PluginsView() {
   const installed = new Set(infos.map((i) => i.id));
   const available = (catalog?.plugins ?? []).filter((p) => !installed.has(p.id)).sort((a, b) => a.name.localeCompare(b.name, "ja"));
   const [themeInUse, ...othersEnabled] = enabledThemes(infos);
+  // The sidebar's session list is the first such plugin's (P17); another's is not used.
+  const [listInUse, ...otherLists] = parts.filter((p) => p.def.sessionList);
+  const noteOf = (info: PluginInfo) =>
+    themeInUse && othersEnabled.some((t) => t.id === info.id)
+      ? `テーマが2つ以上有効です。当てているのは ${themeInUse.manifest.name} です。使わないテーマを無効にしてください。`
+      : listInUse && otherLists.some((p) => p.info.id === info.id)
+        ? `サイドバーのセッションの一覧を決めるプラグインが2つ以上有効です。使っているのは ${listInUse.info.manifest.name} の一覧です。`
+        : undefined;
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 p-4 md:p-6">
       <div className="flex items-start justify-between gap-3">
@@ -81,11 +89,7 @@ export function PluginsView() {
                 loadError={errors[info.id]}
                 loading={Boolean(loading[info.id])}
                 update={updates.get(info.id)}
-                themeNote={
-                  themeInUse && othersEnabled.some((t) => t.id === info.id)
-                    ? `テーマが2つ以上有効です。当てているのは ${themeInUse.manifest.name} です。使わないテーマを無効にしてください。`
-                    : undefined
-                }
+                note={noteOf(info)}
                 onRemove={() => setRemoving(info)}
               />
             ))}
@@ -147,7 +151,7 @@ function PluginCard({
   loadError,
   loading,
   update,
-  themeNote,
+  note,
   onRemove,
 }: {
   info: PluginInfo;
@@ -156,8 +160,8 @@ function PluginCard({
   loading: boolean;
   /** The catalog's newer version of it. */
   update?: CatalogPlugin;
-  /** Why this enabled theme is not the one in use. */
-  themeNote?: string;
+  /** Why this enabled plugin is not used in full: a theme or a session list that another one's stands in for. */
+  note?: string;
   onRemove: () => void;
 }) {
   const [busy, setBusy] = useState<"change" | "update">();
@@ -233,7 +237,7 @@ function PluginCard({
 
       {problem && <p className="text-xs text-red-400">{problem}</p>}
       {error && <p className="text-xs text-red-400">{error}</p>}
-      {themeNote && <p className="text-xs text-amber-400">{themeNote}</p>}
+      {note && <p className="text-xs text-amber-400">{note}</p>}
       {permissionsText(m.permissions) && <p className="text-xs text-muted-foreground">{permissionsText(m.permissions)}</p>}
       {m.daemon && (
         <DaemonMachines info={info} machines={machines} busy={Boolean(busy)} onChange={(machinesValue) => void run({ type: "plugin.machines", plugin: info.id, machines: machinesValue })} />

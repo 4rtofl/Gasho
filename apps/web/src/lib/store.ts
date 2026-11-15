@@ -78,6 +78,8 @@ export interface State {
   catalog?: PluginCatalog;
   /** The latest published versions, as the Gasho server looked them up (absent when it does not). */
   latest?: LatestVersions;
+  /** Whether the Gasho server's first snapshot came: before it, the lists above are empty for not being known yet. */
+  synced: boolean;
 }
 
 const PAGE_SIZE = 80;
@@ -100,6 +102,7 @@ const EMPTY: Omit<State, "auth"> = {
   dirs: {},
   files: {},
   plugins: [],
+  synced: false,
 };
 let state: State = { auth: "checking", ...EMPTY };
 const listeners = new Set<() => void>();
@@ -352,6 +355,7 @@ function handle(m: HubToClient): void {
         plugins: m.plugins ?? [],
         catalog: m.catalog,
         latest: m.latest,
+        synced: true,
       });
       break;
     case "latest":

@@ -1,4 +1,5 @@
-// What can be done to a session from its tab above the session: rename it, fork it, or remove it. The menu opens with a
+// What can be done to a session from its tab above the session, or from its row in the sidebar when a plugin's
+// categories list the sessions there (docs/plugins.md, P17): rename it, fork it, or remove it. The menu opens with a
 // right-click (a long press on a touch screen, the context menu key on a keyboard). Each item opens a dialog, which the
 // app keeps at its top (SessionActionDialog): it stays open while the tabs redraw, and when a fork opens in their place.
 import { GitFork, Pencil, Trash2 } from "lucide-react";
@@ -9,9 +10,11 @@ import { BUTTON_DANGER, BUTTON_PRIMARY, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG
 import { sessionLabel } from "@/lib/format";
 import { go, useRoute } from "@/lib/route";
 import { forkName, MAX_SESSION_NAME, nameProblem } from "@/lib/session-names";
+import { hidesSessionTabs } from "@/lib/session-list";
 import { daemonAtLeast, tabAfterRemoval, worktreeId, worktreesByLastUse } from "@/lib/sessions";
 import { sendCommand, useAppState } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import { useSessionListMode } from "@/plugins/session-list";
 
 export type SessionAction = "rename" | "fork" | "remove";
 
@@ -97,12 +100,18 @@ export function SessionContextMenu({
   );
 }
 
-/** The dialog for a picked menu item. */
-export function SessionActionDialog({ request, onClose }: { request: SessionActionRequest | null; onClose: () => void }) {
+/** The session to open once the open one is removed, when the sidebar lists the sessions (its next row there). */
+export type RowAfterRemoval = (machine: string, sessionId: string) => { machine: string; sessionId: string } | undefined;
+
+/**
+ * The dialog for a picked menu item. `rowAfter`: while a plugin's categories list the sessions in the sidebar, the row
+ * that opens once the open session is removed (else the tab next to it).
+ */
+export function SessionActionDialog({ request, onClose, rowAfter }: { request: SessionActionRequest | null; onClose: () => void; rowAfter?: RowAfterRemoval }) {
   if (!request) return null;
   // A new pick starts a fresh dialog.
   const key = `${request.action}/${request.machine.id}/${request.session.sessionId}`;
-  if (request.action === "remove") return <RemoveDialog key={key} request={request} onClose={onClose} />;
+  if (request.action === "remove") return <RemoveDialog key={key} request={request} onClose={onClose} rowAfter={rowAfter} />;
   return <NameDialog key={key} request={request} onClose={onClose} />;
 }
 
@@ -233,9 +242,10 @@ function NameDialog({ request: { action, machine, session }, onClose }: DialogPr
 }
 
 /** Removing a session: its Claude Code ends, and its conversation stays on the working server. */
-function RemoveDialog({ request: { machine, session }, onClose }: DialogProps) {
+function RemoveDialog({ request: { machine, session }, onClose, rowAfter }: DialogProps & { rowAfter?: RowAfterRemoval }) {
   const route = useRoute();
   const { machines } = useAppState();
+  const tabsHidden = hidesSessionTabs(useSessionListMode());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   // What the session is doing now (it may have started working since the menu was opened).
@@ -245,21 +255,24 @@ function RemoveDialog({ request: { machine, session }, onClose }: DialogProps) {
   const remove = async () => {
     setBusy(true);
     setError(undefined);
-    // Its worktree's tabs as they are before it goes.
+    // Its worktree's tabs, and its neighbours in the sidebar, as they are before it goes.
     const m = machines.find((x) => x.id === machine.id);
     const worktree = m && worktreesByLastUse([m]).find((w) => w.id === worktreeId(machine.id, live));
+    const row = rowAfter?.(machine.id, session.sessionId);
     const r = await sendCommand(machine.id, { type: "session.remove", sessionId: session.sessionId }, REMOVE_WAIT_MS);
     setBusy(false);
     if (!r.ok) {
       setError(r.error ?? "削除できませんでした。");
       return;
     }
-    // The open session is gone: the tab next to it opens in place of its page, or the worktree once it has no tab.
+    // The open session is gone: the row after it in the sidebar's category, or the tab next to it, opens in place of
+    // its page, or the worktree once there is none.
     if (route.name === "session" && route.machine === machine.id && route.sessionId === session.sessionId) {
-      const next = worktree && tabAfterRemoval(worktree, session.sessionId);
+      const tab = worktree && tabAfterRemoval(worktree, session.sessionId);
+      const next = rowAfter ? row : tab && { machine: machine.id, sessionId: tab.sessionId };
       go(
         next
-          ? { name: "session", machine: machine.id, sessionId: next.sessionId }
+          ? { name: "session", machine: next.machine, sessionId: next.sessionId }
           : { name: "worktree", machine: machine.id, path: worktree?.path ?? live.worktree?.path ?? live.cwd },
         { replace: true },
       );
@@ -274,7 +287,7 @@ function RemoveDialog({ request: { machine, session }, onClose }: DialogProps) {
       {live.pendingInputs ? `送信待ちの ${live.pendingInputs} 件は送りません。` : ""}
     </>,
     machine.canResume ? (
-      <>会話の記録は {machine.name} に残ります。タブの左の過去の会話から開き直せます。</>
+      <>会話の記録は {machine.name} に残ります。{tabsHidden ? "セッションの画面の上の行の、左の" : "タブの左の"}過去の会話から開き直せます。</>
     ) : (
       <>
         会話の記録は {machine.name} に残ります。端末で <code className="font-mono text-[0.92em]">claude --resume</code> を使うと開き直せます。

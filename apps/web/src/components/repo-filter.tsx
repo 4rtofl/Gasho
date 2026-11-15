@@ -1,5 +1,6 @@
 // The repository the sidebar's worktrees are narrowed to, picked from a menu at the right of their title. The menu also
-// opens the dialog that registers repositories with a working server (repos-dialog).
+// opens the dialog that registers repositories with a working server (repos-dialog). While a plugin's categories list
+// the sessions instead (docs/plugins.md, P17), they need no narrowing: a button opens that dialog alone.
 import { Check, FolderGit2, ListFilter } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
 import { useRef } from "react";
@@ -83,5 +84,14 @@ export function RepoFilter({
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
+  );
+}
+
+/** The button that opens the dialog registering repositories, in place of the menu while a plugin's categories show. */
+export function RegisterRepos({ onRegister }: { onRegister: () => void }) {
+  return (
+    <button type="button" onClick={onRegister} aria-label="リポジトリを登録・解除…" title="リポジトリを登録・解除…" className={SECTION_BUTTON}>
+      <FolderGit2 />
+    </button>
   );
 }

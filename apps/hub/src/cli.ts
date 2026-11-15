@@ -15,7 +15,7 @@ import { commandOf, type Install, installOf, launcherIn, type Layout, layoutOf, 
 import { switchCurrent, writeJson } from "./launcher.ts";
 import { LatestCheck, npmBin, npmLatest } from "./latest.ts";
 import { buildAllowList } from "./netallow.ts";
-import { PluginRegistry, readPluginFolder, removePluginFolder, swapPluginFolder } from "./plugins.ts";
+import { PLUGIN_API, PluginRegistry, readPluginFolder, removePluginFolder, swapPluginFolder } from "./plugins.ts";
 import { beginTrial, checkVersion, currentVersion, HubUpdater, installVersion } from "./self-update.ts";
 import { createServer } from "./server.ts";
 import {
@@ -89,6 +89,20 @@ export function webBuildOf(webDist: string): string | undefined {
   try {
     const b = (JSON.parse(fs.readFileSync(path.join(webDist, "build.json"), "utf8")) as { build?: unknown }).build;
     return typeof b === "string" && b.length > 0 && b.length <= 100 ? b : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The commit a clone runs (short SHA). Read once at the start: a later git pull does not change the running code. */
+function commitOf(repo: string): string | undefined {
+  try {
+    const sha = execFileSync("git", ["-C", repo, "rev-parse", "--short", "HEAD"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5000,
+    }).trim();
+    return /^[0-9a-f]{4,40}$/.test(sha) ? sha : undefined;
   } catch {
     return undefined;
   }
@@ -195,11 +209,13 @@ async function start(): Promise<void> {
   // The latest published versions, with npm and the user's .npmrc (GASHO_LATEST_CHECK=off: not looked up).
   const npm = npmBin();
   const latest = process.env.GASHO_LATEST_CHECK === "off" ? undefined : new LatestCheck({ lookup: (name) => npmLatest(npm, name) });
-  // The Gasho server itself for browsers: its version, the build of the screen it serves, its update.
+  // The Gasho server itself for browsers: its version (with a clone's commit), its plugin API, the build of the screen
+  // it serves, its update.
+  const commit = install.kind === "repo" ? commitOf(install.repo) : undefined;
   const serverSource: ServerSource = {
     info: () => {
       const web = webBuildOf(cfg.webDist);
-      return { version: HUB_VERSION, ...(web ? { web } : {}), update: updater.info() };
+      return { version: HUB_VERSION, ...(commit ? { commit } : {}), pluginApi: PLUGIN_API, ...(web ? { web } : {}), update: updater.info() };
     },
     update: (version) => updater.start(version),
     subscribe: (l) => {

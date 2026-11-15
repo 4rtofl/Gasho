@@ -11,7 +11,6 @@ import type {
   MachineHookEvent,
   MachineInfo,
   PairingCode,
-  PluginMachines,
   SessionInfo,
 } from "@gasho/protocol";
 import { hashSecret, newPairingCode, newToken, normalizeCode, PAIRING_CODE_TTL_MS, sameHash } from "./auth.ts";
@@ -222,27 +221,23 @@ export class Store {
 
   // ---- plugins ----
 
-  /** Whether a plugin is enabled and where its daemon part runs; undefined for one never changed (enabled, everywhere). */
-  pluginState(id: string): { enabled: boolean; machines: PluginMachines } | undefined {
-    const r = this.db.prepare("SELECT enabled, machines FROM plugins WHERE id = ?").get(id) as Row | undefined;
-    if (!r) return undefined;
-    let machines: PluginMachines = "all";
-    try {
-      const m = JSON.parse(String(r.machines)) as unknown;
-      if (Array.isArray(m) && m.every((x) => typeof x === "string")) machines = m;
-    } catch {
-      // "all"
-    }
-    return { enabled: Number(r.enabled) === 1, machines };
+  /** Whether a plugin is enabled; undefined for one never changed (enabled). */
+  pluginState(id: string): { enabled: boolean } | undefined {
+    const r = this.db.prepare("SELECT enabled FROM plugins WHERE id = ?").get(id) as Row | undefined;
+    return r ? { enabled: Number(r.enabled) === 1 } : undefined;
   }
 
-  setPluginState(id: string, state: { enabled: boolean; machines: PluginMachines }): void {
+  /**
+   * The column machines held where the daemon part ran, when that could be chosen; the daemon part now runs on every
+   * working server, and "all" is written for an older Gasho server that reads it.
+   */
+  setPluginState(id: string, state: { enabled: boolean }): void {
     this.db
       .prepare(
-        `INSERT INTO plugins (id, enabled, machines) VALUES (?, ?, ?)
+        `INSERT INTO plugins (id, enabled, machines) VALUES (?, ?, '"all"')
          ON CONFLICT(id) DO UPDATE SET enabled = excluded.enabled, machines = excluded.machines`,
       )
-      .run(id, state.enabled ? 1 : 0, JSON.stringify(state.machines));
+      .run(id, state.enabled ? 1 : 0);
   }
 
   /** The settings of a plugin that the Gasho server keeps (scope "server"), as saved. */

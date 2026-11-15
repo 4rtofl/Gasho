@@ -15,6 +15,7 @@ import {
   FolderGit2,
   FolderMinus,
   FolderPlus,
+  FolderX,
   GitFork,
   GripHorizontal,
   Hand,
@@ -682,6 +683,7 @@ const OPERATION_ICONS: Record<string, LucideIcon> = {
   "Gasho:repo.register": FolderGit2,
   "Gasho:repo.unregister": FolderMinus,
   "Gasho:file.write": FilePen,
+  "Gasho:worktree.remove": FolderX,
   "Gasho:plugin.call": Puzzle,
   "Gasho:plugin.enable": Puzzle,
   "Gasho:plugin.machines": Puzzle,
@@ -694,8 +696,8 @@ const OPERATION_ICONS: Record<string, LucideIcon> = {
 
 /**
  * What Gasho was asked to do lately: starting, forking, renaming and removing sessions, instructions and stops, the
- * folders made and repositories cloned to start sessions in, the repositories registered and taken off, and the files
- * saved or made in sessions' folders (the Gasho server's records).
+ * folders made and repositories cloned to start sessions in, the repositories registered and taken off, the worktrees
+ * removed, and the files saved or made in sessions' folders (the Gasho server's records).
  */
 function Operations({ events, machines, now }: { events: MachineHookEvent[]; machines: MachineInfo[]; now: number }) {
   const items = events
@@ -793,6 +795,11 @@ function operationText(e: MachineHookEvent): string {
   if (e.event === "Gasho:session.fork") return summary ? `フォーク：${summary}` : "フォークした";
   if (e.event === "Gasho:session.remove") return summary ? `削除：${summary}` : "セッションを削除した";
   if (e.event === "Gasho:session.end") return `Gasho の外の会話を終了：${summary}`;
+  // "/path [branch: b] [force] [sessions: a, b] [via: plugin]": the worktree's folder, by its last name.
+  if (e.event === "Gasho:worktree.remove") {
+    const dir = summary.replace(/(\s*\[(branch|sessions|via): [^\]]*\]|\s*\[force\])+$/, "");
+    return `worktree を削除${/\[force\]/.test(summary) ? "（変更を捨てて）" : ""}：${dir.split("/").filter(Boolean).pop() ?? dir}`;
+  }
   // "[allow] Bash npm test": the answer, then the tool and what it was asked for. "[answer] Color → Blue": Claude's
   // questions answered; "[approve] title", "[revise] what to change": a plan approved, or sent back.
   if (e.event === "Gasho:permission.answer") {

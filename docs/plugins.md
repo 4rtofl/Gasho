@@ -151,10 +151,10 @@ GitHub プラグインの場合は、次のようになる。
 | `name`、`description` | 画面に出す名前（40文字まで）と説明 |
 | `genre` | ジャンルの ID。GashoPlugins のプラグインでは必ず書き、GashoPlugins の `genres.json` にあるジャンル（連携の `integration`、開発ツールの `devtools` など）から1つ選ぶ。GashoPlugins の GitHub Actions が、Pull request と main への push のたびに確かめる。プラグインの画面は、カードにジャンルの名前を出し、「GashoPlugins にあるもの」をジャンルごとに分けて並べる（P9）。ジャンルの名前と並びは、カタログから読む（P10）。Gasho サーバーは、ID の形だけを確かめる |
 | `version` | プラグインの版（1.2.0 の形）。GashoPlugins に新しい版を出すときに上げる。プラグインの画面は、カタログの版が入れた版より新しいときに「更新」を出す。ホットリロードで入れ替えるかは、版ではなく中身のハッシュで判断する |
-| `api` | プラグインが前提にする、プラグインの API の版。Gasho は、メジャーが同じで、マイナーが Gasho の対応する版以下のものだけを読み込む。daemon の部分は、マイナーがその gasho-daemon の版以下の working server でだけ使える（それより古い gasho-daemon は「古い」と出す）。拡張点を足すなど、前の版のプラグインがそのまま動く変更ではマイナーを上げ、動かなくなる変更ではメジャーを上げる。1.1 で、`session.launch`、`useLaunchSession`、`useNavigation` の `openSession`、daemon の部分の `ctx.folders()` と `ctx.dataDir` を足した。1.2 で、会話の末尾（P13、`conversationEnd`）と `useSessionActivity` を足した。1.3 で、daemon の部分の `ctx.github` を足した。1.4 で、入力欄の下（P14、`composerFooter`）、SDK の `Popover`、`SessionInfo` の `context` と `limits` を足し、プラグイン専用のフォルダーで動く Claude Code をセッションとして扱わないようにした。1.5 で、daemon の部分の `ctx.emit` と画面の部分の `useEvent`（P8）、worktree のタブ（P15、`worktreeTabs`・`worktreeViews`）、`useNavigation` の `worktreeHref`・`openWorktreeView` を足した。1.6 で、テーマ（P16、`theme`）を足した。1.7 で、サイドバーのセッションの一覧（P17、`sessionList`）を足した。1.8 で、サイドバーの worktree の一覧の分け方（P18、`worktreeGroupings`）を足した。1.9 で、分け方の `useOnMove` と、`useSharedState` を足した |
+| `api` | プラグインが前提にする、プラグインの API の版。Gasho は、メジャーが同じで、マイナーが Gasho の対応する版以下のものだけを読み込む。daemon の部分は、マイナーがその gasho-daemon の版以下の working server でだけ使える（それより古い gasho-daemon は「古い」と出す）。拡張点を足すなど、前の版のプラグインがそのまま動く変更ではマイナーを上げ、動かなくなる変更ではメジャーを上げる。1.1 で、`session.launch`、`useLaunchSession`、`useNavigation` の `openSession`、daemon の部分の `ctx.folders()` と `ctx.dataDir` を足した。1.2 で、会話の末尾（P13、`conversationEnd`）と `useSessionActivity` を足した。1.3 で、daemon の部分の `ctx.github` を足した。1.4 で、入力欄の下（P14、`composerFooter`）、SDK の `Popover`、`SessionInfo` の `context` と `limits` を足し、プラグイン専用のフォルダーで動く Claude Code をセッションとして扱わないようにした。1.5 で、daemon の部分の `ctx.emit` と画面の部分の `useEvent`（P8）、worktree のタブ（P15、`worktreeTabs`・`worktreeViews`）、`useNavigation` の `worktreeHref`・`openWorktreeView` を足した。1.6 で、テーマ（P16、`theme`）を足した。1.7 で、サイドバーのセッションの一覧（P17、`sessionList`）を足した。1.8 で、サイドバーの worktree の一覧の分け方（P18、`worktreeGroupings`）を足した。1.9 で、分け方の `useOnMove` と、`useSharedState` を足した。1.10 で、`useRemoveWorktree`、`removeWorktreeProblem`、`permissions` の `worktree.remove` を足した。gasho-daemon は、1.5 から 1.10 を名乗るようにした（`worktree.remove` に答えるのはこの gasho-daemon からなので、api 1.10 の daemon の部分は、これより古い gasho-daemon では「古い」と出る） |
 | `web`、`daemon` | 画面の部分と daemon の部分のファイル。`web`・`daemon`・`theme` のうち、少なくとも1つは要る |
 | `methods` | 画面の部分から呼べる、daemon の部分のメソッド。`kind` は、読むだけのもの（`read`）か、何かを変えるもの（`write`）か。`write` の呼び出しは操作のログに残す。`timeoutSeconds` は待つ時間で、既定は15秒、長くても120秒まで |
-| `permissions` | 読む・出す以外に、画面の部分がすること。`session.input`（セッションに発言を送る）と `session.launch`（セッションを起動する。API 1.1） |
+| `permissions` | 読む・出す以外に、画面の部分がすること。`session.input`（セッションに発言を送る）、`session.launch`（セッションを起動する。API 1.1）、`worktree.remove`（worktree を中のセッションとともに削除する。API 1.10） |
 | `settings` | 設定の項目（P5） |
 | `theme` | テーマ（P16）の、名前と CSS の値 |
 
@@ -613,6 +613,8 @@ function useMoveToHeading() {
 | `useNavigation()` | このプラグインのページとパネルを開く・閉じる・戻る。ホームのタイルのようにセッションの外からは、セッションを指定してパネルを開く。`<a href>` に入れる URL も作る。`openSession(machine, sessionId)` と `sessionHref(…)` で、Gasho のセッションの画面に移る（API 1.1）。`openWorktreeView(画面, 引数, at)` と `worktreeHref(…)` で、worktree のタブの画面を開く（API 1.5、P15） |
 | `useSendInput()` | セッションに発言を送る関数を返す。引数は `{ machine, sessionId, text }`。`permissions` に `session.input` が要る。入力欄から送ったときと同じく、会話の末尾にすぐ出し、操作のログに残す |
 | `useLaunchSession()` | working server のフォルダーでセッションを起動する関数を返す（API 1.1）。引数は `{ machine, cwd, name, trust }`。`permissions` に `session.launch` が要る。「新しいセッション」と同じく起動し、操作のログに残す。Claude Code がフォルダーを信頼するかを聞いたときは起動せず、`needsTrust` を返す。利用者に確かめてから `trust: true` で呼び直す |
+| `useRemoveWorktree()` | worktree を、中のセッションとともに削除する関数を返す（API 1.10）。`permissions` に `worktree.remove` が要る。サイドバーの worktree の行の「削除…」と同じく、gasho-daemon が中のセッションを終え（Gasho の外で起動したものも）、`git worktree remove` で消し、操作のログに残す。下の「worktree の削除」を参照 |
+| `removeWorktreeProblem(machine, { path, repo })` | worktree を削除できない理由（人に見せる文）。削除できるなら `undefined`（API 1.10）。リポジトリの外（`repo` が無い）、リポジトリの main の worktree（`path` が `repo`）、オフラインの working server、worktree を削除できない古い gasho-daemon（`MachineInfo.canRemoveWorktree` が無い）のときに理由を返す。サイドバーのメニューも、これで項目を押せなくする |
 | `useSessionActivity(machine, sessionId)` | セッションがいまの作業を始めた時刻（`turnStartedAt`）と、動いているツール（`tool`）（API 1.2、P13） |
 | `useNow(ミリ秒)` | 一定の間隔で変わる現在の時刻。「3分前」の表示を更新するために使う |
 | `githubRepos(session)` | セッションのフォルダーか、その中のリポジトリのうち、GitHub にあるもの |
@@ -632,6 +634,30 @@ function useMoveToHeading() {
 | `Popover` | ボタンから開く小さな画面（API 1.4）。開くボタン（`trigger`）、開く向き（`side`、`align`）、読み上げる名前（`label`）、クラス（`className`）を受け取る。開いているかをプラグインが持つときは、`open` と `onOpenChange` も渡す。Esc、外を押す、ボタンをもう一度押すと閉じる。モーダルにしないので、後ろの会話はスクロールできる。中身は、開いているあいだだけ描く |
 
 型（`MachineInfo`、`SessionInfo`、`GitHubRepo` など）は、`@gasho/protocol` のものを SDK から使う。
+
+### worktree の削除（API 1.10）
+
+`useRemoveWorktree()` が返す関数は、次の引数を取り、Promise で結果を返す。サイドバーの確認のダイアログも、同じものを使う。
+
+```ts
+interface RemoveWorktreeInput {
+  machine: string;
+  path: string;       // worktree の最上位のフォルダー（WorktreeInfo.path）
+  branch?: string;    // 入れると、worktree を消したあとにこのローカルのブランチも消す（worktree が checkout しているブランチでなければ断る）
+  force?: boolean;    // 未コミットの変更や push していない commit があっても消す
+  pushed?: string[];  // push 済みとして数える commit の SHA（7〜40桁、100個まで）。マージした Pull request の head など
+}
+type RemoveWorktreeResult =
+  | { ok: true; sessions: string[]; warning?: string }
+  | { ok: false; error: string; changes?: { uncommitted: number; unpushed: number }; sessions?: string[] };
+```
+
+- `sessions` は、終えた（Gasho から外した）セッションの ID。失敗したときは、止まるまでに終えたもの
+- `changes` は、未コミットの変更（未追跡のファイルを含む）か、どのリモートにも `pushed` にも無い commit のために消さなかったときだけ入る。利用者に件数を見せて確かめてから、`force: true` で呼び直す
+- `pushed` に渡した commit とその前の commit は、push 済みとして数える。squash でマージして GitHub のブランチを消した Pull request でも、手元の commit がその head までなら、`force` 無しで消せる
+- 一緒に終わるセッションを先に見せるときは、`machine.sessions` のうち `cwd` が `path` か、その中にあるものを出す（Gasho の外で起動したものを含む）。`WorktreeInfo.sessions` は Gasho が起動したものだけである
+- 消えたあとは、サイドバーがその worktree を忘れる。画面がその worktree（その画面、プラグインの worktree のタブを含む）か、中にあったセッションを出していれば、Gasho がホームへ移る。プラグインのページ（`#/p/…`）では移らない。`warning`（ブランチを消せなかったなど）は、Gasho が画面の上の帯にも出す
+- 消せない worktree は、`removeWorktreeProblem` で先に見分けて、ボタンを押せなくする
 
 ### すべてのブラウザーで共通の値（API 1.9）
 

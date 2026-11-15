@@ -101,6 +101,7 @@ import {
 } from "./sessions.ts";
 import { SessionTerminals, Terminals } from "./terminal.ts";
 import { foldersRepos, RegisteredRepos } from "./repos.ts";
+import { changesProblem, removableWorktree, removeWorktree, worktreeChanges } from "./worktrees.ts";
 import { listSkills } from "./skills.ts";
 import { conversationFacts, emptyMeta, pastConversations, readTranscript, TranscriptTail, type TranscriptMeta } from "./transcript.ts";
 import type { SessionWire } from "./plugin-ipc.ts";
@@ -709,6 +710,7 @@ export class Daemon {
       features: [...INPUT_FEATURES],
       canResume: true,
       canEnd: true,
+      canRemoveWorktree: true,
       canListSkills: true,
       update: this.updater.info(),
     });
@@ -1000,6 +1002,7 @@ export class Daemon {
       case "repo.register":
       case "repo.unregister":
       case "file.write":
+      case "worktree.remove":
       case "daemon.update": {
         let result: CommandResult;
         try {
@@ -1064,6 +1067,9 @@ export class Daemon {
               break;
             case "file.write":
               result = await this.writeFile(m);
+              break;
+            case "worktree.remove":
+              result = await this.removeWorktree(m);
               break;
             case "daemon.update":
               result = this.updater.start(m.version);
@@ -1616,6 +1622,66 @@ export class Daemon {
     log(`removed session ${m.name} (${sessionId}); closed its terminal ${m.terminal}`);
     await this.refresh();
     return { ok: true };
+  }
+
+  /**
+   * Removes a worktree with the sessions in it (worktree.remove). Nothing is removed while the worktree has changes that
+   * would be lost (unless `force`), nor when a session in it does not end. Those started outside Gasho are ended first
+   * (that can fail); those started from Gasho are then removed as with remove. The changes are counted again after the
+   * sessions have ended, as a session may have written files meanwhile.
+   */
+  private async removeWorktree(m: Extract<HubToDaemon, { type: "worktree.remove" }>): Promise<CommandResult> {
+    const w = await removableWorktree(m.path);
+    if ("error" in w) return { ok: false, error: w.error };
+    if (m.branch !== undefined && m.branch !== w.branch) {
+      return { ok: false, error: `ブランチ ${m.branch} は、この worktree が checkout しているブランチではありません。` };
+    }
+    const check = async (): Promise<CommandResult | undefined> => {
+      if (m.force) return undefined;
+      const changes = await worktreeChanges(w.path, m.pushed);
+      const problem = changesProblem(changes);
+      return problem ? { ok: false, error: problem, changes } : undefined;
+    };
+    const refused = await check();
+    if (refused) return refused;
+    const own = this.managed
+      .all()
+      .filter((s) => isInside(s.cwd, w.path))
+      .map((s) => s.sessionId);
+    const outside = [...this.tracked.values()]
+      .filter((t) => isInside(t.info.cwd, w.path) && !this.managed.has(t.info.sessionId))
+      .map((t) => t.info.sessionId);
+    const ended: string[] = [];
+    if (outside.length > 0) {
+      const r = await this.end(outside);
+      ended.push(...(r.ended ?? []));
+      if (!r.ok || r.warning) {
+        return { ok: false, error: `${r.error ?? r.warning} worktree は削除していません。`, ...(ended.length > 0 ? { ended } : {}) };
+      }
+    }
+    const removed = await Promise.all(own.map((id) => this.remove(id)));
+    ended.push(...own.filter((_, i) => removed[i]!.ok));
+    const failed = own.filter((_, i) => !removed[i]!.ok);
+    if (failed.length > 0) {
+      return { ok: false, error: `終了できないセッションがあるため、worktree は削除していません：${failed.join("、")}`, ...(ended.length > 0 ? { ended } : {}) };
+    }
+    const late = await check();
+    if (late) return { ...late, ...(ended.length > 0 ? { ended } : {}) };
+    let warning: string | undefined;
+    try {
+      ({ warning } = await removeWorktree(w, { force: m.force === true, deleteBranch: m.branch !== undefined }));
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e), ...(ended.length > 0 ? { ended } : {}) };
+    }
+    log(
+      `removed worktree ${w.path}${m.branch !== undefined && !warning ? ` and branch ${m.branch}` : ""}${m.force ? " (forced)" : ""}` +
+        (ended.length > 0 ? `; ended ${ended.length} session(s)` : ""),
+    );
+    if (warning) log(warning);
+    this.repos.delete(w.path);
+    await this.refreshRepos();
+    void this.refreshFolders();
+    return { ok: true, ended, ...(warning ? { warning } : {}) };
   }
 
   private async input(m: Extract<HubToDaemon, { type: "session.input" }>): Promise<CommandResult> {

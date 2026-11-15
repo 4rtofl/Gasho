@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { FolderGit2, Home, KeyRound, ListRestart, LoaderCircle, Plus, Puzzle, Settings } from "lucide-react";
+import { FolderGit2, Home, KeyRound, ListRestart, LoaderCircle, Plus, Puzzle, Settings, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import type { SessionListWorktree } from "@gasho/plugin-sdk";
 import { ResizeHandle } from "@/components/resize-handle";
@@ -7,6 +7,8 @@ import { SessionHeaderToggle } from "@/components/session-header-toggle";
 import { RegisterRepos, RepoFilter } from "@/components/repo-filter";
 import { ReposDialog } from "@/components/repos-dialog";
 import { SessionActionDialog, SessionContextMenu, type SessionActionRequest } from "@/components/session-menu";
+import { RemoveWorktreeDialog, WorktreeContextMenu } from "@/components/worktree-menu";
+import { showNotice, useNotice } from "@/lib/notice";
 import { LAUNCH_WAIT_MS } from "@/components/session-tabs";
 import { StatusDot } from "@/components/status-badge";
 import { Sidebar, SidebarTrigger, useSidebar, type SidebarGroup, type SidebarItem, type SidebarMove, type SidebarSection } from "@/components/ui/sidebar";
@@ -183,6 +185,10 @@ export function App() {
   const [mobileOpen, setMobileOpen] = useState(false);
   // What was picked from a session tab's menu (rename, fork, remove); its dialog is open meanwhile.
   const [sessionAction, setSessionAction] = useState<SessionActionRequest | null>(null);
+  // The worktree whose row's menu picked "削除…"; its dialog is open meanwhile.
+  const [removingWorktree, setRemovingWorktree] = useState<WorktreeSessions | null>(null);
+  // What to tell once the screen it belonged to went away (a worktree removed with a warning).
+  const notice = useNotice();
   // The dialog that starts a new session, opened from the "＋" of the sidebar's worktree list.
   const [launchOpen, setLaunchOpen] = useState(false);
   // The dialog that registers repositories, opened from the menu that narrows the sidebar's worktrees.
@@ -378,6 +384,11 @@ export function App() {
     description: line === undefined ? [w.repo, machines.length > 1 ? w.machine.name : undefined].filter(Boolean).join(" · ") || undefined : line || undefined,
     icon: <StatusDot {...worktreeDot(w, unreadOnes)} />,
     badge: !w.machine.connected ? "オフライン" : w.sessions.some((s) => s.status === "waiting") ? "確認" : undefined,
+    wrap: (button: ReactElement) => (
+      <WorktreeContextMenu worktree={w} onPick={setRemovingWorktree}>
+        {button}
+      </WorktreeContextMenu>
+    ),
   });
   const groupingWorktrees = new Map(groupingContext.worktrees.map((w) => [w.key, w]));
   const groupingFolded = new Set(groupingPrefs.folded ?? []);
@@ -569,6 +580,14 @@ export function App() {
             </button>
           </div>
         )}
+        {notice && (
+          <div role="status" className="flex shrink-0 items-center gap-3 border-b border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs md:px-4">
+            <span className="min-w-0 flex-1 text-amber-200">{notice}</span>
+            <button type="button" onClick={() => showNotice(undefined)} aria-label="閉じる" className="grid size-6 shrink-0 place-items-center rounded-md text-amber-100 hover:bg-amber-500/10">
+              <X className="size-3.5" />
+            </button>
+          </div>
+        )}
         <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3 md:hidden">
           <SidebarTrigger
             onClick={() => {
@@ -644,6 +663,7 @@ export function App() {
             : undefined
         }
       />
+      <RemoveWorktreeDialog worktree={removingWorktree} onClose={() => setRemovingWorktree(null)} />
       <LaunchDialog
         open={launchOpen}
         initial={launchInitial}

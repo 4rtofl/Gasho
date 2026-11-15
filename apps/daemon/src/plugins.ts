@@ -15,8 +15,11 @@ import type { DaemonPluginEntry, DaemonPluginStatus, DaemonToHub, HubToDaemon } 
 import type { GitHubProxy } from "./github.ts";
 import type { FromHost, GitHubAnswer, LocalWire, MachineWire, SessionWire, ToHost } from "./plugin-ipc.ts";
 
-/** The plugin API this gasho-daemon runs plugins of. */
-export const PLUGIN_API = "1.5";
+/**
+ * The plugin API this gasho-daemon runs plugins of. A daemon part runs only where this is at least its manifest's
+ * `api`: 1.10, as worktree.remove (useRemoveWorktree) is answered only from this gasho-daemon on.
+ */
+export const PLUGIN_API = "1.10";
 /** The process of a daemon part: next to this file (.ts when run from the repository, .js in the npm package). */
 const HOST_FILE = fileURLToPath(new URL(`./plugin-host${path.extname(fileURLToPath(import.meta.url))}`, import.meta.url));
 /** How long a new process may take to import the plugin and run its `start`. */

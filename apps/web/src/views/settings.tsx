@@ -146,10 +146,11 @@ const COPIED_MS = 2000;
 function VersionsSection() {
   const { server, machines, latest } = useAppState();
   const rows = versionRows({ server, machines, latest, build: OWN_BUILD });
-  const [copied, setCopied] = useState<MorphingButtonStatus>("idle");
+  // A new object for each copy, so that copying again while it says how the last one went starts the time over.
+  const [copied, setCopied] = useState<{ status: MorphingButtonStatus }>({ status: "idle" });
   useEffect(() => {
-    if (copied === "idle") return;
-    const timer = setTimeout(() => setCopied("idle"), COPIED_MS);
+    if (copied.status === "idle") return;
+    const timer = setTimeout(() => setCopied({ status: "idle" }), COPIED_MS);
     return () => clearTimeout(timer);
   }, [copied]);
   const openUpdates = () => go({ name: "devices", section: "updates" });
@@ -165,14 +166,14 @@ function VersionsSection() {
           <p className="mt-0.5 text-xs text-muted-foreground">いま動いている Gasho のバージョンです。不具合を伝えるときは、まとめてコピーして貼ってください。</p>
         </div>
         <MorphingButton
-          status={copied}
+          status={copied.status}
           idleText="バージョンをコピー"
           successText="コピーしました"
           errorText="コピーできません"
           idleIcon={<Copy className="size-3.5" />}
           successIcon={<Check className="size-3.5" />}
           errorIcon={<CircleAlert className="size-3.5" />}
-          onClick={() => void copyToClipboard(versionsText(rows)).then((ok) => setCopied(ok ? "success" : "error"))}
+          onClick={() => void copyToClipboard(versionsText(rows)).then((ok) => setCopied({ status: ok ? "success" : "error" }))}
         />
       </div>
 

@@ -19,6 +19,8 @@ export const PLUGIN_API_MINOR = 7;
 export const PLUGIN_API = `${PLUGIN_API_MAJOR}.${PLUGIN_API_MINOR}`;
 
 export const ID_RE = /^[a-z][a-z0-9-]{1,31}$/;
+/** A genre's id (gasho-plugin.json `genre`, the catalog's `genres`): of the same form as a plugin's id. */
+export const GENRE_RE = ID_RE;
 export const VERSION_RE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 const API_RE = /^(\d+)\.(\d+)$/;
 const KEY_RE = /^[A-Za-z][\w-]{0,63}$/;
@@ -174,16 +176,21 @@ function themeError(theme: unknown, api: string): string | undefined {
  */
 export function checkManifest(raw: unknown, folder: string | undefined, files: ReadonlySet<string>): ManifestCheck {
   if (!isRecord(raw)) return { error: "gasho-plugin.json が JSON のオブジェクトではありません。" };
-  const { id, name, version, description, api, web, daemon, methods, permissions, settings, theme } = raw;
+  const { id, name, version, description, genre, api, web, daemon, methods, permissions, settings, theme } = raw;
   if (typeof id !== "string" || !ID_RE.test(id)) return { error: "id は、英小文字で始まり、英小文字・数字・- からなる2〜32文字にしてください。" };
   if (folder !== undefined && folder !== id) return { error: `フォルダーの名前（${folder}）と id（${id}）が違います。` };
   if (!isText(name, 40)) return { error: "name を40文字までで書いてください。" };
   if (typeof version !== "string" || !VERSION_RE.test(version)) return { error: "version は 1.2.0 の形で書いてください。" };
   if (description !== undefined && (typeof description !== "string" || description.length > 300)) return { error: "description は300文字までです。" };
+  // Which genres there are is up to the catalog (GashoPlugins' genres.json): any id of the right form is kept.
+  if (genre !== undefined && (typeof genre !== "string" || !GENRE_RE.test(genre))) {
+    return { error: "genre は、英小文字で始まり、英小文字・数字・- からなる2〜32文字のジャンルの ID にしてください。" };
+  }
   const wrongApi = apiProblem(api);
   if (wrongApi) return { error: wrongApi };
   const manifest: PluginManifest = { id, name: name.trim(), version, api: api as string };
   if (typeof description === "string" && description.trim()) manifest.description = description.trim();
+  if (typeof genre === "string") manifest.genre = genre;
   const fileOf = (v: unknown, what: string): string | { error: string } => {
     const rel = safeRelative(v);
     if (!rel) return { error: `${what} のファイルの指定が正しくありません。` };

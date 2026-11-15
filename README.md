@@ -195,7 +195,7 @@ Gasho の画面と gasho-daemon には、プラグインで機能を足せる。
 
 プラグインは、サイドバーの「プラグイン」の画面で、GashoPlugins にあるものから選んで追加する。GashoPlugins の GitHub Actions が、版を上げたプラグインをビルドしてリリースに置き、プラグインの一覧（カタログ）を作る。Gasho サーバーは、そのカタログとプラグインを、Gasho サーバーのマシンの GitHub CLI（gh）で取ってくる。Gasho サーバーのマシンで `gh auth login` を済ませておく。
 
-プラグインの画面では、プラグインを追加するほかに、有効・無効を切り替え、daemon の部分（working server で動く部分）を動かす working server を選び、カタログに新しい版があれば更新し、外すことができる。どれも、Gasho サーバーと gasho-daemon を起動し直さずに、開いている画面と gasho-daemon にすぐ反映する。daemon の部分は、プラグインに対応した gasho-daemon でだけ動く。古い gasho-daemon の working server では、プラグインの画面に「gasho-daemon が古い」と出る。
+プラグインの画面では、プラグインを追加するほかに、有効・無効をスイッチで切り替え、カタログに新しい版があれば更新し、外す（ゴミ箱のボタン）ことができる。GashoPlugins にあるプラグインは、ジャンル（連携、開発ツールなど）ごとに分けて出す。daemon の部分（working server で動く部分）は、有効なプラグインなら、すべての working server で動く。どれも、Gasho サーバーと gasho-daemon を起動し直さずに、開いている画面と gasho-daemon にすぐ反映する。daemon の部分は、プラグインに対応した gasho-daemon でだけ動く。古い gasho-daemon の working server では、プラグインの画面に「gasho-daemon が古い」と出る。
 
 作っているプラグインは、Gasho サーバーでコマンドを実行して入れる。
 

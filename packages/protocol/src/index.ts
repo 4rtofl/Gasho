@@ -548,6 +548,11 @@ export interface PluginManifest {
   name: string;
   version: string;
   description?: string;
+  /**
+   * The id of its genre, one of the genres of the catalog (PluginCatalog `genres`; GashoPlugins lists them in its
+   * genres.json, and its CI makes every plugin name one). Like `id`: 2-32 of a-z, 0-9 and "-", starting with a letter.
+   */
+  genre?: string;
   /** The version of the plugin API it is written for ("1.0"). */
   api: string;
   /** Its files, relative to its folder. */
@@ -613,14 +618,11 @@ export type PluginThemeName =
   | "neutral-950"
   | "radius";
 
-/** Where a plugin's daemon part runs: on every working server, or on those listed (machine ids). */
-export type PluginMachines = "all" | string[];
-
 /**
- * A plugin's daemon part on one working server. running: it runs. stopped: it is not running (yet, or any more).
- * off: the plugin is disabled, not chosen for this working server, or its gasho-daemon runs no plugins (GASHO_PLUGINS).
- * old: its gasho-daemon is too old for plugins. failed: it failed (`error` says why). offline: the working server is not
- * connected.
+ * A plugin's daemon part on one working server (it runs on every working server while the plugin is enabled).
+ * running: it runs. stopped: it is not running (yet, or any more). off: the plugin is disabled, or its gasho-daemon
+ * runs no plugins (GASHO_PLUGINS). old: its gasho-daemon is too old for plugins. failed: it failed (`error` says why).
+ * offline: the working server is not connected.
  */
 export type PluginDaemonState = "running" | "stopped" | "off" | "old" | "failed" | "offline";
 
@@ -631,7 +633,6 @@ export interface PluginInfo {
   /** Linked from a folder being developed (hub:plugin add --link). */
   dev: boolean;
   enabled: boolean;
-  machines: PluginMachines;
   /** The version in use: the hash of its files. Absent while no version of it can be used. */
   hash?: string;
   /** Where its web part is served (for that version). */
@@ -646,15 +647,13 @@ export interface PluginInfo {
 
 /**
  * Managing the plugins from a browser (answered with plugin.result). plugin.install: adds a plugin of the catalog and
- * enables it, its daemon part running on `machines`. plugin.update: replaces an installed plugin with the catalog's
- * newer version. plugin.remove: removes its files (only the link, for one being developed) and the settings the Gasho
- * server keeps for it.
+ * enables it. plugin.update: replaces an installed plugin with the catalog's newer version. plugin.remove: removes its
+ * files (only the link, for one being developed) and the settings the Gasho server keeps for it.
  */
 export type PluginCommand =
   | { type: "plugin.enable"; plugin: string; enabled: boolean }
-  | { type: "plugin.machines"; plugin: string; machines: PluginMachines }
   | { type: "plugin.setting"; plugin: string; key: string; value: unknown }
-  | { type: "plugin.install"; plugin: string; machines: PluginMachines }
+  | { type: "plugin.install"; plugin: string }
   | { type: "plugin.update"; plugin: string }
   | { type: "plugin.remove"; plugin: string };
 
@@ -664,6 +663,8 @@ export interface CatalogPlugin {
   name: string;
   version: string;
   description?: string;
+  /** The id of its genre (PluginManifest `genre`), one of the catalog's `genres`. */
+  genre?: string;
   /** The version of the plugin API it is written for. */
   api: string;
   permissions?: PluginPermission[];
@@ -677,6 +678,14 @@ export interface CatalogPlugin {
   size: number;
 }
 
+/** A genre of the catalog's plugins: the plugins screen shows its name on the cards and lists the plugins by genre. */
+export interface PluginGenre {
+  /** Like a plugin's id: 2-32 of a-z, 0-9 and "-", starting with a letter. */
+  id: string;
+  /** Its name on the plugins screen (up to 40 characters). */
+  name: string;
+}
+
 /** The catalog of plugins, as the Gasho server last read it (gh release download catalog). */
 export interface PluginCatalog {
   /** The repository it is read from (GASHO_PLUGIN_REPO). */
@@ -686,6 +695,8 @@ export interface PluginCatalog {
   /** When GashoPlugins made it (its updatedAt, ISO 8601). */
   updatedAt?: string;
   plugins: CatalogPlugin[];
+  /** The genres of its plugins, in the order the plugins screen lists them; absent when the catalog names none. */
+  genres?: PluginGenre[];
   /** Why the last reading failed; `plugins` are then those read before, if any. */
   error?: string;
   /** Being read now. */
@@ -697,7 +708,7 @@ export interface DaemonPluginEntry {
   id: string;
   /** The version of daemon.js to run (its hash); gasho-daemon asks for the code it does not have (plugin.code.get). */
   hash: string;
-  /** Whether to run it on this working server (enabled, and chosen for it). */
+  /** Whether to run it (it is enabled): on every working server alike. */
   run: boolean;
   /** The values of its settings with scope "server". */
   settings: Record<string, unknown>;

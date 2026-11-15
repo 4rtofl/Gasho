@@ -147,7 +147,7 @@ export function PluginsView() {
 
       <p className="text-xs text-muted-foreground">
         作っているプラグインは、Gasho サーバーで <code className="font-mono text-[0.92em]">npm run hub:plugin -- add --link &lt;dist フォルダー&gt;</code>{" "}
-        を実行して入れます。ビルドするたびに、画面と gasho-daemon が新しい版に入れ替わります。
+        を実行して入れます。ビルドするたびに、画面と gasho-daemon が新しいバージョンに入れ替わります。
       </p>
 
       {adding && <AddDialog plugin={adding} onClose={() => setAdding(undefined)} />}

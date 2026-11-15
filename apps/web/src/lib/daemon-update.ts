@@ -7,7 +7,7 @@ export const INSTALL_COMMAND = "npx @4rtoflow/gasho-daemon@latest service instal
 export const RESTART_SLOW_MS = 2 * 60_000;
 
 export const STEP_LABEL: Record<DaemonUpdateStep, string> = {
-  install: "新しい版を取り込んでいます",
+  install: "新しいバージョンを取り込んでいます",
   check: "起動できるか確かめています",
   wait: "送るのを待っている入力を、送り終えるまで待っています",
   restart: "切り替えて、動かし直しています",

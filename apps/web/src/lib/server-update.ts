@@ -8,11 +8,11 @@ import { compareVersions } from "./daemon-update.ts";
 export const HUB_INSTALL_COMMAND = "npx @4rtoflow/gasho-hub@latest service install";
 
 export const HUB_STEP_LABEL: Record<HubUpdateStep, string> = {
-  install: "新しい版を取り込んでいます",
+  install: "新しいバージョンを取り込んでいます",
   check: "起動できるか、データベースを開けるかを確かめています",
   drain: "処理中の命令が終わるのを待っています",
   restart: "切り替えて、起動し直しています",
-  trial: "新しい版を確かめています（1分ほど。起動できなければ、自動で前の版に戻ります）",
+  trial: "新しいバージョンを確かめています（1分ほど。起動できなければ、自動で前のバージョンに戻ります）",
 };
 
 /** The version the Gasho server can be updated to now, if any. */

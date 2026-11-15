@@ -512,7 +512,7 @@ export function App() {
         {outdated && (
           <div role="status" className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs md:px-4">
             <span className="min-w-0 flex-1 text-amber-200">
-              Gasho が新しい版になりました。書きかけの文やファイルを送るか写してから、読み込み直してください（読み込み直すと、書きかけは消えます）。
+              Gasho が新しいバージョンになりました。書きかけの文やファイルを送るか写してから、読み込み直してください（読み込み直すと、書きかけは消えます）。
             </span>
             <button type="button" onClick={reloadToNewBuild} className="shrink-0 rounded-md border border-amber-500/40 px-2.5 py-1 font-medium text-amber-100 hover:bg-amber-500/10">
               読み込み直す

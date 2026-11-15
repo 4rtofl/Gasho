@@ -165,7 +165,7 @@ async function load(info: PluginInfo): Promise<void> {
     removeSheet(sheet);
     const why = e instanceof Error ? e.message : String(e);
     console.error(`gasho: plugin ${id} (${hash}) could not be loaded`, e);
-    set({ errors: { ...state.errors, [id]: state.loaded[id] ? `新しい版を読み込めませんでした（前の版のまま動いています）：${why}` : `読み込めませんでした：${why}` } });
+    set({ errors: { ...state.errors, [id]: state.loaded[id] ? `新しいバージョンを読み込めませんでした（前のバージョンのまま動いています）：${why}` : `読み込めませんでした：${why}` } });
   } finally {
     if (loadingHash.get(id) === hash) {
       loadingHash.delete(id);

@@ -75,15 +75,30 @@ const WORKTREE_REPO_KEY = "gasho.worktreeRepo";
 /** Gasho's logo: 🙏 (合掌, gasshō). The collapsed sidebar shows the logo alone. */
 export const LOGO = "🙏";
 
+/** Gasho's site, served by Nakamaba from `nakamaba/`. */
+const SITE_URL = "https://d15rkbm4ghff09.cloudfront.net/gasho/";
+
+/** Opens Gasho's site in a new tab. Hovered as the footer's button, and the logo lines up with the items' icons. */
 function Brand() {
-  const { collapsed } = useSidebar();
+  const { collapsed, showTip } = useSidebar();
+  const tip = (e: { currentTarget: HTMLElement }) => showTip(e.currentTarget, "Gasho のサイト");
   return (
-    <div className="flex items-center gap-2 px-2.5 text-base font-semibold tracking-tight">
-      <span aria-hidden className="font-emoji text-lg leading-none">
+    <a
+      href={SITE_URL}
+      target="_blank"
+      rel="noreferrer"
+      aria-label="Gasho のサイトを新しいタブで開く"
+      onMouseEnter={tip}
+      onFocus={tip}
+      onMouseLeave={() => showTip(null)}
+      onBlur={() => showTip(null)}
+      className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-base font-semibold tracking-tight outline-none transition-colors hover:bg-neutral-100 focus-visible:ring-2 focus-visible:ring-neutral-400/50 dark:hover:bg-neutral-900 dark:focus-visible:ring-neutral-600/60"
+    >
+      <span aria-hidden className="grid size-5 shrink-0 place-items-center font-emoji text-lg leading-none">
         {LOGO}
       </span>
       {!collapsed && <span>Gasho</span>}
-    </div>
+    </a>
   );
 }
 

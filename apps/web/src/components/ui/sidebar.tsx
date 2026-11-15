@@ -4,7 +4,8 @@
 // session's context menu), a section's title can have buttons (`action`, for "＋", `secondaryAction`, and `tools`), the
 // items of a section can be put in another order by dragging them (`sort`), a section can hold groups of items under
 // headings of their own that fold (`groups`, a plugin's categories of sessions), which can be dragged too
-// (`groupSort`), and the width on a computer can be changed by dragging the right edge (`ResizeHandle`, lib/widths).
+// (`groupSort`), the width on a computer can be changed by dragging the right edge (`ResizeHandle`, lib/widths), and
+// the header can show the tooltip of the icon-only state (`useSidebar().showTip`).
 
 import * as React from "react";
 import { AnimatePresence, motion, useDragControls, type PanInfo } from "framer-motion";
@@ -101,7 +102,11 @@ export type SidebarSection = {
   groupSort?: SidebarSort;
 };
 
-const SidebarContext = React.createContext({ collapsed: false });
+const SidebarContext = React.createContext<{
+  collapsed: boolean;
+  /** Gasho: the tooltip of the icon-only state beside `el` (none when `el` is null), as an item's. */
+  showTip: (el: HTMLElement | null, label?: string) => void;
+}>({ collapsed: false, showTip: () => {} });
 /** Use inside `header` / `footer` to adapt to the icon-only state. */
 export const useSidebar = () => React.useContext(SidebarContext);
 
@@ -377,6 +382,17 @@ function Panel({
   const [hoverBox, setHoverBox] = React.useState<{ y: number; h: number } | null>(null);
   const [hovering, setHovering] = React.useState(false);
   const [tip, setTip] = React.useState<{ label: string; x: number; y: number } | null>(null);
+  const context = React.useMemo(
+    () => ({
+      collapsed,
+      showTip: (el: HTMLElement | null, label = "") => {
+        if (!el || !collapsed) return setTip(null);
+        const r = el.getBoundingClientRect();
+        setTip({ label, x: r.right + 10, y: r.top + r.height / 2 });
+      },
+    }),
+    [collapsed]
+  );
   const [open, setOpen] = React.useState<Set<string>>(
     () =>
       new Set(
@@ -722,13 +738,14 @@ function Panel({
   };
 
   return (
-    <SidebarContext.Provider value={{ collapsed }}>
+    <SidebarContext.Provider value={context}>
       <div className="flex h-full flex-col">
         {header && (
+          // Gasho: px-2 as the list's, for a header that is a row of its own (the logo, a link).
           <div
             className={cn(
-              "flex h-14 shrink-0 items-center overflow-hidden px-4 transition-all",
-              collapsed && "w-14 justify-center px-0 [&>div>*:not(:first-child)]:hidden [&>div]:gap-0 [&>*:not(:first-child)]:hidden"
+              "flex h-14 shrink-0 items-center overflow-hidden px-2 transition-all",
+              collapsed && "[&>div>*:not(:first-child)]:hidden [&>div]:gap-0 [&>*:not(:first-child)]:hidden"
             )}
           >
             {header}

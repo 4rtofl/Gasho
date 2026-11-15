@@ -1,7 +1,7 @@
 // The easter egg of the sidebar's logo (🙏, 合掌 gasshō), drawn by components/gassho.tsx: three taps on the logo, one to
 // three seconds apart, bring its 🙏 to the middle of a dimmed screen. Pressed and held, the 🙏's two halves (its hands)
-// part to the sides, reaching the screen's edges after five seconds; let go, they come back together with a clap
-// (lib/clap.ts), and a second later Gasho's site opens in this tab. What can be worked out without the page is here.
+// part to the sides, trembling, and reach the screen's edges after five seconds; let go, they come back together with a
+// clap (lib/clap.ts), and a second later Gasho's site opens in this tab. What can be worked out without the page is here.
 
 /** The taps on the logo that start it, each 1 s or more and less than 3 s after the one before. */
 export const TAPS = 3;
@@ -16,6 +16,11 @@ export const OPEN_AFTER_CLAP_MS = 1000;
 /** The 🙏's way (s) from the logo to the middle of the screen, and the screen dimming once it is there. */
 export const FLIGHT_S = 0.8;
 export const DIM_S = 0.3;
+/** How often (ms) the hands' trembling changes while they are held: about 30 times a second. */
+export const SHAKE_MS = 33;
+
+/** `value` within 0 to 1. */
+const unit = (value: number): number => Math.min(1, Math.max(0, value));
 
 /** A run of taps on the logo: how many so far, and when the last one was (ms). */
 export interface Taps {
@@ -49,12 +54,25 @@ export function edgeDistance(screenWidth: number, glyphSize: number): number {
 
 /** How long (s) the hands take from `spread` (0: together, 1: at the edges) to the edges, at the one speed. */
 export function holdDuration(spread: number): number {
-  return (Math.min(1, Math.max(0, 1 - spread)) * HOLD_TO_EDGE_MS) / 1000;
+  return (unit(1 - spread) * HOLD_TO_EDGE_MS) / 1000;
 }
 
 /** How long (s) the hands take to come back together for the clap from `spread`: quick, a little longer from afar. */
 export function clapDuration(spread: number): number {
-  return 0.08 + 0.12 * Math.min(1, Math.max(0, spread));
+  return 0.08 + 0.12 * unit(spread);
+}
+
+/**
+ * How far (px) each hand shifts at most, up and down and to the sides, trembling `spread` apart: from 1% of the 🙏's
+ * size (`glyphSize`) as they start to part, to 4% at the edges.
+ */
+export function shakeShift(spread: number, glyphSize: number): number {
+  return glyphSize * (0.01 + 0.03 * unit(spread));
+}
+
+/** How far (degrees) each hand turns at most, either way, trembling `spread` apart: from 1° to 3° at the edges. */
+export function shakeTurn(spread: number): number {
+  return 1 + 2 * unit(spread);
 }
 
 /** The 🙏's font size (px) in the middle of the screen: 36% of the screen's shorter side, at most 200 px. */

@@ -10,6 +10,8 @@ import {
   countTap,
   edgeDistance,
   holdDuration,
+  shakeShift,
+  shakeTurn,
   soundStart,
   type Taps,
 } from "../src/lib/gassho.ts";
@@ -68,6 +70,19 @@ test("the hands come back together quickly, a little longer from afar", () => {
   assert.equal(clapDuration(1), 0.2);
   assert.ok(clapDuration(0.5) > clapDuration(0.25));
   assert.equal(clapDuration(2), 0.2);
+});
+
+test("the hands tremble more as they part: 1% to 4% of the 🙏's size, turning 1° to 3°", () => {
+  const near = (a: number, b: number) => Math.abs(a - b) < 1e-9;
+  assert.ok(near(shakeShift(0, 200), 2));
+  assert.ok(near(shakeShift(1, 200), 8));
+  assert.ok(near(shakeShift(0.5, 140), 3.5));
+  assert.ok(near(shakeShift(2, 200), 8));
+  assert.ok(near(shakeShift(-1, 200), 2));
+  assert.equal(shakeTurn(0), 1);
+  assert.equal(shakeTurn(0.5), 2);
+  assert.equal(shakeTurn(1), 3);
+  assert.equal(shakeTurn(3), 3);
 });
 
 test("the 🙏 in the middle is 36% of the screen's shorter side, at most 200 px", () => {

@@ -51,7 +51,7 @@ export function StatusDot({ status, unread = false }: { status: DotStatus; unrea
       // As big as the dot, the bell a little bigger over it, so that what is beside it does not move.
       <span role="img" aria-label={UNREAD} title={UNREAD} className="relative inline-flex size-2.5">
         <motion.span
-          className="absolute -inset-0.5 flex text-foreground"
+          className="absolute -inset-0.5 flex text-amber-500"
           animate={reduceMotion ? undefined : SHAKE}
           transition={{ duration: 0.5, ease: "easeInOut" }}
         >

@@ -34,6 +34,17 @@ export function useWindowWidth(): number {
   );
 }
 
+/** Whether the page can be seen: not in a tab behind another one, nor in a minimized window. */
+export function usePageVisible(): boolean {
+  return useSyncExternalStore(
+    (l) => {
+      document.addEventListener("visibilitychange", l);
+      return () => document.removeEventListener("visibilitychange", l);
+    },
+    () => document.visibilityState === "visible",
+  );
+}
+
 /** Whether the screen is a computer's right now (outside React). */
 export function isDesktop(): boolean {
   return matches(DESKTOP);

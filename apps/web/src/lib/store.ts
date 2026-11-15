@@ -1,5 +1,5 @@
 // Client state, kept in sync with gasho-hub over /ws/client.
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import type {
   ClientToHub,
   CommandResult,
@@ -22,6 +22,7 @@ import type {
 import { fetchMe } from "./api";
 import { hasDrafts } from "./drafts";
 import { hasUnsavedFiles } from "./file-drafts";
+import { usePageVisible } from "./media";
 import { type AutoReload, onOutOfDate, outOfDate } from "./server-update";
 
 /** Close code the Gasho server uses when this browser is not (or no longer) registered. */
@@ -638,6 +639,20 @@ export function checkLatest(): void {
 
 export function markRead(ids: string[]): void {
   if (ids.length > 0) send({ type: "notification.read", ids });
+}
+
+/**
+ * While a session is open and the page can be seen, its notifications are read, those that come meanwhile too (on
+ * every browser: the Gasho server keeps it). Those that came while the page was hidden are read once it is seen again,
+ * and those that could not be sent while disconnected once the Gasho server's snapshot brings them back.
+ */
+export function useReadWhileOpen(machine: string | undefined, sessionId: string | undefined): void {
+  const { notifications } = useAppState();
+  const visible = usePageVisible();
+  useEffect(() => {
+    if (!visible || !machine || !sessionId) return;
+    markRead(notifications.filter((n) => !n.read && n.machine === machine && n.sessionId === sessionId).map((n) => n.id));
+  }, [visible, machine, sessionId, notifications]);
 }
 
 /** The state now, outside React (the plugins' loader follows it). */

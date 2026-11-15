@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { MachineInfo, SessionInfo } from "@gasho/protocol";
-import { rememberedOf, repoChoices, repoKeyOf, tabAfterRemoval, worktreesByLastUse } from "../src/lib/sessions.ts";
+import type { GashoNotification, MachineInfo, SessionInfo } from "@gasho/protocol";
+import {
+  rememberedOf,
+  repoChoices,
+  repoKeyOf,
+  sessionDot,
+  tabAfterRemoval,
+  unreadSessions,
+  worktreeDot,
+  worktreesByLastUse,
+} from "../src/lib/sessions.ts";
 
 const session = (sessionId: string, extra: Partial<SessionInfo> = {}): SessionInfo => ({
   sessionId,
@@ -146,4 +155,48 @@ test("a registered repository's other worktrees follow those with sessions, and 
       [repoKeyOf(list[4]!), "lib"],
     ],
   );
+});
+
+test("a worktree's dot is its most pressing session's, gray without sessions, and a bell while a session of it has an unread notification", () => {
+  const note = (machine: string, sessionId: string, read: boolean): GashoNotification => ({
+    id: `${machine}-${sessionId}-${read}`,
+    machine,
+    sessionId,
+    at: 0,
+    kind: "done",
+    title: "",
+    read,
+  });
+  const app = { path: "/src/app", repo: "/src/app", branch: "main" };
+  const lib = { path: "/src/lib", repo: "/src/lib", branch: "main" };
+  const mac = machine("mac", [
+    session("a", { cwd: "/src/app", worktree: app, status: "idle" }),
+    session("b", { cwd: "/src/app", worktree: app, status: "busy" }),
+    session("c", { cwd: "/src/lib", worktree: lib, status: "idle" }),
+  ]);
+  const gone = { machine: "mac", path: "/src/old", label: "feat/old", subfolders: true };
+  const dots = (notes: GashoNotification[], machines = [mac]) => {
+    const unread = unreadSessions(notes);
+    return worktreesByLastUse(machines, [gone]).map((w) => `${w.label} ${w.path}: ${worktreeDot(w, unread).status} ${worktreeDot(w, unread).unread}`);
+  };
+
+  // A notification read, or one of a session of the same id on another working server, rings no bell.
+  assert.deepEqual(dots([note("mac", "a", true), note("ubuntu", "c", false)]), [
+    "main /src/app: busy false",
+    "main /src/lib: idle false",
+    "feat/old /src/old: none false",
+  ]);
+  assert.deepEqual(dots([note("mac", "a", false)]), [
+    "main /src/app: busy true",
+    "main /src/lib: idle false",
+    "feat/old /src/old: none false",
+  ]);
+  // Offline, the state cannot be told, but what was not read stays so.
+  const offline = { ...mac, connected: false };
+  assert.deepEqual(dots([note("mac", "c", false)], [offline]), [
+    "main /src/app: unknown false",
+    "main /src/lib: unknown true",
+    "feat/old /src/old: unknown false",
+  ]);
+  assert.deepEqual(sessionDot(offline, offline.sessions[2]!, unreadSessions([note("mac", "c", false)])), { status: "unknown", unread: true });
 });

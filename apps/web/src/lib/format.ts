@@ -38,9 +38,9 @@ export const STATUS_LABEL: Record<SessionStatus, string> = {
 };
 
 export const STATUS_TONE: Record<SessionStatus, BadgeTone> = {
-  busy: "success",
+  busy: "warning",
   waiting: "warning",
-  idle: "neutral",
+  idle: "success",
   unknown: "neutral",
 };
 

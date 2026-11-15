@@ -13,8 +13,8 @@ import { StatusDot } from "@/components/status-badge";
 import { sessionLabel } from "@/lib/format";
 import { go, type WorktreeView } from "@/lib/route";
 import { hidesSessionTabs } from "@/lib/session-list";
-import type { WorktreeSessions } from "@/lib/sessions";
-import { sendCommand } from "@/lib/store";
+import { sessionDot, unreadSessions, type WorktreeSessions } from "@/lib/sessions";
+import { sendCommand, useAppState } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { PluginWorktreeTabs } from "@/plugins/parts";
 import { useSessionListMode } from "@/plugins/session-list";
@@ -74,6 +74,7 @@ export function SessionTabs({
   }, []);
   const { canLaunch, launching, error, launch } = useWorktreeLaunch(worktree);
   const hidden = hidesSessionTabs(useSessionListMode());
+  const unread = unreadSessions(useAppState().notifications);
 
   return (
     <>
@@ -102,7 +103,7 @@ export function SessionTabs({
                     open ? "text-foreground after:bg-foreground" : "text-muted-foreground hover:text-foreground",
                   )}
                 >
-                  <StatusDot status={machine.connected ? s.status : "unknown"} />
+                  <StatusDot {...sessionDot(machine, s, unread)} />
                   <span className="truncate">{sessionLabel(s)}</span>
                   {/* Work Claude started that runs on in the background (listed above the chat box, where it can be stopped). */}
                   {machine.connected && s.background?.length ? (

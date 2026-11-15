@@ -2,7 +2,6 @@ import { motion } from "framer-motion";
 import { FolderGit2, Home, KeyRound, ListRestart, LoaderCircle, Plus, Puzzle, Settings } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import type { SessionListWorktree } from "@gasho/plugin-sdk";
-import type { SessionStatus } from "@gasho/protocol";
 import { ResizeHandle } from "@/components/resize-handle";
 import { SessionHeaderToggle } from "@/components/session-header-toggle";
 import { RegisterRepos, RepoFilter } from "@/components/repo-filter";
@@ -41,13 +40,15 @@ import {
   rememberedOf,
   repoChoices,
   repoKeyOf,
+  sessionDot,
   sessionToOpen,
+  unreadSessions,
+  worktreeDot,
   worktreeId,
   worktreeKey,
   worktreesByLastUse,
-  type WorktreeSessions,
 } from "@/lib/sessions";
-import { reloadToNewBuild, sendCommand, useAppState } from "@/lib/store";
+import { reloadToNewBuild, sendCommand, useAppState, useReadWhileOpen } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { PANEL_WIDTH_MAX, PANEL_WIDTH_MIN, clampPanelWidth, defaultPanelWidth, usePanelWidth } from "@/lib/widths";
 import { PluginBadgeProbes, PluginPageView, PluginPanelView, usePluginBadges } from "@/plugins/parts";
@@ -67,12 +68,6 @@ import { WorktreeView } from "@/views/worktree";
 /** Where this browser keeps the order the sidebar's worktrees were dragged into, and the repositories they are narrowed to. */
 const WORKTREE_ORDER_KEY = "gasho.worktreeOrder";
 const WORKTREE_REPO_KEY = "gasho.worktreeRepo";
-
-/** A worktree's status in the sidebar: that of its most pressing session. */
-function worktreeStatus(w: WorktreeSessions): SessionStatus {
-  if (!w.machine.connected) return "unknown";
-  return (["waiting", "busy", "idle"] as const).find((st) => w.sessions.some((s) => s.status === st)) ?? "unknown";
-}
 
 /** Gasho's logo: 🙏 (合掌, gasshō). The collapsed sidebar shows the logo alone. */
 export const LOGO = "🙏";
@@ -196,12 +191,14 @@ export function App() {
   // The category whose "＋" is starting a session, and what the dialog opens with when that did not work.
   const [launchingIn, setLaunchingIn] = useState<string>();
   const [launchInitial, setLaunchInitial] = useState<LaunchInitial>();
+  useReadWhileOpen(route.name === "session" ? route.machine : undefined, route.name === "session" ? route.sessionId : undefined);
 
   if (auth === "checking") return <Centered>読み込み中…</Centered>;
   if (auth === "unreachable") return <Centered>Gasho サーバーにつながりません。再試行しています…</Centered>;
   if (auth === "unregistered") return <PairView />;
 
   const unread = notifications.filter((n) => !n.read && notificationShown(n, machines)).length;
+  const unreadOnes = unreadSessions(notifications);
   // The worktrees of all working servers in one list: the one used last first, then those without sessions, or in the
   // order they were dragged into (worktrees that got their first session since then come first).
   const byId = new Map(worktreesByLastUse(machines, remembered).map((w) => [w.id, w]));
@@ -258,7 +255,7 @@ export function App() {
         id: row.key,
         label: sessionLabel(s),
         description: row.description,
-        icon: <StatusDot status={m.connected ? s.status : "unknown"} />,
+        icon: <StatusDot {...sessionDot(m, s, unreadOnes)} />,
         badge: !m.connected ? "オフライン" : s.status === "waiting" ? "確認" : undefined,
         mark: background ? (
           <LoaderCircle role="img" aria-label={`バックグラウンドで ${background} 件実行中`} className="size-3 animate-spin text-sky-400 motion-reduce:animate-none">
@@ -329,7 +326,7 @@ export function App() {
       label: w.label,
       // The working server too, when there are several.
       description: [w.repo, machines.length > 1 ? w.machine.name : undefined].filter(Boolean).join(" · ") || undefined,
-      icon: <StatusDot status={worktreeStatus(w)} />,
+      icon: <StatusDot {...worktreeDot(w, unreadOnes)} />,
       badge: !w.machine.connected ? "オフライン" : w.sessions.some((s) => s.status === "waiting") ? "確認" : undefined,
     })),
   };

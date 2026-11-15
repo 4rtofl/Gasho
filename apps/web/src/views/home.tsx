@@ -185,7 +185,7 @@ export function HomeView() {
           icon={<Zap className="size-3.5" />}
           value={count("busy")}
           period={names("busy")}
-          meter={{ total: online.length, color: "#10b981" }}
+          meter={{ total: online.length, color: "#f59e0b" }}
           className="h-full"
         />
       ),
@@ -210,7 +210,7 @@ export function HomeView() {
           icon={<Moon className="size-3.5" />}
           value={count("idle")}
           period={names("idle")}
-          meter={{ total: online.length, color: "#737373" }}
+          meter={{ total: online.length, color: "#10b981" }}
           className="h-full"
         />
       ),

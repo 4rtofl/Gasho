@@ -33,21 +33,27 @@ export function arrayMove<T>(list: readonly T[], from: number, to: number): T[] 
 }
 
 /**
- * Where the dragged item of a vertical list goes: to the place whose middle is nearest its own middle. `rects` are
- * the places of the items in their current order, the dragged item's included.
+ * Where the dragged item of a vertical list goes: before the items above it whose middle its top has passed, or after
+ * the items below it whose middle its bottom has passed. `rects` are the places of the items in their current order,
+ * the dragged item's (at `from`) included; `top` is where the dragged item's top is shown.
+ *
+ * Its edges, not its middle: for items of different heights (the sidebar's categories), the place whose middle is
+ * nearest the dragged item's own can change back once the items have made room, and an item held still kept swapping
+ * between two places. Past an item's middle by its edge, it is still past it once that item has moved. For items of
+ * one height, both come to the same place.
  */
-export function listIndex(rects: readonly Rect[], middle: number): number {
-  let best = 0;
-  let distance = Number.POSITIVE_INFINITY;
-  rects.forEach((r, i) => {
-    const d = Math.abs(r.top + r.height / 2 - middle);
-    if (d < distance) {
-      best = i;
-      distance = d;
-    }
-  });
-  return best;
+export function listIndex(rects: readonly Rect[], from: number, top: number): number {
+  const box = rects[from];
+  if (!box) return from;
+  let to = from;
+  while (to > 0 && top < middleOf(rects[to - 1]!)) to--;
+  if (to !== from) return to;
+  const bottom = top + box.height;
+  while (to < rects.length - 1 && bottom > middleOf(rects[to + 1]!)) to++;
+  return to;
 }
+
+const middleOf = (r: Rect) => r.top + r.height / 2;
 
 /**
  * Where the dragged tile of a grid goes, by the tile the pointer is over: before that tile when the pointer is on its
@@ -390,7 +396,7 @@ class Sorter {
     m.x.set(x);
     m.y.set(top - box.top);
     d.shown = { x: box.left + x, y: top };
-    this.reorder(d, from, rects, top + box.height / 2);
+    this.reorder(d, from, rects, top);
   };
 
   private autoScroll(d: Drag): void {
@@ -405,8 +411,8 @@ class Sorter {
     else if (below > 0) s.scrollTop += speed(below);
   }
 
-  /** `rects`: the items' places now, in the order shown; `middle`: the dragged item's middle as shown (a list's). */
-  private reorder(d: Drag, from: number, rects: Rect[], middle: number): void {
+  /** `rects`: the items' places now, in the order shown; `top`: the dragged item's top as shown (a list's). */
+  private reorder(d: Drag, from: number, rects: Rect[], top: number): void {
     const now = performance.now();
     if (now - d.moved < MOVE_INTERVAL) return;
     let next: string[];
@@ -420,7 +426,7 @@ class Sorter {
       const to = gridIndex(places, start, p, grid.clientWidth);
       if (to === undefined) return;
       next = arrayMove(d.before, start, to);
-    } else next = arrayMove(this.order, from, listIndex(rects, middle));
+    } else next = arrayMove(this.order, from, listIndex(rects, from, top));
     if (same(next, this.order)) return;
     d.moved = now;
     this.set.preview(next);

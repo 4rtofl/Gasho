@@ -73,14 +73,15 @@ export class PluginBoundary extends Component<BoundaryProps, { error?: Error }> 
 }
 
 /**
- * A part of a plugin, in its scope and boundary. `hash` makes a new version start afresh. What the plugin draws sits
- * in an element of its own, the only place its web.css applies to (registry.ts); `bare` leaves that out where Gasho
- * draws the part itself (header items) or nothing is drawn (badges).
+ * A part of a plugin, in its scope and boundary. The version it is drawn with (PluginPart.version) makes a new version
+ * start afresh, with its own hooks. What the plugin draws sits in an element of its own, the only place its web.css
+ * applies to (registry.ts); `bare` leaves that out where Gasho draws the part itself (header items) or nothing is drawn
+ * (badges, the sidebar's session list).
  */
-function Part({ part, fallback, bare, children }: { part: PluginPart; fallback?: ReactNode; bare?: boolean; children: ReactNode }) {
+export function Part({ part, fallback, bare, children }: { part: PluginPart; fallback?: ReactNode; bare?: boolean; children: ReactNode }) {
   return (
     <PluginScope id={part.info.id}>
-      <PluginBoundary key={part.info.hash} plugin={part.info.id} name={part.info.manifest.name} fallback={fallback}>
+      <PluginBoundary key={part.version} plugin={part.info.id} name={part.info.manifest.name} fallback={fallback}>
         {bare ? (
           children
         ) : (

@@ -1,15 +1,18 @@
 // A worktree with no session open: a plugin's screen that one of its tabs opened (docs/plugins.md, P15), a worktree of a
 // repository registered with its working server, or one whose sessions are all gone, kept in the sidebar by this
-// browser. Its tabs row still starts a new session ("＋") and opens a past conversation again.
-import { ArrowLeft } from "lucide-react";
+// browser. Its tabs row still starts a new session ("＋") and opens a past conversation again; while a plugin's categories
+// list the sessions in the sidebar and leave the "＋" out of the row (P17), the button that starts one is here.
+import { ArrowLeft, LoaderCircle, Plus } from "lucide-react";
 import { useEffect } from "react";
-import { BUTTON_SECONDARY } from "@/components/dialog-styles";
+import { BUTTON_PRIMARY, BUTTON_SECONDARY } from "@/components/dialog-styles";
 import type { SessionActionRequest } from "@/components/session-menu";
-import { SessionTabs } from "@/components/session-tabs";
+import { SessionTabs, useWorktreeLaunch } from "@/components/session-tabs";
 import { forgetWorktree } from "@/lib/remembered-worktrees";
 import { go, type WorktreeView as PluginView } from "@/lib/route";
+import { hidesSessionTabs } from "@/lib/session-list";
 import { sessionToOpen, type WorktreeSessions } from "@/lib/sessions";
 import { PluginWorktreeView } from "@/plugins/parts";
+import { useSessionListMode } from "@/plugins/session-list";
 
 export function WorktreeView({
   worktree,
@@ -55,7 +58,7 @@ export function WorktreeView({
             {worktree.machine.name} · {worktree.path}
           </p>
         </div>
-        <p>この worktree にセッションはありません。タブの右の「＋」で新しいセッションを起動するか、左の履歴から過去の会話を開き直せます。</p>
+        <NoSession worktree={worktree} />
         {worktree.registered ? (
           <p>登録したリポジトリ{worktree.repo ? `（${worktree.repo}）` : ""}の worktree なので、git の一覧にあるあいだはサイドバーに出ます。</p>
         ) : (
@@ -72,6 +75,35 @@ export function WorktreeView({
         )}
       </div>
     </div>
+  );
+}
+
+/** What to do in a worktree without a session: start one ("＋" after the tabs, or here), or open a past conversation. */
+function NoSession({ worktree }: { worktree: WorktreeSessions }) {
+  const hidden = hidesSessionTabs(useSessionListMode());
+  const { canLaunch, launching, error, launch } = useWorktreeLaunch(worktree);
+  if (!hidden) return <p>この worktree にセッションはありません。タブの右の「＋」で新しいセッションを起動するか、左の履歴から過去の会話を開き直せます。</p>;
+  return (
+    <>
+      <p>この worktree にセッションはありません。新しいセッションを起動するか、上の行の左の履歴から過去の会話を開き直せます。</p>
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          onClick={() => void launch()}
+          disabled={!canLaunch || launching}
+          title={canLaunch ? undefined : "接続していて、セッションの端末を作れる working server でだけ起動できます"}
+          className={BUTTON_PRIMARY}
+        >
+          {launching ? <LoaderCircle className="mr-1.5 size-4 animate-spin" /> : <Plus className="mr-1.5 size-4" />}
+          この worktree で新しいセッションを起動
+        </button>
+        {error && (
+          <p role="alert" className="text-red-400">
+            {error}
+          </p>
+        )}
+      </div>
+    </>
   );
 }
 

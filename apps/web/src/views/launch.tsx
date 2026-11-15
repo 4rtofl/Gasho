@@ -22,6 +22,19 @@ const CLONE_WAIT_MS = 660_000;
 
 type Tool = "folder" | "clone";
 
+/**
+ * What the form starts with, when it opens for a folder where starting a session did not work (the "＋" of a category
+ * in the sidebar, docs/plugins.md P17): the working server and the folder, and why it did not start.
+ */
+export interface LaunchInitial {
+  machine: string;
+  folder: string;
+  /** Why it did not start. */
+  error?: string;
+  /** Claude Code asked whether to trust the folder; what it pointed out. */
+  trust?: string[];
+}
+
 function Description() {
   return (
     <>
@@ -45,17 +58,21 @@ const onEnter = (run: () => void) => (e: KeyboardEvent<HTMLInputElement>) => {
 function LaunchForm({
   header,
   className,
+  initial,
   onLaunched,
   onBusyChange,
 }: {
   header: ReactNode;
   className?: string;
+  initial?: LaunchInitial;
   onLaunched: () => void;
   onBusyChange?: (busy: boolean) => void;
 }) {
   const { machines } = useAppState();
   const candidates = useMemo(() => machines.filter((m) => m.connected && m.canLaunch), [machines]);
-  const [machineId, setMachineId] = useState(candidates[0]?.id ?? "");
+  const [machineId, setMachineId] = useState(
+    initial && candidates.some((m) => m.id === initial.machine) ? initial.machine : (candidates[0]?.id ?? ""),
+  );
   const machine = candidates.find((m) => m.id === machineId) ?? candidates[0];
   // gasho-daemon 0.10.0 makes folders, clones, and answers Claude Code's question whether to trust a folder.
   const canMake = machine !== undefined && daemonAtLeast(machine, 0, 10);
@@ -63,13 +80,17 @@ function LaunchForm({
   const [made, setMade] = useState<Record<string, string[]>>({});
   const madeHere = (machine && made[machine.id]) || NONE;
   const folders = useMemo(() => folderChoices(machine?.folders ?? [], madeHere, canMake), [machine, madeHere, canMake]);
-  const [folder, setFolder] = useState(machine?.folders?.[0] ?? OTHER);
-  const [custom, setCustom] = useState("");
+  // The folder it opened for is picked from the list when it is there, else typed in.
+  const opened = initial && initial.machine === machine?.id ? initial.folder : undefined;
+  const [folder, setFolder] = useState(opened === undefined ? (machine?.folders?.[0] ?? OTHER) : folders.includes(opened) ? opened : OTHER);
+  const [custom, setCustom] = useState(opened !== undefined && !folders.includes(opened) ? opened : "");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
+  const [error, setError] = useState<string | undefined>(initial?.error);
   // A launch that stopped at Claude Code's question whether to trust the folder, and what Claude Code pointed out.
-  const [trustAsk, setTrustAsk] = useState<{ cwd: string; warnings: string[] }>();
+  const [trustAsk, setTrustAsk] = useState<{ cwd: string; warnings: string[] } | undefined>(
+    initial?.trust ? { cwd: initial.folder, warnings: initial.trust } : undefined,
+  );
   // A session that started with something to tell, shown before it opens.
   const [started, setStarted] = useState<{ machine: string; sessionId: string; warning: string }>();
   const [tool, setTool] = useState<Tool>();
@@ -520,7 +541,8 @@ export function LaunchPanel({ onClose }: { onClose: () => void }) {
  * folder, a clone), the dialog stays open to show it: a launch's answer opens the new session. `onLaunched` is called
  * once it has started.
  */
-export function LaunchDialog({ open, onClose, onLaunched }: { open: boolean; onClose: () => void; onLaunched?: () => void }) {
+/** `initial`: the working server and folder it opens for, and why starting there did not work (see LaunchInitial). */
+export function LaunchDialog({ open, onClose, onLaunched, initial }: { open: boolean; onClose: () => void; onLaunched?: () => void; initial?: LaunchInitial }) {
   const [busy, setBusy] = useState(false);
   return (
     <Dialog.Root
@@ -543,6 +565,7 @@ export function LaunchDialog({ open, onClose, onLaunched }: { open: boolean; onC
           }}
         >
           <LaunchForm
+            initial={initial}
             onBusyChange={setBusy}
             onLaunched={() => {
               onClose();

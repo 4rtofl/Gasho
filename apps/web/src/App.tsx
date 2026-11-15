@@ -1,14 +1,16 @@
 import { motion } from "framer-motion";
-import { Home, KeyRound, ListRestart, Plus, Puzzle, Settings } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
+import { FolderGit2, Home, KeyRound, ListRestart, LoaderCircle, Plus, Puzzle, Settings } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
+import type { SessionListWorktree } from "@gasho/plugin-sdk";
 import type { SessionStatus } from "@gasho/protocol";
 import { ResizeHandle } from "@/components/resize-handle";
 import { SessionHeaderToggle } from "@/components/session-header-toggle";
-import { RepoFilter } from "@/components/repo-filter";
+import { RegisterRepos, RepoFilter } from "@/components/repo-filter";
 import { ReposDialog } from "@/components/repos-dialog";
-import { SessionActionDialog, type SessionActionRequest } from "@/components/session-menu";
+import { SessionActionDialog, SessionContextMenu, type SessionActionRequest } from "@/components/session-menu";
+import { LAUNCH_WAIT_MS } from "@/components/session-tabs";
 import { StatusDot } from "@/components/status-badge";
-import { Sidebar, SidebarTrigger, useSidebar, type SidebarSection } from "@/components/ui/sidebar";
+import { Sidebar, SidebarTrigger, useSidebar, type SidebarGroup, type SidebarItem, type SidebarSection } from "@/components/ui/sidebar";
 import { updateTo } from "@/lib/daemon-update";
 import { useChoice } from "@/lib/flag";
 import { sessionLabel } from "@/lib/format";
@@ -17,6 +19,22 @@ import { arrangeSessions, rememberSessions, reorderShown, useSavedOrder } from "
 import { updateCount } from "@/lib/plugin-catalog";
 import { go, isOldGitHubLink, useRoute, type SessionPanel } from "@/lib/route";
 import { rememberWorktrees, useRememberedWorktrees } from "@/lib/remembered-worktrees";
+import {
+  arrangeCategories,
+  hasOrder,
+  holdOrder,
+  rowAfterRemoval,
+  sessionKey,
+  sessionListContext,
+  shownSessions,
+  withCategoryOrder,
+  withFolded,
+  withoutOrder,
+  withSessionOrder,
+  type HeldOrder,
+  type ListedSession,
+} from "@/lib/session-list";
+import { useSessionListPrefs } from "@/lib/session-list-prefs";
 import {
   notificationShown,
   rememberedOf,
@@ -28,16 +46,17 @@ import {
   worktreesByLastUse,
   type WorktreeSessions,
 } from "@/lib/sessions";
-import { useAppState } from "@/lib/store";
+import { sendCommand, useAppState } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { PANEL_WIDTH_MAX, PANEL_WIDTH_MIN, clampPanelWidth, defaultPanelWidth, usePanelWidth } from "@/lib/widths";
 import { PluginBadgeProbes, PluginPageView, PluginPanelView, usePluginBadges } from "@/plugins/parts";
 import { usePluginRegistry } from "@/plugins/registry";
+import { PluginSessionListProbe, useSessionListMode } from "@/plugins/session-list";
 import { DevicesView } from "@/views/devices";
 import { FilePanel, FolderPanel } from "@/views/files";
 import { GraphPanel } from "@/views/graph";
 import { HomeView } from "@/views/home";
-import { LaunchDialog } from "@/views/launch";
+import { LaunchDialog, type LaunchInitial } from "@/views/launch";
 import { PairView } from "@/views/pair";
 import { PluginsView } from "@/views/plugins";
 import { SessionState, SessionView } from "@/views/session";
@@ -165,7 +184,17 @@ export function App() {
   const badges = usePluginBadges();
   // Every worktree with sessions is kept, so that it stays in the sidebar once they are gone.
   const remembered = useRememberedWorktrees();
-  useEffect(() => rememberWorktrees(worktreesByLastUse(machines).flatMap((w) => (w.sessions.length > 0 ? [rememberedOf(w)] : []))), [machines]);
+  const ownWorktrees = useMemo(() => worktreesByLastUse(machines), [machines]);
+  useEffect(() => rememberWorktrees(ownWorktrees.flatMap((w) => (w.sessions.length > 0 ? [rememberedOf(w)] : []))), [ownWorktrees]);
+  // A plugin's categories of the sessions, in place of the worktrees (docs/plugins.md, P17): what its hook gets, which
+  // list shows, the order dragged into and the folded categories, and the order held while the pointer is over the list.
+  const listContext = useMemo(() => sessionListContext(ownWorktrees, machines), [ownWorktrees, machines]);
+  const listMode = useSessionListMode();
+  const [listPrefs, changeListPrefs] = useSessionListPrefs(listMode.kind === "gasho" ? undefined : listMode.plugin);
+  const [heldOrder, setHeldOrder] = useState<HeldOrder | null>(null);
+  // The category whose "＋" is starting a session, and what the dialog opens with when that did not work.
+  const [launchingIn, setLaunchingIn] = useState<string>();
+  const [launchInitial, setLaunchInitial] = useState<LaunchInitial>();
 
   if (auth === "checking") return <Centered>読み込み中…</Centered>;
   if (auth === "unreachable") return <Centered>Gasho サーバーにつながりません。再試行しています…</Centered>;
@@ -188,6 +217,134 @@ export function App() {
       return { id, label: item.label, icon: <Icon />, badge: badges.get(id), plugin: info.id, page: item.page };
     }),
   );
+  const openLaunch = (initial?: LaunchInitial) => {
+    setLaunchInitial(initial);
+    setLaunchOpen(true);
+  };
+
+  // The plugin's categories, in the order dragged into (or held), each with its sessions as rows.
+  const categories = listMode.kind === "plugin" ? arrangeCategories(listMode.categories, listPrefs, heldOrder) : [];
+  // While the pointer is over the list (on a phone, while the drawer is open), the order shown stays: the time a
+  // session was last used changes as Claude works, and its row would move away from under the pointer.
+  const holdList = (on: boolean) => setHeldOrder(on ? holdOrder(categories) : null);
+  const openKey = route.name === "session" ? sessionKey(route.machine, route.sessionId) : undefined;
+  const shownByKey = new Map(machines.flatMap((m) => m.sessions.filter((s) => s.managed).map((s) => [sessionKey(m.id, s.sessionId), { m, s }] as const)));
+  const listWorktrees = new Map(listContext.worktrees.map((w) => [w.key, w]));
+  const folded = new Set(listPrefs.folded ?? []);
+  // "＋" of a category: a session in its worktree's folder, at once (as the "＋" after a worktree's tabs). When it does
+  // not start (Claude Code asks whether to trust the folder, say), "新しいセッション" opens for that folder and tells why.
+  const launchIn = async (w: SessionListWorktree) => {
+    if (launchingIn) return;
+    setLaunchingIn(w.key);
+    const r = await sendCommand(w.machine.id, { type: "session.launch", cwd: w.path }, LAUNCH_WAIT_MS);
+    setLaunchingIn(undefined);
+    if (r.ok && r.sessionId) {
+      setMobileOpen(false);
+      go({ name: "session", machine: w.machine.id, sessionId: r.sessionId });
+      return;
+    }
+    openLaunch({ machine: w.machine.id, folder: w.path, ...(r.needsTrust ? { trust: r.trustWarnings ?? [] } : { error: r.error ?? "起動できませんでした。" }) });
+  };
+  // A session's row, as the sidebar's list of sessions had them: its state, its name, waiting or offline, the work it
+  // runs in the background, and its menu (rename, fork, remove).
+  const sessionRow = (row: ListedSession): SidebarItem[] => {
+    const found = shownByKey.get(row.key);
+    if (!found) return [];
+    const { m, s } = found;
+    const background = m.connected ? (s.background?.length ?? 0) : 0;
+    return [
+      {
+        id: row.key,
+        label: sessionLabel(s),
+        description: row.description,
+        icon: <StatusDot status={m.connected ? s.status : "unknown"} />,
+        badge: !m.connected ? "オフライン" : s.status === "waiting" ? "確認" : undefined,
+        mark: background ? (
+          <LoaderCircle role="img" aria-label={`バックグラウンドで ${background} 件実行中`} className="size-3 animate-spin text-sky-400 motion-reduce:animate-none">
+            <title>{`バックグラウンドで ${background} 件実行中`}</title>
+          </LoaderCircle>
+        ) : undefined,
+        wrap: (button: ReactElement) => (
+          <SessionContextMenu machine={m} session={s} onPick={setSessionAction}>
+            {button}
+          </SessionContextMenu>
+        ),
+      },
+    ];
+  };
+  const groups: SidebarGroup[] = categories.map((c) => {
+    const isFolded = folded.has(c.id);
+    const waiting = c.sessions.filter((row) => {
+      const found = shownByKey.get(row.key);
+      return found?.m.connected && found.s.status === "waiting";
+    }).length;
+    const target = c.launch ? listWorktrees.get(c.launch) : undefined;
+    const canLaunch = target !== undefined && target.machine.connected && target.machine.canLaunch === true;
+    return {
+      id: c.id,
+      title: c.title,
+      description: c.description,
+      hint: c.hint,
+      // Folded, a category still tells that a session in it waits for an answer.
+      badge: isFolded && waiting > 0 ? `確認 ${waiting}` : undefined,
+      icon: <FolderGit2 />,
+      action: canLaunch
+        ? {
+            label: `${c.title} で新しいセッションを起動`,
+            icon: launchingIn === target.key ? <LoaderCircle className="animate-spin" /> : <Plus />,
+            onClick: () => void launchIn(target),
+          }
+        : undefined,
+      folded: isFolded,
+      onFoldedChange: (f) => changeListPrefs((p) => withFolded(p, c.id, f)),
+      // Folded, only the open session's row shows (where the person is).
+      items: shownSessions(c, isFolded, openKey).flatMap(sessionRow),
+      sort: isFolded ? undefined : { onReorder: (keys) => changeListPrefs((p) => withSessionOrder(p, c.id, keys, categories.map((x) => x.id))) },
+    };
+  });
+
+  const worktreeSection: SidebarSection = {
+    // Shown even without sessions, for its "＋".
+    title: narrowed ? `worktree · ${narrowed.name}` : "worktree",
+    notice: listMode.kind === "gasho" && listMode.failed ? `${listMode.failed} の一覧を出せないので、worktree を並べています（理由はプラグインの画面に）。` : undefined,
+    action: { label: "新しいセッション", icon: <Plus />, onClick: () => openLaunch() },
+    secondaryAction: worktreeOrder
+      ? { label: "最後に使った順に戻す", icon: <ListRestart />, onClick: () => setWorktreeOrder(undefined) }
+      : undefined,
+    tools: (
+      <RepoFilter
+        choices={repos}
+        picked={narrowed}
+        onPick={setRepoKey}
+        onRegister={() => setReposOpen(true)}
+        machineNames={machines.length > 1}
+      />
+    ),
+    sort: {
+      onReorder: (ids) => setWorktreeOrder(rememberSessions(reorderShown(worktrees.map((w) => w.id), ids), worktreeOrder)),
+    },
+    items: listed.map((w) => ({
+      id: w.id,
+      label: w.label,
+      // The working server too, when there are several.
+      description: [w.repo, machines.length > 1 ? w.machine.name : undefined].filter(Boolean).join(" · ") || undefined,
+      icon: <StatusDot status={worktreeStatus(w)} />,
+      badge: !w.machine.connected ? "オフライン" : w.sessions.some((s) => s.status === "waiting") ? "確認" : undefined,
+    })),
+  };
+  // The plugin's categories (none yet while waiting for it). The repositories need no narrowing there; registering
+  // them stays.
+  const categorySection: SidebarSection = {
+    title: "セッション",
+    action: { label: "新しいセッション", icon: <Plus />, onClick: () => openLaunch() },
+    secondaryAction: hasOrder(listPrefs)
+      ? { label: "最後に使った順に戻す", icon: <ListRestart />, onClick: () => changeListPrefs(withoutOrder) }
+      : undefined,
+    tools: <RegisterRepos onRegister={() => setReposOpen(true)} />,
+    items: [],
+    groups,
+    groupSort: { onReorder: (ids) => changeListPrefs((p) => withCategoryOrder(p, ids)) },
+  };
   const sections: SidebarSection[] = [
     {
       items: [
@@ -199,42 +356,17 @@ export function App() {
         { id: "settings", label: "設定", icon: <Settings /> },
       ],
     },
-    {
-      // Shown even without sessions, for its "＋".
-      title: narrowed ? `worktree · ${narrowed.name}` : "worktree",
-      action: { label: "新しいセッション", icon: <Plus />, onClick: () => setLaunchOpen(true) },
-      secondaryAction: worktreeOrder
-        ? { label: "最後に使った順に戻す", icon: <ListRestart />, onClick: () => setWorktreeOrder(undefined) }
-        : undefined,
-      tools: (
-        <RepoFilter
-          choices={repos}
-          picked={narrowed}
-          onPick={setRepoKey}
-          onRegister={() => setReposOpen(true)}
-          machineNames={machines.length > 1}
-        />
-      ),
-      sort: {
-        onReorder: (ids) => setWorktreeOrder(rememberSessions(reorderShown(worktrees.map((w) => w.id), ids), worktreeOrder)),
-      },
-      items: listed.map((w) => ({
-        id: w.id,
-        label: w.label,
-        // The working server too, when there are several.
-        description: [w.repo, machines.length > 1 ? w.machine.name : undefined].filter(Boolean).join(" · ") || undefined,
-        icon: <StatusDot status={worktreeStatus(w)} />,
-        badge: !w.machine.connected ? "オフライン" : w.sessions.some((s) => s.status === "waiting") ? "確認" : undefined,
-      })),
-    },
+    listMode.kind === "gasho" ? worktreeSection : categorySection,
   ];
   const openSession =
     route.name === "session" ? machines.find((m) => m.id === route.machine)?.sessions.find((s) => s.sessionId === route.sessionId) : undefined;
   const activeId =
     route.name === "session"
-      ? openSession
-        ? worktreeId(route.machine, openSession)
-        : ""
+      ? listMode.kind !== "gasho"
+        ? sessionKey(route.machine, route.sessionId)
+        : openSession
+          ? worktreeId(route.machine, openSession)
+          : ""
       : route.name === "worktree"
         ? worktreeKey(route.machine, route.path)
         : route.name === "plugin"
@@ -255,19 +387,33 @@ export function App() {
           if (id === "home" || id === "devices" || id === "settings" || id === "plugins") return go({ name: id });
           const item = pluginItems.find((i) => i.id === id);
           if (item) return go({ name: "plugin", plugin: item.plugin, page: item.page.id, params: item.page.params ?? {} });
+          // A session's row of the plugin's categories.
+          const row = listMode.kind !== "gasho" ? shownByKey.get(id) : undefined;
+          if (row) return go({ name: "session", machine: row.m.id, sessionId: row.s.sessionId });
           const w = worktrees.find((x) => x.id === id);
           if (!w) return;
           const s = sessionToOpen(w);
           go(s ? { name: "session", machine: w.machine.id, sessionId: s.sessionId } : { name: "worktree", machine: w.machine.id, path: w.path });
         }}
         mobileOpen={mobileOpen}
-        onMobileOpenChange={setMobileOpen}
+        onMobileOpenChange={(open) => {
+          setMobileOpen(open);
+          holdList(open);
+        }}
+        onPointerInside={(inside) => {
+          if (inside || !mobileOpen) holdList(inside);
+        }}
         header={<Brand />}
         footer={<Connection connected={connected} deviceName={me?.name} />}
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3 md:hidden">
-          <SidebarTrigger onClick={() => setMobileOpen(true)} />
+          <SidebarTrigger
+            onClick={() => {
+              setMobileOpen(true);
+              holdList(true);
+            }}
+          />
           {onScreen && onScreenMachine ? (
             <>
               <h1 className="min-w-0 truncate text-sm font-semibold">{sessionLabel(onScreen)}</h1>
@@ -322,8 +468,28 @@ export function App() {
         </div>
       </div>
       <PluginBadgeProbes />
-      <SessionActionDialog request={sessionAction} onClose={() => setSessionAction(null)} />
-      <LaunchDialog open={launchOpen} onClose={() => setLaunchOpen(false)} onLaunched={() => setMobileOpen(false)} />
+      <PluginSessionListProbe ctx={listContext} />
+      <SessionActionDialog
+        request={sessionAction}
+        onClose={() => setSessionAction(null)}
+        rowAfter={
+          listMode.kind === "plugin"
+            ? (machine, sessionId) => {
+                const next = rowAfterRemoval(categories, sessionKey(machine, sessionId));
+                return next && { machine: next.machine, sessionId: next.sessionId };
+              }
+            : undefined
+        }
+      />
+      <LaunchDialog
+        open={launchOpen}
+        initial={launchInitial}
+        onClose={() => {
+          setLaunchOpen(false);
+          setLaunchInitial(undefined);
+        }}
+        onLaunched={() => setMobileOpen(false)}
+      />
       <ReposDialog open={reposOpen} onClose={() => setReposOpen(false)} />
     </div>
   );

@@ -336,6 +336,7 @@ export function validateCommand(cmd: SessionCommand): string | undefined {
     case "session.interrupt":
     case "session.remove":
     case "session.resume":
+    case "session.skills":
       return undefined;
     case "session.end":
       if (
@@ -503,6 +504,7 @@ export class Hub {
         m.features = Array.isArray(msg.features) ? [...new Set(msg.features.filter((f) => FEATURES.has(f)))] : undefined;
         m.canResume = msg.canResume === true || undefined;
         m.canEnd = msg.canEnd === true || undefined;
+        m.canListSkills = msg.canListSkills === true || undefined;
         m.update = updateInfoOf(msg.update);
         this.broadcast({ type: "machine", machine: m });
         break;
@@ -765,6 +767,7 @@ export class Hub {
       case "session.fork":
       case "session.remove":
       case "session.history":
+      case "session.skills":
       case "session.resume":
       case "session.end":
       case "permission.answer":
@@ -784,13 +787,14 @@ export class Hub {
   private relayCommand(peer: ClientPeer, clientRequestId: string, machine: string, cmd: SessionCommand): void {
     const reply = (result: CommandResult) => peer.send({ type: "command.result", requestId: clientRequestId, machine, result });
     // A listing changes nothing: it goes on while an update waits.
-    if (this.holding !== undefined && cmd.type !== "session.history") return reply({ ok: false, error: this.holding });
+    const listing = cmd.type === "session.history" || cmd.type === "session.skills";
+    if (this.holding !== undefined && !listing) return reply({ ok: false, error: this.holding });
     const invalid = validateCommand(cmd) ?? this.unsupported(machine, cmd);
     if (invalid) return reply({ ok: false, error: invalid });
     const daemon = this.daemons.get(machine);
     if (!daemon) return reply({ ok: false, error: "この working server はオフラインです。" });
     // Audit trail of what browsers asked working servers to do (a listing changes nothing).
-    if (cmd.type !== "session.history") {
+    if (!listing) {
       const sessionId = "sessionId" in cmd ? cmd.sessionId : "";
       const summary = this.summaryOf(machine, cmd);
       const event: MachineHookEvent = { machine, sessionId, event: `Gasho:${cmd.type}`, at: Date.now(), summary: `${summary} (by ${peer.deviceId})` };
@@ -811,6 +815,7 @@ export class Hub {
       "session.fork": FORK_TIMEOUT_MS,
       "session.remove": REMOVE_TIMEOUT_MS,
       "session.history": REQUEST_TIMEOUT_MS,
+      "session.skills": REQUEST_TIMEOUT_MS,
       "session.resume": LAUNCH_TIMEOUT_MS,
       "session.end": REMOVE_TIMEOUT_MS,
       "permission.answer": REQUEST_TIMEOUT_MS,
@@ -899,6 +904,7 @@ export class Hub {
         return `${this.machines.get(machine)?.daemonVersion ?? "?"} → ${cmd.version}`;
       case "session.interrupt":
       case "session.history":
+      case "session.skills":
         return "";
     }
   }
@@ -922,6 +928,9 @@ export class Hub {
     }
     if (cmd.type === "session.end") {
       return !m || m.canEnd ? undefined : "この working server の gasho-daemon は古いため、Gasho の外で開いている会話を終了できません。gasho-daemon を更新してください。";
+    }
+    if (cmd.type === "session.skills") {
+      return !m || m.canListSkills ? undefined : "この working server の gasho-daemon は古いため、スキルの候補を出せません。gasho-daemon を更新してください。";
     }
     if (cmd.type === "session.history" || cmd.type === "session.resume") {
       return !m || m.canResume ? undefined : "この working server の gasho-daemon は古いため、過去の会話を一覧にも開き直しもできません。gasho-daemon を更新してください。";

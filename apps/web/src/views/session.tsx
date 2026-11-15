@@ -25,6 +25,7 @@ import { addPending, noneWaiting, pendingShown, removePending, sessionWorking, s
 import { go, type SessionPanel } from "@/lib/route";
 import { closeSessionHeaderOnPhone, useSessionHeaderShown } from "@/lib/session-header";
 import { daemonAtLeast, rememberOpened, worktreeId, worktreesByLastUse } from "@/lib/sessions";
+import { loadSkills, useSkills } from "@/lib/skills";
 import { loadTranscript, sendCommand, transcriptKey, useAppState } from "@/lib/store";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
@@ -347,6 +348,7 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
   const current = currentModel(machine, s.model);
   const ultracode = Boolean(s.ultracode);
   const features = machine.features ?? legacyFeatures(machine.daemonVersion);
+  const skills = useSkills(machine.id, s.sessionId);
   // Once the session runs with what was picked, follow the session again.
   useEffect(() => {
     if (picked && picked === current) setPicks((p) => (p.model === current ? { ...p, model: undefined } : p));
@@ -487,6 +489,19 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
           </>
         }
         draft={promptDraft(key)}
+        commands={machine.canListSkills ? (skills.list ?? []) : []}
+        commandsNote={
+          !machine.canListSkills
+            ? "この working server の gasho-daemon は古いため、スキルの候補を出せません。gasho-daemon を更新してください。"
+            : skills.list?.length
+              ? undefined
+              : skills.error
+                ? `スキルを読み込めませんでした：${skills.error}`
+                : skills.loading || !skills.list
+                  ? "スキルを読み込んでいます…"
+                  : undefined
+        }
+        onCommandsOpen={machine.canListSkills ? () => loadSkills(machine.id, s.sessionId) : undefined}
         allowAttachments={features.includes("files")}
         maxFiles={5}
         maxFileSizeMB={10}

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { arrayMove, gridIndex, listIndex, type Rect } from "../src/lib/sortable.ts";
+import { arrayMove, gridIndex, groupDrop, itemsByGroup, listIndex, type Rect } from "../src/lib/sortable.ts";
 
 test("arrayMove takes the item out and puts it at the new place", () => {
   assert.deepEqual(arrayMove(["a", "b", "c", "d"], 0, 2), ["b", "c", "a", "d"]);
@@ -148,4 +148,24 @@ test("in a grid, the tiles' places when the drag began decide: judged by the pla
   // Judged by the places when the drag began, the place depends on the pointer alone.
   const places = place(TILES.map((id) => DESKTOP[id]!), 4);
   assert.equal(gridIndex(places, 0, p, 400), 4);
+});
+
+test("groups dragged as one list: an item past a heading is in its group, and the drop says which item went where", () => {
+  const headingOf = (id: string) => (id.startsWith("#") ? id.slice(1) : undefined);
+  const home = new Map([["a", "doing"], ["b", "doing"], ["c", "done"], ["n", "done"]]);
+  const groups = [
+    { id: "doing", items: ["a", "b"] },
+    { id: "empty", items: [] },
+    { id: "done", items: ["c"] },
+  ];
+  const by = (order: string[]) => itemsByGroup(order, headingOf, (id) => home.get(id));
+  // b dragged past the heading of a group with no items: it goes there.
+  const moved = ["#doing", "a", "#empty", "b", "#done", "c"];
+  assert.deepEqual([...by(moved)], [["doing", ["a"]], ["empty", ["b"]], ["done", ["c"]]]);
+  assert.deepEqual(groupDrop(groups, by(moved)), { kind: "move", id: "b", from: "doing", to: "empty", ids: ["b"] });
+  // In its own group: the group's new order.
+  assert.deepEqual(groupDrop(groups, by(["#doing", "b", "a", "#empty", "#done", "c"])), { kind: "reorder", group: "doing", ids: ["b", "a"] });
+  assert.equal(groupDrop(groups, by(["#doing", "a", "b", "#empty", "#done", "c"])), undefined);
+  // An item that came while dragging (it shows above every heading) stays in its own group.
+  assert.deepEqual(by(["n", "#doing", "a", "b", "#empty", "#done", "c"]).get("done"), ["n", "c"]);
 });

@@ -65,8 +65,8 @@ test("checkManifest takes a good manifest and says what is wrong with a bad one"
   assert.match(bad({ id: "Hello" }), /id/);
   assert.match(bad({}, "other"), /フォルダーの名前/);
   assert.match(bad({ api: "2.0" }), /API 2\.0/);
-  assert.match(bad({ api: "1.10" }), /API 1\.10/);
-  assert.match(bad({ api: "1.9" }), /この Gasho は 1\.8 までです/);
+  assert.match(bad({ api: "1.11" }), /API 1\.11/);
+  assert.match(bad({ api: "1.10" }), /この Gasho は 1\.9 までです/);
   assert.match(bad({ version: "1" }), /version/);
   assert.match(bad({ genre: "Dev Tools" }), /genre/);
   assert.match(bad({ genre: ["devtools"] }), /genre/);
@@ -307,6 +307,43 @@ test("server settings are checked against the manifest, kept, and sent to browse
   const toDaemon = daemon.sent.filter((m) => m.type === "plugins").at(-1);
   assert.ok(toDaemon?.type === "plugins");
   assert.deepEqual(toDaemon.plugins[0]?.settings, { interval: 120 });
+});
+
+test("a web part's shared values are kept, reach every browser before the answer, and go with the plugin", async () => {
+  const { client, daemon, hub, store } = await setup();
+  const share = (requestId: string, key: unknown, value: unknown) =>
+    hub.onClientMessage(client, { type: "plugin.shared", requestId, plugin: "hello", key, value } as never);
+  const result = (id: string) => {
+    const m = client.sent.find((x) => x.type === "plugin.result" && x.requestId === id);
+    return m?.type === "plugin.result" ? m.result : undefined;
+  };
+  const toDaemons = daemon.sent.length;
+  share("v1", "placed", { "m\u001f/src/app": "doing" });
+  assert.equal(result("v1")?.ok, true);
+  const answered = client.sent.findIndex((m) => m.type === "plugin.result" && m.requestId === "v1");
+  const told = client.sent.findIndex((m) => m.type === "plugins" && m.plugins[0]?.shared.placed !== undefined);
+  assert.ok(told >= 0 && told < answered);
+  assert.deepEqual(lastPlugins(client.sent)?.[0]?.shared, { placed: { "m\u001f/src/app": "doing" } });
+  // A browser that connects later gets them with the plugins; gasho-daemon is not told.
+  const later = fakePeer<HubToClient>(store.createDevice("browser", "Mac").device.id);
+  hub.onClientConnect(later);
+  assert.deepEqual(lastPlugins(later.sent)?.[0]?.shared, { placed: { "m\u001f/src/app": "doing" } });
+  assert.equal(daemon.sent.length, toDaemons);
+
+  // Refused, and nothing kept: a key that is not right, a value that is no JSON, one too large, all too large together.
+  share("v2", "", 1);
+  share("v3", "x".repeat(101), 1);
+  share("v4", "none", undefined);
+  share("v5", "big", "a".repeat(65 * 1024));
+  for (let i = 0; i < 5; i++) share(`f${i}`, `fill${i}`, "a".repeat(60 * 1024));
+  for (const id of ["v2", "v3", "v4", "v5", "f4"]) assert.equal(result(id)?.ok, false, id);
+  assert.match(result("v5")?.error ?? "", /64KB/);
+  assert.match(result("f4")?.error ?? "", /256KB/);
+  assert.deepEqual(Object.keys(lastPlugins(client.sent)?.[0]?.shared ?? {}).sort(), ["fill0", "fill1", "fill2", "fill3", "placed"]);
+
+  // Removing the plugin forgets them.
+  store.forgetPlugin("hello");
+  assert.deepEqual(store.pluginShared("hello"), {});
 });
 
 test("events of a daemon part go to every browser, and those to keep (retain) reach browsers that connect later", async () => {

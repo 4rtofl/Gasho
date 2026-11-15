@@ -1,9 +1,10 @@
 // The Gasho server's part in plugins (docs/plugins.md): it tells browsers which plugins are installed and how they
 // stand, tells each gasho-daemon which daemon parts to run (and hands it their code), relays the calls of web parts to
-// daemon parts, and keeps which plugins are enabled and their settings. The daemon part of an enabled plugin runs on
-// every working server. The plugins' files come from PluginRegistry (plugins.ts); this never runs a plugin's code. It also adds, updates and removes
-// plugins for browsers, from the catalog of GashoPlugins (catalog.ts). The events of daemon parts go on to every
-// browser; the Gasho server keeps the last of each topic that asked for it (retain) for browsers that connect later.
+// daemon parts, and keeps which plugins are enabled, their settings and the values their web parts share between
+// browsers. The daemon part of an enabled plugin runs on every working server. The plugins' files come from
+// PluginRegistry (plugins.ts); this never runs a plugin's code. It also adds, updates and removes plugins for browsers,
+// from the catalog of GashoPlugins (catalog.ts). The events of daemon parts go on to every browser; the Gasho server
+// keeps the last of each topic that asked for it (retain) for browsers that connect later.
 import { randomUUID } from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -51,6 +52,13 @@ const MAX_TOPIC = 100;
 const MAX_EVENT_BYTES = 256 * 1024;
 /** Kept events (retain) of a plugin on one working server, at most: the oldest go first. */
 const MAX_RETAINED = 32;
+/**
+ * The shared values of a plugin's web part (useSharedState): a key (characters), one value (as JSON, in bytes), and
+ * all of a plugin's keys and values together. Every write sends them all to every browser, with the plugins.
+ */
+const MAX_SHARED_KEY = 100;
+const MAX_SHARED_BYTES = 64 * 1024;
+const MAX_SHARED_TOTAL = 256 * 1024;
 
 const OLD_DAEMON = "この working server の gasho-daemon は古いため、プラグインを使えません。gasho-daemon を更新してください。";
 
@@ -314,6 +322,14 @@ export class PluginHub {
         audit("Gasho:plugin.setting", `${name}：${spec.label} = ${JSON.stringify(cmd.value).slice(0, 100)}`);
         break;
       }
+      case "plugin.shared": {
+        const wrong = this.saveShared(entry.id, cmd.key, cmd.value);
+        if (wrong) return { ok: false, error: wrong };
+        // Only browsers read them, and they go to every browser before this answer does: a web part that waits for
+        // the answer already has the value. Not in the operations log: a web part writes them as the person drags.
+        this.toClients();
+        return { ok: true };
+      }
       default:
         return { ok: false, error: "不明な命令です。" };
     }
@@ -496,11 +512,36 @@ export class PluginHub {
     return out;
   }
 
+  /** Saves a JSON value of a plugin's web part (useSharedState), or says why it cannot. */
+  private saveShared(id: string, key: unknown, value: unknown): string | undefined {
+    if (typeof key !== "string" || !key || key.length > MAX_SHARED_KEY) return `キーは${MAX_SHARED_KEY}文字までの文字列にしてください。`;
+    let json: string | undefined;
+    try {
+      json = JSON.stringify(value);
+    } catch {
+      json = undefined;
+    }
+    if (json === undefined) return "値を JSON にできません。";
+    if (Buffer.byteLength(json) > MAX_SHARED_BYTES) return `値が大きすぎます（${MAX_SHARED_BYTES / 1024}KB まで）。`;
+    const others = Object.entries(this.deps.store.pluginShared(id)).filter(([k]) => k !== key);
+    const total = others.reduce((n, [k, v]) => n + Buffer.byteLength(k) + Buffer.byteLength(JSON.stringify(v)), Buffer.byteLength(key) + Buffer.byteLength(json));
+    if (total > MAX_SHARED_TOTAL) return `このプラグインが保存する値が、合わせて${MAX_SHARED_TOTAL / 1024}KB を超えます。`;
+    this.deps.store.setPluginShared(id, key, json);
+    return undefined;
+  }
+
   private info(e: PluginEntry): PluginInfo {
     const r = e.revision;
     const manifest: PluginManifest = r?.manifest ?? { id: e.id, name: e.id, version: "", api: "" };
     const state = this.state(e.id);
-    const info: PluginInfo = { id: e.id, manifest, dev: e.dev, enabled: state.enabled, values: r ? this.values(e.id, manifest) : {} };
+    const info: PluginInfo = {
+      id: e.id,
+      manifest,
+      dev: e.dev,
+      enabled: state.enabled,
+      values: r ? this.values(e.id, manifest) : {},
+      shared: this.deps.store.pluginShared(e.id),
+    };
     if (r) {
       info.hash = r.hash;
       if (manifest.web) {

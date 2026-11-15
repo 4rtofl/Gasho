@@ -4,14 +4,15 @@
 // session's context menu), a section's title can have buttons (`action`, for "＋", `secondaryAction`, and `tools`), the
 // items of a section can be put in another order by dragging them (`sort`), a section can hold groups of items under
 // headings of their own that fold (`groups`, a plugin's categories of sessions), which can be dragged too
-// (`groupSort`), and the width on a computer can be changed by dragging the right edge (`ResizeHandle`, lib/widths).
+// (`groupSort`), whose items can be dragged from one group into another (`itemMove`), and the width on a computer can
+// be changed by dragging the right edge (`ResizeHandle`, lib/widths).
 
 import * as React from "react";
 import { AnimatePresence, motion, useDragControls, type PanInfo } from "framer-motion";
 import { ChevronRight, GripVertical, PanelLeft } from "lucide-react";
 import { useWindowWidth } from "../../lib/media";
 import { SIDEBAR_WIDTH_DEFAULT, SIDEBAR_WIDTH_MAX, SIDEBAR_WIDTH_MIN, clampSidebarWidth, useSidebarWidth } from "../../lib/widths";
-import { useSortable, type Sortable } from "../../lib/sortable";
+import { groupDrop, itemsByGroup, useSortable, type Sortable } from "../../lib/sortable";
 import { cn } from "../../lib/utils";
 import { ResizeHandle } from "../resize-handle";
 
@@ -85,6 +86,11 @@ export type SidebarGroup = {
   items: SidebarItem[];
   sort?: SidebarSort;
 };
+/**
+ * Gasho: an item dropped in another group of its section (`id`: the item; `from`, `to`: the groups), with the items of
+ * the group it went into, in their order then.
+ */
+export type SidebarMove = { id: string; from: string; to: string; ids: string[] };
 export type SidebarSection = {
   title?: string;
   items: SidebarItem[];
@@ -99,6 +105,11 @@ export type SidebarSection = {
   /** Gasho: groups after the items, each under a heading; with `groupSort`, they are dragged by their headings. */
   groups?: SidebarGroup[];
   groupSort?: SidebarSort;
+  /**
+   * Gasho: the groups' items can also be dragged from one group into another (all of them, those of a folded group
+   * too), and moved past a heading with Alt+↑/↓. A drop in the same group still goes to that group's `sort`.
+   */
+  itemMove?: (move: SidebarMove) => void;
 };
 
 const SidebarContext = React.createContext({ collapsed: false });
@@ -348,6 +359,73 @@ function SortableGroups({
       {sortable.order.map((id) => {
         const group = byId.get(id);
         return group ? children(group, sortable) : null;
+      })}
+      <p className="sr-only" aria-live="polite">
+        {sortable.announcement}
+      </p>
+    </>
+  );
+}
+
+/** Gasho: the place of a group's heading among the items dragged as one list (MovableGroupItems). */
+const HEADING = "\u001eheading\u001e";
+const headingOf = (id: string) => (id.startsWith(HEADING) ? id.slice(HEADING.length) : undefined);
+
+/** Gasho: what MovableGroupItems gives to draw the groups with: the items each shows, and its heading's element. */
+type MovableItems = { sortable: Sortable; items: (group: string) => SidebarItem[]; heading: (group: string) => (el: HTMLElement | null) => void };
+
+/**
+ * Gasho: the items of a section's groups as one list, with the groups' headings fixed in it (`itemMove`): an item
+ * dragged past a heading goes into that heading's group.
+ */
+function MovableGroupItems({
+  groups,
+  move,
+  onSorting,
+  children,
+}: {
+  groups: SidebarGroup[];
+  move: (move: SidebarMove) => void;
+  onSorting: OnSorting;
+  children: (movable: MovableItems) => React.ReactNode;
+}) {
+  const ids = React.useMemo(() => groups.flatMap((g) => [HEADING + g.id, ...g.items.map((i) => i.id)]), [groups]);
+  const byId = new Map(groups.flatMap((g) => g.items.map((i) => [i.id, i] as const)));
+  const home = new Map(groups.flatMap((g) => g.items.map((i) => [i.id, g.id] as const)));
+  const titles = new Map(groups.map((g) => [g.id, g.title]));
+  const fixed = (id: string) => headingOf(id) !== undefined;
+  const sortable = useSortable({
+    ids,
+    mode: "list",
+    fixed,
+    onCommit: (next) => {
+      const drop = groupDrop(
+        groups.map((g) => ({ id: g.id, items: g.items.map((i) => i.id) })),
+        itemsByGroup(next, headingOf, (id) => home.get(id)),
+      );
+      if (drop?.kind === "move") move(drop);
+      else if (drop?.kind === "reorder") groups.find((g) => g.id === drop.group)?.sort?.onReorder(drop.ids);
+    },
+    label: (id) => byId.get(id)?.label ?? id,
+    describe: (id, order) => {
+      const at = order.indexOf(id);
+      let start = at;
+      while (start > 0 && !fixed(order[start - 1]!)) start--;
+      let end = at;
+      while (end < order.length - 1 && !fixed(order[end + 1]!)) end++;
+      const group = start > 0 ? headingOf(order[start - 1]!) : home.get(id);
+      const title = (group !== undefined && titles.get(group)) || "";
+      return `「${byId.get(id)?.label ?? id}」を「${title}」の ${at - start + 1} 番目に移動しました（全 ${end - start + 1} 件）`;
+    },
+  });
+  useTellSorting(onSorting, sortable.dragging);
+  const shown = itemsByGroup(sortable.order, headingOf, (id) => home.get(id));
+  return (
+    <>
+      {children({
+        sortable,
+        items: (group) => (shown.get(group) ?? []).flatMap((id) => byId.get(id) ?? []),
+        heading: (group) => sortable.item(HEADING + group).ref,
       })}
       <p className="sr-only" aria-live="polite">
         {sortable.announcement}
@@ -607,7 +685,8 @@ function Panel({
 
   // Gasho: a group of items under its heading. Pressing the heading folds it; with `sort` (the section's `groupSort`),
   // the heading also drags the whole group: itself with a mouse, its handle on a touch screen, Alt+↑/↓ on the keyboard.
-  const renderGroup = (group: SidebarGroup, sort?: Sortable) => {
+  // With `movable` (the section's `itemMove`), its items are those of one list of all the groups' items.
+  const renderGroup = (group: SidebarGroup, sort?: Sortable, movable?: MovableItems) => {
     const tipLabel = [group.title, group.description, group.badge].filter((x) => x !== undefined && x !== "").join(" · ");
     // While the group is lifted or settles into its place, its items keep still in it.
     const still = Boolean(sort && sort.active === group.id);
@@ -686,8 +765,10 @@ function Panel({
       heading = <div className="mx-2.5 my-2 h-px bg-neutral-200 dark:bg-neutral-800" />;
     }
 
-    const items =
-      group.sort && group.items.length > 1 ? (
+    if (movable) heading = <div ref={movable.heading(group.id)}>{heading}</div>;
+    const items = movable ? (
+      movable.items(group.id).map((item) => renderItem(item, movable.sortable, still))
+    ) : group.sort && group.items.length > 1 ? (
         <SortableItems items={group.items} sort={group.sort} onSorting={onSorting} still={still}>
           {renderItem}
         </SortableItems>
@@ -720,6 +801,15 @@ function Panel({
       </motion.div>
     );
   };
+
+  const renderGroups = (section: SidebarSection, movable?: MovableItems) =>
+    section.groupSort ? (
+      <SortableGroups groups={section.groups ?? []} sort={section.groupSort} onSorting={onSorting}>
+        {(group, sort) => renderGroup(group, sort, movable)}
+      </SortableGroups>
+    ) : (
+      (section.groups ?? []).map((group) => renderGroup(group, undefined, movable))
+    );
 
   return (
     <SidebarContext.Provider value={{ collapsed }}>
@@ -794,12 +884,12 @@ function Panel({
                 section.items.map((item) => renderItem(item))
               )}
               {section.groups &&
-                (section.groupSort ? (
-                  <SortableGroups groups={section.groups} sort={section.groupSort} onSorting={onSorting}>
-                    {renderGroup}
-                  </SortableGroups>
+                (section.itemMove ? (
+                  <MovableGroupItems groups={section.groups} move={section.itemMove} onSorting={onSorting}>
+                    {(movable) => renderGroups(section, movable)}
+                  </MovableGroupItems>
                 ) : (
-                  section.groups.map((group) => renderGroup(group))
+                  renderGroups(section)
                 ))}
             </div>
           ))}

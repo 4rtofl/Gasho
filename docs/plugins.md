@@ -54,9 +54,9 @@ Gasho のプラグインは、Gasho の画面の決まった場所に、項目�
 | P15 | worktree のセッションのタブの行に、タブを足す。押すと、セッションと同じ場所にプラグインの画面を出す（API 1.5） |
 | P16 | テーマ。画面全体の色と角の丸みを変える。同時に有効にできるのは1つ（API 1.6） |
 | P17 | サイドバーの worktree の一覧の代わりに、プラグインが決めたカテゴリに分けてセッションを並べる。使えるのは1つのプラグインの一覧だけ（API 1.7） |
-| P18 | サイドバーの worktree の一覧を、プラグインが決めたカテゴリに分けて出す。分け方は一覧のメニューで選び、いくつのプラグインのものからでも選べる（API 1.8） |
+| P18 | サイドバーの worktree の一覧を、プラグインが決めたカテゴリに分けて出す。分け方は一覧のメニューで選び、いくつのプラグインのものからでも選べる（API 1.8）。行を別のカテゴリへドラッグしたことを、プラグインに伝える（API 1.9） |
 
-P6 は、いまの GitHub の機能がホームにタイルを持っているので足した。P8 は GitHub では使わないが、working server の様子を監視するプラグインのために、API 1.5 で足した。P13 は、エージェントが作業しているあいだ、その様子を会話に出すプラグインのために、API 1.2 で足した。P14 は、セッションの Context Window の使用率と、Claude.ai のプランで決まっている使用量の上限を出すプラグインのために、API 1.4 で足した。P15 は、worktree の Issue と Pull request を、セッションと並んだタブで開くプラグイン（GashoPlugins の github-allmighty）のために、API 1.5 で足した。P16 は、Gasho の見た目を好みの色に変えるテーマを1つずつプラグインにして、GashoPlugins のカタログから選んで入れるために、API 1.6 で足した。P17 は、サイドバーに worktree の行の代わりに、リポジトリごとのカテゴリでセッションを並べるプラグイン（GashoPlugins の Session List Rewind）のために、API 1.7 で足した。P18 は、worktree の行のまま、リポジトリごとや作業中・待機中のカテゴリに分けて出すプラグイン（GashoPlugins の Better WorktreeList）のために、API 1.8 で足した。
+P6 は、いまの GitHub の機能がホームにタイルを持っているので足した。P8 は GitHub では使わないが、working server の様子を監視するプラグインのために、API 1.5 で足した。P13 は、エージェントが作業しているあいだ、その様子を会話に出すプラグインのために、API 1.2 で足した。P14 は、セッションの Context Window の使用率と、Claude.ai のプランで決まっている使用量の上限を出すプラグインのために、API 1.4 で足した。P15 は、worktree の Issue と Pull request を、セッションと並んだタブで開くプラグイン（GashoPlugins の github-allmighty）のために、API 1.5 で足した。P16 は、Gasho の見た目を好みの色に変えるテーマを1つずつプラグインにして、GashoPlugins のカタログから選んで入れるために、API 1.6 で足した。P17 は、サイドバーに worktree の行の代わりに、リポジトリごとのカテゴリでセッションを並べるプラグイン（GashoPlugins の Session List Rewind）のために、API 1.7 で足した。P18 は、worktree の行のまま、リポジトリごとや作業中・待機中のカテゴリに分けて出すプラグイン（GashoPlugins の Better WorktreeList）のために、API 1.8 で足した。API 1.9 では、利用者が作った見出しに worktree を手で入れて分けるプラグイン（GashoPlugins の worktree-status）のために、P18 の分け方に行を別のカテゴリへ動かしたときに呼ぶ関数（`useOnMove`）と、すべてのブラウザーで共通の値を Gasho サーバーに保存するフック（`useSharedState`）を足した。
 
 ## 構成
 
@@ -151,7 +151,7 @@ GitHub プラグインの場合は、次のようになる。
 | `name`、`description` | 画面に出す名前（40文字まで）と説明 |
 | `genre` | ジャンルの ID。GashoPlugins のプラグインでは必ず書き、GashoPlugins の `genres.json` にあるジャンル（連携の `integration`、開発ツールの `devtools` など）から1つ選ぶ。GashoPlugins の GitHub Actions が、Pull request と main への push のたびに確かめる。プラグインの画面は、カードにジャンルの名前を出し、「GashoPlugins にあるもの」をジャンルごとに分けて並べる（P9）。ジャンルの名前と並びは、カタログから読む（P10）。Gasho サーバーは、ID の形だけを確かめる |
 | `version` | プラグインの版（1.2.0 の形）。GashoPlugins に新しい版を出すときに上げる。プラグインの画面は、カタログの版が入れた版より新しいときに「更新」を出す。ホットリロードで入れ替えるかは、版ではなく中身のハッシュで判断する |
-| `api` | プラグインが前提にする、プラグインの API の版。Gasho は、メジャーが同じで、マイナーが Gasho の対応する版以下のものだけを読み込む。daemon の部分は、マイナーがその gasho-daemon の版以下の working server でだけ使える（それより古い gasho-daemon は「古い」と出す）。拡張点を足すなど、前の版のプラグインがそのまま動く変更ではマイナーを上げ、動かなくなる変更ではメジャーを上げる。1.1 で、`session.launch`、`useLaunchSession`、`useNavigation` の `openSession`、daemon の部分の `ctx.folders()` と `ctx.dataDir` を足した。1.2 で、会話の末尾（P13、`conversationEnd`）と `useSessionActivity` を足した。1.3 で、daemon の部分の `ctx.github` を足した。1.4 で、入力欄の下（P14、`composerFooter`）、SDK の `Popover`、`SessionInfo` の `context` と `limits` を足し、プラグイン専用のフォルダーで動く Claude Code をセッションとして扱わないようにした。1.5 で、daemon の部分の `ctx.emit` と画面の部分の `useEvent`（P8）、worktree のタブ（P15、`worktreeTabs`・`worktreeViews`）、`useNavigation` の `worktreeHref`・`openWorktreeView` を足した。1.6 で、テーマ（P16、`theme`）を足した。1.7 で、サイドバーのセッションの一覧（P17、`sessionList`）を足した。1.8 で、サイドバーの worktree の一覧の分け方（P18、`worktreeGroupings`）を足した |
+| `api` | プラグインが前提にする、プラグインの API の版。Gasho は、メジャーが同じで、マイナーが Gasho の対応する版以下のものだけを読み込む。daemon の部分は、マイナーがその gasho-daemon の版以下の working server でだけ使える（それより古い gasho-daemon は「古い」と出す）。拡張点を足すなど、前の版のプラグインがそのまま動く変更ではマイナーを上げ、動かなくなる変更ではメジャーを上げる。1.1 で、`session.launch`、`useLaunchSession`、`useNavigation` の `openSession`、daemon の部分の `ctx.folders()` と `ctx.dataDir` を足した。1.2 で、会話の末尾（P13、`conversationEnd`）と `useSessionActivity` を足した。1.3 で、daemon の部分の `ctx.github` を足した。1.4 で、入力欄の下（P14、`composerFooter`）、SDK の `Popover`、`SessionInfo` の `context` と `limits` を足し、プラグイン専用のフォルダーで動く Claude Code をセッションとして扱わないようにした。1.5 で、daemon の部分の `ctx.emit` と画面の部分の `useEvent`（P8）、worktree のタブ（P15、`worktreeTabs`・`worktreeViews`）、`useNavigation` の `worktreeHref`・`openWorktreeView` を足した。1.6 で、テーマ（P16、`theme`）を足した。1.7 で、サイドバーのセッションの一覧（P17、`sessionList`）を足した。1.8 で、サイドバーの worktree の一覧の分け方（P18、`worktreeGroupings`）を足した。1.9 で、分け方の `useOnMove` と、`useSharedState` を足した |
 | `web`、`daemon` | 画面の部分と daemon の部分のファイル。`web`・`daemon`・`theme` のうち、少なくとも1つは要る |
 | `methods` | 画面の部分から呼べる、daemon の部分のメソッド。`kind` は、読むだけのもの（`read`）か、何かを変えるもの（`write`）か。`write` の呼び出しは操作のログに残す。`timeoutSeconds` は待つ時間で、既定は15秒、長くても120秒まで |
 | `permissions` | 読む・出す以外に、画面の部分がすること。`session.input`（セッションに発言を送る）と `session.launch`（セッションを起動する。API 1.1） |
@@ -562,6 +562,39 @@ worktreeGroupings: [
 
 ページを開いたときは、選んだ分け方のプラグインを読み込むあいだ（15秒まで）、一覧を空けて待つ。P17 と同じく、分けない一覧が一瞬出てから分けた一覧に替わらないようにするためである。
 
+#### 行を別のカテゴリへ動かす（API 1.9）
+
+分け方に `useOnMove` を書くと、worktree の行を別のカテゴリへドラッグして入れられる。`useOnMove` を持たない分け方では、これまでどおり、行は同じカテゴリの中でしか動かない。
+
+```tsx
+worktreeGroupings: [
+  { id: "manual", label: "見出しごと", useCategories: useHeadingCategories, useOnMove: useMoveToHeading },
+],
+
+function useMoveToHeading() {
+  const [, setPlaced] = useSharedState<Record<string, string>>("placed", {});
+  return ({ worktree, to }: WorktreeMove) =>
+    setPlaced((placed) => {
+      const { [worktree]: _, ...rest } = placed;
+      return to === null ? rest : { ...rest, [worktree]: to };
+    });
+}
+```
+
+`useOnMove` は React のフックで、`useCategories` と一緒に、同じ `WorktreeListContext` を受け取って呼ぶ。返すのは、行を別のカテゴリへ落としたときに Gasho が呼ぶ関数である。関数は次のもの（`WorktreeMove`）を受け取る。
+
+| 名前 | 中身 |
+|---|---|
+| `worktree` | 動かした worktree の `key` |
+| `from` | 行があったカテゴリの ID。Gasho が足す「その他」なら `null` |
+| `to` | 行を落としたカテゴリの ID。「その他」なら `null` |
+| `index` | 落としたカテゴリの、いま出ている worktree の中での場所（0 から） |
+
+- ドラッグは、同じカテゴリの中の並べ替えと同じく、PC では行そのもの、スマホではつまみを動かす。行の上下の端が見出しの真ん中を越えると、その見出しのカテゴリに入る。行の無いカテゴリ（見出しだけのもの）、畳んだカテゴリ、「その他」にも入れられる。キーボードでは、カテゴリの先頭で Alt+↑ を押すと上のカテゴリの最後へ、最後で Alt+↓ を押すと下のカテゴリの先頭へ動く
+- Gasho は、落とした行を、落とした場所にすぐ出し、関数が返す Promise が終わるまでそのまま出す。そのあとは、`useCategories` の答えのとおりに出す。ポインターが一覧の上にあるあいだは、P18 のほかの行と同じく、行を落としたカテゴリに止めておき、ポインターが離れてから答えのとおりに並べ直す。関数は、`useCategories` の答えを変えるもの（下の `useSharedState` の値など）を変える。何も変えなければ、行は元のカテゴリに戻る
+- 落としたカテゴリの中の順は、同じカテゴリの中で並べ替えたときと同じく、Gasho がブラウザーごとに覚える。`index` は、プラグインが順も覚えたいときに使う
+- 関数がエラーを投げたとき、返した Promise が失敗したときは、行を元のカテゴリに戻し、一覧の見出しの下に理由を10秒出す。`useOnMove` 自身がエラーを投げたときは、`useCategories` のときと同じく、分けない一覧に戻す
+
 ## 画面の部分から使えるもの
 
 画面の部分は、Gasho の状態と操作を、SDK のフックと関数で使う。プラグインが SDK だけを使うようにするのは、Gasho の中を変えても、プラグインが壊れないようにするためである。
@@ -576,6 +609,7 @@ worktreeGroupings: [
 | `useEvent(topic, { machine })` | daemon の部分がその working server から送ったイベントの、最後のデータ。まだ届いていなければ `undefined`（P8、API 1.5） |
 | `useSetting(key)` | 設定の値と、値を変える関数（P5） |
 | `usePluginState(key, 初期値)` | ページを開いているあいだ Gasho が覚えておく値。ホットリロードで部品を作り直しても残り、ページを読み込み直すと消える |
+| `useSharedState(key, 初期値)` | Gasho サーバーに保存する JSON の値と、値を変える関数（API 1.9）。すべてのブラウザーで同じ値を読み書きする。下の「すべてのブラウザーで共通の値」を参照 |
 | `useNavigation()` | このプラグインのページとパネルを開く・閉じる・戻る。ホームのタイルのようにセッションの外からは、セッションを指定してパネルを開く。`<a href>` に入れる URL も作る。`openSession(machine, sessionId)` と `sessionHref(…)` で、Gasho のセッションの画面に移る（API 1.1）。`openWorktreeView(画面, 引数, at)` と `worktreeHref(…)` で、worktree のタブの画面を開く（API 1.5、P15） |
 | `useSendInput()` | セッションに発言を送る関数を返す。引数は `{ machine, sessionId, text }`。`permissions` に `session.input` が要る。入力欄から送ったときと同じく、会話の末尾にすぐ出し、操作のログに残す |
 | `useLaunchSession()` | working server のフォルダーでセッションを起動する関数を返す（API 1.1）。引数は `{ machine, cwd, name, trust }`。`permissions` に `session.launch` が要る。「新しいセッション」と同じく起動し、操作のログに残す。Claude Code がフォルダーを信頼するかを聞いたときは起動せず、`needsTrust` を返す。利用者に確かめてから `trust: true` で呼び直す |
@@ -598,6 +632,16 @@ worktreeGroupings: [
 | `Popover` | ボタンから開く小さな画面（API 1.4）。開くボタン（`trigger`）、開く向き（`side`、`align`）、読み上げる名前（`label`）、クラス（`className`）を受け取る。開いているかをプラグインが持つときは、`open` と `onOpenChange` も渡す。Esc、外を押す、ボタンをもう一度押すと閉じる。モーダルにしないので、後ろの会話はスクロールできる。中身は、開いているあいだだけ描く |
 
 型（`MachineInfo`、`SessionInfo`、`GitHubRepo` など）は、`@gasho/protocol` のものを SDK から使う。
+
+### すべてのブラウザーで共通の値（API 1.9）
+
+`useSharedState(key, 初期値)` は、`[値, 値を変える関数]` を返す。値は、プラグインごと・`key` ごとに Gasho サーバーが保存し、すべてのブラウザーに送る。ページを読み込み直しても、別のブラウザーで開いても同じ値になる。まだ保存していない `key` は、初期値を返す。値を変える関数には、新しい値か、前の値から新しい値を作る関数を渡す。
+
+- 値を変えると、そのブラウザーではすぐに新しい値になる。関数が返す Promise は、Gasho サーバーが保存して、すべてのブラウザーに送ったあとに終わる。Gasho サーバーが断ったとき（大きすぎるときなど）は、Promise が失敗し、値は元に戻る
+- 前の値から作る関数は、そのブラウザーが知っている最新の値（まだ Gasho サーバーが答えていない値を含む）を受け取る。2つのブラウザーがほぼ同時に変えたときは、後から Gasho サーバーに届いたほうの値が残る
+- 値は JSON にできるもので、1つが 64KB まで、`key` は100文字まで、プラグインのすべての値を合わせて 256KB まで。値を変えるたびに、Gasho サーバーはプラグインの一覧と一緒にすべての値をすべてのブラウザーへ送るので、大きなデータを置かない
+- 値は、プラグインを無効にしても残り、外すと消える。値を変えたことは、操作のログに残さない（ドラッグのたびに変わる値があるため）
+- daemon の部分は、この値を読めない。daemon の部分と共通にしたい値は、`scope: "server"` の設定（P5）か、daemon の部分の `ctx.dataDir` に置く
 
 ## daemon の部分
 
@@ -970,6 +1014,7 @@ Gasho サーバーは、入れたプラグインを置くフォルダーを監�
 | `useRequest` の結果と、答えを待っている呼び出し | 部品の中の `useState` の値 |
 | 設定の値（`useSetting`） | モジュールの中の変数 |
 | `usePluginState` の値 | |
+| `useSharedState` の値 | |
 | サイドバーのセッションの一覧（P17）の、並べ替えた順と畳んだ状態 | |
 | サイドバーの worktree の一覧の分け方（P18）の、選んだものと、並べ替えた順と畳んだ状態 | |
 
@@ -1051,9 +1096,10 @@ Gasho の CSS（Tailwind CSS）には、Gasho のコードが使うクラスし�
 | ブラウザー → Gasho サーバー | `plugin.update`、`plugin.remove` | プラグインの ID |
 | ブラウザー → Gasho サーバー | `plugin.enable` | プラグイン、有効にするか |
 | ブラウザー → Gasho サーバー | `plugin.setting` | プラグイン、設定の名前、値（`scope: "server"` のもの） |
+| ブラウザー → Gasho サーバー | `plugin.shared` | プラグイン、`key`、値（`useSharedState`、API 1.9） |
 | ブラウザー → Gasho サーバー | `plugin.request` | requestId、プラグイン、working server、セッション（なくてもよい）、メソッド、引数、ログに残す要約（`write` のとき） |
 | Gasho サーバー → ブラウザー | `plugin.response` | requestId、結果かエラー |
-| Gasho サーバー → ブラウザー | `snapshot` の `plugins`、`plugins` | 入れたプラグインの一覧。状態、ハッシュ、ファイルの URL、設定の項目と値、working server ごとの daemon の部分の状態。一覧が変わるたびに送る |
+| Gasho サーバー → ブラウザー | `snapshot` の `plugins`、`plugins` | 入れたプラグインの一覧。状態、ハッシュ、ファイルの URL、設定の項目と値、`useSharedState` の値、working server ごとの daemon の部分の状態。一覧が変わるたびに送る |
 | Gasho サーバー → ブラウザー | `plugin.event` | プラグイン、working server、topic、data |
 | Gasho サーバー → ブラウザー | `snapshot` の `pluginEvents` | Gasho サーバーが覚えている `retain` のイベント |
 | Gasho サーバー → gasho-daemon | `plugins` | daemon の部分のあるプラグインの ID、`daemon.js` のハッシュ、設定の値、動かすか（有効か。どの working server にも同じものを送る）。つないだときと、変わったときに送る |

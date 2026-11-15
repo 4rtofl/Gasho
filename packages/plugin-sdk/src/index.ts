@@ -329,6 +329,18 @@ export interface WorktreeCategory {
   worktrees: WorktreeCategoryItem[];
 }
 
+/** A worktree's row the person dropped in another category of a grouping (P18). Plugin API 1.9. */
+export interface WorktreeMove {
+  /** WorktreeListWorktree.key */
+  worktree: string;
+  /** The id of the category it showed in; null: the one Gasho adds at the end ("その他"). */
+  from: string | null;
+  /** The id of the category it was dropped in; null: "その他". */
+  to: string | null;
+  /** Where it was dropped among the worktrees that category shows, from 0 (Gasho keeps that order itself). */
+  index: number;
+}
+
 /**
  * A way to put the sidebar's worktrees in categories (P18), picked in the menu at the right of the list's title, where
  * every enabled plugin's groupings are offered. Gasho draws the categories and the worktrees' rows as it draws its own
@@ -345,6 +357,14 @@ export interface WorktreeGrouping {
    * show by default. A worktree left out of every category goes in one Gasho adds at the end ("その他").
    */
   useCategories: (ctx: WorktreeListContext) => WorktreeCategory[];
+  /**
+   * A React hook, called with useCategories: the function Gasho calls when the person drops a worktree's row in another
+   * category (or moves it there with Alt+↑/↓). Only a grouping with it lets rows go from one category to another. Gasho
+   * shows the row where it was dropped until the function's promise settles; then the categories useCategories gives
+   * decide, so the function should change what they are made of (useSharedState keeps that for every browser). When it
+   * throws or rejects, the row goes back and the list tells why. Plugin API 1.9.
+   */
+  useOnMove?: (ctx: WorktreeListContext) => (move: WorktreeMove) => void | Promise<void>;
 }
 
 /** What the web part of a plugin adds to Gasho's screen (its web.js exports it as default). */
@@ -499,6 +519,13 @@ export interface GashoSdk {
   useSetting<T = unknown>(key: string): [T, (value: T) => Promise<void>];
   /** A value Gasho keeps while the page is open; it outlives a hot reload of the plugin. */
   usePluginState<T>(key: string, initial: T): [T, (value: T | ((prev: T) => T)) => void];
+  /**
+   * A JSON value the Gasho server keeps for this plugin, the same in every browser, and a function that changes it
+   * (plugin API 1.9). `initial` until one is saved. A new value shows here at once; the function's promise settles once
+   * the Gasho server kept it and sent it to every browser, and rejects when it refused it (the value then goes back).
+   * Up to 64 KB as JSON, and 256 KB for all the plugin's keys together.
+   */
+  useSharedState<T>(key: string, initial: T): [T, (value: T | ((prev: T) => T)) => Promise<void>];
   useNavigation(): Navigation;
   /** Sends a message to a session (needs the permission "session.input"), as the chat box does. */
   useSendInput(): (input: { machine: string; sessionId: string; text: string }) => Promise<CallResult<undefined>>;
@@ -551,6 +578,7 @@ export declare const useRequest: GashoSdk["useRequest"];
 export declare const useCall: GashoSdk["useCall"];
 export declare const useSetting: GashoSdk["useSetting"];
 export declare const usePluginState: GashoSdk["usePluginState"];
+export declare const useSharedState: GashoSdk["useSharedState"];
 export declare const useNavigation: GashoSdk["useNavigation"];
 export declare const useSendInput: GashoSdk["useSendInput"];
 export declare const useLaunchSession: GashoSdk["useLaunchSession"];

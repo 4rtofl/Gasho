@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { PluginInfo } from "@gasho/protocol";
 import { PluginEventStore } from "../src/plugins/event-store.ts";
 
-const info = (id: string, hash: string, enabled = true): PluginInfo => ({ id, manifest: { id, name: id, version: "1.0.0", api: "1.4" }, dev: false, enabled, hash, values: {} });
+const info = (id: string, hash: string, enabled = true): PluginInfo => ({ id, manifest: { id, name: id, version: "1.0.0", api: "1.4" }, dev: false, enabled, hash, values: {}, shared: {} });
 const key = (plugin: string, topic: string, machine = "m1") => PluginEventStore.key(plugin, machine, topic);
 
 test("the last event of each plugin, working server and topic is kept, and only its readers hear of it", () => {

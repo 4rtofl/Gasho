@@ -9,7 +9,7 @@ import { ReposDialog } from "@/components/repos-dialog";
 import { SessionActionDialog, SessionContextMenu, type SessionActionRequest } from "@/components/session-menu";
 import { LAUNCH_WAIT_MS } from "@/components/session-tabs";
 import { StatusDot } from "@/components/status-badge";
-import { Sidebar, SidebarTrigger, useSidebar, type SidebarGroup, type SidebarItem, type SidebarSection } from "@/components/ui/sidebar";
+import { Sidebar, SidebarTrigger, useSidebar, type SidebarGroup, type SidebarItem, type SidebarMove, type SidebarSection } from "@/components/ui/sidebar";
 import { updateTo } from "@/lib/daemon-update";
 import { hubUpdateToTell } from "@/lib/server-update";
 import { useChoices } from "@/lib/flag";
@@ -23,6 +23,7 @@ import {
   arrangeCategories,
   hasOrder,
   holdOrder,
+  OTHER_CATEGORY,
   rowAfterRemoval,
   sessionKey,
   sessionListContext,
@@ -51,7 +52,16 @@ import {
 } from "@/lib/sessions";
 import { reloadToNewBuild, sendCommand, useAppState, useReadWhileOpen } from "@/lib/store";
 import { cn } from "@/lib/utils";
-import { arrangeWorktreeCategories, groupingKey, holdWorktreeList, worktreeListContext, type HeldWorktreeList } from "@/lib/worktree-groupings";
+import {
+  arrangeWorktreeCategories,
+  groupingKey,
+  holdWorktreeList,
+  moveHeldWorktree,
+  withMoves,
+  worktreeListContext,
+  type HeldWorktreeList,
+  type PendingMove,
+} from "@/lib/worktree-groupings";
 import { PANEL_WIDTH_MAX, PANEL_WIDTH_MIN, clampPanelWidth, defaultPanelWidth, usePanelWidth } from "@/lib/widths";
 import { PluginBadgeProbes, PluginPageView, PluginPanelView, usePluginBadges } from "@/plugins/parts";
 import { usePluginRegistry } from "@/plugins/registry";
@@ -71,6 +81,9 @@ import { WorktreeView } from "@/views/worktree";
 /** Where this browser keeps the order the sidebar's worktrees were dragged into, and the repositories they are narrowed to. */
 const WORKTREE_ORDER_KEY = "gasho.worktreeOrder";
 const WORKTREE_REPO_KEY = "gasho.worktreeRepo";
+
+/** How long the list tells that a row could not be moved to another category of a grouping (ms). */
+const MOVE_ERROR_MS = 10_000;
 
 /** Gasho's logo: 🙏 (合掌, gasshō). The collapsed sidebar shows the logo alone. */
 export const LOGO = "🙏";
@@ -204,6 +217,14 @@ export function App() {
   const shownGrouping = groupings.mode.kind === "flat" ? undefined : groupingKey(groupings.mode.plugin, groupings.mode.grouping);
   const [groupingPrefs, changeGroupingPrefs] = useGroupingPrefs(shownGrouping);
   const [heldWorktrees, setHeldWorktrees] = useState<HeldWorktreeList | null>(null);
+  // Rows dropped in another category, until the plugin's function for that settles, and why the last one failed.
+  const [moves, setMoves] = useState<PendingMove[]>([]);
+  const [moveError, setMoveError] = useState<string>();
+  useEffect(() => {
+    if (!moveError) return;
+    const t = setTimeout(() => setMoveError(undefined), MOVE_ERROR_MS);
+    return () => clearTimeout(t);
+  }, [moveError]);
   // The drawer is a phone's: once the window is wide, it is hidden, so it is closed, and the list it held is let go
   // (else the list would stay held while the pointer comes and goes on a computer).
   useEffect(() => {
@@ -258,7 +279,11 @@ export function App() {
   // The grouping's categories of the worktrees, in the order dragged into, or as held.
   const worktreeCategories =
     groupings.mode.kind === "grouped"
-      ? arrangeWorktreeCategories(groupings.mode.categories, groupingPrefs, heldWorktrees?.grouping === shownGrouping ? heldWorktrees : null)
+      ? arrangeWorktreeCategories(
+          withMoves(groupings.mode.categories, moves, shownGrouping),
+          groupingPrefs,
+          heldWorktrees?.grouping === shownGrouping ? heldWorktrees : null,
+        )
       : [];
   // While the pointer is over the list (on a phone, while the drawer is open), the order shown stays: the time a
   // session was last used changes as Claude works, and its row would move away from under the pointer. A grouping's
@@ -389,6 +414,29 @@ export function App() {
         : { onReorder: (keys) => changeGroupingPrefs((p) => withSessionOrder(p, c.id, keys, worktreeCategories.map((x) => x.id))) },
     };
   });
+  // A row dropped in another category of a grouping with useOnMove: it shows there at once, where it was dropped, until
+  // the plugin's function settles; then the plugin's categories decide (while the list is held, from when the pointer
+  // leaves it). When the function fails, the row goes back and the list tells why for a while.
+  const moveRow = (m: SidebarMove) => {
+    const move = groupings.move;
+    if (!move || !shownGrouping) return;
+    const grouping = shownGrouping;
+    const index = m.ids.indexOf(m.id);
+    const back = worktreeCategories.find((c) => c.id === m.from)?.worktrees.findIndex((w) => w.key === m.id) ?? 0;
+    const pending: PendingMove = { grouping, worktree: m.id, to: m.to };
+    changeGroupingPrefs((p) => withSessionOrder(p, m.to, m.ids, worktreeCategories.map((x) => x.id)));
+    setMoves((prev) => [...prev.filter((x) => x.grouping !== grouping || x.worktree !== m.id), pending]);
+    setHeldWorktrees((h) => (h?.grouping === grouping ? moveHeldWorktree(h, m.id, m.to, index) : h));
+    setMoveError(undefined);
+    const settled = () => setMoves((prev) => prev.filter((x) => x !== pending));
+    const plugins = (id: string) => (id === OTHER_CATEGORY ? null : id);
+    const label = byId.get(m.id)?.label ?? m.id;
+    move({ worktree: m.id, from: plugins(m.from), to: plugins(m.to), index }).then(settled, (e: unknown) => {
+      settled();
+      setHeldWorktrees((h) => (h?.grouping === grouping ? moveHeldWorktree(h, m.id, m.from, back) : h));
+      setMoveError(`「${label}」を移せませんでした（${e instanceof Error ? e.message : String(e)}）。`);
+    });
+  };
   // A grouping's categories show in place of the rows (none yet while waiting for them); the order dragged into and
   // "最後に使った順に戻す" are then the grouping's.
   const grouped = groupings.mode.kind !== "flat";
@@ -397,6 +445,7 @@ export function App() {
     groupings.mode.kind === "flat" && groupings.mode.failed
       ? `${groupings.mode.failed} の分け方を使えないので、worktree を分けずに並べています（理由はプラグインの画面に）。`
       : undefined,
+    groupings.mode.kind === "grouped" ? moveError : undefined,
   ].filter(Boolean);
   const worktreeSection: SidebarSection = {
     // Shown even without sessions, for its "＋".
@@ -430,6 +479,7 @@ export function App() {
     items: grouped ? [] : listed.map((w) => worktreeRow(w)),
     groups: grouped ? worktreeGroups : undefined,
     groupSort: grouped ? { onReorder: (ids) => changeGroupingPrefs((p) => withCategoryOrder(p, ids)) } : undefined,
+    itemMove: grouped && groupings.move ? moveRow : undefined,
   };
   // The plugin's categories (none yet while waiting for it). The repositories need no narrowing there; registering
   // them stays.

@@ -9,7 +9,9 @@ import {
   effectiveChoice,
   groupingOptions,
   holdWorktreeList,
+  moveHeldWorktree,
   normalizeWorktreeCategories,
+  withMoves,
   worktreeListContext,
   worktreeListMode,
   type GroupingPlugins,
@@ -145,6 +147,28 @@ test("while held, a worktree stays in the category it showed in; what came meanw
   assert.deepEqual(shown(arrangeWorktreeCategories(now, {})), ["busy: w,b,n", "idle: a", "none: m"]);
 });
 
+test("a row dropped in another category shows there until the plugin took it, and while held, stays where it was dropped", () => {
+  const answer = [cat("doing", ["a"]), cat("review", []), cat(OTHER_CATEGORY, ["n", "m"])];
+  const moves = [
+    { grouping: "p/manual", worktree: "n", to: "review" },
+    { grouping: "p/manual", worktree: "a", to: OTHER_CATEGORY },
+    // Of another grouping, and to a category that is gone: neither takes a row out of its own.
+    { grouping: "p/other", worktree: "m", to: "doing" },
+    { grouping: "p/manual", worktree: "m", to: "gone" },
+  ];
+  assert.deepEqual(shown(withMoves(answer, moves, "p/manual")), ["doing: ", "review: n", `${OTHER_CATEGORY}: a,m`]);
+  // その他 shows once a row is dropped in it, and goes once its last row is taken out.
+  assert.deepEqual(shown(withMoves([cat("doing", ["a"])], [{ grouping: "g", worktree: "a", to: OTHER_CATEGORY }], "g")), ["doing: ", `${OTHER_CATEGORY}: a`]);
+  assert.deepEqual(shown(withMoves([cat("doing", []), cat(OTHER_CATEGORY, ["n"])], [{ grouping: "g", worktree: "n", to: "doing" }], "g")), ["doing: n"]);
+
+  // Held: the row goes where it was dropped, and the heading it left stays while the hook still gives it.
+  const held = moveHeldWorktree(holdWorktreeList("p/manual", answer), "n", "doing", 0);
+  assert.deepEqual(shown(held.categories), ["doing: n,a", "review: ", `${OTHER_CATEGORY}: m`]);
+  assert.deepEqual(shown(arrangeWorktreeCategories(answer, {}, held)), ["doing: n,a", "review: ", `${OTHER_CATEGORY}: m`]);
+  // When the plugin's function failed, it goes back to where it was.
+  assert.deepEqual(shown(moveHeldWorktree(held, "n", OTHER_CATEGORY, 0).categories), ["doing: a", "review: ", `${OTHER_CATEGORY}: n,m`]);
+});
+
 test("the groupings offered are those of the loaded plugins, in their order; the first is used until one is picked", () => {
   const options = groupingOptions([
     { id: "better", name: "Better", groupings: [{ id: "repo", label: "リポジトリごと" }, { id: "status", label: "作業中・待機中" }] },
@@ -197,4 +221,6 @@ test("a web part's groupings need an id each (once), a label and useCategories",
   assert.match(checkWorktreeGroupings([ok, ok]) ?? "", /「repo」が2つ/);
   assert.match(checkWorktreeGroupings([{ ...ok, label: " " }]) ?? "", /label/);
   assert.match(checkWorktreeGroupings([{ ...ok, useCategories: "no" }]) ?? "", /useCategories/);
+  assert.equal(checkWorktreeGroupings([{ ...ok, useOnMove: () => () => {} }]), undefined);
+  assert.match(checkWorktreeGroupings([{ ...ok, useOnMove: {} }]) ?? "", /useOnMove/);
 });

@@ -1,8 +1,9 @@
 // The sidebar's worktrees in a plugin's categories (docs/plugins.md, P18): the groupings the plugins offer in the menu
 // of the list (groupingOptions; checkWorktreeGroupings refuses a web part whose groupings are not right), what the
 // picked one's hook gets (worktreeListContext), what of its answer is kept (normalizeWorktreeCategories), the order
-// dragged into and what is held while the pointer is over the list (arrangeWorktreeCategories), and which list the
-// sidebar shows (worktreeListMode). Unlike the session list of P17, a grouping only puts Gasho's rows of worktrees under
+// dragged into and what is held while the pointer is over the list (arrangeWorktreeCategories), where a row dropped in
+// another category shows until the plugin took it there (withMoves, moveHeldWorktree), and which list the sidebar shows
+// (worktreeListMode). Unlike the session list of P17, a grouping only puts Gasho's rows of worktrees under
 // headings: the rows, the tabs above a session and the rest stay as they are. Pure, so that it can be tested;
 // plugins/worktree-groupings.tsx runs the hook, App draws the result.
 import type { WorktreeListContext, WorktreeListWorktree } from "@gasho/plugin-sdk";
@@ -36,6 +37,7 @@ export function checkWorktreeGroupings(given: unknown): string | undefined {
     ids.add(g.id);
     if (!text(g.label, MAX_TITLE)) return `worktreeGroupings の「${g.id}」に、label を書いてください。`;
     if (typeof g.useCategories !== "function") return `worktreeGroupings の「${g.id}」に、関数 useCategories を書いてください。`;
+    if (g.useOnMove !== undefined && typeof g.useOnMove !== "function") return `worktreeGroupings の「${g.id}」の useOnMove は、関数にしてください。`;
   }
   return undefined;
 }
@@ -146,6 +148,50 @@ export interface HeldWorktreeList {
 
 export function holdWorktreeList(grouping: string, shown: readonly ListedWorktreeCategory[]): HeldWorktreeList {
   return { grouping, categories: [...shown] };
+}
+
+/**
+ * A worktree's row dropped in another category (`to`) of the grouping with the key `grouping`, while the plugin's
+ * function for it (useOnMove) has not settled yet.
+ */
+export interface PendingMove {
+  grouping: string;
+  worktree: string;
+  to: string;
+}
+
+/**
+ * The hook's categories with the rows of `moves` (of the grouping `grouping`) in the categories they were dropped in,
+ * first there (the order dragged into places them). その他 shows while a worktree is in it, as the hook's answer has it.
+ */
+export function withMoves(categories: readonly ListedWorktreeCategory[], moves: readonly PendingMove[], grouping: string | undefined): ListedWorktreeCategory[] {
+  const own = moves.filter((m) => m.grouping === grouping);
+  if (own.length === 0) return [...categories];
+  const ids = new Set(categories.map((c) => c.id));
+  // A move to a category that is gone does not take the row out of its own.
+  const moved = new Map(own.filter((m) => ids.has(m.to) || m.to === OTHER_CATEGORY).map((m) => [m.worktree, m.to]));
+  const rows = new Map(categories.flatMap((c) => c.worktrees.map((w) => [w.key, w] as const)));
+  const into = (id: string) => [...moved].flatMap(([key, to]) => (to === id ? (rows.get(key) ?? []) : []));
+  const out = categories.map((c) => ({ ...c, worktrees: [...into(c.id), ...c.worktrees.filter((w) => !moved.has(w.key))] }));
+  if (!ids.has(OTHER_CATEGORY)) out.push({ id: OTHER_CATEGORY, title: "その他", worktrees: into(OTHER_CATEGORY) });
+  return out.filter((c) => c.id !== OTHER_CATEGORY || c.worktrees.length > 0);
+}
+
+/** The held list with the worktree `key` in the category `to`, at `index` there (dropped while the list is held). */
+export function moveHeldWorktree(held: HeldWorktreeList, key: string, to: string, index: number): HeldWorktreeList {
+  let row: ListedWorktree = { key };
+  const categories = held.categories.map((c) => {
+    const found = c.worktrees.find((w) => w.key === key);
+    if (found) row = found;
+    return found ? { ...c, worktrees: c.worktrees.filter((w) => w.key !== key) } : c;
+  });
+  const at = categories.findIndex((c) => c.id === to);
+  if (at < 0) return { ...held, categories };
+  const target = categories[at]!;
+  const worktrees = [...target.worktrees];
+  worktrees.splice(Math.max(0, Math.min(index, worktrees.length)), 0, row);
+  categories[at] = { ...target, worktrees };
+  return { ...held, categories };
 }
 
 /**

@@ -301,8 +301,8 @@ export function requestCatalog(refresh = false): void {
 }
 
 /**
- * Adds, updates or removes a plugin, enables or disables one, chooses where its daemon part runs, or changes one of
- * its settings.
+ * Adds, updates or removes a plugin, enables or disables one, chooses where its daemon part runs, changes one of its
+ * settings, or keeps a value its web part shares between browsers.
  */
 export function sendPluginCommand(cmd: PluginCommand, timeoutMs = 20_000): Promise<CommandResult> {
   return new Promise((resolve) => {

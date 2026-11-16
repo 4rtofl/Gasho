@@ -123,8 +123,11 @@ test("service install writes the unit where systemd or launchd reads it, and res
     activateCommands("linux", "/x", 1000).map((c) => c.argv.join(" ")),
     ["systemctl --user daemon-reload", "systemctl --user enable gasho-daemon", "systemctl --user restart gasho-daemon"],
   );
-  assert.deepEqual(activateCommands("darwin", "/Users/u/Library/LaunchAgents/local.gasho.daemon.plist", 501), [
-    { argv: ["launchctl", "bootout", "gui/501/local.gasho.daemon"], mayFail: true },
-    { argv: ["launchctl", "bootstrap", "gui/501", "/Users/u/Library/LaunchAgents/local.gasho.daemon.plist"] },
-  ]);
+  // launchd: bootout, wait until the agent is gone, bootstrap (tried again on failure); run in launchd.test.ts.
+  const darwin = activateCommands("darwin", "/Users/u/Library/LaunchAgents/local.gasho.daemon.plist", 501);
+  assert.deepEqual(darwin[0], { argv: ["launchctl", "bootout", "gui/501/local.gasho.daemon"], mayFail: true });
+  assert.deepEqual(darwin[1]?.argv.slice(-1), ["gui/501/local.gasho.daemon"]);
+  assert.equal(darwin[1]?.mayFail, true);
+  assert.deepEqual(darwin[2]?.argv.slice(-2), ["gui/501", "/Users/u/Library/LaunchAgents/local.gasho.daemon.plist"]);
+  assert.equal(darwin[2]?.mayFail, undefined);
 });

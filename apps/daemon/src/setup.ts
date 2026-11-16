@@ -256,17 +256,37 @@ export function serviceFile(platform: NodeJS.Platform, home: string, env: NodeJS
   return undefined;
 }
 
+/** How long launchd's agent may take to go after `launchctl bootout`, in steps of LAUNCHD_POLL_S seconds (10 s). */
+export const LAUNCHD_GONE_POLLS = 50;
+const LAUNCHD_POLL_S = 0.2;
+/** How many quiet tries of `launchctl bootstrap`, a second apart, come before its last one (whose error is shown). */
+export const LAUNCHD_BOOTSTRAP_RETRIES = 5;
+
+/**
+ * launchd's commands that replace a loaded agent with the one in `file`: bootout (it may fail: the agent was not
+ * loaded yet), then wait until launchd has let the agent go, then bootstrap. bootout can return while the old agent is
+ * still being stopped, and a bootstrap then fails with "Bootstrap failed: 5: Input/output error" (#87). The wait ends
+ * when `launchctl print` no longer finds the agent, or after LAUNCHD_GONE_POLLS; bootstrap is tried again a second
+ * later when it fails anyway, quietly but for the last try. The scripts get their values as arguments, never quoted
+ * into them. Shared with gasho-hub's (apps/hub/src/service.ts), which copies it.
+ */
+export function launchdReplaceCommands(label: string, file: string, uid: number): { argv: string[]; mayFail?: boolean }[] {
+  const domain = `gui/${uid}`;
+  const wait = `i=0; while launchctl print "$1" >/dev/null 2>&1; do i=$((i+1)); [ "$i" -ge ${LAUNCHD_GONE_POLLS} ] && exit 0; sleep ${LAUNCHD_POLL_S}; done`;
+  const bootstrap = `n=0; until launchctl bootstrap "$1" "$2" 2>/dev/null; do n=$((n+1)); sleep 1; if [ "$n" -ge ${LAUNCHD_BOOTSTRAP_RETRIES} ]; then exec launchctl bootstrap "$1" "$2"; fi; done`;
+  return [
+    { argv: ["launchctl", "bootout", `${domain}/${label}`], mayFail: true },
+    { argv: ["/bin/sh", "-c", wait, "sh", `${domain}/${label}`], mayFail: true },
+    { argv: ["/bin/sh", "-c", bootstrap, "sh", domain, file] },
+  ];
+}
+
 /**
  * The commands that make the service manager read the service's file again and start the daemon with it (stopping
- * the one it runs now). The first one of launchd's may fail: the agent was not loaded yet.
+ * the one it runs now).
  */
 export function activateCommands(platform: NodeJS.Platform, file: string, uid: number): { argv: string[]; mayFail?: boolean }[] {
-  if (platform === "darwin") {
-    return [
-      { argv: ["launchctl", "bootout", `gui/${uid}/${LAUNCHD_LABEL}`], mayFail: true },
-      { argv: ["launchctl", "bootstrap", `gui/${uid}`, file] },
-    ];
-  }
+  if (platform === "darwin") return launchdReplaceCommands(LAUNCHD_LABEL, file, uid);
   const unit = SYSTEMD_UNIT.replace(/\.service$/, "");
   return [
     { argv: ["systemctl", "--user", "daemon-reload"] },

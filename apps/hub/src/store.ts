@@ -10,6 +10,7 @@ import type {
   GashoNotification,
   MachineHookEvent,
   MachineInfo,
+  NotificationKind,
   PairingCode,
   SessionInfo,
 } from "@gasho/protocol";
@@ -22,7 +23,7 @@ import { hashSecret, newPairingCode, newToken, normalizeCode, PAIRING_CODE_TTL_M
  * cannot keep to that writes the lowest schema that may still open the database (min_schema in meta); an older Gasho
  * server then refuses it, rather than spoil it (docs/hub-setup.md).
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 const EVENT_TTL_MS = 7 * 24 * 3600_000;
 const NOTIFICATION_TTL_MS = 30 * 24 * 3600_000;
 
@@ -40,6 +41,33 @@ function toDevice(r: Row): DeviceRecord {
     createdAt: Number(r.created_at),
     lastSeenAt: r.last_seen_at == null ? undefined : Number(r.last_seen_at),
     revokedAt: r.revoked_at == null ? undefined : Number(r.revoked_at),
+  };
+}
+
+/** A browser's Web Push subscription, as kept. */
+export interface PushSubscriptionRecord {
+  endpoint: string;
+  deviceId: string;
+  p256dh: string;
+  auth: string;
+  kinds: NotificationKind[];
+  createdAt: number;
+}
+
+function toPushSubscription(r: Row): PushSubscriptionRecord {
+  let kinds: NotificationKind[] = [];
+  try {
+    kinds = JSON.parse(String(r.kinds)) as NotificationKind[];
+  } catch {
+    // none: nothing is sent to it
+  }
+  return {
+    endpoint: String(r.endpoint),
+    deviceId: String(r.device_id),
+    p256dh: String(r.p256dh),
+    auth: String(r.auth),
+    kinds,
+    createdAt: Number(r.created_at),
   };
 }
 
@@ -88,6 +116,19 @@ export class Store {
         PRIMARY KEY (plugin, key)
       );
       PRAGMA user_version = 4;
+    `);
+    // Version 5 adds the browsers' Web Push subscriptions (the VAPID keys go in meta).
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        endpoint TEXT PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        p256dh TEXT NOT NULL,
+        auth TEXT NOT NULL,
+        kinds TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS push_subscriptions_device ON push_subscriptions(device_id);
+      PRAGMA user_version = 5;
     `);
   }
 
@@ -185,6 +226,7 @@ export class Store {
     const res = this.db.prepare("UPDATE devices SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL").run(now, id);
     if (Number(res.changes) === 0) return false;
     this.db.prepare("DELETE FROM machines WHERE id = ?").run(id);
+    this.db.prepare("DELETE FROM push_subscriptions WHERE device_id = ?").run(id);
     return true;
   }
 
@@ -314,6 +356,60 @@ export class Store {
     this.db.prepare("DELETE FROM plugins WHERE id = ?").run(id);
     this.db.prepare("DELETE FROM plugin_settings WHERE plugin = ?").run(id);
     this.db.prepare("DELETE FROM plugin_shared WHERE plugin = ?").run(id);
+  }
+
+  // ---- meta ----
+
+  getMeta(key: string): string | undefined {
+    const r = this.db.prepare("SELECT value FROM meta WHERE key = ?").get(key) as Row | undefined;
+    return r ? String(r.value) : undefined;
+  }
+
+  setMeta(key: string, value: string): void {
+    this.db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
+  }
+
+  // ---- Web Push ----
+
+  /**
+   * Keeps a subscription of a browser, or changes its kinds. An endpoint belongs to one browser: taken by another
+   * (registered again in the same app), it moves to that one.
+   */
+  savePushSubscription(s: Omit<PushSubscriptionRecord, "createdAt">, now = Date.now()): void {
+    this.db
+      .prepare(
+        `INSERT INTO push_subscriptions (endpoint, device_id, p256dh, auth, kinds, created_at) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(endpoint) DO UPDATE SET device_id = excluded.device_id, p256dh = excluded.p256dh,
+           auth = excluded.auth, kinds = excluded.kinds`,
+      )
+      .run(s.endpoint, s.deviceId, s.p256dh, s.auth, JSON.stringify(s.kinds), now);
+  }
+
+  /** The subscriptions of a browser, oldest first. */
+  pushSubscriptionsOf(deviceId: string): PushSubscriptionRecord[] {
+    return (
+      this.db.prepare("SELECT * FROM push_subscriptions WHERE device_id = ? ORDER BY created_at, endpoint").all(deviceId) as Row[]
+    ).map(toPushSubscription);
+  }
+
+  /** The subscriptions of the browsers still registered. */
+  pushSubscriptions(): PushSubscriptionRecord[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT p.* FROM push_subscriptions p JOIN devices d ON d.id = p.device_id
+           WHERE d.revoked_at IS NULL ORDER BY p.created_at, p.endpoint`,
+        )
+        .all() as Row[]
+    ).map(toPushSubscription);
+  }
+
+  /** Forgets a subscription; with `deviceId`, only that browser's. */
+  deletePushSubscription(endpoint: string, deviceId?: string): boolean {
+    const res = deviceId
+      ? this.db.prepare("DELETE FROM push_subscriptions WHERE endpoint = ? AND device_id = ?").run(endpoint, deviceId)
+      : this.db.prepare("DELETE FROM push_subscriptions WHERE endpoint = ?").run(endpoint);
+    return Number(res.changes) > 0;
   }
 
   // ---- events and notifications ----

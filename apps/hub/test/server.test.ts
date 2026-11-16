@@ -130,12 +130,13 @@ test("addresses outside the allow list are refused", async () => {
   }
 });
 
-test("only the hashed files under assets/ are cached for good; the browser asks again for the others", async () => {
+test("only the hashed files under assets/ are cached for good; the browser asks again for the others, and never keeps the Service Worker", async () => {
   const dist = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-web-"));
   fs.mkdirSync(path.join(dist, "assets"));
   fs.writeFileSync(path.join(dist, "index.html"), "<!doctype html>");
   fs.writeFileSync(path.join(dist, "assets", "index-AbCd1234.js"), "");
   fs.writeFileSync(path.join(dist, "manifest.webmanifest"), "{}");
+  fs.writeFileSync(path.join(dist, "sw.js"), "");
   const s2 = new Store(":memory:");
   const web = createServer({ hub: new Hub(s2), store: s2, webDist: dist, allow: buildAllowList(parseNets(undefined)) });
   await new Promise<void>((r) => web.listen(0, "127.0.0.1", () => r()));
@@ -151,6 +152,8 @@ test("only the hashed files under assets/ are cached for good; the browser asks 
       cache: "public, max-age=31536000, immutable",
     });
     assert.deepEqual(await get("/manifest.webmanifest"), { type: "application/manifest+json", cache: "no-cache" });
+    // The Service Worker is not kept at all.
+    assert.deepEqual(await get("/sw.js"), { type: "text/javascript; charset=utf-8", cache: "no-store" });
     // A path the app routes itself gets index.html.
     assert.deepEqual(await get("/sessions/x"), { type: "text/html; charset=utf-8", cache: "no-cache" });
   } finally {

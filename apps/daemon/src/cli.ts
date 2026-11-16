@@ -11,6 +11,7 @@ import { DAEMON_VERSION, Daemon } from "./daemon.ts";
 import { hooksConfig, installHooks, SECRET_ENV } from "./hooks.ts";
 import { commandOf, type Install, installOf, layoutOf, serviceCommand } from "./install.ts";
 import { checkVersion, currentVersion, installVersion, npmOf, recordUpdate, runAsService, switchTo } from "./self-update.ts";
+import { stableNode } from "./node-path.ts";
 import { activateCommands, doctor, formatChecks, launchdPlist, serviceFile, servicePath, systemdUnit } from "./setup.ts";
 import { attach, listTerminals } from "./terminal.ts";
 
@@ -90,6 +91,7 @@ try {
         ghBin: process.env.GASHO_GH_BIN ?? "gh",
         hookPort: port,
         settingsFile: path.join(process.env.GASHO_CLAUDE_DIR ?? path.join(os.homedir(), ".claude"), "settings.json"),
+        serviceFile: serviceFile(process.platform, os.homedir()),
         command,
       });
       console.log(formatChecks(checks, DAEMON_VERSION));
@@ -160,10 +162,12 @@ try {
 /** The service's file (a systemd unit, a launchd agent) that runs gasho-daemon as `how` says. */
 function serviceText(how: Install): string {
   const home = os.homedir();
+  // Not Homebrew's folder for this version of Node.js, which an upgrade removes (node-path.ts).
+  const node = stableNode(process.execPath);
   const input = {
-    node: process.execPath,
-    ...serviceCommand(how, process.execPath, DAEMON_VERSION, home, layout),
-    path: servicePath(process.execPath, process.env.PATH),
+    node,
+    ...serviceCommand(how, node, DAEMON_VERSION, home, layout),
+    path: servicePath(node, process.env.PATH),
     home,
   };
   if (process.platform === "linux") return systemdUnit(input);

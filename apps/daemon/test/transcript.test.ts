@@ -199,6 +199,29 @@ test("slash commands and their output become notes, and a model switch updates t
   assert.equal(meta.model, "Haiku 5.5");
 });
 
+test("a skill called as a slash command is a note with its arguments, not the tags", () => {
+  // Claude Code writes `<command-message>` first for a skill (#83).
+  const meta = emptyMeta();
+  const entry = parseRecord(
+    {
+      type: "user",
+      uuid: "k1",
+      message: {
+        role: "user",
+        content: "<command-message>launch-gasho-session</command-message>\n<command-name>/launch-gasho-session</command-name>\n<command-args>#6</command-args>",
+      },
+    },
+    meta,
+  );
+  assert.deepEqual(entry?.role, "system");
+  assert.deepEqual(entry?.blocks, [{ type: "text", text: "/launch-gasho-session #6" }]);
+  const bare = parseRecord(
+    { type: "user", uuid: "k2", message: { role: "user", content: "<command-message>simplify</command-message>\n<command-name>/simplify</command-name>" } },
+    meta,
+  );
+  assert.deepEqual(bare?.blocks, [{ type: "text", text: "/simplify" }]);
+});
+
 test("the model comes from the model attachment and from replies, but not from subagents", () => {
   const meta = emptyMeta();
   parseRecord({ type: "attachment", attachment: { type: "model", identity: { modelId: "claude-opus-5-5", marketingName: "Opus 5.5" } } }, meta);

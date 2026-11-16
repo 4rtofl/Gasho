@@ -25,8 +25,11 @@ const MAX_TOOL = 2000;
 /** A compaction's summary is long (10,000 to 25,000 characters) and is read only when its fold is opened. */
 const MAX_SUMMARY = 40000;
 const INTERRUPT_RE = /^\[Request interrupted by user/;
-/** A slash command typed into Claude Code, recorded as a user message. */
-const COMMAND_RE = /^\s*<command-name>([\s\S]*?)<\/command-name>/;
+/**
+ * A slash command typed into Claude Code, recorded as a user message. A built-in command starts with its name; a skill
+ * called as a command starts with `<command-message>` before its name.
+ */
+const COMMAND_RE = /^\s*(?:<command-message>[\s\S]*?<\/command-message>\s*)?<command-name>([\s\S]*?)<\/command-name>/;
 const COMMAND_ARGS_RE = /<command-args>([\s\S]*?)<\/command-args>/;
 /** What a slash command printed, recorded as a user message. */
 const COMMAND_OUTPUT_RE = /^\s*<local-command-(stdout|stderr)>([\s\S]*?)<\/local-command-\1>\s*$/;

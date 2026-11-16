@@ -242,6 +242,7 @@ Gasho サーバーは LAN の中だけで使う前提にしている。外から
 1. Gasho サーバー・スマホ（・Mac）に Tailscale を入れる
 2. Gasho サーバーで `sudo tailscale serve --bg 7740` を実行する。`https://<マシン名>.<tailnet>.ts.net/` で Gasho を開けるようになる。Serve は Gasho サーバーに 127.0.0.1 からつなぐので、`GASHO_ALLOW_NETS` は変えなくてよい
 3. Mac の gasho-daemon を家の外からつなぐときは、Gasho サーバーを `GASHO_ALLOW_NETS=lan,tailscale npm run hub` で起動して、Tailscale のアドレスからも受け付ける
+4. iPhone で通知を受け取るときは、ホーム画面に追加した Gasho の「設定」で「この端末に通知する」をオンにする。通知は Apple の push service を通るので、Gasho サーバーから外（`web.push.apple.com`）へつながる必要がある
 
 ### 開発
 
@@ -281,6 +282,7 @@ gasho-daemon（`@4rtoflow/gasho-daemon`）、Gasho サーバー（`@4rtoflow/gas
 | `GASHO_PLUGIN_CACHE` | hub | `~/.cache/gasho/hub-plugins`（配るプラグインの版ごとの写し） |
 | `GASHO_PLUGIN_REPO` | hub | `4rtoflow/GashoPlugins`（プラグインを追加するリポジトリ） |
 | `GASHO_LATEST_CHECK` | hub | なし。`off` にすると、公開されている gasho-daemon と Gasho サーバーの最新の版を調べない |
+| `GASHO_VAPID_SUBJECT` | hub | `https://github.com/4rtoflow/Gasho`（Web Push で push service に伝える送り手。`mailto:` か `https:` の URL） |
 | `GASHO_HUB_HOME` | hub | `~/.local/share/gasho/hub`（`service install` と更新が、版ごとに Gasho サーバーを入れるフォルダー） |
 | `GASHO_HUB_PROBATION_MS` | hub | `60000`（更新したあとの試しの期間。そのうちに止まった版は、前の版に戻す） |
 | `GASHO_HUB_ENV` | hub | `~/.config/gasho/hub.env`（起動するときに読む設定のファイル）。`off` にすると読まない |

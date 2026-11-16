@@ -180,13 +180,15 @@ export function Sidebar({
 
   return (
     <>
+      {/* Gasho: under the notch of an iPhone held sideways, the sidebar's background (its content stays beside it). */}
+      <div aria-hidden className="hidden w-(--safe-left) shrink-0 bg-white md:block dark:bg-neutral-950" />
       <motion.aside
         initial={false}
         animate={{ width: collapsed ? COLLAPSED : width }}
         // While dragged, the edge stays under the pointer.
         transition={dragWidth === null ? spring : { duration: 0 }}
         className={cn(
-          "relative hidden h-full shrink-0 overflow-hidden border-r border-neutral-200 bg-white md:block dark:border-neutral-800 dark:bg-neutral-950",
+          "relative hidden h-full shrink-0 overflow-hidden border-r border-neutral-200 bg-white pt-(--safe-top) md:block dark:border-neutral-800 dark:bg-neutral-950",
           className
         )}
       >
@@ -222,7 +224,7 @@ export function Sidebar({
               role="dialog"
               aria-modal="true"
               aria-label="Navigation"
-              className="absolute inset-y-0 left-0 w-[17rem] max-w-[85vw] overflow-hidden border-r border-neutral-200 bg-white shadow-2xl dark:border-neutral-800 dark:bg-neutral-950"
+              className="absolute inset-y-0 left-0 w-[17rem] max-w-[85vw] overflow-hidden border-r border-neutral-200 bg-white pt-(--safe-top) pl-(--safe-left) shadow-2xl dark:border-neutral-800 dark:bg-neutral-950"
               initial={{ x: "-100%" }}
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}

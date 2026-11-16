@@ -8,6 +8,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { credentialsPath, loadCredentials } from "./credentials.ts";
 import { hookUrl, installedHookEvents } from "./hooks.ts";
+import { cellarNode, serviceNode, stableNode } from "./node-path.ts";
 import { terminalWorks } from "./terminal.ts";
 
 const execFileP = promisify(execFile);
@@ -71,6 +72,8 @@ export async function doctor(o: {
   ghBin: string;
   hookPort: number;
   settingsFile: string;
+  /** The service's file (serviceFile), for the Node.js it runs. */
+  serviceFile?: string;
   command?: string;
 }): Promise<Check[]> {
   const DAEMON = o.command ?? "node apps/daemon/src/cli.ts";
@@ -161,7 +164,30 @@ export async function doctor(o: {
       ? { level: "ok", name: "daemon", detail: `動いています（127.0.0.1:${o.hookPort}）` }
       : { level: "warn", name: "daemon", detail: "動いていません", hint: `${DAEMON} run で動かすか、常駐させてください（${DAEMON} service install）` },
   );
+  const service = o.serviceFile ? await fs.readFile(o.serviceFile, "utf8").catch(() => undefined) : undefined;
+  const serviceCheck = service === undefined ? undefined : serviceNodeCheck(service, DAEMON);
+  if (serviceCheck) checks.push(serviceCheck);
   return checks;
+}
+
+/**
+ * Whether the service's file runs Node.js from Homebrew's folder for one version (node-path.ts), which `brew upgrade`
+ * removes; undefined when the file names no Node.js. `service install` writes a path that stays.
+ */
+export function serviceNodeCheck(text: string, command: string, stable: (node: string) => string = stableNode): Check | undefined {
+  const node = serviceNode(text);
+  if (!node) return undefined;
+  if (!cellarNode(node)) return { level: "ok", name: "常駐の Node.js", detail: node };
+  const better = stable(node);
+  return {
+    level: "warn",
+    name: "常駐の Node.js",
+    detail: `Homebrew の版ごとのフォルダーです（${node}）`,
+    hint:
+      better === node
+        ? `brew upgrade node で消えると、daemon が起動できなくなります。${command} service install をもう一度実行してください（版が変わっても変わらないパスにします）`
+        : `brew upgrade node で消えると、daemon が起動できなくなります。${command} service install をもう一度実行すると、${better} にします`,
+  };
 }
 
 const MARK: Record<Check["level"], string> = { ok: "✓", warn: "!", fail: "✗" };

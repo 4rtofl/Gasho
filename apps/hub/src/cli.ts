@@ -15,6 +15,7 @@ import { commandOf, commitOf, type Install, installOf, launcherIn, type Layout, 
 import { switchCurrent, writeJson } from "./launcher.ts";
 import { LatestCheck, npmBin, npmLatest } from "./latest.ts";
 import { buildAllowList } from "./netallow.ts";
+import { stableNode } from "./node-path.ts";
 import { PLUGIN_API, PluginRegistry, readPluginFolder, removePluginFolder, swapPluginFolder } from "./plugins.ts";
 import { PushSender } from "./push.ts";
 import { beginTrial, checkVersion, currentVersion, HubUpdater, installVersion } from "./self-update.ts";
@@ -315,7 +316,8 @@ async function plugin(argv: string[]): Promise<void> {
 /** What the service runs: the layout's launcher (or, from a clone, the clone itself, which Gasho cannot update). */
 function serviceInput(how: Install): ServiceInput {
   const home = os.homedir();
-  const node = process.execPath;
+  // Not Homebrew's folder for this version of Node.js, which an upgrade removes (node-path.ts).
+  const node = stableNode(process.execPath);
   const flags = ["--disable-warning=ExperimentalWarning"];
   const where = how.kind === "repo" ? { argv: [node, ...flags, path.join(how.repo, "apps/hub/src/cli.ts")], cwd: how.repo } : { argv: [node, ...flags, layout.launcher], cwd: home };
   return { node, ...where, path: servicePath(node, process.env.PATH), home };

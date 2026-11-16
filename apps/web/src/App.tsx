@@ -568,7 +568,9 @@ export function App() {
   const onScreenMachine = onScreen && machines.find((m) => m.id === (route.name === "session" ? route.machine : ""));
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-background text-foreground">
+    // On an iPhone, the screen's edges are kept clear of its notch and status bar (--safe-*, index.css): the sidebar
+    // keeps its own side, this the right and, below the sidebar's width, the left.
+    <div className="flex h-dvh overflow-hidden bg-background pr-(--safe-right) pl-(--safe-left) text-foreground md:pl-0">
       <Sidebar
         sections={sections}
         activeId={activeId}
@@ -595,7 +597,7 @@ export function App() {
         header={<Brand away={gassho !== null} onGassho={setGassho} />}
         footer={<Connection connected={connected} deviceName={me?.name} />}
       />
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col pt-(--safe-top)">
         {/* The Gasho server serves a new build of the screen, and this page did not reload itself: something is being written in it. */}
         {outdated && (
           <div role="status" className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs md:px-4">

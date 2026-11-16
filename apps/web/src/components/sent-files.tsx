@@ -211,7 +211,7 @@ function Viewer({
         <Dialog.Content
           onKeyDown={onKeyDown}
           className="fixed inset-0 z-[91] flex flex-col text-white outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0"
-          style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}
+          style={{ padding: "var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left)" }}
         >
           <div className="flex shrink-0 items-center gap-1 px-2 py-1.5 sm:px-3">
             <Dialog.Title className="min-w-0 flex-1 truncate px-1 text-sm font-medium" title={file.path}>
@@ -265,10 +265,10 @@ function Viewer({
             )}
             {many && (
               <>
-                <button type="button" aria-label="前へ" title="前へ（←）" onClick={() => go(-1)} className={cn(VIEWER_BUTTON, "fixed top-1/2 left-2 -translate-y-1/2 bg-black/40")}>
+                <button type="button" aria-label="前へ" title="前へ（←）" onClick={() => go(-1)} className={cn(VIEWER_BUTTON, "fixed top-1/2 left-[calc(0.5rem+var(--safe-left))] -translate-y-1/2 bg-black/40")}>
                   <ChevronLeft className="size-5" />
                 </button>
-                <button type="button" aria-label="次へ" title="次へ（→）" onClick={() => go(1)} className={cn(VIEWER_BUTTON, "fixed top-1/2 right-2 -translate-y-1/2 bg-black/40")}>
+                <button type="button" aria-label="次へ" title="次へ（→）" onClick={() => go(1)} className={cn(VIEWER_BUTTON, "fixed top-1/2 right-[calc(0.5rem+var(--safe-right))] -translate-y-1/2 bg-black/40")}>
                   <ChevronRight className="size-5" />
                 </button>
               </>

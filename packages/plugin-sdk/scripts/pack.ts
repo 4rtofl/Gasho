@@ -1,7 +1,7 @@
-// Builds the npm package of the plugin SDK (@4rtoflow/gasho-plugin-sdk on GitHub Packages) in dist/package: the types
+// Builds the npm package of the plugin SDK (@4rtofl/gasho-plugin-sdk on GitHub Packages) in dist/package: the types
 // and the daemon part's helpers compiled to JavaScript (Node.js does not run TypeScript inside node_modules), Gasho's
 // protocol types put inside it (the protocol is not published), the build command (gasho-plugin) and the stylesheets.
-// Plugins install it under the name the SDK has in Gasho: "@gasho/plugin-sdk": "npm:@4rtoflow/gasho-plugin-sdk@^1".
+// Plugins install it under the name the SDK has in Gasho: "@gasho/plugin-sdk": "npm:@4rtofl/gasho-plugin-sdk@^1".
 // The version is the one in packages/plugin-sdk/package.json. Publish with `npm publish dist/package`.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -39,7 +39,7 @@ fs.chmodSync(path.join(out, "bin/gasho-plugin.mjs"), 0o755);
 const { dependencies, peerDependencies } = sdkDependencies(read(path.join(root, "apps/web/package.json")));
 
 const pkg = {
-  name: "@4rtoflow/gasho-plugin-sdk",
+  name: "@4rtofl/gasho-plugin-sdk",
   version: own.version,
   description: "Gasho のプラグインを書くための SDK：型、daemon の部分の関数、ビルドのコマンド（gasho-plugin build）、テーマ",
   type: "module",
@@ -55,8 +55,8 @@ const pkg = {
   dependencies,
   peerDependencies,
   engines: { node: ">=24" },
-  repository: { type: "git", url: "git+https://github.com/4rtoflow/Gasho.git", directory: "packages/plugin-sdk" },
-  homepage: "https://github.com/4rtoflow/Gasho/blob/main/docs/plugins.md",
+  repository: { type: "git", url: "git+https://github.com/4rtofl/Gasho.git", directory: "packages/plugin-sdk" },
+  homepage: "https://github.com/4rtofl/Gasho/blob/main/docs/plugins.md",
   publishConfig: { registry: "https://npm.pkg.github.com" },
 };
 fs.writeFileSync(path.join(out, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
@@ -64,7 +64,7 @@ fs.writeFileSync(
   path.join(out, "README.md"),
   `# ${pkg.name}
 
-Gasho のプラグインを書くための SDK。プラグインは [GashoPlugins](https://github.com/4rtoflow/GashoPlugins) に置き、この SDK を \`@gasho/plugin-sdk\` の名前で使う。
+Gasho のプラグインを書くための SDK。プラグインは [GashoPlugins](https://github.com/4rtofl/GashoPlugins) に置き、この SDK を \`@gasho/plugin-sdk\` の名前で使う。
 
 \`\`\`json
 "devDependencies": { "@gasho/plugin-sdk": "npm:${pkg.name}@^${own.version.split(".")[0]}" }
@@ -75,7 +75,7 @@ npx gasho-plugin build           # dist/ に gasho-plugin.json、web.js、web.cs
 npx gasho-plugin build --watch   # 保存するたびにビルドし直す
 \`\`\`
 
-仕組みと API は [docs/plugins.md](https://github.com/4rtoflow/Gasho/blob/main/docs/plugins.md) にまとめた。GitHub Packages から入れる設定は [docs/daemon-setup.md](https://github.com/4rtoflow/Gasho/blob/main/docs/daemon-setup.md) と同じ。
+仕組みと API は [docs/plugins.md](https://github.com/4rtofl/Gasho/blob/main/docs/plugins.md) にまとめた。GitHub Packages から入れる設定は [docs/daemon-setup.md](https://github.com/4rtofl/Gasho/blob/main/docs/daemon-setup.md) と同じ。
 `,
 );
 console.log(`built ${pkg.name}@${pkg.version} in ${path.relative(process.cwd(), out) || "."}`);

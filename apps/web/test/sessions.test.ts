@@ -45,7 +45,7 @@ test("sessions are grouped by machine and worktree, the worktree used last first
 });
 
 test("a worktree is named by its branch, else its folder, and its repository by GitHub, else the repository's folder", () => {
-  const github = { owner: "4rtoflow", name: "Gasho", url: "https://github.com/4rtoflow/Gasho" };
+  const github = { owner: "4rtofl", name: "Gasho", url: "https://github.com/4rtofl/Gasho" };
   const list = worktreesByLastUse([
     machine("mac", [
       session("gh", { cwd: "/w/gasho", worktree: { path: "/w/gasho", repo: "/w/gasho", branch: "main" }, github, lastActivityAt: 5 }),

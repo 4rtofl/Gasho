@@ -19,15 +19,15 @@ import {
 import { foldersRepos, RegisteredRepos } from "../src/repos.ts";
 
 test("parseGitHubUrl handles https, ssh and credentials, and rejects other hosts", () => {
-  assert.deepEqual(parseGitHubUrl("https://github.com/4rtoflow/Gasho.git\n"), {
-    owner: "4rtoflow",
+  assert.deepEqual(parseGitHubUrl("https://github.com/4rtofl/Gasho.git\n"), {
+    owner: "4rtofl",
     name: "Gasho",
-    url: "https://github.com/4rtoflow/Gasho",
+    url: "https://github.com/4rtofl/Gasho",
   });
-  assert.deepEqual(parseGitHubUrl("git@github.com:4rtoflow/nakamaba"), {
-    owner: "4rtoflow",
+  assert.deepEqual(parseGitHubUrl("git@github.com:4rtofl/nakamaba"), {
+    owner: "4rtofl",
     name: "nakamaba",
-    url: "https://github.com/4rtoflow/nakamaba",
+    url: "https://github.com/4rtofl/nakamaba",
   });
   assert.equal(parseGitHubUrl("https://user:secret@github.com/a/b.git")?.url, "https://github.com/a/b");
   assert.equal(parseGitHubUrl("https://gitlab.com/a/b.git"), undefined);
@@ -143,7 +143,7 @@ test("nestedRepos lists the repositories inside a folder that is not one, with t
       fs.mkdirSync(path.join(dir, p), { recursive: true });
       run(path.join(dir, p), "init", "-b", p === "api" ? "main" : "dev");
     }
-    run(path.join(dir, "api"), "remote", "add", "origin", "git@github.com:4rtoflow/zen-api.git");
+    run(path.join(dir, "api"), "remote", "add", "origin", "git@github.com:4rtofl/zen-api.git");
     fs.mkdirSync(path.join(dir, "notes"));
 
     // Two levels down at most; hidden folders and node_modules are skipped.
@@ -152,7 +152,7 @@ test("nestedRepos lists the repositories inside a folder that is not one, with t
       ["api", "org/web"],
     );
     assert.deepEqual(await nestedRepos(dir), [
-      { path: "api", branch: "main", github: { owner: "4rtoflow", name: "zen-api", url: "https://github.com/4rtoflow/zen-api" } },
+      { path: "api", branch: "main", github: { owner: "4rtofl", name: "zen-api", url: "https://github.com/4rtofl/zen-api" } },
       { path: "org/web", branch: "dev" },
     ]);
     // A folder inside a repository is that repository, not a workspace.

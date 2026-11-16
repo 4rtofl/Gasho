@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 /** The package on GitHub Packages (npm.pkg.github.com); its scope is the repository's owner. */
-export const PACKAGE_NAME = "@4rtoflow/gasho-hub";
+export const PACKAGE_NAME = "@4rtofl/gasho-hub";
 
 export type Install =
   | { kind: "repo"; repo: string }
@@ -19,7 +19,7 @@ export type Install =
 
 /**
  * Where `service install` and updates put the Gasho server: each version in a folder of its own (an npm prefix:
- * versions/0.1.0/node_modules/@4rtoflow/gasho-hub), `current`, a link to the one in use, and the launcher the service
+ * versions/0.1.0/node_modules/@4rtofl/gasho-hub), `current`, a link to the one in use, and the launcher the service
  * runs, which starts `current` and goes back to the version before when one on trial did not start (launcher.ts). The
  * database, the plugins and the caches are not here: they stay where they are (config.ts).
  */

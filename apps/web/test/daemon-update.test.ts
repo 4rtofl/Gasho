@@ -37,5 +37,5 @@ test("the inputs to send and the permission requests an update would affect are 
     ],
   } as Partial<MachineInfo>);
   assert.deepEqual(pendingWork(m), { inputs: 2, requests: 1 });
-  assert.equal(changesUrl("0.15.0", "0.16.0"), "https://github.com/4rtoflow/Gasho/compare/daemon-v0.15.0...daemon-v0.16.0");
+  assert.equal(changesUrl("0.15.0", "0.16.0"), "https://github.com/4rtofl/Gasho/compare/daemon-v0.15.0...daemon-v0.16.0");
 });

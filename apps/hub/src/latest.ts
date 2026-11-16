@@ -1,5 +1,5 @@
 // The latest published versions, looked up on the package registry with npm (`npm view`, which reads the registry and
-// its token from the user's .npmrc, as `npx @4rtoflow/gasho-daemon` does). Browsers show them beside what each working
+// its token from the user's .npmrc, as `npx @4rtofl/gasho-daemon` does). Browsers show them beside what each working
 // server runs and what the Gasho server runs, and offer the updates (daemon.update, hub.update).
 import { execFile } from "node:child_process";
 import fs from "node:fs";
@@ -7,9 +7,9 @@ import path from "node:path";
 import type { LatestVersions } from "@gasho/protocol";
 
 /** The package gasho-daemon is published as (apps/daemon/src/install.ts). */
-export const DAEMON_PACKAGE = "@4rtoflow/gasho-daemon";
+export const DAEMON_PACKAGE = "@4rtofl/gasho-daemon";
 /** The package the Gasho server is published as (install.ts). */
-export const HUB_PACKAGE = "@4rtoflow/gasho-hub";
+export const HUB_PACKAGE = "@4rtofl/gasho-hub";
 /** How often the versions are looked up (the release workflow runs every 15 minutes). */
 export const LATEST_INTERVAL_MS = 30 * 60_000;
 /** A browser's "check now" does not look them up again sooner than this after the last time. */

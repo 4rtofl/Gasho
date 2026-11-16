@@ -90,28 +90,28 @@ test("how gasho-daemon was installed decides the command to suggest and what its
   });
 
   // npx keeps the package in a cache npm may clear: the service runs npx again, for the same version.
-  const npx = installOf("/home/u/.npm/_npx/0123abcd/node_modules/@4rtoflow/gasho-daemon/lib/cli.js");
-  assert.equal(commandOf(npx), "npx @4rtoflow/gasho-daemon");
+  const npx = installOf("/home/u/.npm/_npx/0123abcd/node_modules/@4rtofl/gasho-daemon/lib/cli.js");
+  assert.equal(commandOf(npx), "npx @4rtofl/gasho-daemon");
   assert.deepEqual(serviceCommand(npx, node, "1.2.3", "/home/u", layout), {
-    argv: ["/opt/node/bin/npx", "--yes", "--prefer-offline", "@4rtoflow/gasho-daemon@1.2.3"],
+    argv: ["/opt/node/bin/npx", "--yes", "--prefer-offline", "@4rtofl/gasho-daemon@1.2.3"],
     cwd: "/home/u",
   });
 
-  const global = installOf("/opt/node/lib/node_modules/@4rtoflow/gasho-daemon/lib/cli.js");
+  const global = installOf("/opt/node/lib/node_modules/@4rtofl/gasho-daemon/lib/cli.js");
   assert.equal(commandOf(global), "gasho-daemon");
-  assert.deepEqual(serviceCommand(global, node, "1.2.3", "/home/u", layout).argv, [node, "/opt/node/lib/node_modules/@4rtoflow/gasho-daemon/lib/cli.js"]);
+  assert.deepEqual(serviceCommand(global, node, "1.2.3", "/home/u", layout).argv, [node, "/opt/node/lib/node_modules/@4rtofl/gasho-daemon/lib/cli.js"]);
 
   // Installed by `service install`: Node.js runs it through its real path, in its own folder of versions; the service
   // runs the version that `current` links to, so that an update changes the link alone.
-  const managed = installOf("/home/u/.local/share/gasho/daemon/versions/0.15.2/node_modules/@4rtoflow/gasho-daemon/lib/cli.js", [layout.versions]);
+  const managed = installOf("/home/u/.local/share/gasho/daemon/versions/0.15.2/node_modules/@4rtofl/gasho-daemon/lib/cli.js", [layout.versions]);
   assert.deepEqual(managed, { kind: "managed", version: "0.15.2" });
-  assert.equal(commandOf(managed), "npx @4rtoflow/gasho-daemon");
+  assert.equal(commandOf(managed), "npx @4rtofl/gasho-daemon");
   assert.deepEqual(serviceCommand(managed, node, "0.15.2", "/home/u", layout), {
-    argv: [node, "/home/u/.local/share/gasho/daemon/current/node_modules/@4rtoflow/gasho-daemon/lib/cli.js"],
+    argv: [node, "/home/u/.local/share/gasho/daemon/current/node_modules/@4rtofl/gasho-daemon/lib/cli.js"],
     cwd: "/home/u",
   });
   // Not a folder of a version: an ordinary package.
-  assert.equal(installOf("/home/u/.local/share/gasho/daemon/versions/.0.15.2-1-x/node_modules/@4rtoflow/gasho-daemon/lib/cli.js", [layout.versions]).kind, "package");
+  assert.equal(installOf("/home/u/.local/share/gasho/daemon/versions/.0.15.2-1-x/node_modules/@4rtofl/gasho-daemon/lib/cli.js", [layout.versions]).kind, "package");
 });
 
 test("service install writes the unit where systemd or launchd reads it, and restarts the daemon with it", () => {

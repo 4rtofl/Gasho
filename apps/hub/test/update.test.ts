@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { HubToClient, HubToDaemon } from "@gasho/protocol";
-import { Hub, updateInfoOf, validateCommand } from "../src/hub.ts";
+import { Hub, updateInfoFor, updateInfoOf, validateCommand, versionAfter } from "../src/hub.ts";
 import { DAEMON_PACKAGE, HUB_PACKAGE, LatestCheck } from "../src/latest.ts";
 import { Store } from "../src/store.ts";
 
@@ -28,7 +28,7 @@ function setup(latest?: LatestCheck) {
   const c = fakePeer<HubToClient>(browser.device.id);
   hub.onClientConnect(c);
   const d = fakePeer<HubToDaemon>();
-  hub.onDaemonMessage(d, { type: "hello", machineId: machine.device.id, token: machine.token, daemonVersion: "0.15.0" });
+  hub.onDaemonMessage(d, { type: "hello", machineId: machine.device.id, token: machine.token, daemonVersion: "0.22.0" });
   return { store, hub, c, d, machineId: machine.device.id };
 }
 
@@ -42,7 +42,7 @@ test("what a gasho-daemon says about updating it reaches browsers, kept to what 
       canUpdate: true,
       installed: ["0.14.0", "latest", "0.13.2"],
       previous: "0.14.0",
-      progress: { version: "0.16.0", step: "check", at: 5 },
+      progress: { version: "0.23.0", step: "check", at: 5 },
       failed: { version: "../x", error: "e", at: 1 },
     },
   });
@@ -54,12 +54,12 @@ test("what a gasho-daemon says about updating it reaches browsers, kept to what 
     command: undefined,
     installed: ["0.14.0", "0.13.2"],
     previous: "0.14.0",
-    progress: { version: "0.16.0", step: "check", at: 5 },
+    progress: { version: "0.23.0", step: "check", at: 5 },
     failed: undefined,
   });
   assert.equal(updateInfoOf("yes"), undefined);
   assert.equal(updateInfoOf({ canUpdate: "true" })?.canUpdate, false);
-  assert.equal(updateInfoOf({ canUpdate: true, progress: { version: "0.16.0", step: "reboot", at: 5 } })?.progress, undefined);
+  assert.equal(updateInfoOf({ canUpdate: true, progress: { version: "0.23.0", step: "reboot", at: 5 } })?.progress, undefined);
 });
 
 test("the update goes only to a gasho-daemon that can take it, is checked, and is recorded from which version to which", () => {
@@ -70,31 +70,31 @@ test("the update goes only to a gasho-daemon that can take it, is checked, and i
     return r.result;
   };
   // A gasho-daemon from before updates from Gasho says nothing about them.
-  hub.onClientMessage(c, { type: "daemon.update", requestId: "u0", machine: machineId, version: "0.16.0" });
+  hub.onClientMessage(c, { type: "daemon.update", requestId: "u0", machine: machineId, version: "0.23.0" });
   assert.match(result().error ?? "", /service install/);
   // One that cannot says why.
   hub.onDaemonMessage(d, { ...caps, update: { canUpdate: false, reason: "常駐させずに動かしているので", command: "npx x" } });
-  hub.onClientMessage(c, { type: "daemon.update", requestId: "u1", machine: machineId, version: "0.16.0" });
+  hub.onClientMessage(c, { type: "daemon.update", requestId: "u1", machine: machineId, version: "0.23.0" });
   assert.equal(result().error, "常駐させずに動かしているので");
   assert.equal(d.sent.at(-1)?.type, "welcome");
 
   hub.onDaemonMessage(d, { ...caps, update: { canUpdate: true } });
   hub.onClientMessage(c, { type: "daemon.update", requestId: "u2", machine: machineId, version: "latest" });
   assert.equal(result().error, "版の指定が正しくありません。");
-  assert.equal(validateCommand({ type: "daemon.update", version: "0.16.0; rm -rf ~" }), "版の指定が正しくありません。");
+  assert.equal(validateCommand({ type: "daemon.update", version: "0.23.0; rm -rf ~" }), "版の指定が正しくありません。");
 
-  hub.onClientMessage(c, { type: "daemon.update", requestId: "u3", machine: machineId, version: "0.16.0" });
+  hub.onClientMessage(c, { type: "daemon.update", requestId: "u3", machine: machineId, version: "0.23.0" });
   const sent = d.sent.at(-1);
-  assert.ok(sent?.type === "daemon.update" && sent.version === "0.16.0");
+  assert.ok(sent?.type === "daemon.update" && sent.version === "0.23.0");
   const event = c.sent.findLast((m) => m.type === "event");
   assert.ok(event?.type === "event");
   assert.equal(event.event.event, "Gasho:daemon.update");
-  assert.match(event.event.summary ?? "", /^0\.15\.0 → 0\.16\.0 \(by /);
+  assert.match(event.event.summary ?? "", /^0\.22\.0 → 0\.23\.0 \(by /);
   hub.onDaemonMessage(d, { type: "command.result", requestId: sent.requestId, result: { ok: true } });
   assert.deepEqual(c.sent.at(-1), { type: "command.result", requestId: "u3", machine: machineId, result: { ok: true } });
 
   // Its steps come with the capabilities; the restart closes the connection, and the new version's hello ends it.
-  hub.onDaemonMessage(d, { ...caps, update: { canUpdate: true, progress: { version: "0.16.0", step: "restart", at: 9 } } });
+  hub.onDaemonMessage(d, { ...caps, update: { canUpdate: true, progress: { version: "0.23.0", step: "restart", at: 9 } } });
   hub.onDaemonClose(d);
   const offline = c.sent.at(-1);
   assert.ok(offline?.type === "machine" && !offline.machine.connected && offline.machine.update?.progress?.step === "restart");
@@ -121,7 +121,7 @@ test("the latest versions are in the snapshot, looked up again when a browser as
   const answers: Record<string, (string | Error)[]> = {
     [DAEMON_PACKAGE]: ["0.16.0", new Error("npm error code E401"), "0.16.1"],
     // Not published before its first release; then a look-up that fails on its own.
-    [HUB_PACKAGE]: [new Error("npm error code E404\nnpm error 404 Not Found - GET https://npm.pkg.github.com/@4rtoflow%2fgasho-hub"), "0.1.0", new Error("npm error code ETIMEDOUT")],
+    [HUB_PACKAGE]: [new Error("npm error code E404\nnpm error 404 Not Found - GET https://npm.pkg.github.com/@4rtofl%2fgasho-hub"), "0.1.0", new Error("npm error code ETIMEDOUT")],
   };
   const asked: string[] = [];
   const latest = new LatestCheck({
@@ -165,4 +165,39 @@ test("the latest versions are in the snapshot, looked up again when a browser as
   assert.equal(latest.latest().error, undefined);
   assert.equal(latest.latest().hub, "0.1.0");
   assert.equal(latest.latest().hubError, "Gasho サーバーの最新の版を調べられませんでした：npm error code ETIMEDOUT");
+});
+
+test("a gasho-daemon from before the package was renamed is told to be moved by hand, not updated", () => {
+  assert.equal(versionAfter("0.21.1", [0, 21, 1]), false);
+  assert.equal(versionAfter("0.21.2", [0, 21, 1]), true);
+  assert.equal(versionAfter("0.22.0", [0, 21, 1]), true);
+  assert.equal(versionAfter("1.0.0", [0, 21, 1]), true);
+  assert.equal(versionAfter("0.9.30", [0, 21, 1]), false);
+  assert.equal(versionAfter(undefined, [0, 21, 1]), false);
+
+  const says = { canUpdate: true, installed: ["0.20.0"], previous: "0.20.0", failed: { version: "0.22.0", error: "E404", at: 1 } };
+  const old = updateInfoFor("0.21.1", says);
+  assert.equal(old?.canUpdate, false);
+  assert.match(old?.reason ?? "", /@4rtofl:registry/);
+  assert.equal(old?.command, "npx @4rtofl/gasho-daemon@latest service install");
+  assert.equal(old?.previous, undefined);
+  assert.equal(old?.installed, undefined);
+  assert.equal(old?.failed?.error, "E404");
+  assert.deepEqual(updateInfoFor("0.21.2", says), updateInfoOf(says));
+  assert.equal(updateInfoFor("0.21.0", undefined), undefined);
+
+  const store = new Store(":memory:");
+  const machine = store.createDevice("machine", "mac");
+  const browser = store.createDevice("browser", "iPhone");
+  const hub = new Hub(store, {});
+  const c = fakePeer<HubToClient>(browser.device.id);
+  hub.onClientConnect(c);
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId: machine.device.id, token: machine.token, daemonVersion: "0.21.0" });
+  hub.onDaemonMessage(d, { ...caps, update: { canUpdate: true } });
+  hub.onClientMessage(c, { type: "daemon.update", requestId: "r", machine: machine.device.id, version: "0.22.0" });
+  const r = c.sent.at(-1);
+  assert.ok(r?.type === "command.result");
+  assert.match(r.result.error ?? "", /パッケージの名前が変わる前/);
+  assert.ok(d.sent.every((m) => m.type !== "daemon.update"));
 });

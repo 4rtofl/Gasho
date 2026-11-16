@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { dispatch, type Env } from "../src/index.ts";
 
 const env: Env = {
-	GITHUB_REPOSITORY: "4rtoflow/Gasho",
+	GITHUB_REPOSITORY: "4rtofl/Gasho",
 	GITHUB_WORKFLOW: "release.yml",
 	GITHUB_REF: "main",
 	GITHUB_TOKEN: "token",
@@ -16,7 +16,7 @@ test("dispatches the workflow on the branch with the token", async () => {
 		return new Response(null, { status: 204 });
 	}) as typeof fetch);
 	assert.equal(calls.length, 1);
-	assert.equal(calls[0].url, "https://api.github.com/repos/4rtoflow/Gasho/actions/workflows/release.yml/dispatches");
+	assert.equal(calls[0].url, "https://api.github.com/repos/4rtofl/Gasho/actions/workflows/release.yml/dispatches");
 	assert.equal(calls[0].init.method, "POST");
 	const headers = calls[0].init.headers as Record<string, string>;
 	assert.equal(headers.Authorization, "Bearer token");

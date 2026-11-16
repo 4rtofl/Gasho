@@ -25,15 +25,15 @@ Node.js 24 以上が要る。TypeScript はビルドせずにそのまま実行�
 
 ### Gasho サーバー（Ubuntu Server）
 
-Gasho サーバーは、GitHub Packages の npm パッケージ `@4rtoflow/gasho-hub` として配っている。画面も入っているので、リポジトリの clone も `npm install` も要らない。手順は [docs/hub-setup.md](docs/hub-setup.md) にまとめた。
+Gasho サーバーは、GitHub Packages の npm パッケージ `@4rtofl/gasho-hub` として配っている。画面も入っているので、リポジトリの clone も `npm install` も要らない。手順は [docs/hub-setup.md](docs/hub-setup.md) にまとめた。
 
 ```bash
 # GitHub Packages から入れる設定（初めてのときだけ。gasho-daemon と同じもの）
 gh auth refresh -s read:packages
-npm config set @4rtoflow:registry https://npm.pkg.github.com
+npm config set @4rtofl:registry https://npm.pkg.github.com
 npm config set //npm.pkg.github.com/:_authToken "$(gh auth token)"
 
-npx @4rtoflow/gasho-hub@latest service install   # 常駐させる（Ubuntu は systemd、Mac は launchd）。LAN 側の 0.0.0.0:7740 で待ち受ける
+npx @4rtofl/gasho-hub@latest service install   # 常駐させる（Ubuntu は systemd、Mac は launchd）。LAN 側の 0.0.0.0:7740 で待ち受ける
 ```
 
 こうして常駐させた Gasho サーバーは、Gasho の「端末」の画面から更新できる。新しい版がうまく起動しなかったときは、自動で前の版に戻す。
@@ -53,7 +53,7 @@ npm run hub        # LAN 側の 0.0.0.0:7740 で待ち受ける
 Gasho は、登録した端末からしか使えない。
 
 ```bash
-npx @4rtoflow/gasho-hub pair   # 登録コード（10分間有効、1回だけ使える）を出す。clone では npm run hub:pair
+npx @4rtofl/gasho-hub pair   # 登録コード（10分間有効、1回だけ使える）を出す。clone では npm run hub:pair
 ```
 
 ブラウザで `http://<Gasho サーバーの IP アドレス>:7740` を開き、登録の画面にコードを入れる。2台目からは、登録済みの端末の「端末」画面でもコードを出せる。
@@ -65,15 +65,15 @@ Claude Code を動かすマシン（working server）ごとに、gasho-daemon �
 ```bash
 # GitHub Packages から入れる設定（初めてのときだけ。読むのに read:packages の権限のトークンが要る）
 gh auth refresh -s read:packages
-npm config set @4rtoflow:registry https://npm.pkg.github.com
+npm config set @4rtofl:registry https://npm.pkg.github.com
 npm config set //npm.pkg.github.com/:_authToken "$(gh auth token)"
 
-npx @4rtoflow/gasho-daemon register --server http://<Gasho サーバーの IP アドレス>:7740 --code <コード>
-npx @4rtoflow/gasho-daemon doctor          # 要るものが揃っているかを確かめる
-npx @4rtoflow/gasho-daemon service install # 常駐させる（Ubuntu は systemd、Mac は launchd）。これからは Gasho の画面から更新できる
+npx @4rtofl/gasho-daemon register --server http://<Gasho サーバーの IP アドレス>:7740 --code <コード>
+npx @4rtofl/gasho-daemon doctor          # 要るものが揃っているかを確かめる
+npx @4rtofl/gasho-daemon service install # 常駐させる（Ubuntu は systemd、Mac は launchd）。これからは Gasho の画面から更新できる
 ```
 
-gasho-daemon は GitHub Packages の npm パッケージ `@4rtoflow/gasho-daemon` として配っているので、リポジトリの clone も `npm install` も要らない。`doctor` は、Node.js、登録、Claude Code、セッションの端末、git、GitHub CLI、通知の hooks が揃っているかを確かめ、足りないものがあれば、使えなくなる機能と直し方を示す。
+gasho-daemon は GitHub Packages の npm パッケージ `@4rtofl/gasho-daemon` として配っているので、リポジトリの clone も `npm install` も要らない。`doctor` は、Node.js、登録、Claude Code、セッションの端末、git、GitHub CLI、通知の hooks が揃っているかを確かめ、足りないものがあれば、使えなくなる機能と直し方を示す。
 
 ### Gasho からセッションを起動して、入力する
 
@@ -223,7 +223,7 @@ gasho-daemon session list [--json]
 - `launch` は起動を待ち、プロンプトがあれば入力欄に送ってから、`{sessionId, name, cwd, terminal}` を JSON で出す。`name` は `claude agents`（Claude Code のセッション一覧）に出る名前で、ほかのセッションから SendMessage するときの宛先になる。Claude Code は新しいセッションを `--remote-control` の名前ではなくフォルダー名で並べるので、`--name` を付けたときは、まず `/rename` でその名前に変え、一覧に出るまで待ってからプロンプトを送る。`--name` が無いと、最初の発言のあとで Gasho が発言から名前を付け直すので、出した名前は変わる
 - `--trust` は、Claude Code の「このフォルダーを信頼するか」に Yes と答える（Gasho の画面の「信頼して起動する」と同じ）
 - gasho-daemon が動いていないとき（ソケットが無い古い版のときも）は、そう伝えて起動の仕方を示す
-- `service install` で入れたときは PATH に `gasho-daemon` が無いので、`node ~/.local/share/gasho/daemon/current/node_modules/@4rtoflow/gasho-daemon/lib/cli.js session …` で呼ぶ
+- `service install` で入れたときは PATH に `gasho-daemon` が無いので、`node ~/.local/share/gasho/daemon/current/node_modules/@4rtofl/gasho-daemon/lib/cli.js session …` で呼ぶ
 
 ### 端末を管理する
 
@@ -238,7 +238,7 @@ node apps/hub/src/cli.ts revoke <端末の ID>      # 取り消し（30秒以内
 
 ### プラグイン
 
-Gasho の画面と gasho-daemon には、プラグインで機能を足せる。仕組みは [docs/plugins.md](docs/plugins.md) にまとめた。プラグインは [GashoPlugins](https://github.com/4rtoflow/GashoPlugins) に置く。GitHub の Issues と Pull requests のパネル、ホームの GitHub のタイルも、GitHub プラグイン（`github`）になった。
+Gasho の画面と gasho-daemon には、プラグインで機能を足せる。仕組みは [docs/plugins.md](docs/plugins.md) にまとめた。プラグインは [GashoPlugins](https://github.com/4rtofl/GashoPlugins) に置く。GitHub の Issues と Pull requests のパネル、ホームの GitHub のタイルも、GitHub プラグイン（`github`）になった。
 
 プラグインは、サイドバーの「プラグイン」の画面で、GashoPlugins にあるものから選んで追加する。GashoPlugins の GitHub Actions が、版を上げたプラグインをビルドしてリリースに置き、プラグインの一覧（カタログ）を作る。Gasho サーバーは、そのカタログとプラグインを、Gasho サーバーのマシンの GitHub CLI（gh）で取ってくる。Gasho サーバーのマシンで `gh auth login` を済ませておく。
 
@@ -274,7 +274,7 @@ PR と main への push のたびに、GitHub Actions（`.github/workflows/ci.ym
 
 ### 公開
 
-gasho-daemon（`@4rtoflow/gasho-daemon`）、Gasho サーバー（`@4rtoflow/gasho-hub`。画面も入る）、プラグインの SDK（`@4rtoflow/gasho-plugin-sdk`）は、GitHub Actions（`.github/workflows/release.yml`）が GitHub Packages に公開する。15分ごとに main を見て、前に公開してから中身が変わったパッケージだけを公開する。まだ一度も公開していないパッケージ（タグが無いもの）は、ソースに書いてある版のまま公開する。
+gasho-daemon（`@4rtofl/gasho-daemon`）、Gasho サーバー（`@4rtofl/gasho-hub`。画面も入る）、プラグインの SDK（`@4rtofl/gasho-plugin-sdk`）は、GitHub Actions（`.github/workflows/release.yml`）が GitHub Packages に公開する。15分ごとに main を見て、前に公開してから中身が変わったパッケージだけを公開する。まだ一度も公開していないパッケージ（タグが無いもの）は、ソースに書いてある版のまま公開する。
 
 ワークフローを15分ごとに起動するのは、Cloudflare Worker（`infra/release-trigger`）である。GitHub Actions の `schedule` では動かなかったため、Cron Trigger から `workflow_dispatch` で起動している。Worker のデプロイと、使うトークンの作り方・替え方は、[infra/release-trigger/README.md](infra/release-trigger/README.md) に書いた。
 
@@ -298,9 +298,9 @@ gasho-daemon（`@4rtoflow/gasho-daemon`）、Gasho サーバー（`@4rtoflow/gas
 | `GASHO_WEB_DIST` | hub | パッケージでは、その中の `web`。clone では `apps/web/dist` |
 | `GASHO_PLUGINS_DIR` | hub | `~/.local/share/gasho/plugins`（入れたプラグイン） |
 | `GASHO_PLUGIN_CACHE` | hub | `~/.cache/gasho/hub-plugins`（配るプラグインの版ごとの写し） |
-| `GASHO_PLUGIN_REPO` | hub | `4rtoflow/GashoPlugins`（プラグインを追加するリポジトリ） |
+| `GASHO_PLUGIN_REPO` | hub | `4rtofl/GashoPlugins`（プラグインを追加するリポジトリ） |
 | `GASHO_LATEST_CHECK` | hub | なし。`off` にすると、公開されている gasho-daemon と Gasho サーバーの最新の版を調べない |
-| `GASHO_VAPID_SUBJECT` | hub | `https://github.com/4rtoflow/Gasho`（Web Push で push service に伝える送り手。`mailto:` か `https:` の URL） |
+| `GASHO_VAPID_SUBJECT` | hub | `https://github.com/4rtofl/Gasho`（Web Push で push service に伝える送り手。`mailto:` か `https:` の URL） |
 | `GASHO_HUB_HOME` | hub | `~/.local/share/gasho/hub`（`service install` と更新が、版ごとに Gasho サーバーを入れるフォルダー） |
 | `GASHO_HUB_PROBATION_MS` | hub | `60000`（更新したあとの試しの期間。そのうちに止まった版は、前の版に戻す） |
 | `GASHO_HUB_ENV` | hub | `~/.config/gasho/hub.env`（起動するときに読む設定のファイル）。`off` にすると読まない |

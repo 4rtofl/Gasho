@@ -2,7 +2,7 @@
 
 GitHub Actions の Release ワークフロー（`.github/workflows/release.yml`）を、15分ごとに動かす Cloudflare Worker。
 
-GitHub Actions の `schedule` は、遅れたり動かなかったりする。Gasho でも、`schedule` で一度も動かなかった。そこで、Cloudflare の Cron Trigger で15分ごとにこの Worker を動かし、GitHub の API（`POST /repos/4rtoflow/Gasho/actions/workflows/release.yml/dispatches`）で、main の Release ワークフローを `workflow_dispatch` として起動する。
+GitHub Actions の `schedule` は、遅れたり動かなかったりする。Gasho でも、`schedule` で一度も動かなかった。そこで、Cloudflare の Cron Trigger で15分ごとにこの Worker を動かし、GitHub の API（`POST /repos/4rtofl/Gasho/actions/workflows/release.yml/dispatches`）で、main の Release ワークフローを `workflow_dispatch` として起動する。
 
 公開するかどうかは、これまでどおりワークフローの中の `scripts/release.ts plan` が決める。この Worker は起動するだけである。GitHub が起動を断ったとき（トークンの期限切れなど）は、例外を投げる。Cloudflare のダッシュボードで、この Worker のログと Cron の実行結果を見るとわかる。
 
@@ -12,9 +12,9 @@ GitHub Actions の `schedule` は、遅れたり動かなかったりする。Ga
 
 GitHub の Settings → Developer settings → Personal access tokens → Fine-grained tokens で作る。
 
-- Resource owner：`4rtoflow`
+- Resource owner：`4rtofl`
 - Expiration：組織が認める最長
-- Repository access：Only select repositories → `4rtoflow/Gasho`
+- Repository access：Only select repositories → `4rtofl/Gasho`
 - Permissions：Repository permissions の Actions を Read and write にする。ほかは足さない（Metadata の Read-only は自動で付く）
 
 組織が fine-grained PAT に承認を求めているときは、組織のオーナーが承認するまで使えない。

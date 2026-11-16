@@ -51,7 +51,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): HubConfig {
     webDist: webDistOf(env),
     pluginsDir: pluginsDirOf(env),
     pluginCacheDir: env.GASHO_PLUGIN_CACHE ?? path.join(env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "gasho", "hub-plugins"),
-    pluginRepo: env.GASHO_PLUGIN_REPO || "4rtoflow/GashoPlugins",
+    pluginRepo: env.GASHO_PLUGIN_REPO || "4rtofl/GashoPlugins",
     ghBin: env.GASHO_GH_BIN || "gh",
     vapidSubject: env.GASHO_VAPID_SUBJECT || DEFAULT_VAPID_SUBJECT,
   };

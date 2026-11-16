@@ -47,7 +47,7 @@ test("a folder's name is one name that gh, git and the shell cannot misread", ()
 
 test("a repository is owner/name, a name, or a GitHub URL; its folder is its name", () => {
   const cases: [string, string | undefined][] = [
-    ["4rtoflow/Gasho", "Gasho"],
+    ["4rtofl/Gasho", "Gasho"],
     ["Gasho", "Gasho"],
     ["github.com/cli/cli", "cli"],
     ["https://github.com/cli/cli", "cli"],

@@ -476,7 +476,7 @@ switch (args[0] ?? "start") {
     console.log(`registration code: ${code}`);
     console.log(`valid until ${new Date(expiresAt).toLocaleString()} (single use)`);
     console.log("- browser: open the Gasho server and enter the code");
-    console.log("- working server: npx @4rtoflow/gasho-daemon register --server http://<this server>:7740 --code <code>");
+    console.log("- working server: npx @4rtofl/gasho-daemon register --server http://<this server>:7740 --code <code>");
     break;
   }
   case "devices": {

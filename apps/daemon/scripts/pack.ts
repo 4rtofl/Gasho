@@ -1,4 +1,4 @@
-// Builds the npm package of gasho-daemon (@4rtoflow/gasho-daemon on GitHub Packages) in dist/package: the TypeScript
+// Builds the npm package of gasho-daemon (@4rtofl/gasho-daemon on GitHub Packages) in dist/package: the TypeScript
 // compiled to JavaScript (Node.js does not run TypeScript inside node_modules), a package.json and a README. The
 // version is DAEMON_VERSION, the one gasho-daemon tells the Gasho server. Publish with `npm publish dist/package`.
 import { execFileSync } from "node:child_process";
@@ -30,8 +30,8 @@ const pkg = {
   files: ["lib"],
   dependencies,
   engines: { node: ">=24" },
-  repository: { type: "git", url: "git+https://github.com/4rtoflow/Gasho.git", directory: "apps/daemon" },
-  homepage: "https://github.com/4rtoflow/Gasho/blob/main/docs/daemon-setup.md",
+  repository: { type: "git", url: "git+https://github.com/4rtofl/Gasho.git", directory: "apps/daemon" },
+  homepage: "https://github.com/4rtofl/Gasho/blob/main/docs/daemon-setup.md",
   publishConfig: { registry: "https://npm.pkg.github.com" },
 };
 fs.writeFileSync(path.join(out, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
@@ -46,7 +46,7 @@ npx ${PACKAGE_NAME} register --server http://<Gasho サーバー>:7740 --code <�
 npx ${PACKAGE_NAME} doctor
 \`\`\`
 
-GitHub Packages から入れるための設定と、常駐のさせ方は [docs/daemon-setup.md](https://github.com/4rtoflow/Gasho/blob/main/docs/daemon-setup.md) を見る。
+GitHub Packages から入れるための設定と、常駐のさせ方は [docs/daemon-setup.md](https://github.com/4rtofl/Gasho/blob/main/docs/daemon-setup.md) を見る。
 `,
 );
 console.log(`built ${PACKAGE_NAME}@${version} in ${path.relative(process.cwd(), out) || "."}`);

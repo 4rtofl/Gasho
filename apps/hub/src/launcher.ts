@@ -37,7 +37,7 @@ export function planLaunch(trial: Trial | undefined, current: string | undefined
 }
 
 const VERSION_RE = /^\d{1,9}\.\d{1,9}\.\d{1,9}$/;
-const PACKAGE = ["@4rtoflow", "gasho-hub"];
+const PACKAGE = ["@4rtofl", "gasho-hub"];
 
 /** The files of the layout beside the launcher (the same names as install.ts's LAYOUT_NAMES). */
 export function filesAt(root: string) {

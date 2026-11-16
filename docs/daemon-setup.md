@@ -30,28 +30,28 @@ Claude Code は公式の手順で入れ、端末で一度 `claude` を起動し�
 
 ## 2. GitHub Packages から入れられるようにする
 
-gasho-daemon は、GitHub Packages の npm パッケージ `@4rtoflow/gasho-daemon` として配っている。npx で実行するので、リポジトリを置く必要も `npm install` も要らない。gasho-daemon は Node.js の組み込みの機能だけで動く。
+gasho-daemon は、GitHub Packages の npm パッケージ `@4rtofl/gasho-daemon` として配っている。npx で実行するので、リポジトリを置く必要も `npm install` も要らない。gasho-daemon は Node.js の組み込みの機能だけで動く。
 
 GitHub Packages の npm パッケージは、公開されていても、読むのに GitHub のトークン（`read:packages` の権限）が要る。GitHub CLI でログインしていれば、そのトークンに権限を足して、npm に設定する。
 
 ```bash
 gh auth refresh -s read:packages
-npm config set @4rtoflow:registry https://npm.pkg.github.com
+npm config set @4rtofl:registry https://npm.pkg.github.com
 npm config set //npm.pkg.github.com/:_authToken "$(gh auth token)"
 ```
 
 トークンは `~/.npmrc` に保存される。gh を使わないときは、GitHub の設定で `read:packages` の権限を付けた classic の personal access token を作り、最後の行の `$(gh auth token)` の代わりに使う（fine-grained のトークンは GitHub Packages の npm に使えない）。
 
-以下の手順の `npx @4rtoflow/gasho-daemon` は、どのフォルダーで実行してもよい。初めて実行したときに、パッケージを npm のキャッシュに入れる。毎回 `npx` を付けたくないときは、`npm install -g @4rtoflow/gasho-daemon` で入れて、`gasho-daemon` のコマンドで実行する。
+以下の手順の `npx @4rtofl/gasho-daemon` は、どのフォルダーで実行してもよい。初めて実行したときに、パッケージを npm のキャッシュに入れる。毎回 `npx` を付けたくないときは、`npm install -g @4rtofl/gasho-daemon` で入れて、`gasho-daemon` のコマンドで実行する。
 
-開発のためにリポジトリを clone したマシンでは、`npx @4rtoflow/gasho-daemon` の代わりに、リポジトリのフォルダーで `node apps/daemon/src/cli.ts` を実行してもよい。
+開発のためにリポジトリを clone したマシンでは、`npx @4rtofl/gasho-daemon` の代わりに、リポジトリのフォルダーで `node apps/daemon/src/cli.ts` を実行してもよい。
 
 ## 3. Gasho サーバーに登録する
 
 まず登録コードを出す。Gasho の画面の「端末」で「コードを発行」を押すか、Gasho サーバーで `npm run hub:pair` を実行する。コードは10分間有効で、1回だけ使える。
 
 ```bash
-npx @4rtoflow/gasho-daemon register --server http://<Gasho サーバーの IP アドレス>:7740 --code <コード>
+npx @4rtofl/gasho-daemon register --server http://<Gasho サーバーの IP アドレス>:7740 --code <コード>
 ```
 
 working server は、このマシンのホスト名で画面に出る。別の名前にしたいときは `--name <名前>` を付ける。名前は、あとから「端末」画面でも変えられる。登録は `~/.config/gasho/daemon.json` に保存される（本人だけが読める権限）。
@@ -59,7 +59,7 @@ working server は、このマシンのホスト名で画面に出る。別の�
 ## 4. `doctor` で確かめる
 
 ```bash
-npx @4rtoflow/gasho-daemon doctor
+npx @4rtofl/gasho-daemon doctor
 ```
 
 要るものが揃っているかを、1行ずつ確かめる。次は、hooks を入れていないマシンでの例。
@@ -88,7 +88,7 @@ daemon は動かせます。! の機能は、入れるまで使えません。
 gasho-daemon を、マシンの起動とともに動かし、止まったら動かし直すようにする。Ubuntu では systemd のユーザーサービス、Mac では launchd のエージェントで動かす。設定は `service install` がまとめて行う。
 
 ```bash
-npx @4rtoflow/gasho-daemon service install
+npx @4rtofl/gasho-daemon service install
 ```
 
 `service install` は、次のことを行う。
@@ -137,7 +137,7 @@ Mac では、ログインしているあいだだけ動く。スリープする�
 常駐させずに、端末の前面で動かすこともできる。Ctrl+C で止まる。
 
 ```bash
-npx @4rtoflow/gasho-daemon run
+npx @4rtofl/gasho-daemon run
 ```
 
 1台のマシンで gasho-daemon を2つ動かさない。常駐させたあとに前面でも動かすと、hooks の待ち受けのポート（7741）がぶつかり、Gasho サーバーとの接続も取り合いになる。
@@ -156,8 +156,8 @@ echo "GASHO_HOOK_SECRET=$(openssl rand -hex 32)" >> ~/.config/gasho/daemon.env
 次に、hooks を Claude Code の設定（`~/.claude/settings.json`）に追記する。秘密の値は `daemon.env` から入る。元のファイルはバックアップされる。
 
 ```bash
-npx @4rtoflow/gasho-daemon hooks print     # 追加される内容を確かめる
-npx @4rtoflow/gasho-daemon hooks install   # 追記する
+npx @4rtofl/gasho-daemon hooks print     # 追加される内容を確かめる
+npx @4rtofl/gasho-daemon hooks install   # 追記する
 ```
 
 最後に、gasho-daemon を動かし直して、秘密の値を読ませる（5 の表の「動かし直す」）。
@@ -188,12 +188,21 @@ npx @4rtoflow/gasho-daemon hooks install   # 追記する
 Gasho の画面から更新できないときは、working server で次を実行する。Gasho からの更新に対応する前の版の gasho-daemon、`service print` で常駐させた gasho-daemon、常駐させずに動かしている gasho-daemon がそうで、画面にもこのコマンドが出る。最新の版を入れ、これからは Gasho から更新できる形で常駐させ直す。
 
 ```bash
-npx @4rtoflow/gasho-daemon@latest service install
+npx @4rtofl/gasho-daemon@latest service install
 ```
+
+GitHub の Org の名前が `4rtofl` に変わったため、パッケージの名前も `@4rtofl/gasho-daemon` に変わった（#85）。0.21.1 までの gasho-daemon は、前の名前で更新を探すので、Gasho の画面からは更新できない。画面にもその旨とこのコマンドが出る。working server で、npm の設定に新しい名前を足してから、このコマンドを一度実行する。
+
+```bash
+npm config set @4rtofl:registry https://npm.pkg.github.com
+npx @4rtofl/gasho-daemon@latest service install
+```
+
+前の名前で入れた版のフォルダーは、「<版> に戻す」の戻す先にならない。セッションの端末が使わなくなったら消える。
 
 0.10.0 までの gasho-daemon は、systemd で動かしているときに起動したセッションを、自分のサービスの中で動かしていた。そのため、0.10.0 から更新して動かし直すと、そのセッションは止まる。会話は working server に残るので、端末で `claude --resume` を使えば開き直せる。
 
-`npm install -g` で入れて `service print` で常駐させたときは、`npm install -g @4rtoflow/gasho-daemon@latest` のあと動かし直す。clone したリポジトリで動かしているときは、`git pull` のあと動かし直す。
+`npm install -g` で入れて `service print` で常駐させたときは、`npm install -g @4rtofl/gasho-daemon@latest` のあと動かし直す。clone したリポジトリで動かしているときは、`git pull` のあと動かし直す。
 
 新しい機能には、Gasho サーバーと gasho-daemon の両方の更新が要ることが多いので、Gasho サーバーも新しくしておく（同じ「端末」の画面の先頭の行。[hub-setup.md](hub-setup.md) の「更新する」）。gasho-daemon の版は、ホームの「working server」のタイルに出る。
 
@@ -218,9 +227,9 @@ npx @4rtoflow/gasho-daemon@latest service install
 | セッション画面に「ファイル」が出ない | gasho-daemon が 0.11.0 以上か |
 | 通知が来ない | `doctor` の hooks。`~/.config/gasho/daemon.env` と `~/.claude/settings.json` の秘密の値が同じか |
 | 常駐させると claude や gh が見つからない | 設定ファイルの PATH。`doctor` で見つかる端末で `service install` を実行し直す |
-| Gasho の画面から更新できない | 画面に出る理由。多くは、working server で `npx @4rtoflow/gasho-daemon@latest service install` を一度実行すれば直る |
-| 更新に失敗する（npm で入れられない） | working server の npm の設定（2）。`npm view @4rtoflow/gasho-daemon version` が版を返すか |
-| 「公開されている最新の版」を調べられない | Gasho サーバーのマシンの npm の設定（2）。Gasho サーバーを動かしている端末で `npm view @4rtoflow/gasho-daemon version` |
+| Gasho の画面から更新できない | 画面に出る理由。多くは、working server で `npx @4rtofl/gasho-daemon@latest service install` を一度実行すれば直る |
+| 更新に失敗する（npm で入れられない） | working server の npm の設定（2）。`npm view @4rtofl/gasho-daemon version` が版を返すか |
+| 「公開されている最新の版」を調べられない | Gasho サーバーのマシンの npm の設定（2）。Gasho サーバーを動かしている端末で `npm view @4rtofl/gasho-daemon version` |
 | 更新のあと、working server がつながらない | ログ（5 の表）。`~/.local/share/gasho/daemon/current` を前の版のフォルダーに向け直して動かし直すと、前の版に戻る |
 
 ## 設定（環境変数）

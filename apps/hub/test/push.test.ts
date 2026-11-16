@@ -102,7 +102,7 @@ test("the VAPID header is a JWT for the push service's origin, signed with the k
   assert.deepEqual(JSON.parse(Buffer.from(claims as string, "base64url").toString()), {
     aud: "https://web.push.apple.com",
     exp: now / 1000 + 12 * 3600,
-    sub: "https://github.com/4rtoflow/Gasho",
+    sub: "https://github.com/4rtofl/Gasho",
   });
   const raw = Buffer.from(k as string, "base64url");
   assert.equal(raw.length, 65);

@@ -137,9 +137,42 @@ export function versionAtLeast(version: string | undefined, major: number, minor
 /** A version of gasho-daemon (daemon.update). */
 const VERSION_RE = /^\d{1,9}\.\d{1,9}\.\d{1,9}$/;
 const UPDATE_STEPS = new Set(["install", "check", "wait", "restart"]);
+/** The command that installs the latest gasho-daemon as a service that Gasho can update. */
+const DAEMON_INSTALL_COMMAND = "npx @4rtofl/gasho-daemon@latest service install";
 /** Said when a gasho-daemon does not say whether Gasho can update it (one from before updates from Gasho). */
 const UPDATE_TOO_OLD =
-  "この working server の gasho-daemon は古いため、Gasho からは更新できません。working server で npx @4rtoflow/gasho-daemon@latest service install を実行してください。";
+  `この working server の gasho-daemon は古いため、Gasho からは更新できません。working server で ${DAEMON_INSTALL_COMMAND} を実行してください。`;
+
+/**
+ * The last gasho-daemon published under its name from before the GitHub organization was renamed (#85; the scope of
+ * the package follows the organization). It installs its updates under that name, which is gone, so it cannot be
+ * updated from Gasho: it is moved to the new name once by hand. The ones after it are published under the new name.
+ */
+const LAST_BEFORE_RENAME: [number, number, number] = [0, 21, 1];
+const UPDATE_RENAMED =
+  "この working server の gasho-daemon は、パッケージの名前が変わる前の版のため、Gasho からは更新できません。working server の npm の設定に @4rtofl:registry=https://npm.pkg.github.com を足してから、このコマンドを一度実行してください。これからは Gasho から更新できます。";
+
+/** Whether `version` (x.y.z) comes after `than`; an unknown version does not. */
+export function versionAfter(version: string | undefined, than: [number, number, number]): boolean {
+  if (!version || !VERSION_RE.test(version)) return false;
+  const v = version.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    const a = v[i] ?? 0;
+    const b = than[i] ?? 0;
+    if (a !== b) return a > b;
+  }
+  return false;
+}
+
+/**
+ * What a gasho-daemon of `daemonVersion` says about updating it (updateInfoOf). One from before the package was
+ * renamed says it can be updated, but its update would look for the old name: it is told to be moved by hand.
+ */
+export function updateInfoFor(daemonVersion: string | undefined, u: unknown): DaemonUpdateInfo | undefined {
+  const info = updateInfoOf(u);
+  if (!info || versionAfter(daemonVersion, LAST_BEFORE_RENAME)) return info;
+  return { ...info, canUpdate: false, reason: UPDATE_RENAMED, command: DAEMON_INSTALL_COMMAND, installed: undefined, previous: undefined };
+}
 
 /** What a gasho-daemon says about updating it, kept to what is expected (it is shown to browsers). */
 export function updateInfoOf(u: unknown): DaemonUpdateInfo | undefined {
@@ -542,7 +575,7 @@ export class Hub {
         m.canEnd = msg.canEnd === true || undefined;
         m.canRemoveWorktree = msg.canRemoveWorktree === true || undefined;
         m.canListSkills = msg.canListSkills === true || undefined;
-        m.update = updateInfoOf(msg.update);
+        m.update = updateInfoFor(m.daemonVersion, msg.update);
         this.broadcast({ type: "machine", machine: m });
         break;
       case "repos":

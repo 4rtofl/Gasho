@@ -15,6 +15,7 @@ import type {
   PluginCatalog,
   PluginCommand,
   PluginInfo,
+  PushInfo,
   ServerInfo,
   SessionCommand,
   TranscriptEntry,
@@ -92,6 +93,8 @@ export interface State {
    * written in it): a band offers to reload.
    */
   outdated?: string;
+  /** Web Push for this browser, as the Gasho server keeps it (absent from one older than Web Push). */
+  push?: PushInfo;
 }
 
 const PAGE_SIZE = 80;
@@ -166,11 +169,21 @@ function cancelRetry(): void {
  * A phone suspends a web app in the background, so its connection is often gone by the time it is opened again.
  */
 function retryNow(): void {
-  if (!retry || document.visibilityState !== "visible") return;
+  if (document.visibilityState !== "visible") return;
+  // A connection that seems open may be dead: the phone dropped it while the app was in the background.
+  if (!retry) {
+    checkAlive();
+    return;
+  }
   const { run } = retry;
   cancelRetry();
   backoff = 1000;
   run();
+}
+
+/** Tells the Gasho server whether this page is on screen (no Web Push to this browser meanwhile). */
+function sendPresence(): void {
+  send({ type: "presence", visible: document.visibilityState === "visible" });
 }
 
 let watchingResume = false;
@@ -178,9 +191,56 @@ let watchingResume = false;
 function watchResume(): void {
   if (watchingResume) return;
   watchingResume = true;
-  document.addEventListener("visibilitychange", retryNow);
+  document.addEventListener("visibilitychange", () => {
+    sendPresence();
+    retryNow();
+  });
   window.addEventListener("pageshow", retryNow);
   window.addEventListener("online", retryNow);
+  // While on screen, the connection is checked now and then (a background page waits until it is seen again).
+  setInterval(() => {
+    if (document.visibilityState === "visible") checkAlive();
+  }, PING_INTERVAL_MS);
+}
+
+/** How often a page on screen checks its connection, and how long it waits for the answer. */
+const PING_INTERVAL_MS = 25_000;
+const PONG_TIMEOUT_MS = 8_000;
+/** Whether the Gasho server of this connection answers ping (its snapshot says so). */
+let heartbeat = false;
+let pongTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * Pings the Gasho server; without an answer (any message) in time, the connection is given up and made again. A
+ * dropped connection may never say so: a closed lid, a phone that suspended the app, a network that changed.
+ */
+function checkAlive(): void {
+  const ws = socket;
+  if (!ws || ws.readyState !== WebSocket.OPEN || !heartbeat || pongTimer) return;
+  pongTimer = setTimeout(() => {
+    pongTimer = undefined;
+    if (socket === ws) dropped(ws);
+  }, PONG_TIMEOUT_MS);
+  ws.send(JSON.stringify({ type: "ping" } satisfies ClientToHub));
+}
+
+function heard(): void {
+  if (pongTimer) clearTimeout(pongTimer);
+  pongTimer = undefined;
+}
+
+/** Gives up a connection that does not answer: it may take long to close, so a new one is made at once. */
+function dropped(ws: WebSocket): void {
+  ws.onclose = null;
+  ws.onmessage = null;
+  ws.close();
+  if (socket !== ws) return;
+  socket = undefined;
+  heartbeat = false;
+  heard();
+  update({ connected: false });
+  backoff = 1000;
+  connect();
 }
 
 /** Checks the registration of this browser and connects when it is registered. */
@@ -226,10 +286,13 @@ function connect(): void {
   const opening = setTimeout(() => {
     if (ws.readyState === WebSocket.CONNECTING) ws.close();
   }, OPEN_TIMEOUT_MS);
+  heartbeat = false;
+  heard();
   ws.onopen = () => {
     clearTimeout(opening);
     backoff = 1000;
     update({ connected: true });
+    sendPresence();
     for (const l of connectedListeners) l();
     // Reload the transcripts that are on screen; appends may have been missed while offline.
     for (const key of Object.keys(state.transcripts)) {
@@ -251,6 +314,7 @@ function connect(): void {
     }
   };
   ws.onmessage = (ev) => {
+    if (socket === ws) heard();
     try {
       handle(JSON.parse(String(ev.data)) as HubToClient);
     } catch (e) {
@@ -261,6 +325,8 @@ function connect(): void {
     clearTimeout(opening);
     if (socket !== ws) return; // replaced or closed on purpose
     socket = undefined;
+    heartbeat = false;
+    heard();
     if (ev.code === CLOSE_UNAUTHORIZED) {
       becomeUnregistered();
       return;
@@ -444,8 +510,15 @@ function handle(m: HubToClient): void {
     case "plugin.catalog":
       update({ catalog: m.catalog });
       break;
+    case "pong":
+      break;
+    case "push":
+      update({ push: m.push });
+      break;
     case "snapshot":
+      heartbeat = m.heartbeat === true;
       update({
+        push: m.push,
         machines: m.machines,
         notifications: m.notifications,
         events: m.events.slice(-MAX_EVENTS),

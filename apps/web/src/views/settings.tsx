@@ -1,8 +1,9 @@
 // Settings of this browser: the size of the conversation's text on the session screen, with a sample of a
-// conversation to see it by. Then the versions of Gasho running now.
+// conversation to see it by, and its notifications (Web Push). Then the versions of Gasho running now.
 import { Check, CircleAlert, Copy, Info, RotateCcw, Type } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { TranscriptEntry } from "@gasho/protocol";
+import { PushSettingsSection } from "@/components/push-settings";
 import { TranscriptSample } from "@/components/transcript";
 import { Badge } from "@/components/ui/badge";
 import { MorphingButton, type MorphingButtonStatus } from "@/components/ui/morphing-button";
@@ -130,6 +131,8 @@ export function SettingsView() {
           <TranscriptSample entries={SAMPLE} textSize={size} />
         </div>
       </section>
+
+      <PushSettingsSection />
 
       {/* The settings of the enabled plugins (docs/plugins.md, P5). */}
       <PluginSettingsSections />

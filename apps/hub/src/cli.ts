@@ -16,6 +16,7 @@ import { switchCurrent, writeJson } from "./launcher.ts";
 import { LatestCheck, npmBin, npmLatest } from "./latest.ts";
 import { buildAllowList } from "./netallow.ts";
 import { PLUGIN_API, PluginRegistry, readPluginFolder, removePluginFolder, swapPluginFolder } from "./plugins.ts";
+import { PushSender } from "./push.ts";
 import { beginTrial, checkVersion, currentVersion, HubUpdater, installVersion } from "./self-update.ts";
 import { createServer } from "./server.ts";
 import {
@@ -216,7 +217,8 @@ async function start(): Promise<void> {
       return () => listeners.delete(l);
     },
   };
-  hub = new Hub(store, { plugins, catalog, latest, server: serverSource });
+  const push = new PushSender({ store, subject: cfg.vapidSubject, log });
+  hub = new Hub(store, { plugins, catalog, latest, server: serverSource, push });
   watchWebBuild(cfg.webDist, emitServer);
   latest?.start();
   const server = createServer({ hub, store, webDist: cfg.webDist, allow: buildAllowList(cfg.allowNets), plugins });

@@ -18,10 +18,11 @@ import type {
   SessionCommand,
 } from "@gasho/protocol";
 import type { LatestCheck } from "./latest.ts";
-import { notificationFor } from "./notify.ts";
+import { notificationFor, sessionLabel } from "./notify.ts";
 import type { PluginCatalogSource } from "./catalog.ts";
 import { PluginHub } from "./plugin-hub.ts";
 import type { PluginRegistry } from "./plugins.ts";
+import type { PushSender } from "./push.ts";
 import type { Store } from "./store.ts";
 
 export interface Peer<T> {
@@ -423,6 +424,12 @@ export interface ServerSource {
 /** Said to a browser whose command comes while the Gasho server waits to restart for an update. */
 export const UPDATING = "Gasho サーバーを更新しています。起動し直したら、もう一度試してください。";
 
+/**
+ * How long a page that said it is on screen counts as on screen without a word from it: it pings every 25 s while on
+ * screen, and a phone may suspend it before it can say it went to the background.
+ */
+export const PRESENCE_TTL_MS = 60_000;
+
 export class Hub {
   private store: Store;
   private machines = new Map<string, MachineInfo>();
@@ -439,9 +446,17 @@ export class Hub {
   private server: ServerSource | undefined;
   /** Why new commands are refused (an update waits for those under way to end); undefined: they are taken. */
   private holding: string | undefined;
+  /** Web Push (docs/iphone.md); absent in tests that do not use it. */
+  private push: PushSender | undefined;
+  /** Each page's last word: whether it is on screen, and when it last sent anything. */
+  private presence = new Map<ClientPeer, { visible: boolean; at: number }>();
 
-  constructor(store: Store, opts: { plugins?: PluginRegistry; catalog?: PluginCatalogSource; latest?: LatestCheck; server?: ServerSource } = {}) {
+  constructor(
+    store: Store,
+    opts: { plugins?: PluginRegistry; catalog?: PluginCatalogSource; latest?: LatestCheck; server?: ServerSource; push?: PushSender } = {},
+  ) {
     this.store = store;
+    this.push = opts.push;
     this.latest = opts.latest;
     this.server = opts.server;
     opts.latest?.subscribe((latest) => this.broadcast({ type: "latest", latest }));
@@ -605,6 +620,9 @@ export class Hub {
         if (n) {
           this.store.addNotification(n);
           this.broadcast({ type: "notification", notification: n });
+          // A permission prompt may come before the sessions that say it waits.
+          const badge = this.waitingCount() + (n.kind === "permission" && session?.status !== "waiting" ? 1 : 0);
+          void this.push?.notify(n, sessionLabel(session, event.sessionId), badge, (device) => this.onScreen(device));
         }
         break;
       }
@@ -676,7 +694,27 @@ export class Hub {
       ...(this.plugins?.catalog() ? { catalog: this.plugins.catalog() } : {}),
       ...(this.latest ? { latest: this.latest.latest() } : {}),
       ...(this.server ? { server: this.server.info() } : {}),
+      ...(this.push ? { push: this.push.info(peer.deviceId) } : {}),
+      heartbeat: true,
     });
+  }
+
+  /** How many sessions (of those Gasho shows) wait for a confirmation: the app icon's badge. */
+  waitingCount(): number {
+    let n = 0;
+    for (const m of this.machines.values()) {
+      if (!m.connected) continue;
+      for (const s of m.sessions) if (s.managed && s.status === "waiting") n++;
+    }
+    return n;
+  }
+
+  /** Whether a page of this browser is on screen now: it is sent no Web Push meanwhile. */
+  onScreen(deviceId: string, now = Date.now()): boolean {
+    for (const [peer, p] of this.presence) {
+      if (peer.deviceId === deviceId && p.visible && now - p.at < PRESENCE_TTL_MS) return true;
+    }
+    return false;
   }
 
   /**
@@ -694,7 +732,25 @@ export class Hub {
   }
 
   onClientMessage(peer: ClientPeer, msg: ClientToHub): void {
+    const seen = this.presence.get(peer);
+    if (seen) seen.at = Date.now();
     switch (msg.type) {
+      case "ping":
+        peer.send({ type: "pong" });
+        break;
+      case "presence":
+        this.presence.set(peer, { visible: msg.visible === true, at: Date.now() });
+        break;
+      case "push.subscribe":
+      case "push.unsubscribe": {
+        if (!this.push) break;
+        if (msg.type === "push.subscribe") this.push.subscribe(peer.deviceId, msg.subscription, msg.kinds);
+        else this.push.unsubscribe(peer.deviceId, msg.endpoint);
+        // Every page of this browser shows its subscriptions; an invalid one is answered too, unchanged.
+        const push = this.push.info(peer.deviceId);
+        for (const c of this.clients) if (c.deviceId === peer.deviceId) c.send({ type: "push", push });
+        break;
+      }
       case "transcript.get": {
         const daemon = this.daemons.get(msg.machine);
         const reply = { type: "transcript.page" as const, machine: msg.machine, sessionId: msg.sessionId, entries: [], start: 0, total: 0 };
@@ -1024,6 +1080,7 @@ export class Hub {
 
   onClientClose(peer: ClientPeer): void {
     this.clients.delete(peer);
+    this.presence.delete(peer);
     this.plugins?.onClientClose(peer);
     for (const [id, c] of this.commands) {
       if (c.client !== peer) continue;
@@ -1076,6 +1133,7 @@ export class Hub {
       for (const c of [...this.clients]) {
         if (c.deviceId !== id) continue;
         this.clients.delete(c);
+        this.presence.delete(c);
         c.close(CLOSE_UNAUTHORIZED, "registration revoked");
       }
       if (this.machines.delete(id)) {

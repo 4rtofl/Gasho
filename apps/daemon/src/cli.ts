@@ -5,6 +5,7 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { loadConfig } from "./config.ts";
+import { controlRequest, controlSocketOf, SESSION_USAGE, sessionCommand } from "./control.ts";
 import { credentialsPath, loadCredentials, register, saveCredentials } from "./credentials.ts";
 import { DAEMON_VERSION, Daemon } from "./daemon.ts";
 import { hooksConfig, installHooks, SECRET_ENV } from "./hooks.ts";
@@ -40,6 +41,7 @@ const usage = `usage: ${command} <command>
   hooks install [--settings FILE]                  merge the hooks into FILE (default ~/.claude/settings.json)
   attach [NAME]                                    show the terminal of a session Gasho started, and type into it
                                                    (Ctrl+] leaves it running); without NAME, list the terminals
+${SESSION_USAGE}
   version                                          print the version
 
 The registration is stored in ${credentialsPath()} (GASHO_DAEMON_CONFIG to change).
@@ -112,6 +114,21 @@ try {
       const list = await listTerminals(stateDir);
       if (list.length === 0) console.log("no session terminals are running");
       for (const t of list) console.log(`${t.name}\t${t.cwd}${t.exited ? "\t(ended)" : ""}`);
+      break;
+    }
+    case "session": {
+      const socket = controlSocketOf(path.dirname(credentialsPath()));
+      await sessionCommand(args.slice(1), {
+        request: (req) => controlRequest(socket, req),
+        readFile: (file) => fsp.readFile(file, "utf8"),
+        readStdin: async () => {
+          let text = "";
+          for await (const chunk of process.stdin) text += String(chunk);
+          return text;
+        },
+        out: (s) => console.log(s),
+        note: (s) => console.error(s),
+      });
       break;
     }
     case "hooks": {

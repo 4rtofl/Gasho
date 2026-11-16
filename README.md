@@ -207,6 +207,23 @@ clone したリポジトリは、親のフォルダーを信頼していても�
 - 読み書きできるのは、セッションのフォルダーの中だけ。フォルダーの外を指すシンボリックリンクは、一覧に「フォルダーの外」と出すが、開かない
 - 保存と作成は、ファイルのパスと大きさを操作のログに残し、ホームの「最近の操作」に出す。ファイルの中身は Gasho サーバーに残さない
 
+### working server のコマンドからセッションを起動する
+
+working server の上では、Gasho の画面を通さずに、`gasho-daemon session` でセッションを起動し、入力できる。Claude Code のセッションから別のセッションを立ち上げて作業させるときに使う（リポジトリの Skill `.claude/skills/launch-gasho-session` が、ワークツリーを作るところからこれを使う）。
+
+```bash
+gasho-daemon session launch --cwd <フォルダー> --name <名前> [--trust] [--prompt <文> | --prompt-file <ファイル> | --prompt -]
+gasho-daemon session send <名前か ID> (--text <文> | --file <ファイル> | -)
+gasho-daemon session list [--json]
+```
+
+- 動いている gasho-daemon に、その置き場（`~/.config/gasho/`、`GASHO_DAEMON_CONFIG` で変わる）の Unix ソケット `control.sock` で頼む。ソケットは本人だけが使える（0600）。Gasho サーバーを通らないので、ペアリングも要らず、Gasho サーバーが止まっていても使える
+- 中身は Gasho の画面からの起動・入力・名前の変更と同じ。起動したセッションは Gasho の画面にも出て、入力は作業中なら終わるまで待つ
+- `launch` は起動を待ち、プロンプトがあれば入力欄に送ってから、`{sessionId, name, cwd, terminal}` を JSON で出す。`name` は `claude agents`（Claude Code のセッション一覧）に出る名前で、ほかのセッションから SendMessage するときの宛先になる。Claude Code は新しいセッションを `--remote-control` の名前ではなくフォルダー名で並べるので、`--name` を付けたときは、まず `/rename` でその名前に変え、一覧に出るまで待ってからプロンプトを送る。`--name` が無いと、最初の発言のあとで Gasho が発言から名前を付け直すので、出した名前は変わる
+- `--trust` は、Claude Code の「このフォルダーを信頼するか」に Yes と答える（Gasho の画面の「信頼して起動する」と同じ）
+- gasho-daemon が動いていないとき（ソケットが無い古い版のときも）は、そう伝えて起動の仕方を示す
+- `service install` で入れたときは PATH に `gasho-daemon` が無いので、`node ~/.local/share/gasho/daemon/current/node_modules/@4rtoflow/gasho-daemon/lib/cli.js session …` で呼ぶ
+
 ### 端末を管理する
 
 画面の「端末」で、登録した端末の一覧、名前の変更、登録の取り消し、登録コードの発行ができる。取り消した端末の接続はすぐに切れる。コマンドでも操作できる。

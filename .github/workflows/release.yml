@@ -1,5 +1,5 @@
-# Publishes gasho-daemon (@4rtoflow/gasho-daemon), the Gasho server (@4rtoflow/gasho-hub) and the plugin SDK
-# (@4rtoflow/gasho-plugin-sdk) to GitHub Packages from main every 15 minutes, when what goes into them changed since their
+# Publishes gasho-daemon (@4rtofl/gasho-daemon), the Gasho server (@4rtofl/gasho-hub) and the plugin SDK
+# (@4rtofl/gasho-plugin-sdk) to GitHub Packages from main every 15 minutes, when what goes into them changed since their
 # last release. scripts/release.ts decides the versions (x.y.z: y up for a pull request labeled "enhancement" or a new
 # plugin API, z up otherwise), commits them to main, tags the commit (daemon-v<version>, hub-v<version>,
 # plugin-sdk-v<version>) and publishes. Run it by hand to release at once.
@@ -31,7 +31,7 @@ jobs:
         with:
           node-version: 24
           registry-url: https://npm.pkg.github.com
-          scope: "@4rtoflow"
+          scope: "@4rtofl"
       - id: plan
         run: node scripts/release.ts plan
         env:

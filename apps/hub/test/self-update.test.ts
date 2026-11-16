@@ -24,7 +24,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 if (process.env.FAKE_NPM_FAIL) {
   console.error("npm error code E404");
-  console.error("npm error 404 Not Found - GET https://npm.pkg.github.com/@4rtoflow%2fgasho-hub");
+  console.error("npm error 404 Not Found - GET https://npm.pkg.github.com/@4rtofl%2fgasho-hub");
   process.exit(1);
 }
 const spec = process.argv[process.argv.length - 1];
@@ -144,16 +144,16 @@ test("only a Gasho server installed by service install and run as its service ca
   assert.match(repo.reason ?? "", /git pull/);
   assert.equal(repo.command, undefined);
 
-  for (const install of [{ kind: "npx" }, { kind: "package", cli: "/usr/lib/node_modules/@4rtoflow/gasho-hub/lib/cli.js" }] as Install[]) {
+  for (const install of [{ kind: "npx" }, { kind: "package", cli: "/usr/lib/node_modules/@4rtofl/gasho-hub/lib/cli.js" }] as Install[]) {
     const info = updater({ layout, npm, db, install }).updater.info();
     assert.equal(info.canUpdate, false);
-    assert.equal(info.command, "npx @4rtoflow/gasho-hub@latest service install");
+    assert.equal(info.command, "npx @4rtofl/gasho-hub@latest service install");
   }
 
   const foreground = updater({ layout, npm, db, service: false }).updater.info();
   assert.equal(foreground.canUpdate, false);
   assert.match(foreground.reason ?? "", /常駐させずに/);
-  assert.equal(foreground.command, "npx @4rtoflow/gasho-hub@latest service install");
+  assert.equal(foreground.command, "npx @4rtofl/gasho-hub@latest service install");
 
   const r = updater({ layout, npm, db });
   assert.deepEqual(r.updater.info(), { canUpdate: true });
@@ -255,7 +255,7 @@ test("going back to the version before installs nothing and goes through the sam
 
 test("an update that fails before the switch changes nothing and takes new commands again", async (t) => {
   const cases: { name: string; env?: NodeJS.ProcessEnv; inFlight?: () => number; error: RegExp; held: boolean }[] = [
-    { name: "npm fails", env: { FAKE_NPM_FAIL: "1" }, error: /npm で @4rtoflow\/gasho-hub@0\.2\.0 を入れられませんでした：[\s\S]*E404/, held: false },
+    { name: "npm fails", env: { FAKE_NPM_FAIL: "1" }, error: /npm で @4rtofl\/gasho-hub@0\.2\.0 を入れられませんでした：[\s\S]*E404/, held: false },
     { name: "it is another version", env: { FAKE_PRINTS: "9.9.9" }, error: /0\.2\.0 ではなく 9\.9\.9 でした/, held: false },
     { name: "its screen is missing", env: { FAKE_NO_WEB: "1" }, error: /web\/index\.html がありません/, held: false },
     { name: "it cannot open the database", env: { FAKE_DB_FAIL: "1" }, error: /0\.2\.0 では、データベース（の写し）を開けませんでした：no such column/, held: false },
@@ -428,4 +428,21 @@ test("a clone's commit: its short SHA, -dirty once a tracked file changed, none 
   await fs.mkdir(path.join(dir, "gasho"));
   assert.equal(await commitOf(path.join(dir, "gasho")), undefined);
   await fs.rm(dir, { recursive: true, force: true });
+});
+
+test("a version installed under the package's name from before the rename is neither offered nor gone back to", async () => {
+  const { layout, npm, db } = await setup();
+  await installed(layout, npm, "0.8.0");
+  // As a version from before the GitHub organization was renamed (#85) lies: under another scope.
+  const old = path.join(versionDir(layout, "0.7.0"), "node_modules", "@old-owner", "gasho-hub", "lib", "cli.js");
+  await fs.mkdir(path.dirname(old), { recursive: true });
+  await fs.writeFile(old, 'console.log("0.7.0");\n');
+  switchCurrent(layout.root, "0.8.0");
+  await fs.writeFile(layout.updateFile, JSON.stringify({ from: "0.7.0", to: "0.8.0", at: 1 }));
+  assert.deepEqual(await installedVersions(layout), ["0.8.0"]);
+
+  const r = updater({ layout, npm, db, version: "0.8.0" });
+  await r.updater.load();
+  assert.equal(r.updater.info().previous, undefined);
+  assert.equal(r.updater.info().installed, undefined);
 });

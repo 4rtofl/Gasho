@@ -1,6 +1,6 @@
 # Gasho サーバーのセットアップ
 
-Gasho サーバー（gasho-hub）は、ブラウザーと各 working server の gasho-daemon をつなぎ、Gasho の画面を配るプログラム。この文書では、Gasho サーバーを GitHub Packages の npm パッケージ `@4rtoflow/gasho-hub` から入れて常駐させ、Gasho の画面から更新するまでを説明する。working server の用意は [daemon-setup.md](daemon-setup.md) を見る。
+Gasho サーバー（gasho-hub）は、ブラウザーと各 working server の gasho-daemon をつなぎ、Gasho の画面を配るプログラム。この文書では、Gasho サーバーを GitHub Packages の npm パッケージ `@4rtofl/gasho-hub` から入れて常駐させ、Gasho の画面から更新するまでを説明する。working server の用意は [daemon-setup.md](daemon-setup.md) を見る。
 
 ## 1. 要るもの
 
@@ -15,7 +15,7 @@ npm の設定は、gasho-daemon と同じもの（[daemon-setup.md](daemon-setup
 ## 2. 入れて常駐させる
 
 ```bash
-npx @4rtoflow/gasho-hub@latest service install
+npx @4rtofl/gasho-hub@latest service install
 ```
 
 `service install` は、次のことを行う。
@@ -33,7 +33,7 @@ npx @4rtoflow/gasho-hub@latest service install
 ブラウザーを登録するコードは、Gasho の「端末」の画面か、次のコマンドで出す。
 
 ```bash
-npx @4rtoflow/gasho-hub pair
+npx @4rtofl/gasho-hub pair
 ```
 
 ### Ubuntu（systemd）
@@ -64,7 +64,7 @@ loginctl enable-linger "$USER"
 
 clone で `npm run hub` を動かしていたときは、次の順に移す。場所・host・port が同じなので、登録、トークン、プラグイン、設定は引き継がれる。
 
-1. ふつうの端末で `npx @4rtoflow/gasho-hub@latest service install` を実行する。7740 番は clone の Gasho サーバーが使っているので、常駐の設定をして有効にするだけで、起動はしない
+1. ふつうの端末で `npx @4rtofl/gasho-hub@latest service install` を実行する。7740 番は clone の Gasho サーバーが使っているので、常駐の設定をして有効にするだけで、起動はしない
 2. clone の Gasho サーバーを止める（動かしている端末で Ctrl+C）
 3. `systemctl --user start gasho-hub`（Mac では表示された `launchctl bootstrap …`）で起動する
 4. ブラウザーで Gasho を読み込み直す
@@ -96,7 +96,7 @@ clone で `npm run hub` を動かしていたときは、次の順に移す。�
 - 7740 番をほかの Gasho サーバーがまだ使っているときも、失敗には数えない。空くまで数秒ごとに起動し直す（systemd では2秒、launchd では5秒）
 - 起動用のファイルは、うまく起動した最後の版のものを使う。新しい版の起動用のファイルが壊れていても、戻すことはできる
 
-次のものは自動では戻せない。画面の「<前の版> に戻す」か、Gasho サーバーのマシンの端末で `npx @4rtoflow/gasho-hub service use <前の版>` を実行して戻す。
+次のものは自動では戻せない。画面の「<前の版> に戻す」か、Gasho サーバーのマシンの端末で `npx @4rtofl/gasho-hub service use <前の版>` を実行して戻す。
 
 - 止まらずに固まる版
 - 試しの期間を過ぎてから落ちる版（systemd が起動し直し続ける）
@@ -109,7 +109,8 @@ clone で `npm run hub` を動かしていたときは、次の順に移す。�
 Gasho の画面から更新できないときは、画面にその理由とコマンドが出る。
 
 - clone から動かしている：`git pull` のあと、`npm ci`（依存が変わったとき）と `npm run web:build` をして、Gasho サーバーを動かし直す
-- 常駐させずに動かしている、`npm install -g` で入れた、Gasho からの更新に対応する前の版：Gasho サーバーのマシンで `npx @4rtoflow/gasho-hub@latest service install` を一度実行する。これからは Gasho から更新できる
+- 常駐させずに動かしている、`npm install -g` で入れた、Gasho からの更新に対応する前の版：Gasho サーバーのマシンで `npx @4rtofl/gasho-hub@latest service install` を一度実行する。これからは Gasho から更新できる
+- 0.7.0 までの版：GitHub の Org の名前が `4rtofl` に変わったため、パッケージの名前も `@4rtofl/gasho-hub` に変わった（#85）。0.7.0 までの Gasho サーバーは前の名前で最新の版を調べるので、画面には「最新の版を調べられませんでした」と出て、更新できない。Gasho サーバーのマシンで `npm config set @4rtofl:registry https://npm.pkg.github.com` を実行してから、`npx @4rtofl/gasho-hub@latest service install` を一度実行する。前の名前で入れた版は「<前の版> に戻す」の戻す先にならない
 
 ### データベースの決まり（Gasho を作る人へ）
 
@@ -149,11 +150,11 @@ echo "GASHO_ALLOW_NETS=lan,tailscale" >> ~/.config/gasho/hub.env
 
 | こと | 確かめること |
 |---|---|
-| 「この版の Gasho サーバーは、Gasho からは更新できません」と出る | 更新に対応する前の版。Gasho サーバーのマシンで `npx @4rtoflow/gasho-hub@latest service install` を一度実行する |
-| 「Gasho サーバーの版は、まだ公開されていません」と出る | `@4rtoflow/gasho-hub` がまだ公開されていない。公開されると、最新の版が出る |
-| 更新に失敗する（npm で入れられない） | Gasho サーバーのマシンの npm の設定（1）。`npm view @4rtoflow/gasho-hub version` が版を返すか |
+| 「この版の Gasho サーバーは、Gasho からは更新できません」と出る | 更新に対応する前の版。Gasho サーバーのマシンで `npx @4rtofl/gasho-hub@latest service install` を一度実行する |
+| 「Gasho サーバーの版は、まだ公開されていません」と出る | `@4rtofl/gasho-hub` がまだ公開されていない。公開されると、最新の版が出る |
+| 更新に失敗する（npm で入れられない） | Gasho サーバーのマシンの npm の設定（1）。`npm view @4rtofl/gasho-hub version` が版を返すか |
 | 更新に失敗する（データベースを開けない） | 新しい版の移行が、データベースの写しで失敗した。何も変わっていない。理由を添えて知らせる |
 | 更新に失敗する（処理中の命令が終わらない） | 長くかかる clone や起動が終わってから、もう一度更新する |
-| 更新のあと、Gasho につながらない | ログ（2 の表）。試しの期間のうちに止まっていれば、次の起動で前の版に戻る。戻らないときは `npx @4rtoflow/gasho-hub service use <前の版>` |
+| 更新のあと、Gasho につながらない | ログ（2 の表）。試しの期間のうちに止まっていれば、次の起動で前の版に戻る。戻らないときは `npx @4rtofl/gasho-hub service use <前の版>` |
 | 「自動で戻しました」と出る | 画面の理由と、ログ（2 の表）の、新しい版が止まったところ |
 | `service install` のあと起動しない | 7740 番を使っているほかの Gasho サーバーを止めて、`systemctl --user start gasho-hub` |

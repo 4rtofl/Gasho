@@ -5,7 +5,7 @@ import type { HubUpdateStep, LatestVersions, ServerInfo } from "@gasho/protocol"
 import { compareVersions } from "./daemon-update.ts";
 
 /** What makes the Gasho server updatable from Gasho, when it was started otherwise. */
-export const HUB_INSTALL_COMMAND = "npx @4rtoflow/gasho-hub@latest service install";
+export const HUB_INSTALL_COMMAND = "npx @4rtofl/gasho-hub@latest service install";
 
 export const HUB_STEP_LABEL: Record<HubUpdateStep, string> = {
   install: "新しいバージョンを取り込んでいます",
@@ -40,7 +40,7 @@ export function hubNewerPublished(server: ServerInfo | undefined, latest: Latest
 
 /** The changes between two versions of the Gasho server, on GitHub (each release is tagged hub-v<version>). */
 export function hubChangesUrl(from: string, to: string): string {
-  return `https://github.com/4rtoflow/Gasho/compare/hub-v${from}...hub-v${to}`;
+  return `https://github.com/4rtofl/Gasho/compare/hub-v${from}...hub-v${to}`;
 }
 
 /** Whether this page (of build `own`) is out of date: the Gasho server serves another build. Never under the dev server. */

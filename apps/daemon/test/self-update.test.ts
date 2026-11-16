@@ -20,7 +20,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 if (process.env.FAKE_NPM_FAIL) {
   console.error("npm error code E404");
-  console.error("npm error 404 Not Found - GET https://npm.pkg.github.com/@4rtoflow%2fgasho-daemon");
+  console.error("npm error 404 Not Found - GET https://npm.pkg.github.com/@4rtofl%2fgasho-daemon");
   process.exit(1);
 }
 const spec = process.argv[process.argv.length - 1];
@@ -101,12 +101,12 @@ test("only a gasho-daemon installed by service install and run as its service ca
 
   const npx = updater({ layout, npm, install: { kind: "npx" } }).updater.info();
   assert.equal(npx.canUpdate, false);
-  assert.equal(npx.command, "npx @4rtoflow/gasho-daemon@latest service install");
+  assert.equal(npx.command, "npx @4rtofl/gasho-daemon@latest service install");
 
   const foreground = updater({ layout, npm, service: false }).updater.info();
   assert.equal(foreground.canUpdate, false);
   assert.match(foreground.reason ?? "", /常駐させずに/);
-  assert.equal(foreground.command, "npx @4rtoflow/gasho-daemon@latest service install");
+  assert.equal(foreground.command, "npx @4rtofl/gasho-daemon@latest service install");
 
   const r = updater({ layout, npm });
   assert.deepEqual(r.updater.info(), { canUpdate: true, installed: undefined, previous: undefined, progress: undefined, failed: undefined });
@@ -154,7 +154,7 @@ test("a failed install or a version that does not start changes nothing, and say
   assert.equal(await settled(notFound), "failed");
   const failed = notFound.states.at(-1)?.failed;
   assert.equal(failed?.version, "0.15.0");
-  assert.match(failed?.error ?? "", /npm で @4rtoflow\/gasho-daemon@0\.15\.0 を入れられませんでした/);
+  assert.match(failed?.error ?? "", /npm で @4rtofl\/gasho-daemon@0\.15\.0 を入れられませんでした/);
   assert.match(failed?.error ?? "", /404 Not Found/);
   assert.equal(notFound.states.at(-1)?.progress, undefined);
   assert.equal(await currentVersion(layout), "0.14.0");
@@ -200,7 +200,7 @@ test("the versions no longer used are removed, but not the one to go back to nor
   await fs.mkdir(path.join(layout.versions, ".0.16.0-123-abc"));
   await switchTo(layout, "0.15.0");
   await fs.writeFile(layout.updateFile, JSON.stringify({ from: "0.14.0", to: "0.15.0", at: 1 }));
-  const terminal = `${process.execPath} ${path.join(layout.versions, "0.12.0", "node_modules/@4rtoflow/gasho-daemon/lib/terminal-host.js")} /x/y.json`;
+  const terminal = `${process.execPath} ${path.join(layout.versions, "0.12.0", "node_modules/@4rtofl/gasho-daemon/lib/terminal-host.js")} /x/y.json`;
   const ps = async () => ["/usr/bin/zsh", terminal, ""].join("\n");
   assert.deepEqual(await versionsInUse(layout, ps), new Set(["0.12.0"]));
 
@@ -257,4 +257,26 @@ test("gasho-daemon answers daemon.update and tells the Gasho server whether it c
   managed.d.emitCapabilities();
   assert.equal((managed.sent[0] as { update: DaemonUpdateInfo }).update.canUpdate, true);
   await fs.rm(dir, { recursive: true, force: true });
+});
+
+test("a version installed under the package's name from before the rename is neither offered nor gone back to, and is removed once unused", async () => {
+  const { layout, npm } = await setup();
+  await installed(layout, "0.22.0");
+  // As a version from before the GitHub organization was renamed (#85) lies: under another scope.
+  const old = path.join(layout.versions, "0.21.0", "node_modules", "@old-owner", "gasho-daemon", "lib", "cli.js");
+  await fs.mkdir(path.dirname(old), { recursive: true });
+  await fs.writeFile(old, 'console.log("0.21.0");\n');
+  await switchTo(layout, "0.22.0");
+  await fs.writeFile(layout.updateFile, JSON.stringify({ from: "0.21.0", to: "0.22.0", at: 1 }));
+  assert.deepEqual(await installedVersions(layout), ["0.22.0"]);
+
+  const r = updater({ layout, npm, version: "0.22.0" });
+  await r.updater.load();
+  assert.equal(r.updater.info().previous, undefined);
+  assert.equal(r.updater.info().installed, undefined);
+  // A session's terminal still running from it keeps it.
+  const terminal = `${process.execPath} ${path.join(layout.versions, "0.21.0", "node_modules/@old-owner/gasho-daemon/lib/terminal-host.js")} /x/y.json`;
+  assert.deepEqual(await r.updater.prune(async () => terminal), []);
+  assert.deepEqual(await r.updater.prune(async () => ""), ["0.21.0"]);
+  assert.deepEqual(await fs.readdir(layout.versions), ["0.22.0"]);
 });

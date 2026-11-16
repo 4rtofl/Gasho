@@ -1,5 +1,5 @@
-// Publishes gasho-daemon (@4rtoflow/gasho-daemon), the Gasho server with its screen (@4rtoflow/gasho-hub) and the plugin
-// SDK (@4rtoflow/gasho-plugin-sdk) from main. The workflow .github/workflows/release.yml runs it every 15 minutes. A
+// Publishes gasho-daemon (@4rtofl/gasho-daemon), the Gasho server with its screen (@4rtofl/gasho-hub) and the plugin
+// SDK (@4rtofl/gasho-plugin-sdk) from main. The workflow .github/workflows/release.yml runs it every 15 minutes. A
 // package is released when what goes into it changed since its last tag (daemon-v<version>, hub-v<version>,
 // plugin-sdk-v<version>); a package without any tag yet is released at the version in its source (its first release).
 //
@@ -34,6 +34,8 @@ interface Package {
   title: string;
   /** The name on GitHub Packages. */
   name: string;
+  /** The file that holds the name (the pack script takes it from there). */
+  nameFile: string;
   tagPrefix: string;
   /** x of x.y.z. */
   major: number;
@@ -59,6 +61,15 @@ const HUB_VERSION_RE = /^export const HUB_VERSION = "([^"]*)";$/m;
 const SDK_JSON = "packages/plugin-sdk/package.json";
 const LOCK = "package-lock.json";
 
+/**
+ * Whether the source of a package's name file (`nameFile`, at some commit) builds it under `name`. A tag made before
+ * the package was renamed (the scope follows the GitHub organization, which was renamed in #85) builds it under its
+ * old name, which can no longer be published.
+ */
+export function namedAs(source: string, name: string): boolean {
+  return source.includes(`"${name}"`);
+}
+
 /** The versions of the packages from the registry in a lockfile (not the workspace's own), to tell when they changed. */
 export function registryPackages(lockText: string): string | undefined {
   try {
@@ -74,7 +85,8 @@ export const PACKAGES: Package[] = [
   {
     id: "daemon",
     title: "gasho-daemon",
-    name: "@4rtoflow/gasho-daemon",
+    name: "@4rtofl/gasho-daemon",
+    nameFile: "apps/daemon/src/install.ts",
     tagPrefix: "daemon-v",
     major: 0,
     // @gasho/protocol is left out: gasho-daemon uses only its types, which are gone in the JavaScript.
@@ -93,7 +105,8 @@ export const PACKAGES: Package[] = [
   {
     id: "hub",
     title: "gasho-hub",
-    name: "@4rtoflow/gasho-hub",
+    name: "@4rtofl/gasho-hub",
+    nameFile: "apps/hub/src/install.ts",
     tagPrefix: "hub-v",
     major: 0,
     // The Gasho server and the screen it serves (built into the package); @gasho/protocol is only types. The screen
@@ -133,7 +146,8 @@ export const PACKAGES: Package[] = [
   {
     id: "sdk",
     title: "SDK",
-    name: "@4rtoflow/gasho-plugin-sdk",
+    name: "@4rtofl/gasho-plugin-sdk",
+    nameFile: "packages/plugin-sdk/scripts/pack.ts",
     tagPrefix: "plugin-sdk-v",
     // The SDK's major is the plugin API's major (docs/plugins.md); plan checks that they still agree.
     major: 1,
@@ -246,7 +260,11 @@ function makePlan(): Plan {
       continue;
     }
     const from = tag.slice(pkg.tagPrefix.length);
-    if (!publishedVersions(pkg.name).includes(from)) pending.push(tag);
+    if (!publishedVersions(pkg.name).includes(from)) {
+      // Built under the package's old name, it cannot be published: the next version carries what it had.
+      if (namedAs(showIfThere(tag, pkg.nameFile), pkg.name)) pending.push(tag);
+      else console.log(`::warning::${tag} was made before ${pkg.name} took its name; it is not published`);
+    }
     const source = pkg.readVersion();
     if (source !== from) console.log(`::warning::${pkg.title}: the source says ${source}, the last tag ${tag}; the tag wins`);
 

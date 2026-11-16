@@ -13,7 +13,7 @@
 		"enabled": true
 	},
 	"vars": {
-		"GITHUB_REPOSITORY": "4rtoflow/Gasho",
+		"GITHUB_REPOSITORY": "4rtofl/Gasho",
 		"GITHUB_WORKFLOW": "release.yml",
 		"GITHUB_REF": "main"
 	},

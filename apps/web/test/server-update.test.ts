@@ -28,7 +28,7 @@ test("the Gasho server's update is offered only for a newer version, when it can
   assert.equal(hubNewerPublished(server({ update: { canUpdate: false } }), latest), true);
   assert.equal(hubNewerPublished(server({ version: "0.2.0" }), latest), false);
   assert.equal(hubNewerPublished(server(), undefined), false);
-  assert.equal(hubChangesUrl("0.1.0", "0.2.0"), "https://github.com/4rtoflow/Gasho/compare/hub-v0.1.0...hub-v0.2.0");
+  assert.equal(hubChangesUrl("0.1.0", "0.2.0"), "https://github.com/4rtofl/Gasho/compare/hub-v0.1.0...hub-v0.2.0");
 });
 
 test("a page is out of date when the Gasho server serves another build of the screen; never under the dev server", () => {

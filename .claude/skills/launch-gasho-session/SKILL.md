@@ -14,7 +14,7 @@ description: ワークツリーを作り、その中で Gasho のセッション
 `gasho-daemon` が PATH にあればそれを使う。`service install` で入れた daemon（managed install）は PATH に無いので、`current` の cli.js を node で直接呼ぶ。Bash の呼び出しをまたいでシェルの変数は残らないので、毎回同じ書き方で始める。
 
 ```sh
-GD="node ${GASHO_DAEMON_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/gasho/daemon}/current/node_modules/@4rtoflow/gasho-daemon/lib/cli.js"
+GD="node ${GASHO_DAEMON_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/gasho/daemon}/current/node_modules/@4rtofl/gasho-daemon/lib/cli.js"
 command -v gasho-daemon >/dev/null && GD=gasho-daemon
 $GD session list
 ```

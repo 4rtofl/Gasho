@@ -14,7 +14,7 @@ import type { CatalogPlugin, PluginCatalog, PluginGenre, PluginManifest } from "
 import { GENRE_RE, ID_RE, MAX_BYTES, MAX_FILES, readPluginFolder, swapPluginFolder, VERSION_RE } from "./plugins.ts";
 import { readTgz } from "./tar.ts";
 
-export const DEFAULT_PLUGIN_REPO = "4rtoflow/GashoPlugins";
+export const DEFAULT_PLUGIN_REPO = "4rtofl/GashoPlugins";
 /** The release that holds catalog.json. */
 const CATALOG_RELEASE = "catalog";
 /** A browser's ask reads the catalog again when it was read longer ago than this; it is read every READ_EVERY_MS anyway. */

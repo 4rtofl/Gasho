@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { latestTag, nextVersion, PACKAGES, parseVersion, pluginApi, registryPackages } from "./release.ts";
+import fs from "node:fs";
+import path from "node:path";
+import { latestTag, namedAs, nextVersion, PACKAGES, parseVersion, pluginApi, registryPackages } from "./release.ts";
 
 test("a feature raises y and puts z back to 0; a fix raises z", () => {
   assert.equal(nextVersion("0.13.0", "minor", 0), "0.14.0");
@@ -38,7 +40,7 @@ test("a change of a package from the registry in the lockfile counts; the worksp
       packages: {
         "": { name: "gasho" },
         "packages/plugin-sdk": { version: sdk },
-        "node_modules/@4rtoflow/gasho-plugin-sdk": { resolved: "packages/plugin-sdk", link: true },
+        "node_modules/@4rtofl/gasho-plugin-sdk": { resolved: "packages/plugin-sdk", link: true },
         "node_modules/ws": { version: ws },
       },
     });
@@ -51,4 +53,12 @@ test("the tag prefixes do not overlap, so that publish finds each tag's package"
   for (const a of PACKAGES) {
     for (const b of PACKAGES) if (a !== b) assert.ok(!a.tagPrefix.startsWith(b.tagPrefix), `${a.tagPrefix} / ${b.tagPrefix}`);
   }
+});
+
+test("each package's name is in its name file, and a tag from before a rename is told apart", () => {
+  const root = path.resolve(import.meta.dirname, "..");
+  for (const pkg of PACKAGES) assert.ok(namedAs(fs.readFileSync(path.join(root, pkg.nameFile), "utf8"), pkg.name), pkg.nameFile);
+  assert.ok(namedAs('export const PACKAGE_NAME = "@4rtofl/gasho-daemon";', "@4rtofl/gasho-daemon"));
+  assert.ok(!namedAs('export const PACKAGE_NAME = "@old-owner/gasho-daemon";', "@4rtofl/gasho-daemon"));
+  assert.ok(!namedAs("", "@4rtofl/gasho-daemon"));
 });

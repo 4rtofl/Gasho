@@ -2,7 +2,7 @@
 
 Gasho のプラグインは、Gasho の画面の決まった場所に、項目・ページ・パネル・設定・タイルを足すための仕組みである。プラグインは、ブラウザーで動く「画面の部分」と、working server で gasho-daemon が動かす「daemon の部分」からなる。
 
-プラグインは、GitHub のリポジトリ [4rtoflow/GashoPlugins](https://github.com/4rtoflow/GashoPlugins) に、プラグインごとのディレクトリとして並べる。利用者は、サイドバーの「プラグイン」から開く画面（プラグインの画面）で、GashoPlugins にあるプラグインから使うものを選んで追加する。動くのは、利用者が追加したプラグインだけである。
+プラグインは、GitHub のリポジトリ [4rtofl/GashoPlugins](https://github.com/4rtofl/GashoPlugins) に、プラグインごとのディレクトリとして並べる。利用者は、サイドバーの「プラグイン」から開く画面（プラグインの画面）で、GashoPlugins にあるプラグインから使うものを選んで追加する。動くのは、利用者が追加したプラグインだけである。
 
 追加・更新・有効・無効・外すは、Gasho を動かしたまま反映する（ホットリロード）。開いている画面はページを読み込み直さずに、gasho-daemon は起動し直さずに、新しいプラグインで動く。Gasho サーバーも起動し直さない。いまセッション画面にある GitHub の Issues・Pull requests の機能は、GashoPlugins の最初のプラグインとして作り直す。このプラグインで、仕組みが足りることを確かめる。
 
@@ -13,14 +13,14 @@ Gasho のプラグインは、Gasho の画面の決まった場所に、項目�
 | 用語 | 指すもの |
 |---|---|
 | プラグイン（GashoPlugin） | Gasho の画面に部品を足し、必要なら working server で処理をするもの。`gasho-plugin.json` と、ビルドした画面の部分・daemon の部分のファイルからなる |
-| GashoPlugins | プラグインを集めた GitHub の公開のリポジトリ（4rtoflow/GashoPlugins）。プラグインごとのディレクトリが並ぶ |
+| GashoPlugins | プラグインを集めた GitHub の公開のリポジトリ（4rtofl/GashoPlugins）。プラグインごとのディレクトリが並ぶ |
 | カタログ | GashoPlugins のリリースに置く、プラグインの一覧（`catalog.json`）。プラグインの画面は、これを見て、追加できるプラグインを出す |
 | プラグインの画面 | サイドバーの「プラグイン」から開くページ（`#/plugins`）。ホームや設定と同じく、メインの領域に出す。GashoPlugins のプラグインを追加・更新し、有効・無効を切り替え、外す |
 | 画面の部分 | ブラウザーで動く ES モジュール（`web.js`）。拡張点に部品を足す |
 | daemon の部分 | gasho-daemon が working server の子プロセスで動かす ES モジュール（`daemon.js`）。画面の部分から呼ばれて、コマンドを実行したりファイルを読んだりする |
 | 拡張点 | プラグインが部品を足せる、画面の決まった場所。サイドバー、ページ、セッションのヘッダー、セッションのパネル、設定、ホームのタイル、会話の末尾、入力欄の下、worktree のタブ、サイドバーのセッションの一覧、サイドバーの worktree の一覧の分け方の11個 |
 | ホットリロード | 動いている Gasho で、プラグインを新しい版に入れ替えること。ページの読み込み直しも、Gasho サーバーと gasho-daemon の起動し直しも要らない |
-| SDK | プラグインを書くための npm パッケージ。Gasho のリポジトリの `packages/plugin-sdk/` で作り、GitHub Packages に `@4rtoflow/gasho-plugin-sdk` として公開する。プラグインのコードでは `@gasho/plugin-sdk` の名前で使う |
+| SDK | プラグインを書くための npm パッケージ。Gasho のリポジトリの `packages/plugin-sdk/` で作り、GitHub Packages に `@4rtofl/gasho-plugin-sdk` として公開する。プラグインのコードでは `@gasho/plugin-sdk` の名前で使う |
 
 ## 前提
 
@@ -103,7 +103,7 @@ Gasho サーバーは、プラグインのコードを動かさない。Gasho �
 ### リポジトリ
 
 ```
-GashoPlugins/               https://github.com/4rtoflow/GashoPlugins
+GashoPlugins/               https://github.com/4rtofl/GashoPlugins
 ├─ package.json             ワークスペース。SDK を使う
 ├─ .github/workflows/       版の上がったプラグインをビルドして公開
 ├─ github/                  プラグイン1つ（ID は github）
@@ -122,7 +122,7 @@ GashoPlugins/               https://github.com/4rtoflow/GashoPlugins
 
 プラグインは、GashoPlugins の直下に、ID と同じ名前のディレクトリとして置く。ソースは TypeScript と React で書き、SDK のビルドのコマンド `gasho-plugin build` で `dist/` にする。このコマンドは、中で Vite を使う。`web.js` と `daemon.js` は、使う npm パッケージを中に含めた1つのファイルにする。ただし、`web.js` には `react` などの共有するモジュールを入れない（「画面での読み込み」）。gasho-daemon は、node_modules なしで `daemon.js` を動かす。
 
-GashoPlugins はワークスペースにして、SDK を `"@gasho/plugin-sdk": "npm:@4rtoflow/gasho-plugin-sdk@^1"` の別名で入れる。SDK は、画面の部分が使う `@gasho/plugin-sdk`、daemon の部分が使う `@gasho/plugin-sdk/daemon`、スタイルの `@gasho/plugin-sdk/plugin.css`、ビルドのコマンド `gasho-plugin` からなる。`plugin.css` は、Tailwind CSS のクラスを、Gasho と同じテーマの色と大きさで使えるようにする。SDK のメジャーは、プラグインの API のメジャーと同じにする。
+GashoPlugins はワークスペースにして、SDK を `"@gasho/plugin-sdk": "npm:@4rtofl/gasho-plugin-sdk@^1"` の別名で入れる。SDK は、画面の部分が使う `@gasho/plugin-sdk`、daemon の部分が使う `@gasho/plugin-sdk/daemon`、スタイルの `@gasho/plugin-sdk/plugin.css`、ビルドのコマンド `gasho-plugin` からなる。`plugin.css` は、Tailwind CSS のクラスを、Gasho と同じテーマの色と大きさで使えるようにする。SDK のメジャーは、プラグインの API のメジャーと同じにする。
 
 ### gasho-plugin.json
 
@@ -167,7 +167,7 @@ GitHub プラグインの場合は、次のようになる。
 ```
 ┌────────────────┬───────────────────────────────────┬─────────────────┐
 │ Gasho          │ * gasho-plugin  * api ＋ #30 ◀P15 │ Issues        x │
-│                ├───────────────────────────────────┤ 4rtoflow/Gasho  │
+│                ├───────────────────────────────────┤ 4rtofl/Gasho  │
 │ ホーム         │ gasho-plugin               作業中 │                 │
 │ リポジトリ ◀P1 │ Gasho main  Issues PRs ファイル   ├─────────────────┤
 │ 端末           │             └── P3 ──┘            │ #12 仕様の案    │
@@ -265,7 +265,7 @@ sidebar: [{ id: "repos", label: "リポジトリ", icon: FolderGit2, page: { id:
 
 ### ページ（P2）
 
-ページの URL は `#/p/<プラグインの ID>/<ページの ID>` で、引数はクエリにする（`#/p/git/repos?repo=4rtoflow%2FGasho`）。ページの部品は、引数を `params` で受け取る。
+ページの URL は `#/p/<プラグインの ID>/<ページの ID>` で、引数はクエリにする（`#/p/git/repos?repo=4rtofl%2FGasho`）。ページの部品は、引数を `params` で受け取る。
 
 ページは、ホームや設定と同じく、メインの領域に出す。枠は SDK の `Page`（見出し、説明、右上のボタン）を使い、幅と余白をほかのページにそろえる。プラグインがまだ読み込まれていないあいだは「読み込み中…」を出す。プラグインが無効か、ないか、読み込めなかったときは、そのことと、プラグインの画面へのリンクを出す。
 
@@ -768,9 +768,9 @@ daemon の部分は、gh を `ctx.exec` で動かさず、`ctx.github` で gasho
 
 ```ts
 // 読む：同じ引数で30秒以内に読んだ結果があれば、gh を実行せずにそれを返す
-const { stdout } = await ctx.github.read(["pr", "list", "--repo", "4rtoflow/Gasho", "--state", "open", "--json", "number,title"]);
+const { stdout } = await ctx.github.read(["pr", "list", "--repo", "4rtofl/Gasho", "--state", "open", "--json", "number,title"]);
 // 変える：kind が write のメソッドの中で。終わると、そのリポジトリの記録を消す
-await ctx.github.write(["issue", "edit", "12", "--repo", "4rtoflow/Gasho", "--add-assignee", "@me"], { repo: "4rtoflow/Gasho" });
+await ctx.github.write(["issue", "edit", "12", "--repo", "4rtofl/Gasho", "--add-assignee", "@me"], { repo: "4rtofl/Gasho" });
 ```
 
 - 引数は gh の引数で、`gh` は付けない。gh は、gasho-daemon のフォルダーで、プラグインの環境変数なしで動くので、リポジトリは `--repo` で指す。出力と失敗は、`ctx.exec` と同じ形で返る（`stdout`、`stderr`、失敗したときの `code` と `killed`）
@@ -826,7 +826,7 @@ const state = useEvent<{ running: number }>("state", { machine: machine.id });
 ```
 ┌────────────────┬─────────────────────────────────────────────────────┐
 │ Gasho          │ プラグイン                             [再読み込み] │
-│                │ 4rtoflow/GashoPlugins の一覧（3分前に確認）         │
+│                │ 4rtofl/GashoPlugins の一覧（3分前に確認）         │
 │ ホーム         │                                                     │
 │ リポジトリ     │ 入れたもの                                          │
 │ 端末           │ ┌─────────────────────────────────────────────────┐ │
@@ -845,7 +845,7 @@ const state = useEvent<{ running: number }>("state", { machine: machine.id });
 
 ```
 プラグイン                                                [再読み込み]
-4rtoflow/GashoPlugins の一覧（3分前に確認）
+4rtofl/GashoPlugins の一覧（3分前に確認）
 
 入れたもの
 ┌────────────────────────────────────────────────────────────────────┐
@@ -927,7 +927,7 @@ GashoPlugins の GitHub Actions は、main に push されたとき、`gasho-plu
 
 ```json
 {
-  "repo": "4rtoflow/GashoPlugins",
+  "repo": "4rtofl/GashoPlugins",
   "updatedAt": "2026-11-14T09:00:00Z",
   "genres": [
     { "id": "integration", "name": "連携" },
@@ -954,7 +954,7 @@ GashoPlugins の GitHub Actions は、main に push されたとき、`gasho-plu
 
 ### Gasho サーバーが読む
 
-Gasho サーバーは、`GASHO_PLUGIN_REPO`（既定は `4rtoflow/GashoPlugins`）のリポジトリから、`gh release download catalog --pattern catalog.json` でカタログを読む。gh は、Gasho サーバーのマシンでログインしておく。gh は `GASHO_GH_BIN` で変えられる（gasho-daemon と同じ）。カタログを読むのは、Gasho サーバーを起動したとき、プラグインの画面を開いたとき（前に読んでから10分たっていれば）、「再読み込み」を押したとき、6時間ごとである。読めなかったときは、前に読んだカタログを出し、理由を添える。読めなかったあとは、1分たっていれば、プラグインの画面を開いたときに読み直す。読んだカタログは、開いているすべての画面に送る。サイドバーの「プラグイン」のバッジは、これを見て数える。
+Gasho サーバーは、`GASHO_PLUGIN_REPO`（既定は `4rtofl/GashoPlugins`）のリポジトリから、`gh release download catalog --pattern catalog.json` でカタログを読む。gh は、Gasho サーバーのマシンでログインしておく。gh は `GASHO_GH_BIN` で変えられる（gasho-daemon と同じ）。カタログを読むのは、Gasho サーバーを起動したとき、プラグインの画面を開いたとき（前に読んでから10分たっていれば）、「再読み込み」を押したとき、6時間ごとである。読めなかったときは、前に読んだカタログを出し、理由を添える。読めなかったあとは、1分たっていれば、プラグインの画面を開いたときに読み直す。読んだカタログは、開いているすべての画面に送る。サイドバーの「プラグイン」のバッジは、これを見て数える。
 
 カタログの項目のうち、形の正しくないもの（`id` や `version` の形、`sha256` が64桁の16進数でないものなど）は出さず、Gasho サーバーのログに書く。`release` と `file` は、`<ID>-v<版>` と `<ID>-<版>.tgz` でなければならない。gh に渡す名前を、GashoPlugins の GitHub Actions が作る形に限るためである。ジャンルも、形の正しくないもの（ID の形、40文字を超える名前など）は出さない。プラグインの `genre` の形が正しくないときは、そのプラグインを、ジャンルのないものとして出す。
 
@@ -1170,7 +1170,7 @@ Gasho の CSS（Tailwind CSS）には、Gasho のコードが使うクラスし�
 | gasho-daemon の `github.ts`（`gh issue list`、`gh pr list`、`gh issue view`、`gh pr view`） | GitHub プラグインの daemon の部分。Gasho サーバーから gasho-daemon に渡す |
 | URL の `…/issues`、`…/pulls`、`…/issue/<番号>`、`…/pull/<番号>`（後ろにリポジトリ） | `…/p/git/list?kind=issues`、`…/p/git/item?kind=pulls&number=12`（リポジトリは `&repo=…`）。古い URL を開いたときは、新しい URL に置き換える |
 
-移したあと、GashoPlugins でこのプラグインの ID を `github` から `git` に改名した（4rtoflow/GashoPlugins#96）。`github` の ID は、Actions・Projects・Packages を読む新しいプラグインに使う（4rtoflow/GashoPlugins#97）。そのため、上の表と下の説明のプラグインの ID は `git` にしてある。改名の前の URL `…/p/github/list`・`…/p/github/item` は、新しい `github` プラグインのパネルを指すので、開くと「このページはありません」になる。
+移したあと、GashoPlugins でこのプラグインの ID を `github` から `git` に改名した（4rtofl/GashoPlugins#96）。`github` の ID は、Actions・Projects・Packages を読む新しいプラグインに使う（4rtofl/GashoPlugins#97）。そのため、上の表と下の説明のプラグインの ID は `git` にしてある。改名の前の URL `…/p/github/list`・`…/p/github/item` は、新しい `github` プラグインのパネルを指すので、開くと「このページはありません」になる。
 
 セッションの GitHub のリポジトリを見つけること（`SessionInfo.github`、`repos[].github`）は、Gasho の本体に残す。ヘッダーのリポジトリのリンクと、ブランチの GitHub のリンクにも使うためである。トランスクリプトから読む PR のリンク（G4）、ブランチグラフ（G1、G3）、ファイルのパネルも、本体に残す。
 

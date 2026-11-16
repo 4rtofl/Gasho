@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 /** The package on GitHub Packages (npm.pkg.github.com); its scope is the repository's owner. */
-export const PACKAGE_NAME = "@4rtoflow/gasho-daemon";
+export const PACKAGE_NAME = "@4rtofl/gasho-daemon";
 
 export type Install =
   | { kind: "repo"; repo: string }
@@ -17,7 +17,7 @@ export type Install =
 
 /**
  * Where `service install` and updates put gasho-daemon: each version in a folder of its own (an npm prefix:
- * versions/0.15.0/node_modules/@4rtoflow/gasho-daemon), and `current`, a link to the one the service runs. Switching
+ * versions/0.15.0/node_modules/@4rtofl/gasho-daemon), and `current`, a link to the one the service runs. Switching
  * versions changes the link alone; the service's file stays as it is.
  */
 export interface Layout {

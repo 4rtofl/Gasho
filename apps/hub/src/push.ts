@@ -5,7 +5,7 @@ import type { GashoNotification, NotificationKind, PushInfo, PushPayload, PushSu
 import type { Store } from "./store.ts";
 
 /** What the push services are told about who sends (VAPID `sub`): a URL of the project, no personal contact. */
-export const DEFAULT_VAPID_SUBJECT = "https://github.com/4rtoflow/Gasho";
+export const DEFAULT_VAPID_SUBJECT = "https://github.com/4rtofl/Gasho";
 export const NOTIFICATION_KINDS: readonly NotificationKind[] = ["done", "permission", "idle", "error"];
 /** How long a push service keeps a message for a phone that is off (s). */
 const TTL_S = 24 * 3600;

@@ -109,8 +109,8 @@ test("metadata records update meta and are not entries", () => {
   const pr = {
     type: "pr-link",
     prNumber: 5,
-    prUrl: "https://github.com/4rtoflow/Nakamaba/pull/5",
-    prRepository: "4rtoflow/Nakamaba",
+    prUrl: "https://github.com/4rtofl/Nakamaba/pull/5",
+    prRepository: "4rtofl/Nakamaba",
   };
   parseRecord(pr, meta);
   parseRecord(pr, meta);

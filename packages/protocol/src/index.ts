@@ -510,9 +510,9 @@ export interface ServerInfo {
 
 /** The latest published versions, as the Gasho server last looked them up on the package registry. */
 export interface LatestVersions {
-  /** gasho-daemon (@4rtoflow/gasho-daemon). */
+  /** gasho-daemon (@4rtofl/gasho-daemon). */
   daemon?: string;
-  /** The Gasho server (@4rtoflow/gasho-hub). */
+  /** The Gasho server (@4rtofl/gasho-hub). */
   hub?: string;
   /** Why the Gasho server's version could not be looked up (it is published later than gasho-daemon). */
   hubError?: string;

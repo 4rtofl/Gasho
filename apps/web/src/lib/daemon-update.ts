@@ -2,7 +2,7 @@
 import type { DaemonUpdateStep, LatestVersions, MachineInfo } from "@gasho/protocol";
 
 /** The command that makes gasho-daemon updatable from Gasho, for one too old to say whether it is. */
-export const INSTALL_COMMAND = "npx @4rtoflow/gasho-daemon@latest service install";
+export const INSTALL_COMMAND = "npx @4rtofl/gasho-daemon@latest service install";
 /** How long a restart may take before the row suggests looking at the working server's log. */
 export const RESTART_SLOW_MS = 2 * 60_000;
 
@@ -39,7 +39,7 @@ export function newerPublished(m: MachineInfo, latest: LatestVersions | undefine
 
 /** The changes between two versions of gasho-daemon, on GitHub (each release is tagged daemon-v<version>). */
 export function changesUrl(from: string, to: string): string {
-  return `https://github.com/4rtoflow/Gasho/compare/daemon-v${from}...daemon-v${to}`;
+  return `https://github.com/4rtofl/Gasho/compare/daemon-v${from}...daemon-v${to}`;
 }
 
 /** What waits on a working server that an update would affect: inputs still to send, and permission requests. */

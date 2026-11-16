@@ -1,4 +1,4 @@
-// Builds the npm package of the Gasho server (@4rtoflow/gasho-hub on GitHub Packages) in dist/package: the TypeScript
+// Builds the npm package of the Gasho server (@4rtofl/gasho-hub on GitHub Packages) in dist/package: the TypeScript
 // compiled to JavaScript (lib/; Node.js does not run TypeScript inside node_modules), the screen built for this version
 // (web/), a package.json and a README. The version is HUB_VERSION (src/version.ts), the one the Gasho server tells
 // browsers; GASHO_PACK_VERSION packs a trial package under another one (a release checks that it was built with its
@@ -47,8 +47,8 @@ const pkg = {
   files: ["lib", "web"],
   dependencies,
   engines: { node: ">=24" },
-  repository: { type: "git", url: "git+https://github.com/4rtoflow/Gasho.git", directory: "apps/hub" },
-  homepage: "https://github.com/4rtoflow/Gasho/blob/main/docs/hub-setup.md",
+  repository: { type: "git", url: "git+https://github.com/4rtofl/Gasho.git", directory: "apps/hub" },
+  homepage: "https://github.com/4rtofl/Gasho/blob/main/docs/hub-setup.md",
   publishConfig: { registry: "https://npm.pkg.github.com" },
 };
 fs.writeFileSync(path.join(out, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
@@ -63,7 +63,7 @@ npx ${PACKAGE_NAME} service install   # 常駐させる（これからは Gasho 
 npx ${PACKAGE_NAME} pair              # 登録コードを出す
 \`\`\`
 
-GitHub Packages から入れるための設定と、常駐のさせ方、更新と自動で前の版に戻す仕組みは [docs/hub-setup.md](https://github.com/4rtoflow/Gasho/blob/main/docs/hub-setup.md) を見る。
+GitHub Packages から入れるための設定と、常駐のさせ方、更新と自動で前の版に戻す仕組みは [docs/hub-setup.md](https://github.com/4rtofl/Gasho/blob/main/docs/hub-setup.md) を見る。
 `,
 );
 console.log(`built ${PACKAGE_NAME}@${version} in ${path.relative(process.cwd(), out) || "."}`);

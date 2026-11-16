@@ -5,6 +5,7 @@ import type { SessionListWorktree } from "@gasho/plugin-sdk";
 import { GasshoOverlay } from "@/components/gassho";
 import { ResizeHandle } from "@/components/resize-handle";
 import { SessionHeaderToggle } from "@/components/session-header-toggle";
+import { PanelBarContext } from "@/components/side-panel";
 import { RegisterRepos, RepoFilter } from "@/components/repo-filter";
 import { ReposDialog } from "@/components/repos-dialog";
 import { SessionActionDialog, SessionContextMenu, type SessionActionRequest } from "@/components/session-menu";
@@ -224,6 +225,8 @@ export function App() {
   // The order the sidebar's worktrees were dragged into (none: the one used last first).
   const [worktreeOrder, setWorktreeOrder] = useSavedOrder(WORKTREE_ORDER_KEY);
   const desktop = useMediaQuery(DESKTOP);
+  // A panel takes a phone's screen: its heading goes into the top bar, in this place (see SidePanel).
+  const [panelBar, setPanelBar] = useState<HTMLElement | null>(null);
   // The plugins' web parts (docs/plugins.md): their sidebar items and the badges their hooks give.
   const { parts } = usePluginRegistry();
   const badges = usePluginBadges();
@@ -624,7 +627,9 @@ export function App() {
               holdList(true);
             }}
           />
-          {onScreen && onScreenMachine ? (
+          {route.name === "session" && !desktop && panel ? (
+            <div ref={setPanelBar} className="flex min-w-0 flex-1 items-center gap-2" />
+          ) : onScreen && onScreenMachine ? (
             <>
               <h1 className="min-w-0 truncate text-sm font-semibold">{sessionLabel(onScreen)}</h1>
               <SessionState machine={onScreenMachine} session={onScreen} />
@@ -667,7 +672,9 @@ export function App() {
               />
             )}
             {route.name === "session" && !desktop && panel && (
-              <PanelView machine={route.machine} sessionId={route.sessionId} panel={panel} docked={false} />
+              <PanelBarContext.Provider value={panelBar}>
+                <PanelView machine={route.machine} sessionId={route.sessionId} panel={panel} docked={false} />
+              </PanelBarContext.Provider>
             )}
           </motion.main>
           {route.name === "session" && desktop && panel && (

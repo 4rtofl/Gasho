@@ -187,6 +187,7 @@ clone したリポジトリは、親のフォルダーを信頼していても�
 - Claude Code が会話を要約したところ（Conversation compacted）には、「会話を要約しました」の区切り線を出す。要約の本文は線の下に折りたたんでおき、押すと開く。要約は Claude Code がユーザーの発言として記録するが、Gasho では発言として出さない
 - Claude Code が権限の確認を出しているあいだは、入力欄の上に確認のカードを出し、Gasho から「許可」「今後も許可」「拒否」で答えられる。端末や公式アプリでも答えられ、そちらで答えるとカードは消える。「今後も許可」は、Claude Code が許可のルール（`Bash(npm test:*)` など）を提案したときだけ出る。拒否すると、端末で「No」を選んだときと同じく、Claude は作業を止めて次の指示を待つ。使うには hooks を入れ直す（`hooks install`）
 - ヘッダーのブランチ名を押すと、ブランチグラフを開く。PC ではセッションの右にパネルとして並べ、スマホでは画面全体に出す。セッションのリポジトリのブランチと、全ブランチの新しいほうから300件のコミットを、枝分かれとマージの線で表示する
+- スマホでパネル（ブランチグラフ、ファイル、プラグインのパネル）を開くと、パネルの題名と右上のボタンを画面上部のバーに出す。バーの左の ← でセッションに戻る。ボタンがバーに入りきらないときは、ボタンの並びを横にスクロールする
 - GitHub プラグインを入れると（「プラグイン」の節）、ブランチ名と「ファイル」のあいだに「Issues」「Pull requests」が出る。押すと、リポジトリの開いている Issue と Pull request の一覧を、同じようにパネルで開く。一覧の項目を押すと、GitHub へは移らずに、本文とコメント（Pull request ではレビュー、チェック、変更したファイルも）を Gasho の中で読める。GitHub のページは、パネルの「GitHub」から開く。working server の GitHub CLI（gh）で読むので、working server で `gh auth login` を済ませておく。gh のログインを使うので、Gasho は GitHub のトークンを扱わない。プラグインに対応した gasho-daemon の working server でだけ出る
 - ブランチの一覧には、ローカルのブランチ（push していないコミットの数など）と、リモートにだけあるブランチ（雲のアイコン）を並べる。見出しを押すと、一覧を折りたためる
 - コミットの件名は省略せずに出す。長い件名は、その行を横にスクロールして読む（スクロールバーは出さない）
@@ -206,6 +207,23 @@ clone したリポジトリは、親のフォルダーを信頼していても�
 - フォルダーの「新しいファイル」で、そのフォルダーに空のファイルを作り、編集の画面で開く。同じ名前のファイルやフォルダーがあれば作らない
 - 読み書きできるのは、セッションのフォルダーの中だけ。フォルダーの外を指すシンボリックリンクは、一覧に「フォルダーの外」と出すが、開かない
 - 保存と作成は、ファイルのパスと大きさを操作のログに残し、ホームの「最近の操作」に出す。ファイルの中身は Gasho サーバーに残さない
+
+### working server のコマンドからセッションを起動する
+
+working server の上では、Gasho の画面を通さずに、`gasho-daemon session` でセッションを起動し、入力できる。Claude Code のセッションから別のセッションを立ち上げて作業させるときに使う（リポジトリの Skill `.claude/skills/launch-gasho-session` が、ワークツリーを作るところからこれを使う）。
+
+```bash
+gasho-daemon session launch --cwd <フォルダー> --name <名前> [--trust] [--prompt <文> | --prompt-file <ファイル> | --prompt -]
+gasho-daemon session send <名前か ID> (--text <文> | --file <ファイル> | -)
+gasho-daemon session list [--json]
+```
+
+- 動いている gasho-daemon に、その置き場（`~/.config/gasho/`、`GASHO_DAEMON_CONFIG` で変わる）の Unix ソケット `control.sock` で頼む。ソケットは本人だけが使える（0600）。Gasho サーバーを通らないので、ペアリングも要らず、Gasho サーバーが止まっていても使える
+- 中身は Gasho の画面からの起動・入力・名前の変更と同じ。起動したセッションは Gasho の画面にも出て、入力は作業中なら終わるまで待つ
+- `launch` は起動を待ち、プロンプトがあれば入力欄に送ってから、`{sessionId, name, cwd, terminal}` を JSON で出す。`name` は `claude agents`（Claude Code のセッション一覧）に出る名前で、ほかのセッションから SendMessage するときの宛先になる。Claude Code は新しいセッションを `--remote-control` の名前ではなくフォルダー名で並べるので、`--name` を付けたときは、まず `/rename` でその名前に変え、一覧に出るまで待ってからプロンプトを送る。`--name` が無いと、最初の発言のあとで Gasho が発言から名前を付け直すので、出した名前は変わる
+- `--trust` は、Claude Code の「このフォルダーを信頼するか」に Yes と答える（Gasho の画面の「信頼して起動する」と同じ）
+- gasho-daemon が動いていないとき（ソケットが無い古い版のときも）は、そう伝えて起動の仕方を示す
+- `service install` で入れたときは PATH に `gasho-daemon` が無いので、`node ~/.local/share/gasho/daemon/current/node_modules/@4rtoflow/gasho-daemon/lib/cli.js session …` で呼ぶ
 
 ### 端末を管理する
 
@@ -242,6 +260,7 @@ Gasho サーバーは LAN の中だけで使う前提にしている。外から
 1. Gasho サーバー・スマホ（・Mac）に Tailscale を入れる
 2. Gasho サーバーで `sudo tailscale serve --bg 7740` を実行する。`https://<マシン名>.<tailnet>.ts.net/` で Gasho を開けるようになる。Serve は Gasho サーバーに 127.0.0.1 からつなぐので、`GASHO_ALLOW_NETS` は変えなくてよい
 3. Mac の gasho-daemon を家の外からつなぐときは、Gasho サーバーを `GASHO_ALLOW_NETS=lan,tailscale npm run hub` で起動して、Tailscale のアドレスからも受け付ける
+4. iPhone で通知を受け取るときは、ホーム画面に追加した Gasho の「設定」で「この端末に通知する」をオンにする。通知は Apple の push service を通るので、Gasho サーバーから外（`web.push.apple.com`）へつながる必要がある
 
 ### 開発
 
@@ -281,6 +300,7 @@ gasho-daemon（`@4rtoflow/gasho-daemon`）、Gasho サーバー（`@4rtoflow/gas
 | `GASHO_PLUGIN_CACHE` | hub | `~/.cache/gasho/hub-plugins`（配るプラグインの版ごとの写し） |
 | `GASHO_PLUGIN_REPO` | hub | `4rtoflow/GashoPlugins`（プラグインを追加するリポジトリ） |
 | `GASHO_LATEST_CHECK` | hub | なし。`off` にすると、公開されている gasho-daemon と Gasho サーバーの最新の版を調べない |
+| `GASHO_VAPID_SUBJECT` | hub | `https://github.com/4rtoflow/Gasho`（Web Push で push service に伝える送り手。`mailto:` か `https:` の URL） |
 | `GASHO_HUB_HOME` | hub | `~/.local/share/gasho/hub`（`service install` と更新が、版ごとに Gasho サーバーを入れるフォルダー） |
 | `GASHO_HUB_PROBATION_MS` | hub | `60000`（更新したあとの試しの期間。そのうちに止まった版は、前の版に戻す） |
 | `GASHO_HUB_ENV` | hub | `~/.config/gasho/hub.env`（起動するときに読む設定のファイル）。`off` にすると読まない |

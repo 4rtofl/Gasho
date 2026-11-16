@@ -2,6 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseNets } from "./netallow.ts";
+import { DEFAULT_VAPID_SUBJECT } from "./push.ts";
 
 export interface HubConfig {
   host: string;
@@ -17,6 +18,8 @@ export interface HubConfig {
   pluginRepo: string;
   /** The GitHub CLI that reads it, with its login. */
   ghBin: string;
+  /** VAPID `sub` for Web Push: who sends, as the push services see it (a mailto: or https: URL). */
+  vapidSubject: string;
 }
 
 export function pluginsDirOf(env: NodeJS.ProcessEnv = process.env): string {
@@ -50,5 +53,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): HubConfig {
     pluginCacheDir: env.GASHO_PLUGIN_CACHE ?? path.join(env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "gasho", "hub-plugins"),
     pluginRepo: env.GASHO_PLUGIN_REPO || "4rtoflow/GashoPlugins",
     ghBin: env.GASHO_GH_BIN || "gh",
+    vapidSubject: env.GASHO_VAPID_SUBJECT || DEFAULT_VAPID_SUBJECT,
   };
 }

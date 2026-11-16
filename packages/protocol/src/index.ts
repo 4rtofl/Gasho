@@ -356,6 +356,40 @@ export interface GashoNotification {
   read: boolean;
 }
 
+/** A browser's Web Push subscription, as PushSubscription.toJSON() gives it. */
+export interface PushSubscriptionInfo {
+  /** The push service's URL for this subscription (https). */
+  endpoint: string;
+  /** base64url: the browser's P-256 public key (p256dh) and its 16-byte secret (auth). */
+  keys: { p256dh: string; auth: string };
+}
+
+/** Web Push on the Gasho server, as one browser sees it (docs/iphone.md). */
+export interface PushInfo {
+  /** The VAPID public key to subscribe with (applicationServerKey), base64url. */
+  publicKey: string;
+  /** This browser's subscriptions (one per Service Worker), each with the kinds of notification it is sent. */
+  subscriptions: { endpoint: string; kinds: NotificationKind[] }[];
+}
+
+/**
+ * What a Web Push carries, as JSON, for the Service Worker to show. Only the session's name and the kind of
+ * notification: the lock screen shows it, so nothing of the conversation goes in.
+ */
+export interface PushPayload {
+  /** The session's name. */
+  title: string;
+  /** What happened ("応答が終わりました"). */
+  body: string;
+  kind: NotificationKind;
+  /** One notification per session: a newer one replaces it. */
+  tag: string;
+  /** The page to open when it is tapped ("/#/s/<machine>/<session>"). */
+  url: string;
+  /** How many sessions wait for a confirmation, for the app icon's badge. */
+  badge: number;
+}
+
 /** A working server: a machine that runs Claude Code and gasho-daemon. */
 export interface MachineInfo {
   /** Id issued when the machine was registered. */
@@ -942,6 +976,10 @@ export type HubToClient =
       latest?: LatestVersions;
       /** The Gasho server itself (absent from one older than updates from Gasho). */
       server?: ServerInfo;
+      /** Web Push for this browser (absent from a Gasho server older than Web Push). */
+      push?: PushInfo;
+      /** The Gasho server answers ping with pong (absent from an older one, which ignores ping). */
+      heartbeat?: boolean;
     }
   | { type: "machine"; machine: MachineInfo }
   /** The Gasho server itself, whenever its update or the build of the screen it serves changed. */
@@ -967,7 +1005,11 @@ export type HubToClient =
   /** The catalog of plugins, whenever it was read again or is being read. */
   | { type: "plugin.catalog"; catalog: PluginCatalog }
   /** An event of a plugin's daemon part on a working server (useEvent), to every browser. */
-  | { type: "plugin.event"; event: PluginEvent };
+  | { type: "plugin.event"; event: PluginEvent }
+  /** Web Push for this browser, whenever its subscriptions changed (to every connection of the browser). */
+  | { type: "push"; push: PushInfo }
+  /** The answer to ping. */
+  | { type: "pong" };
 
 // browser -> gasho-hub
 export type ClientToHub =
@@ -1006,7 +1048,18 @@ export type ClientToHub =
    * Reads the catalog of plugins again if it is older than 10 minutes, or at once with `refresh` (answered with
    * plugin.catalog, to every browser).
    */
-  | { type: "plugin.catalog.get"; refresh?: boolean };
+  | { type: "plugin.catalog.get"; refresh?: boolean }
+  /** Asks whether the connection still works (answered with pong by a Gasho server that says heartbeat). */
+  | { type: "ping" }
+  /**
+   * Whether the page is on screen (document.visibilityState), said when it connects and whenever it changes. Web Push
+   * is not sent to a browser while one of its pages is on screen.
+   */
+  | { type: "presence"; visible: boolean }
+  /** Sends Web Push to this browser's subscription, for `kinds` (answered with push); again to change the kinds. */
+  | { type: "push.subscribe"; subscription: PushSubscriptionInfo; kinds: NotificationKind[] }
+  /** Stops sending Web Push to this subscription (answered with push). */
+  | { type: "push.unsubscribe"; endpoint: string };
 
 /** Models a session started from Gasho can switch to, as Claude Code's /model picker lists them. */
 export type SessionModel = "default" | "opus" | "fable" | "sonnet" | "haiku";

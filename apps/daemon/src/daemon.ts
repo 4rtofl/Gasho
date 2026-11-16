@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
@@ -24,6 +25,7 @@ import type {
   TranscriptEntry,
 } from "@gasho/protocol";
 import type { DaemonConfig } from "./config.ts";
+import { type ControlReply, type ControlRequest, type ControlSession, controlSocketOf, startControlServer } from "./control.ts";
 import { listDir, readFileAt, writeFileAt } from "./files.ts";
 import { cloneRepo, createFolder } from "./folders.ts";
 import { githubRepoOf, nestedRepos, readGitGraph, worktreeOf } from "./git.ts";
@@ -388,6 +390,11 @@ export class Daemon {
       },
       onStatusLine: (payload) => this.applyStatusLine(payload),
     });
+    const control = controlSocketOf(this.cfg.stateDir);
+    await startControlServer(control, (req) => this.onControl(req)).then(
+      () => log(`gasho-daemon session … is answered on ${control}`),
+      (e: unknown) => log("no control socket, so gasho-daemon session … cannot reach this daemon", e),
+    );
     setInterval(() => void this.refresh(), this.cfg.pollIntervalMs);
     setInterval(() => void this.pollTails(), 1000);
     try {
@@ -1083,6 +1090,49 @@ export class Daemon {
         return;
       }
     }
+  }
+
+  /**
+   * A request on the local control socket (control.ts, `gasho-daemon session …`): done as the same command from the
+   * Gasho server is.
+   */
+  private async onControl(req: ControlRequest): Promise<ControlReply> {
+    const requestId = `control-${randomUUID()}`;
+    try {
+      switch (req.op) {
+        case "session.launch":
+          log(`session.launch in ${req.cwd} from the control socket`);
+          return await this.launch(req.cwd, req.name, req.trust === true);
+        case "session.input":
+          return await this.input({ type: "session.input", requestId, sessionId: req.sessionId, text: req.text });
+        case "session.rename":
+          return await this.rename(req.sessionId, req.name, requestId);
+        case "session.list":
+          await this.refresh();
+          return { ok: true, sessions: this.controlSessions() };
+      }
+    } catch (e) {
+      log(`${req.op} from the control socket failed`, e);
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  /** The sessions Gasho started, under the names `claude agents` (and so ListAgents) shows. */
+  private controlSessions(): ControlSession[] {
+    return this.managed.all().map((m) => {
+      const info = this.tracked.get(m.sessionId)?.info;
+      const name = info?.name || m.name;
+      const pending = this.managed.waiting(m.sessionId).filter((input) => !input.auto).length;
+      return {
+        sessionId: m.sessionId,
+        name,
+        ...(name !== m.name ? { gashoName: m.name } : {}),
+        cwd: m.cwd,
+        terminal: m.terminal,
+        status: info?.status ?? "unknown",
+        ...(pending > 0 ? { pendingInputs: pending } : {}),
+      };
+    });
   }
 
   private async sendTranscriptPage(m: Extract<HubToDaemon, { type: "transcript.get" }>): Promise<void> {

@@ -101,7 +101,9 @@ test("readTgz reads what tar makes of a dist folder", (t) => {
   fs.writeFileSync(path.join(dir, "dist", "gasho-plugin.json"), "{}");
   fs.writeFileSync(path.join(dir, "dist", "assets", `${"n".repeat(110)}.js`), "chunk");
   const out = path.join(dir, "p.tgz");
-  execFileSync(tar, ["-czf", out, "-C", path.join(dir, "dist"), "."]);
+  // Without COPYFILE_DISABLE, macOS's tar adds the files' extended attributes as "._" files; releases are made on
+  // Ubuntu, whose GNU tar ignores it.
+  execFileSync(tar, ["-czf", out, "-C", path.join(dir, "dist"), "."], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
   const { files } = readTgz(fs.readFileSync(out), LIMITS);
   assert.deepEqual(files.map((f) => f.path).sort(), [`assets/${"n".repeat(110)}.js`, "gasho-plugin.json"]);
 });

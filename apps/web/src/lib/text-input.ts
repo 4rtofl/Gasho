@@ -14,3 +14,12 @@ export function pastedFiles(data: { files: ArrayLike<File>; getData(type: string
   if (!canAttach || data.getData("text/plain").trim()) return [];
   return Array.from(data.files);
 }
+
+const TEXT_TYPES = new Set(["text", "search", "url", "email", "password", "tel", "number"]);
+
+/** Whether the keys go to a box that text is written in, where the system's keys (Ctrl+B on a Mac) move the cursor. */
+export function typingIn(target: EventTarget | null): boolean {
+  if (target instanceof HTMLTextAreaElement) return true;
+  if (target instanceof HTMLInputElement) return TEXT_TYPES.has(target.type);
+  return target instanceof HTMLElement && target.isContentEditable;
+}

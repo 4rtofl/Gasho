@@ -5,7 +5,8 @@
 // items of a section can be put in another order by dragging them (`sort`), a section can hold groups of items under
 // headings of their own that fold (`groups`, a plugin's categories of sessions), which can be dragged too
 // (`groupSort`), whose items can be dragged from one group into another (`itemMove`), and the width on a computer can
-// be changed by dragging the right edge (`ResizeHandle`, lib/widths).
+// be changed by dragging the right edge (`ResizeHandle`, lib/widths). Ctrl+B in a box that text is written in is left to
+// the box (on a Mac it moves the cursor back), and only ⌘B folds the sidebar there.
 
 import * as React from "react";
 import { AnimatePresence, motion, useDragControls, type PanInfo } from "framer-motion";
@@ -13,6 +14,7 @@ import { ChevronRight, GripVertical, PanelLeft } from "lucide-react";
 import { useWindowWidth } from "../../lib/media";
 import { SIDEBAR_WIDTH_DEFAULT, SIDEBAR_WIDTH_MAX, SIDEBAR_WIDTH_MIN, clampSidebarWidth, useSidebarWidth } from "../../lib/widths";
 import { groupDrop, itemsByGroup, useSortable, type Sortable } from "../../lib/sortable";
+import { typingIn } from "../../lib/text-input";
 import { cn } from "../../lib/utils";
 import { ResizeHandle } from "../resize-handle";
 
@@ -156,6 +158,7 @@ export function Sidebar({
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+        if (!e.metaKey && typingIn(e.target)) return;
         e.preventDefault();
         if (window.matchMedia("(min-width: 768px)").matches) setCollapsed(!collapsed);
         else setMobileOpen(!mobileOpen);

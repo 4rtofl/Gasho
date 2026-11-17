@@ -12,8 +12,11 @@ import { cn } from "@/lib/utils";
 export function PermissionRequests({ machine, session }: { machine: MachineInfo; session: SessionInfo }) {
   const requests = session.permissionRequests ?? [];
   if (requests.length === 0) return null;
+  // Shrinks, and scrolls, when the cards and the chat box would be taller than the conversation's box (a phone on its
+  // side, several requests at once); the chat box keeps its height. The questions and the plan scroll in their cards
+  // and, at their end, this list scrolls on: they can be taller than it.
   return (
-    <div className="mb-2 space-y-2">
+    <div className="mb-2 min-h-0 space-y-2 overflow-y-auto">
       {requests.map((r) =>
         r.questions ? (
           <QuestionCard key={r.id} machine={machine} sessionId={session.sessionId} request={r} questions={r.questions} />
@@ -170,7 +173,7 @@ function QuestionCard({ machine, sessionId, request: r, questions }: CardProps &
           この質問には、Gasho から直接は答えられません。答えると、端末の質問を閉じてから、答えを次の発言として Claude に送ります。
         </p>
       )}
-      <div className="max-h-[45vh] space-y-4 overflow-y-auto overscroll-contain px-3 pt-2">
+      <div className="max-h-[45vh] space-y-4 overflow-y-auto px-3 pt-2">
         {questions.map((q, i) => (
           <QuestionField
             key={i}
@@ -301,7 +304,7 @@ function PlanCard({ machine, sessionId, request: r, plan }: CardProps & { plan: 
         計画の承認
       </div>
       <p className="px-3 pt-1 text-xs text-muted-foreground">Claude が計画を立てました。この計画で進めますか？</p>
-      <div className="mx-3 mt-2 max-h-[40vh] overflow-y-auto overscroll-contain rounded-lg border border-border bg-black/20 px-3 py-2">
+      <div className="mx-3 mt-2 max-h-[40vh] overflow-y-auto rounded-lg border border-border bg-black/20 px-3 py-2">
         <MarkdownText text={plan} />
       </div>
       {revising ? (

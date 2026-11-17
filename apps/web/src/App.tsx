@@ -222,8 +222,10 @@ export function App() {
   // The dialog that registers repositories, opened from the menu that narrows the sidebar's worktrees.
   const [reposOpen, setReposOpen] = useState(false);
   const [repoKeys, setRepoKeys] = useChoices(WORKTREE_REPO_KEY);
-  // The order the sidebar's worktrees were dragged into (none: the one used last first).
+  // The order the sidebar's worktrees were dragged into (none: the one used last first), and the order held while the
+  // pointer is over the list.
   const [worktreeOrder, setWorktreeOrder] = useSavedOrder(WORKTREE_ORDER_KEY);
+  const [heldWorktreeOrder, setHeldWorktreeOrder] = useState<string[]>();
   const desktop = useMediaQuery(DESKTOP);
   // A panel takes a phone's screen: its heading goes into the top bar, in this place (see SidePanel).
   const [panelBar, setPanelBar] = useState<HTMLElement | null>(null);
@@ -268,6 +270,7 @@ export function App() {
     setMobileOpen(false);
     setHeldOrder(null);
     setHeldWorktrees(null);
+    setHeldWorktreeOrder(undefined);
   }, [desktop]);
   // The category whose "＋" is starting a session, and what the dialog opens with when that did not work.
   const [launchingIn, setLaunchingIn] = useState<string>();
@@ -280,10 +283,10 @@ export function App() {
 
   const unread = notifications.filter((n) => !n.read && notificationShown(n, machines)).length;
   const unreadOnes = unreadSessions(notifications);
-  // The worktrees of all working servers in one list: the one used last first, then those without sessions, or in the
-  // order they were dragged into (worktrees that got their first session since then come first).
+  // The worktrees of all working servers in one list: the one used last first, then those without sessions, or as held,
+  // then in the order they were dragged into (worktrees that got their first session since then come first).
   const byId = new Map(allWorktrees.map((w) => [w.id, w]));
-  const worktrees = arrangeSessions([...byId.keys()], worktreeOrder).flatMap((id) => byId.get(id) ?? []);
+  const worktrees = arrangeSessions(arrangeSessions([...byId.keys()], heldWorktreeOrder), worktreeOrder).flatMap((id) => byId.get(id) ?? []);
   // Narrowed to the repositories picked.
   const listed = narrowWorktrees(worktrees, narrowed);
   const openSession =
@@ -326,6 +329,7 @@ export function App() {
   // worktrees also stay in the categories they showed in: their state, and with it their category, changes as Claude
   // works. What shows while waiting for the categories is not held.
   const holdList = (on: boolean) => {
+    setHeldWorktreeOrder(on ? worktrees.map((w) => w.id) : undefined);
     setHeldOrder(on ? holdOrder(categories) : null);
     setHeldWorktrees(on && shownGrouping && groupings.mode.kind === "grouped" ? holdWorktreeList(shownGrouping, worktreeCategories) : null);
   };
@@ -498,7 +502,15 @@ export function App() {
         ? { label: "最後に使った順に戻す", icon: <ListRestart />, onClick: () => changeGroupingPrefs(withoutOrder) }
         : undefined
       : worktreeOrder
-        ? { label: "最後に使った順に戻す", icon: <ListRestart />, onClick: () => setWorktreeOrder(undefined) }
+        ? {
+            label: "最後に使った順に戻す",
+            icon: <ListRestart />,
+            onClick: () => {
+              setWorktreeOrder(undefined);
+              // Held, the list would keep the order dragged into until the pointer leaves it.
+              setHeldWorktreeOrder((held) => held && allWorktrees.map((w) => w.id));
+            },
+          }
         : undefined,
     tools: (
       <RepoFilter

@@ -338,6 +338,22 @@ test("commands recorded as system records are notes too", () => {
   assert.deepEqual(command?.blocks, [{ type: "text", text: "/model" }]);
 });
 
+test("/rename (or /name) and what it printed are not shown in the chat", () => {
+  const meta = emptyMeta();
+  const name = "端末画面とプラグイン画面の更新ボタン";
+  // As Claude Code records the /rename gasho-daemon sends.
+  const records = [
+    { type: "system", subtype: "local_command", uuid: "r1", content: `<command-name>/rename</command-name>\n            <command-message>rename</command-message>\n            <command-args>${name}</command-args>` },
+    { type: "system", subtype: "local_command", uuid: "r2", content: `<local-command-stdout>Session renamed to: ${name}</local-command-stdout>`, commandRun: { command: "rename", args: name } },
+    { type: "user", uuid: "r3", message: { role: "user", content: `<command-name>/name</command-name>\n  <command-args>${name}</command-args>` } },
+    { type: "user", uuid: "r4", message: { role: "user", content: `<local-command-stdout>Session renamed to: ${name}</local-command-stdout>` } },
+  ];
+  for (const rec of records) assert.equal(parseRecord(rec, meta), null, rec.uuid);
+  // Other commands are still notes.
+  const other = parseRecord({ type: "system", subtype: "local_command", uuid: "r5", content: "<command-name>/model</command-name>" }, meta);
+  assert.deepEqual(other?.blocks, [{ type: "text", text: "/model" }]);
+});
+
 test("the effort level comes from replies and from /effort and /model output; ultracode from /effort ultracode", () => {
   const meta = emptyMeta();
   parseRecord({ type: "assistant", uuid: "a", effort: "medium", message: { model: "claude-haiku-5-5", content: [{ type: "text", text: "はい" }] } }, meta);

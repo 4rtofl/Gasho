@@ -40,6 +40,13 @@ const MODEL_SET_RE = /Set model to `?([^`\n]+?)`?(?: and saved| for this session
 /** "Set effort level to high", "… with `medium` effort", "Effort stays high." */
 const EFFORT_SET_RE = /(?:Set effort level to|Effort stays|with) `?(low|medium|high|xhigh|max)`?/i;
 const ULTRACODE_RE = /^Ultracode (on|off)\b/i;
+/**
+ * /rename (alias /name) and what it printed. gasho-daemon sends it to pass a session's name to Claude Code (the name
+ * from the first message, or one given from Gasho's menu); the name shows in the session's header, so neither is
+ * shown in the chat.
+ */
+const RENAME_COMMANDS = new Set(["rename", "name"]);
+const RENAMED_RE = /^Session renamed to:/;
 const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 
 /** "claude-opus-5-5" → "Opus 5.5". Other names are returned as they are. */
@@ -51,14 +58,17 @@ export function modelLabel(id: string): string {
 
 /**
  * A slash command (such as /model) or what it printed, as a short note; undefined for other text. Claude Code
- * records these as user messages or as system records. A model switch also updates the session's model.
+ * records these as user messages or as system records; "" for those not shown. A model switch also updates the
+ * session's model.
  */
 function commandNote(content: string, meta: TranscriptMeta): string | undefined {
   const command = COMMAND_RE.exec(content);
+  if (command?.[1] && RENAME_COMMANDS.has(command[1].trim().replace(/^\//, ""))) return "";
   if (command?.[1]) return `${command[1].trim()} ${COMMAND_ARGS_RE.exec(content)?.[1]?.trim() ?? ""}`.trim();
   const output = COMMAND_OUTPUT_RE.exec(content);
   if (!output) return undefined;
   const text = (output[2] ?? "").trim();
+  if (RENAMED_RE.test(text)) return "";
   const model = MODEL_SET_RE.exec(text)?.[1];
   if (model) meta.model = model.trim();
   if (model && /for this session only/.test(text)) meta.sessionSwitches = (meta.sessionSwitches ?? 0) + 1;

@@ -72,6 +72,11 @@ export interface State {
   machines: MachineInfo[];
   notifications: GashoNotification[];
   events: MachineHookEvent[];
+  /**
+   * The Gasho server's records of what it was asked to do (the events named Gasho:…), oldest first: of the last 48
+   * hours at least. Kept apart from `events`, where the hooks of tools outnumber them.
+   */
+  operations: MachineHookEvent[];
   transcripts: Record<string, TranscriptState>;
   /** Keyed by graphKey(machine, sessionId, repo). */
   graphs: Record<string, GraphState>;
@@ -99,7 +104,11 @@ export interface State {
 
 const PAGE_SIZE = 80;
 const MAX_EVENTS = 300;
+/** As many as the Gasho server sends at most (Store.recentOperations). */
+export const MAX_OPERATIONS = 2000;
 const MAX_NOTIFICATIONS = 200;
+
+const isOperation = (e: MachineHookEvent): boolean => e.event.startsWith("Gasho:");
 
 export const transcriptKey = (machine: string, sessionId: string): string => `${machine}\u0000${sessionId}`;
 /** A branch graph per session and, in a folder of several repositories, per repository. */
@@ -112,6 +121,7 @@ const EMPTY: Omit<State, "auth"> = {
   machines: [],
   notifications: [],
   events: [],
+  operations: [],
   transcripts: {},
   graphs: {},
   dirs: {},
@@ -522,6 +532,7 @@ function handle(m: HubToClient): void {
         machines: m.machines,
         notifications: m.notifications,
         events: m.events.slice(-MAX_EVENTS),
+        operations: (m.operations ?? m.events.filter(isOperation)).slice(-MAX_OPERATIONS),
         plugins: m.plugins ?? [],
         catalog: m.catalog,
         latest: m.latest,
@@ -587,7 +598,10 @@ function handle(m: HubToClient): void {
       break;
     }
     case "event":
-      update({ events: [...state.events, m.event].slice(-MAX_EVENTS) });
+      update({
+        events: [...state.events, m.event].slice(-MAX_EVENTS),
+        ...(isOperation(m.event) ? { operations: [...state.operations, m.event].slice(-MAX_OPERATIONS) } : {}),
+      });
       break;
     case "command.result":
       pendingCommands.get(m.requestId)?.(m.result);

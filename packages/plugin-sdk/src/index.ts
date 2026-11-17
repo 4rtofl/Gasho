@@ -84,8 +84,8 @@ export interface SessionHeaderItem {
 }
 
 /**
- * The size of a home tile: stat (1 of 4 columns on a computer, 1 of 2 on a phone), small (1 of 4; the phone's width),
- * medium (2 of 4; the phone's width), large (3 of 4; the phone's width).
+ * The size of a home tile. The home has as many columns as its width holds at 210px each, from 2 (a phone) to 5:
+ * stat (1 column), small (1; both of 2), medium (2), large (all but one; both of 2 or 3).
  */
 export type TileSize = "stat" | "small" | "medium" | "large";
 
@@ -95,7 +95,7 @@ export interface HomeTile {
   /** The tile's name (its drag handle is read out with it). */
   title: string;
   size?: TileSize;
-  /** Two rows high on a computer. */
+  /** Two rows high, from three columns. */
   tall?: boolean;
   /** The tile it follows by default: one of Gasho's ("operations") or "<plugin>.<tile>". At the end without it. */
   after?: string;

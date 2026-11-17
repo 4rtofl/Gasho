@@ -26,6 +26,14 @@ import { hashSecret, newPairingCode, newToken, normalizeCode, PAIRING_CODE_TTL_M
 export const SCHEMA_VERSION = 5;
 const EVENT_TTL_MS = 7 * 24 * 3600_000;
 const NOTIFICATION_TTL_MS = 30 * 24 * 3600_000;
+/** The records of what the Gasho server was asked to do (relayCommand and the like name their events Gasho:…). */
+const OPERATION = "json_extract(data, '$.event') GLOB 'Gasho:*'";
+/** The home screen counts the instructions of the last 24 hours and of the 24 before. */
+const OPERATIONS_MS = 48 * 3600_000;
+/** The home screen's latest operations, when the last 48 hours have fewer. */
+const MIN_OPERATIONS = 20;
+/** Bounds the snapshot; the screen keeps as many (MAX_OPERATIONS in apps/web/src/lib/store.ts). */
+const MAX_OPERATIONS = 2000;
 
 type Row = Record<string, unknown>;
 
@@ -420,6 +428,20 @@ export class Store {
 
   recentEvents(limit = 200): MachineHookEvent[] {
     const rows = this.db.prepare("SELECT data FROM events ORDER BY at DESC, id DESC LIMIT ?").all(limit) as Row[];
+    return rows.map((r) => JSON.parse(String(r.data)) as MachineHookEvent).reverse();
+  }
+
+  /**
+   * The records of operations of the last 48 hours, or the latest MIN_OPERATIONS when fewer, oldest first. Apart from
+   * recentEvents, where the hooks of tools outnumber them.
+   */
+  recentOperations(now = Date.now()): MachineHookEvent[] {
+    let rows = this.db
+      .prepare(`SELECT data FROM events WHERE at >= ? AND ${OPERATION} ORDER BY at DESC, id DESC LIMIT ?`)
+      .all(now - OPERATIONS_MS, MAX_OPERATIONS) as Row[];
+    if (rows.length < MIN_OPERATIONS) {
+      rows = this.db.prepare(`SELECT data FROM events WHERE ${OPERATION} ORDER BY at DESC, id DESC LIMIT ?`).all(MIN_OPERATIONS) as Row[];
+    }
     return rows.map((r) => JSON.parse(String(r.data)) as MachineHookEvent).reverse();
   }
 

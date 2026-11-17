@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { HubToClient, HubToDaemon, ServerInfo, SessionInfo } from "@gasho/protocol";
+import type { HubToClient, HubToDaemon, MachineHookEvent, ServerInfo, SessionInfo } from "@gasho/protocol";
 import {
   CLOSE_INVALID_CREDENTIALS,
   CLOSE_UNAUTHORIZED,
@@ -91,6 +91,39 @@ test("sessions and hooks reach the browser, and Stop becomes a notification", ()
   assert.ok(last?.type === "machine" && last.machine.connected === false);
 });
 
+test("the snapshot sends the operations apart from the hooks of tools, which outnumber them", () => {
+  const { hub, store, machineId, machineToken, browserId } = setup();
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.2.0" });
+  const asking = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(asking);
+  hub.onClientMessage(asking, { type: "session.input", requestId: "a", machine: machineId, sessionId: "s1", text: "直して" });
+  for (let i = 0; i < 300; i++) {
+    hub.onDaemonMessage(d, { type: "hook", event: { sessionId: "s1", event: i % 2 ? "PostToolUse" : "PreToolUse", at: Date.now(), toolName: "Bash" } });
+  }
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const snap = c.sent[0];
+  assert.ok(snap?.type === "snapshot");
+  assert.ok(!snap.events.some((e) => e.event === "Gasho:session.input"));
+  assert.deepEqual(snap.operations?.map((e) => e.event), ["Gasho:session.input"]);
+
+  // Those of the last 48 hours; the latest 20 when fewer.
+  const now = Date.now();
+  const op = (at: number): MachineHookEvent => ({ machine: machineId, sessionId: "", event: "Gasho:folder.create", at, summary: "/tmp/x" });
+  const older = new Store(":memory:");
+  for (let i = 0; i < 25; i++) older.addEvent(op(now - 72 * 3600_000 + i));
+  assert.deepEqual(
+    older.recentOperations(now).map((e) => e.at),
+    Array.from({ length: 20 }, (_, i) => now - 72 * 3600_000 + 5 + i),
+  );
+  for (let i = 0; i < 5; i++) store.addEvent(op(now - 72 * 3600_000 + i));
+  for (let i = 0; i < 30; i++) store.addEvent(op(now - 3600_000 + i));
+  const recent = store.recentOperations(now);
+  assert.equal(recent.length, 31);
+  assert.ok(recent.every((e) => e.at >= now - 48 * 3600_000));
+});
+
 test("transcript.get is relayed to the daemon and the page goes back to the asking browser", () => {
   const { hub, machineId, machineToken, browserId } = setup();
   const d = fakePeer<HubToDaemon>();
@@ -127,14 +160,24 @@ test("transcript.get for an offline machine answers with an error", () => {
   assert.equal(page.error, "machine is offline");
 });
 
-test("revoking a machine disconnects it and removes it from browsers", () => {
+test("revoking a machine disconnects it, fails the commands under way on it, and removes it from browsers", () => {
   const { hub, machineId, machineToken, browserId } = setup();
   const d = fakePeer<HubToDaemon>();
   hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.1.0" });
   const c = fakePeer<HubToClient>(browserId);
   hub.onClientConnect(c);
+  hub.onClientMessage(c, { type: "session.input", requestId: "a", machine: machineId, sessionId: "s1", text: "テスト" });
+  assert.equal(d.sent.at(-1)?.type, "session.input");
   assert.equal(hub.revokeDevice(machineId), true);
   assert.equal(d.closed?.[0], CLOSE_INVALID_CREDENTIALS);
+  hub.onDaemonClose(d); // as the socket's close follows
+  assert.equal(hub.inFlight(), 0);
+  assert.deepEqual(c.sent.at(-2), {
+    type: "command.result",
+    requestId: "a",
+    machine: machineId,
+    result: { ok: false, error: "working server の登録が外されました。" },
+  });
   assert.deepEqual(c.sent.at(-1), { type: "machine.removed", id: machineId });
   assert.equal(hub.revokeDevice(machineId), false);
 });
@@ -158,6 +201,22 @@ test("browsers revoked from the command line are disconnected by checkRevocation
   assert.equal(c.closed?.[0], CLOSE_UNAUTHORIZED);
 });
 
+test("an offline machine revoked from the command line is taken off browsers by checkRevocations", () => {
+  const { hub, store, machineId, browserId } = setup();
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const snap = c.sent[0];
+  assert.ok(snap?.type === "snapshot" && snap.machines.some((m) => m.id === machineId && !m.connected));
+  store.revokeDevice(machineId);
+  hub.checkRevocations();
+  assert.deepEqual(c.sent.at(-1), { type: "machine.removed", id: machineId });
+  const later = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(later);
+  const again = later.sent[0];
+  assert.ok(again?.type === "snapshot");
+  assert.deepEqual(again.machines, []);
+});
+
 test("machines are restored from the store as disconnected; revoked ones are not", () => {
   const store = new Store(":memory:");
   const keep = store.createDevice("machine", "ubuntu").device;
@@ -174,6 +233,35 @@ test("machines are restored from the store as disconnected; revoked ones are not
     [["ubuntu", false]],
   );
   assert.equal(snap.machines[0]?.sessions[0]?.title, "プラグインの整理");
+});
+
+test("messages of the wrong shape are left and change nothing; a hello of the wrong shape is refused (#97)", () => {
+  const { hub, store, machineId, machineToken, browserId } = setup();
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  for (const hello of [{ type: "hello" }, { type: "hello", machineId, token: 1 }]) {
+    const d = fakePeer<HubToDaemon>();
+    hub.onDaemonMessage(d, hello as never);
+    assert.equal(d.closed?.[0], CLOSE_INVALID_CREDENTIALS);
+  }
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: {} as never });
+  assert.deepEqual(d.sent, [{ type: "welcome" }]);
+  hub.onDaemonMessage(d, { type: "sessions", sessions: [session] });
+  const sent = c.sent.length;
+
+  hub.onDaemonMessage(d, { type: "sessions" } as never);
+  hub.onDaemonMessage(d, { type: "sessions", sessions: [null] } as never);
+  hub.onDaemonMessage(d, { type: "hook" } as never);
+  hub.onDaemonMessage(d, { type: "hook", event: { sessionId: "s1", event: "Stop" } } as never);
+  hub.onClientMessage(c, { type: "notification.read" } as never);
+  hub.onClientMessage(c, { type: "notification.read", ids: [{}] } as never);
+  assert.equal(c.sent.length, sent);
+  assert.equal(d.closed, undefined);
+  const [m] = store.loadMachines();
+  assert.deepEqual(m?.sessions, [session]);
+  assert.equal(m?.daemonVersion, undefined);
+  assert.deepEqual(store.recentEvents(), []);
 });
 
 test("notificationFor covers permission, idle and errors, and ignores other events", () => {

@@ -972,6 +972,12 @@ export type HubToClient =
       machines: MachineInfo[];
       notifications: GashoNotification[];
       events: MachineHookEvent[];
+      /**
+       * The Gasho server's records of what it was asked to do (the events named Gasho:…) of the last 48 hours, or the
+       * latest ones when fewer, oldest first; `events` holds only the latest of them among the hooks (absent from an
+       * older Gasho server).
+       */
+      operations?: MachineHookEvent[];
       /** The installed plugins (absent from a Gasho server without plugins). */
       plugins?: PluginInfo[];
       /** The catalog of plugins that can be added, as last read (absent from a Gasho server without plugins). */

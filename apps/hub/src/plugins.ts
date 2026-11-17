@@ -14,7 +14,7 @@ import type { PluginManifest, PluginMethodSpec, PluginPermission, PluginSettingS
 
 /** The plugin API this Gasho server serves: plugins written for 1.0 … 1.PLUGIN_API_MINOR. */
 export const PLUGIN_API_MAJOR = 1;
-export const PLUGIN_API_MINOR = 10;
+export const PLUGIN_API_MINOR = 12;
 /** The version of the plugin API, as plugins and gasho-daemon name it. */
 export const PLUGIN_API = `${PLUGIN_API_MAJOR}.${PLUGIN_API_MINOR}`;
 
@@ -347,14 +347,16 @@ export async function readPluginFolder(
   name: string | undefined,
 ): Promise<{ manifest: PluginManifest; hash: string; files: { rel: string; data: Buffer }[] } | { error: string }> {
   let list: { rel: string; size: number }[];
+  let files: { rel: string; data: Buffer }[];
   try {
     list = await filesOf(folder);
+    // A file listed may be gone when it is read (the folder is replaced meanwhile); the change is read again.
+    files = await Promise.all(list.map(async (f) => ({ rel: f.rel, data: await fsp.readFile(path.join(folder, f.rel)) })));
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
   const rels = new Set(list.map((f) => f.rel));
   if (!rels.has("gasho-plugin.json")) return { error: "gasho-plugin.json がありません。" };
-  const files = await Promise.all(list.map(async (f) => ({ rel: f.rel, data: await fsp.readFile(path.join(folder, f.rel)) })));
   let raw: unknown;
   try {
     raw = JSON.parse(files.find((f) => f.rel === "gasho-plugin.json")?.data.toString("utf8") ?? "");
@@ -517,7 +519,7 @@ export class PluginRegistry extends EventEmitter {
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       this.timer = undefined;
-      void this.scan();
+      this.scan().catch((e: unknown) => this.log(`cannot read the plugins: ${e instanceof Error ? e.message : String(e)}`));
     }, ms);
     this.timer.unref();
   }

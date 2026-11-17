@@ -105,13 +105,13 @@ import { SessionTerminals, Terminals } from "./terminal.ts";
 import { foldersRepos, RegisteredRepos } from "./repos.ts";
 import { changesProblem, removableWorktree, removeWorktree, worktreeChanges } from "./worktrees.ts";
 import { listSkills } from "./skills.ts";
-import { conversationFacts, emptyMeta, pastConversations, readTranscript, TranscriptTail, type TranscriptMeta } from "./transcript.ts";
+import { appendBatches, conversationFacts, emptyMeta, followTranscript, pastConversations, TranscriptTail, type TranscriptMeta } from "./transcript.ts";
 import type { SessionWire } from "./plugin-ipc.ts";
 import { PluginRunner } from "./plugins.ts";
 import { npmOf, Updater } from "./self-update.ts";
 import { log, str } from "./util.ts";
 
-export const DAEMON_VERSION = "0.21.4";
+export const DAEMON_VERSION = "0.23.0";
 const GITHUB_CACHE_MS = 5 * 60_000;
 /** How long the worktree a folder is in, or the repositories inside it, and their branches are reused. */
 const REPOS_CACHE_MS = 60_000;
@@ -188,6 +188,8 @@ interface Tracked {
   meta: TranscriptMeta;
   /** The transcript did not exist yet when the session was first seen (Claude Code writes it on the first message). */
   sawWithoutTranscript?: boolean;
+  /** The first read of the transcript, while it runs: a page asked for meanwhile waits for it. */
+  opening?: Promise<void>;
   /** Sessions started from Gasho: the model in Claude Code's welcome banner, until the transcript records one. */
   bannerModel?: string;
   /** Sessions started from Gasho: the tokens they used, and when they were last counted. */
@@ -232,6 +234,11 @@ export class Daemon {
    */
   private ownPids = new Set<number>();
   private lastSent = "";
+  /**
+   * Whether a refresh has ended since the start. Until then no sessions are sent: the list would be empty, and the
+   * Gasho server would drop the sessions it kept from before the restart (open ones would show as gone).
+   */
+  private refreshed = false;
   private refreshing = false;
   private refreshAgain = false;
   private refreshTimer: NodeJS.Timeout | undefined;
@@ -319,6 +326,7 @@ export class Daemon {
         this.emitRepos();
         // Also tells the Gasho server that this gasho-daemon runs plugins.
         this.plugins.status(true);
+        this.plugins.connected();
       },
       onMessage: (m) => void this.onHubMessage(m),
       onRejected: (reason) => {
@@ -489,6 +497,11 @@ export class Daemon {
       log("refresh failed", e);
     } finally {
       this.refreshing = false;
+      // Also after a failed one: the sessions from before the restart would otherwise show on as if they still ran.
+      if (!this.refreshed) {
+        this.refreshed = true;
+        this.emitSessions();
+      }
       if (this.refreshAgain) {
         this.refreshAgain = false;
         void this.refresh();
@@ -540,16 +553,19 @@ export class Daemon {
         // loaded the (then empty) conversation receive the first messages too.
         t.transcript = found;
         t.meta = emptyMeta();
-        t.tail = new TranscriptTail(found, 0);
+        t.tail = new TranscriptTail(found);
       } else {
-        try {
-          const { meta, consumed } = await readTranscript(found);
-          t.transcript = found;
-          t.meta = meta;
-          t.tail = new TranscriptTail(found, consumed);
-        } catch (e) {
-          log(`cannot read ${found}`, e);
-        }
+        // A long conversation takes seconds to read: answered meanwhile, a page would show it empty.
+        t.opening = followTranscript(found).then(
+          ({ tail, meta }) => {
+            t.transcript = found;
+            t.meta = meta;
+            t.tail = tail;
+          },
+          (e: unknown) => log(`cannot read ${found}`, e),
+        );
+        await t.opening;
+        delete t.opening;
       }
     }
     info.bridgeSessionId = reg?.bridgeSessionId ?? t.meta.bridgeSessionId;
@@ -634,6 +650,7 @@ export class Daemon {
   }
 
   private emitSessions(): void {
+    if (!this.refreshed) return;
     const sessions = [...this.tracked.values()]
       // Not yet, or no longer, among Gasho's sessions: sent, it would show as one opened outside Gasho.
       .filter((t) => this.managed.has(t.info.sessionId) || !this.isOwn(t.info.pid))
@@ -885,14 +902,17 @@ export class Daemon {
       for (const t of this.tracked.values()) {
         if (!t.tail) continue;
         const named = t.meta.customTitle;
-        const entries = await t.tail.poll(t.meta);
+        let appended = false;
+        for await (const entries of t.tail.read(t.meta)) {
+          this.notePrompts(t.info.sessionId, entries);
+          for (const batch of appendBatches(entries)) this.hub.send({ type: "transcript.append", sessionId: t.info.sessionId, entries: batch });
+          appended = true;
+        }
         if (t.meta.customTitle !== named && (await this.followName(t))) changed = true;
         if (await this.nameAfterTitle(t)) changed = true;
         // Background work can start or end without an entry to show (Claude Code queues its notice first).
         if (this.applyTasks(t)) changed = true;
-        if (entries.length === 0) continue;
-        this.notePrompts(t.info.sessionId, entries);
-        this.hub.send({ type: "transcript.append", sessionId: t.info.sessionId, entries });
+        if (!appended) continue;
         this.applyMeta(t);
         changed = true;
       }
@@ -1142,17 +1162,14 @@ export class Daemon {
       this.hub.send({ ...reply, entries: [], start: 0, total: 0, error: "session not found" });
       return;
     }
-    if (!t.transcript) {
+    await t.opening;
+    if (!t.tail) {
       // A new session has no transcript until its first message; that is an empty conversation, not an error.
       this.hub.send({ ...reply, entries: [], start: 0, total: 0 });
       return;
     }
     try {
-      const { entries } = await readTranscript(t.transcript);
-      const total = entries.length;
-      const end = Math.min(m.before ?? total, total);
-      const start = Math.max(0, end - m.limit);
-      this.hub.send({ ...reply, entries: entries.slice(start, end), start, total });
+      this.hub.send({ ...reply, ...(await t.tail.page(m.before, m.limit)) });
     } catch (e) {
       this.hub.send({ ...reply, entries: [], start: 0, total: 0, error: String(e) });
     }

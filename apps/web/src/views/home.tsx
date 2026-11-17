@@ -1,7 +1,8 @@
-// The home screen: a dashboard of tiles of several sizes (a bento grid). On a computer, four columns: the states of
-// the sessions and the instructions sent lately as number tiles, the sessions as the largest tile, the notifications,
-// the tokens used, then the latest operations and the working servers, with the plugins' tiles among them. On a
-// phone, the number tiles two by two and the rest one under the other. Only sessions started from Gasho are shown.
+// The home screen: a dashboard of tiles of several sizes (a bento grid): the states of the sessions and the
+// instructions sent lately as number tiles, the sessions as the largest tile, the notifications, the tokens used, then
+// the latest operations and the working servers, with the plugins' tiles among them. As many columns as the home's
+// width holds (TILE_COLUMNS), from two (on a phone, the number tiles two by two and the rest one under the other) to
+// five. Only sessions started from Gasho are shown.
 // A tile can be put elsewhere by dragging the handle at the middle of its top edge, or with the arrow keys once the
 // handle has the focus; this browser keeps the order.
 import { motion, useTransform } from "framer-motion";
@@ -36,6 +37,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
+import type { TileSize } from "@gasho/plugin-sdk";
 import type {
   GashoNotification,
   MachineHookEvent,
@@ -54,7 +56,7 @@ import { arrangeTiles, sameOrder, useSavedOrder } from "@/lib/order";
 import { go } from "@/lib/route";
 import { notificationShown, shownSessions } from "@/lib/sessions";
 import { useSortable, type Sortable } from "@/lib/sortable";
-import { markRead, useAppState } from "@/lib/store";
+import { MAX_OPERATIONS, markRead, useAppState } from "@/lib/store";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
 import { usePluginTiles, type PluginTile } from "@/plugins/parts";
@@ -64,6 +66,26 @@ interface Row {
   machine: MachineInfo;
   s: SessionInfo;
 }
+
+/**
+ * The grid's columns, by the home's width (a container query on the home, not the window's width, which the sidebar
+ * shares): as many as hold 210px each (easyui's StatGrid) with the 16px gaps between them, two at the least.
+ */
+const TILE_COLUMNS = "grid-cols-2 @min-[662px]/home:grid-cols-3 @min-[888px]/home:grid-cols-4 @min-[1114px]/home:grid-cols-5";
+/**
+ * The columns a tile takes (docs/plugins.md, P6): with two columns, the number tiles one and the others both; from
+ * three, a small tile one, a medium one two, and a large one all but the column of the notifications beside it.
+ */
+const TILE_SPANS: Record<TileSize, string> = {
+  stat: "",
+  small: "col-span-2 @min-[662px]/home:col-span-1",
+  medium: "col-span-2",
+  large: "col-span-2 @min-[888px]/home:col-span-3 @min-[1114px]/home:col-span-4",
+};
+/** Two rows high, from three columns. */
+const TALL = "@min-[662px]/home:row-span-2";
+/** A plugin may name a size Gasho does not know (yet): it is then small. */
+const tileClass = (size: TileSize, tall?: boolean) => cn(TILE_SPANS[size] ?? TILE_SPANS.small, tall && TALL);
 
 /** The tiles, in their default order, with the names their handles are read out with. */
 const TILE_NAMES = {
@@ -119,8 +141,6 @@ const NOTIFICATION_TYPE: Record<GashoNotification["kind"], NotificationItem["typ
 /** Waiting first (they need an answer), then working, then idle; the latest activity first within each. */
 const STATUS_ORDER: Record<SessionStatus, number> = { waiting: 0, busy: 1, idle: 2, unknown: 3 };
 const HOUR = 3600_000;
-/** The snapshot the Gasho server sends holds this many of the latest events (Store.recentEvents). */
-const SNAPSHOT_EVENTS = 200;
 /** Sessions shown before "すべて表示". */
 const SESSIONS_SHOWN = 9;
 /** Operations shown in their tile. */
@@ -131,7 +151,7 @@ function openSession(machine: string, sessionId: string): void {
 }
 
 export function HomeView() {
-  const { machines, notifications, events } = useAppState();
+  const { machines, notifications, operations } = useAppState();
   const now = useNow();
   const [launching, setLaunching] = useState(false);
 
@@ -155,7 +175,7 @@ export function HomeView() {
     return list.length <= 2 ? list.join("、") : `${list.slice(0, 2).join("、")} ほか ${list.length - 2} 件`;
   };
   const unread = notifications.filter((n) => !n.read && notificationShown(n, machines));
-  const sent = useMemo(() => sentTrend(events, now), [events, now]);
+  const sent = useMemo(() => sentTrend(operations, now), [operations, now]);
   const tokens = useMemo(() => tokenTrend(rows, now), [rows, now]);
 
   const [stored, saveOrder] = useSavedOrder(TILE_ORDER_KEY);
@@ -177,9 +197,10 @@ export function HomeView() {
   });
 
   // The tiles by id, with their sizes; the grid shows them in the order they were put in.
-  const tiles: Record<TileId, { className?: string; content: ReactNode }> = {
+  const tiles: Record<TileId, { size: TileSize; tall?: boolean; content: ReactNode }> = {
     // The meters: each state's share of the sessions, in the colors of the state dots elsewhere in Gasho.
     busy: {
+      size: "stat",
       content: (
         <StatCard
           label="作業中"
@@ -192,6 +213,7 @@ export function HomeView() {
       ),
     },
     waiting: {
+      size: "stat",
       content: (
         <StatCard
           label="確認待ち"
@@ -205,6 +227,7 @@ export function HomeView() {
       ),
     },
     idle: {
+      size: "stat",
       content: (
         <StatCard
           label="待機中"
@@ -217,6 +240,7 @@ export function HomeView() {
       ),
     },
     sent: {
+      size: "stat",
       content: (
         <StatCard
           label="送った指示"
@@ -233,7 +257,7 @@ export function HomeView() {
       ),
     },
     sessions: {
-      className: "col-span-2 lg:col-span-3",
+      size: "large",
       content: (
         <Tile title="セッション" icon={<Layers className="size-4" />}>
           <Sessions rows={rows} now={now} onLaunch={() => setLaunching(true)} />
@@ -241,7 +265,8 @@ export function HomeView() {
       ),
     },
     notifications: {
-      className: "col-span-2 lg:col-span-1 lg:row-span-2",
+      size: "small",
+      tall: true,
       content: (
         <Tile>
           <NotificationStack
@@ -264,7 +289,7 @@ export function HomeView() {
       ),
     },
     tokens: {
-      className: "col-span-2 lg:col-span-1",
+      size: "small",
       content: (
         <StatCard
           label="トークン"
@@ -282,7 +307,7 @@ export function HomeView() {
       ),
     },
     tokenBreakdown: {
-      className: "col-span-2",
+      size: "medium",
       content: (
         <Tile title="トークンの内訳（過去24時間）" icon={<Cpu className="size-4" />}>
           <TokenBreakdown tokens={tokens} />
@@ -290,15 +315,15 @@ export function HomeView() {
       ),
     },
     operations: {
-      className: "col-span-2",
+      size: "medium",
       content: (
         <Tile title="最近の操作" icon={<CircleDot className="size-4" />}>
-          <Operations events={events} machines={machines} now={now} />
+          <Operations operations={operations} machines={machines} now={now} />
         </Tile>
       ),
     },
     machines: {
-      className: "col-span-2 lg:col-span-1",
+      size: "small",
       content: (
         <Tile title="working server" icon={<Server className="size-4" />}>
           <Machines machines={machines} now={now} />
@@ -308,7 +333,7 @@ export function HomeView() {
   };
 
   return (
-    <div className="mx-auto flex max-w-7xl flex-col gap-4 p-4 md:p-6">
+    <div className="@container/home mx-auto flex max-w-7xl flex-col gap-4 p-4 md:p-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">ホーム</h1>
@@ -344,18 +369,18 @@ export function HomeView() {
       {launching && <LaunchPanel onClose={() => setLaunching(false)} />}
 
       {/* Positioned: the tiles' places are measured from it while one is dragged. */}
-      <div className="relative grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+      <div className={cn("relative grid gap-3 sm:gap-4", TILE_COLUMNS)}>
         {sort.order.map((id) => {
           if (isTile(id)) {
             return (
-              <BentoItem key={id} id={id} name={TILE_NAMES[id]} sort={sort} className={tiles[id].className}>
+              <BentoItem key={id} id={id} name={TILE_NAMES[id]} sort={sort} className={tileClass(tiles[id].size, tiles[id].tall)}>
                 {tiles[id].content}
               </BentoItem>
             );
           }
           const t = pluginById.get(id);
           return t ? (
-            <BentoItem key={id} id={id} name={t.name} sort={sort} className={t.className}>
+            <BentoItem key={id} id={id} name={t.name} sort={sort} className={tileClass(t.size, t.tall)}>
               {t.content}
             </BentoItem>
           ) : null;
@@ -519,7 +544,7 @@ function TokenBreakdown({ tokens }: { tokens: TokenTrend }) {
   if (tokens.total === 0) return <p className="text-sm text-muted-foreground">過去24時間に使ったトークンはありません。</p>;
   const max = tokens.bySession[0]?.total ?? 0;
   return (
-    <div className="grid gap-5 @xl:grid-cols-2">
+    <div className="grid grid-cols-1 gap-5 @xl:grid-cols-2">
       <div className="space-y-3">
         {/* The whole, split by kind: a 2px gap of the surface between the parts, no text on the bar. */}
         <div className="flex h-2 gap-[2px] overflow-hidden rounded-full" aria-hidden>
@@ -561,10 +586,10 @@ function TokenBreakdown({ tokens }: { tokens: TokenTrend }) {
 
 /**
  * The instructions sent from Gasho in the last 24 hours, in twelve 2-hour steps, and in the 24 hours before when the
- * events on hand reach back that far.
+ * operations on hand reach back that far.
  */
-function sentTrend(events: MachineHookEvent[], now: number): { total: number; trend: number[]; labels: string[]; previous?: number } {
-  const sent = events.filter((e) => e.event === "Gasho:session.input").map((e) => e.at);
+function sentTrend(operations: MachineHookEvent[], now: number): { total: number; trend: number[]; labels: string[]; previous?: number } {
+  const sent = operations.filter((e) => e.event === "Gasho:session.input").map((e) => e.at);
   const start = now - 24 * HOUR;
   const trend = Array.from({ length: 12 }, (_, i) => {
     const from = start + i * 2 * HOUR;
@@ -577,9 +602,10 @@ function sentTrend(events: MachineHookEvent[], now: number): { total: number; tr
     return `${hm(from)}〜${hm(to)}`;
   });
   const total = trend.reduce((a, b) => a + b, 0);
-  // All events are on hand when fewer than a snapshot holds arrived, or when the oldest is older than 48 hours.
-  const oldest = events[0]?.at ?? now;
-  const covered = events.length < SNAPSHOT_EVENTS || oldest <= now - 48 * HOUR;
+  // All operations of the 48 hours are on hand when fewer than the most kept are, or when the oldest is older than 48
+  // hours.
+  const oldest = operations[0]?.at ?? now;
+  const covered = operations.length < MAX_OPERATIONS || oldest <= now - 48 * HOUR;
   const previous = covered ? sent.filter((at) => at >= now - 48 * HOUR && at < start).length : undefined;
   return { total, trend, labels, ...(previous !== undefined ? { previous } : {}) };
 }
@@ -604,7 +630,7 @@ function Sessions({ rows, now, onLaunch }: { rows: Row[]; now: number; onLaunch:
   const shown = all ? rows : rows.slice(0, SESSIONS_SHOWN);
   return (
     <>
-      <ul className="grid gap-3 @lg:grid-cols-2 @4xl:grid-cols-3">
+      <ul className="grid grid-cols-1 gap-3 @lg:grid-cols-2 @4xl:grid-cols-3">
         {shown.map((r) => (
           <li key={`${r.machine.id}/${r.s.sessionId}`}>
             <SessionCard row={r} now={now} />
@@ -699,8 +725,8 @@ const OPERATION_ICONS: Record<string, LucideIcon> = {
  * folders made and repositories cloned to start sessions in, the repositories registered and taken off, the worktrees
  * removed, and the files saved or made in sessions' folders (the Gasho server's records).
  */
-function Operations({ events, machines, now }: { events: MachineHookEvent[]; machines: MachineInfo[]; now: number }) {
-  const items = events
+function Operations({ operations, machines, now }: { operations: MachineHookEvent[]; machines: MachineInfo[]; now: number }) {
+  const items = operations
     .filter((e) => Object.hasOwn(OPERATION_ICONS, e.event))
     .slice(-OPERATIONS_SHOWN)
     .reverse();

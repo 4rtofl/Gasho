@@ -5,10 +5,13 @@
 // gasho-daemon being away only means that nothing is sent.
 import { spawn } from "node:child_process";
 
-/** How long the update may take to reach gasho-daemon. */
-const SEND_MS = 2000;
+/**
+ * How long the update may take to reach gasho-daemon. The tests set a longer one: on a machine under heavy load, the
+ * send alone can take 2 seconds.
+ */
+const SEND_MS = Number(process.env.GASHO_STATUSLINE_SEND_MS) || 2000;
 /** The variables meant for this relay alone, not for the user's command. */
-const OWN = ["GASHO_STATUSLINE_URL", "GASHO_STATUSLINE_SECRET", "GASHO_STATUSLINE_COMMAND"];
+const OWN = ["GASHO_STATUSLINE_URL", "GASHO_STATUSLINE_SECRET", "GASHO_STATUSLINE_COMMAND", "GASHO_STATUSLINE_SEND_MS"];
 
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];

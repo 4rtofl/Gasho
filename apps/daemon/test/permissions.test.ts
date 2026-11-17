@@ -4,6 +4,9 @@ import { test } from "node:test";
 import { startHookServer } from "../src/hooks.ts";
 import { alwaysLabel, answersMessage, callKey, openQuestionRequest, PermissionRequests, questionAnswers } from "../src/permissions.ts";
 
+/** How t.waitFor waits for the hook server to hold or drop a request: up to 5 seconds, for a machine under load. */
+const WAIT = { interval: 10, timeout: 5_000 };
+
 const request = (extra: Record<string, unknown> = {}) => ({
   hook_event_name: "PermissionRequest",
   session_id: "s1",
@@ -122,7 +125,7 @@ test("'always' applies only the allow rules Claude Code suggests", () => {
   assert.equal(alwaysLabel([]), undefined);
 });
 
-test("the hook server holds a PermissionRequest until it is answered, and answers other hooks at once", async () => {
+test("the hook server holds a PermissionRequest until it is answered, and answers other hooks at once", async (t) => {
   const p = new PermissionRequests(() => undefined);
   const events: string[] = [];
   const server = startHookServer({
@@ -139,10 +142,10 @@ test("the hook server holds a PermissionRequest until it is answered, and answer
   const { port } = server.address() as AddressInfo;
   const url = `http://127.0.0.1:${port}/hooks`;
   try {
-    const stop = await fetch(url, { method: "POST", body: JSON.stringify({ hook_event_name: "Stop", session_id: "s1" }) });
+    const stop = await fetch(url, { method: "POST", body: JSON.stringify({ hook_event_name: "Stop", session_id: "s1" }), headers: { "content-type": "application/json" } });
     assert.equal(await stop.text(), "");
-    const pending = fetch(url, { method: "POST", body: JSON.stringify(request()) });
-    while (!p.of("s1")) await new Promise((r) => setTimeout(r, 5));
+    const pending = fetch(url, { method: "POST", body: JSON.stringify(request()), headers: { "content-type": "application/json" } });
+    await t.waitFor(() => assert.ok(p.of("s1")), WAIT);
     const id = p.of("s1")?.[0]?.id ?? "";
     p.answer("s1", id, "allow");
     const res = await pending;
@@ -151,11 +154,11 @@ test("the hook server holds a PermissionRequest until it is answered, and answer
 
     // Claude Code gives up (closes the connection): the request is dropped.
     const ac = new AbortController();
-    const gone = fetch(url, { method: "POST", body: JSON.stringify(request()), signal: ac.signal }).catch(() => undefined);
-    while (!p.of("s1")) await new Promise((r) => setTimeout(r, 5));
+    const gone = fetch(url, { method: "POST", body: JSON.stringify(request()), headers: { "content-type": "application/json" }, signal: ac.signal }).catch(() => undefined);
+    await t.waitFor(() => assert.ok(p.of("s1")), WAIT);
     ac.abort();
     await gone;
-    while (p.of("s1")) await new Promise((r) => setTimeout(r, 5));
+    await t.waitFor(() => assert.equal(p.of("s1"), undefined), WAIT);
   } finally {
     server.close();
   }

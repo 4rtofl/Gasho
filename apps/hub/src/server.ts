@@ -101,8 +101,33 @@ function isHttps(req: http.IncomingMessage): boolean {
   return (req.socket as { encrypted?: boolean }).encrypted === true || req.headers["x-forwarded-proto"] === "https";
 }
 
+/**
+ * Sends a file with `headers`. A file that cannot be opened (removed since it was found, as by an update) is answered
+ * with 500; one that fails once sent ends the response.
+ */
+function sendFile(res: http.ServerResponse, file: string, headers: http.OutgoingHttpHeaders): void {
+  const stream = fs.createReadStream(file);
+  stream.on("error", (e) => {
+    console.error(`[gasho-hub] cannot read ${file}: ${e.message}`);
+    if (res.headersSent) res.destroy();
+    else res.writeHead(500, { "content-type": "text/plain; charset=utf-8" }).end("internal error");
+  });
+  stream.on("open", () => {
+    res.writeHead(200, headers);
+    stream.pipe(res);
+  });
+  // A browser that goes away leaves the file open otherwise.
+  res.on("close", () => stream.destroy());
+}
+
 function serveStatic(webDist: string, url: URL, res: http.ServerResponse): void {
-  const rel = decodeURIComponent(url.pathname).replace(/^\/+/, "");
+  let rel: string;
+  try {
+    rel = decodeURIComponent(url.pathname).replace(/^\/+/, "");
+  } catch {
+    res.writeHead(400, { "content-type": "text/plain; charset=utf-8" }).end("bad request");
+    return;
+  }
   let file = path.resolve(webDist, rel);
   if (!file.startsWith(path.resolve(webDist))) {
     res.writeHead(403).end();
@@ -122,11 +147,10 @@ function serveStatic(webDist: string, url: URL, res: http.ServerResponse): void 
   const hashed = served.startsWith(`assets${path.sep}`);
   // The Service Worker (Web Push) is never kept, so that an update of the screen reaches it at once.
   const worker = served === "sw.js";
-  res.writeHead(200, {
+  sendFile(res, file, {
     "content-type": MIME[ext] ?? "application/octet-stream",
     "cache-control": worker ? "no-store" : hashed ? "public, max-age=31536000, immutable" : "no-cache",
   });
-  fs.createReadStream(file).pipe(res);
 }
 
 function parse<T>(data: unknown): T | undefined {
@@ -257,12 +281,11 @@ export function createServer(opts: ServerOptions): http.Server {
         res.writeHead(404, { "content-type": "text/plain; charset=utf-8" }).end("not found");
         return;
       }
-      res.writeHead(200, {
+      sendFile(res, file, {
         "content-type": MIME[path.extname(file)] ?? "application/octet-stream",
         "cache-control": "private, max-age=31536000, immutable",
         "x-content-type-options": "nosniff",
       });
-      fs.createReadStream(file).pipe(res);
       return;
     }
     // An image or a video Claude sent in a session: /media/<machine>/<session>?path=<file>, to registered browsers only.
@@ -297,26 +320,36 @@ export function createServer(opts: ServerOptions): http.Server {
   // Browsers send files with inputs (10 MB in all, about 13.4 MB as base64).
   const clientWss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024 });
   const alive = new WeakMap<WebSocket, boolean>();
-  const track = (ws: WebSocket): void => {
+  const track = (ws: WebSocket, who: string): void => {
     alive.set(ws, true);
     ws.on("pong", () => alive.set(ws, true));
+    // A frame ws cannot take (text that is not UTF-8, one over maxPayload): ws closes the connection after this.
+    ws.on("error", (e) => console.error(`[gasho-hub] ${who} connection error: ${e.message}`));
+  };
+  // A message that fails is left, and the connection goes on.
+  const handle = (who: string, run: () => void): void => {
+    try {
+      run();
+    } catch (e) {
+      console.error(`[gasho-hub] ${who} message error`, e);
+    }
   };
 
   daemonWss.on("connection", (ws) => {
-    track(ws);
+    track(ws, "daemon");
     const peer: DaemonPeer = {
       send: (msg) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(msg)),
       close: (code, reason) => ws.close(code, reason),
     };
     ws.on("message", (data) => {
       const msg = parse<DaemonToHub>(data);
-      if (msg) hub.onDaemonMessage(peer, msg);
+      if (msg) handle("daemon", () => hub.onDaemonMessage(peer, msg));
     });
     ws.on("close", () => hub.onDaemonClose(peer));
   });
 
   clientWss.on("connection", (ws, req: http.IncomingMessage) => {
-    track(ws);
+    track(ws, "browser");
     const device = browserDevice(req);
     if (!device) {
       ws.close(CLOSE_UNAUTHORIZED, "this browser is not registered");
@@ -330,12 +363,15 @@ export function createServer(opts: ServerOptions): http.Server {
     hub.onClientConnect(peer);
     ws.on("message", (data) => {
       const msg = parse<ClientToHub>(data);
-      if (msg) hub.onClientMessage(peer, msg);
+      if (msg) handle("browser", () => hub.onClientMessage(peer, msg));
     });
     ws.on("close", () => hub.onClientClose(peer));
   });
 
   server.on("upgrade", (req, socket, head) => {
+    // The HTTP server stops listening for the socket's errors here, and ws listens only once it takes the socket: the
+    // other end may cut the connection while it is refused.
+    socket.on("error", () => undefined);
     if (!allowed(req.socket.remoteAddress)) {
       socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
       return;

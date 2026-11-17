@@ -309,20 +309,50 @@ const DIALOG_OPTION_RE = /^\s*(❯)?\s*(\d+)\.\s+(\S.*)$/;
  * screen shows no such choices, or the prompt box is there.
  */
 export function permissionDialog(screen: string): DialogOption[] | undefined {
+  return dialogChoices(screen)?.options;
+}
+
+/** permissionDialog's choices, and where the first is among the screen's non-empty lines. */
+function dialogChoices(screen: string): { options: DialogOption[]; first: number } | undefined {
   const lines = screenLines(screen);
   if (promptBoxAtBottom(lines)) return undefined;
+  const all = lines.filter(Boolean);
   let options: DialogOption[] = [];
-  for (const line of bottomLines(screen, 15)) {
-    const m = DIALOG_OPTION_RE.exec(line);
+  let first = -1;
+  for (let i = Math.max(0, all.length - 15); i < all.length; i++) {
+    const m = DIALOG_OPTION_RE.exec(all[i]!);
     if (!m) continue;
     const n = Number(m[2]);
     const option = { n, label: m[3]!.trim(), selected: m[1] !== undefined };
     // A choice that wraps goes on without a number; numbers that start again from 1 are another list.
-    if (n === 1) options = [option];
-    else if (n === options.length + 1) options.push(option);
+    if (n === 1) {
+      options = [option];
+      first = i;
+    } else if (n === options.length + 1) options.push(option);
   }
   if (options[0]?.label !== "Yes" || !options.slice(1).some((o) => /^No\b/.test(o.label))) return undefined;
-  return options.filter((o) => o.selected).length === 1 ? options : undefined;
+  return options.filter((o) => o.selected).length === 1 ? { options, first } : undefined;
+}
+
+/** What a permission dialog shows above its choices (see permissionDialogText). */
+export interface DialogText {
+  /** Its non-empty lines, from below the rule drawn above it down to the question. */
+  lines: string[];
+  /** Whether that rule is on the screen: a dialog taller than the screen has its top cut off. */
+  top: boolean;
+}
+
+/**
+ * What Claude Code's permission dialog shows above its choices (the tool, the command or the file, the question), to
+ * tell which call it is about. Undefined when no permission dialog is open.
+ */
+export function permissionDialogText(screen: string): DialogText | undefined {
+  const choices = dialogChoices(screen);
+  if (!choices) return undefined;
+  const above = screenLines(screen).filter(Boolean).slice(0, choices.first);
+  // The rule between the conversation and the dialog.
+  const rule = above.findLastIndex((l) => /^─{8,}$/.test(l));
+  return { lines: above.slice(rule + 1), top: rule >= 0 };
 }
 
 /**

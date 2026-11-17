@@ -5,7 +5,9 @@
 // approve). For them, "allow" alone answers nothing and Claude Code keeps its dialog open: the answers, or the plan,
 // go back in the tool's input (updatedInput), as Claude Code's hooks documentation says.
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import type { AskedOption, AskedQuestion, PermissionDecision, PermissionRequestInfo, PlanMode, QuestionAnswer } from "@gasho/protocol";
+import type { DialogText } from "./managed.ts";
 import { clip, inputSummary, str } from "./util.ts";
 
 /** What the hook answers: a decision, or nothing (Claude Code goes on with its own dialog). */
@@ -169,13 +171,67 @@ export const OPEN_DIALOG = "dialog:";
 /** Tools whose dialog is not a permission to use them, or that do not ask for one. */
 const NOT_ASKING = new Set(["AskUserQuestion", "ExitPlanMode", "Agent", "Task"]);
 
+/** Tools whose dialog asks about a file, whose name ends the question ("Do you want to make this edit to a.ts?"). */
+const FILE_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
+
+/** The dashes that Claude Code draws above and below the command in its dialog. */
+const DASHES_RE = /^╌{8,}$/;
+
+/** What is compared with the screen: without the "│" left of a command's lines, spaces and line breaks (lines wrap). */
+function flat(s: string): string {
+  return s.replace(/^\s*│ ?/gm, "").replace(/\s+/g, "");
+}
+
+/**
+ * Whether Claude Code's permission dialog shows this call. A command must be all that is drawn between the dashes
+ * above the question, or its end when the dialog's top is above the screen; a file's name must end the question; a
+ * fetch must show its URL; another tool, its name and every text of its input.
+ */
+function dialogShows(c: { name: string; input: Record<string, unknown> }, d: DialogText): boolean {
+  if (c.name === "Bash") {
+    const command = str(c.input.command);
+    const dashes = d.lines.flatMap((l, i) => (DASHES_RE.test(l) ? [i] : []));
+    const end = dashes.at(-1);
+    const start = dashes.at(-2);
+    if (!command || end === undefined || (start === undefined && d.top)) return false;
+    const shown = flat(d.lines.slice((start ?? -1) + 1, end).join("\n"));
+    return start === undefined ? shown !== "" && flat(command).endsWith(shown) : shown === flat(command);
+  }
+  const text = flat(d.lines.join("\n"));
+  if (FILE_TOOLS.has(c.name)) {
+    const file = str(c.input.file_path) ?? str(c.input.notebook_path);
+    return !!file && text.endsWith(`${flat(path.basename(file))}?`);
+  }
+  if (c.name === "WebFetch") {
+    const url = str(c.input.url);
+    return !!url && text.includes(flat(`url: ${url}`));
+  }
+  const texts = Object.values(c.input).filter((v): v is string => typeof v === "string" && v.trim() !== "");
+  return text.includes(flat(c.name.split("__").at(-1) ?? "")) && texts.every((v) => text.includes(flat(v)));
+}
+
+/** The calls without a result that may have a permission dialog (a subagent's call is in its own transcript). */
+function asking<C extends { name: string }>(calls: C[] | undefined): C[] {
+  return calls?.filter((c) => !NOT_ASKING.has(c.name)) ?? [];
+}
+
+/**
+ * The call without a result that Claude Code's permission dialog shows (see dialogShows); undefined when none does,
+ * or when calls that differ do (the same call made twice counts as one).
+ */
+export function shownCall<C extends { name: string; input: Record<string, unknown> }>(calls: C[] | undefined, d: DialogText): C | undefined {
+  const [first, ...others] = asking(calls).filter((c) => dialogShows(c, d));
+  const same = (c: C) => c.name === first?.name && JSON.stringify(c.input) === JSON.stringify(first.input);
+  return first && others.every(same) ? first : undefined;
+}
+
 /**
  * The call that Claude Code's permission dialog is about when gasho-daemon holds no hook for it (it restarted while
- * the dialog was open, or the hook timed out): the latest of the calls without a result, leaving out the tools that
- * ask nothing (a subagent's call is in its own transcript).
+ * the dialog was open, or the hook timed out): the one the dialog on the screen shows, else the earliest of the calls
+ * without a result (Claude Code asks about them in order).
  */
-export function dialogCall<C extends { name: string }>(calls: C[] | undefined): C | undefined {
-  return calls?.filter((c) => !NOT_ASKING.has(c.name)).at(-1);
+export function dialogCall<C extends { name: string; input: Record<string, unknown> }>(calls: C[] | undefined, d?: DialogText): C | undefined {
+  return (d && shownCall(calls, d)) ?? asking(calls)[0];
 }
 
 /**

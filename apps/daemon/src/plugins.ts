@@ -265,7 +265,10 @@ interface Topic {
 export class PluginRunner {
   private opts: PluginRunnerOptions;
   private slots = new Map<string, Slot>();
-  private code = new Map<string, { resolve: (code: string) => void; reject: (e: Error) => void }>();
+  /** The code asked of the Gasho server and not handed over yet, by plugin and version ("<id>\0<hash>"). */
+  private code = new Map<string, { ask: () => void; resolve: (code: string) => void; reject: (e: Error) => void }>();
+  /** The code files being fetched, by plugin and version: one fetch for all who need it, as `code` keeps one waiter for each. */
+  private fetching = new Map<string, Promise<string>>();
   private lastStatus = "";
   /** By plugin and topic ("<id>\0<topic>"). */
   private topics = new Map<string, Topic>();
@@ -314,6 +317,11 @@ export class PluginRunner {
     this.code.delete(key);
     if (typeof m.code === "string") waiting.resolve(m.code);
     else waiting.reject(new Error(m.error ?? "Gasho サーバーから daemon.js を受け取れませんでした。"));
+  }
+
+  /** Connected to the Gasho server (again): the code still awaited is asked for again, as an answer on its way is lost with the old connection. */
+  connected(): void {
+    for (const waiting of this.code.values()) waiting.ask();
   }
 
   /** A call from a plugin's web part. */
@@ -525,17 +533,32 @@ export class PluginRunner {
   }
 
   /** The daemon part's code in the cache, asked of the Gasho server when it is not there yet. */
-  private async codeFile(id: string, hash: string): Promise<string> {
+  private codeFile(id: string, hash: string): Promise<string> {
+    const key = `${id}\0${hash}`;
+    let file = this.fetching.get(key);
+    if (!file) {
+      file = this.fetchCode(id, hash, key).finally(() => this.fetching.delete(key));
+      this.fetching.set(key, file);
+    }
+    return file;
+  }
+
+  private async fetchCode(id: string, hash: string, key: string): Promise<string> {
     if (!/^[a-z][a-z0-9-]{1,31}$/.test(id) || !/^[0-9a-f]{16}$/.test(hash)) throw new Error("プラグインの指定が正しくありません。");
     const file = path.join(this.opts.cacheDir, id, hash, "daemon.mjs");
     if (fs.existsSync(file)) return file;
-    const key = `${id}\0${hash}`;
     const code = await new Promise<string>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.code.delete(key);
-        reject(new Error("Gasho サーバーから daemon.js を受け取れませんでした。"));
-      }, CODE_MS);
+      let timer: NodeJS.Timeout | undefined;
+      const ask = () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          this.code.delete(key);
+          reject(new Error("Gasho サーバーから daemon.js を受け取れませんでした。"));
+        }, CODE_MS);
+        this.opts.send({ type: "plugin.code.get", plugin: id, hash });
+      };
       this.code.set(key, {
+        ask,
         resolve: (c) => {
           clearTimeout(timer);
           resolve(c);
@@ -545,7 +568,7 @@ export class PluginRunner {
           reject(e);
         },
       });
-      this.opts.send({ type: "plugin.code.get", plugin: id, hash });
+      ask();
     });
     await fsp.mkdir(path.dirname(file), { recursive: true });
     const tmp = `${file}.${process.pid}.tmp`;

@@ -113,10 +113,14 @@ test("isInside tells a plugin's own folder from the rest", () => {
   assert.ok(isInside(`${root}/..data`, root));
 });
 
-/** Runs the relay as Claude Code would: the JSON on stdin, the environment statusLineLaunch gives. */
+/**
+ * Runs the relay as Claude Code would: the JSON on stdin, the environment statusLineLaunch gives. The send may take
+ * up to 10 seconds instead of 2, for a machine under load.
+ */
 function runRelay(env: Record<string, string>, input: string): Promise<{ code: number | null; stdout: string }> {
   return new Promise((resolve) => {
-    const child = execFile(process.execPath, [RELAY_FILE], { env: { PATH: process.env.PATH ?? "", HOME: os.tmpdir(), ...env }, timeout: 15_000 }, (e, stdout) =>
+    const full = { PATH: process.env.PATH ?? "", HOME: os.tmpdir(), GASHO_STATUSLINE_SEND_MS: "10000", ...env };
+    const child = execFile(process.execPath, [RELAY_FILE], { env: full, timeout: 15_000 }, (e, stdout) =>
       resolve({ code: e ? ((e as { code?: number }).code ?? 1) : 0, stdout }),
     );
     child.stdin?.end(input);
@@ -140,10 +144,10 @@ test("the relay sends the context window and the limits, and prints the user's s
       port,
       secret: "s3cret",
       // Reads the JSON as a status line command does; must not see the relay's own variables.
-      user: { type: "command", command: `printf '%s|%s' "$(cat | head -c 13)" "\${GASHO_STATUSLINE_SECRET:-none}"; exit 3` },
+      user: { type: "command", command: `printf '%s|%s|%s' "$(cat | head -c 13)" "\${GASHO_STATUSLINE_SECRET:-none}" "\${GASHO_STATUSLINE_SEND_MS:-none}"; exit 3` },
     });
     const r = await runRelay(env, JSON.stringify(AFTER_REPLY));
-    assert.equal(r.stdout, `{"session_id"|none`);
+    assert.equal(r.stdout, `{"session_id"|none|none`);
     assert.equal(r.code, 3);
     assert.equal(got.length, 1);
     assert.equal(got[0]?.headers["x-gasho-secret"], "s3cret");

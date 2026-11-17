@@ -335,6 +335,12 @@ export interface HookEvent {
   toolName?: string;
   notificationType?: string;
   summary?: string;
+  /**
+   * On a UserPromptSubmit that Claude Code sent by itself, not for something the user typed: a background task or a
+   * subagent ended (`<task-notification>`), or another session or agent sent a message. The turn it starts ends in a
+   * Stop like any other. Older gasho-daemon versions do not set it.
+   */
+  automatic?: boolean;
 }
 
 // In the messages below, `machine` is always a machine id (the id of its registered device), never its name.

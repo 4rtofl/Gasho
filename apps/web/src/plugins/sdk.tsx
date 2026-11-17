@@ -45,7 +45,7 @@ export const PluginScopeContext = createContext<string | undefined>(undefined);
 /** The session of a header item or a panel. */
 export const SessionScopeContext = createContext<SessionContext | undefined>(undefined);
 /** The panel being drawn: beside the session or in its place, and how it closes. */
-export const PanelScopeContext = createContext<{ docked: boolean; onClose: () => void } | undefined>(undefined);
+export const PanelScopeContext = createContext<{ docked: boolean; onClose: () => void; backLabel?: string } | undefined>(undefined);
 
 /** The plugin of the part being drawn, as the Gasho server last described it. */
 export function usePluginInfo(): PluginInfo {
@@ -227,7 +227,10 @@ function useNavigation(): Navigation {
       : session
         ? { machine: session.machine.id, sessionId: session.session.sessionId }
         : undefined;
+  // On a page of this plugin (P19), a panel without `at` is one of the page.
+  const page = route.name === "plugin" && route.plugin === plugin && !session ? route : undefined;
   const panelRoute = (id: string, params?: Params, at?: { machine: string; sessionId: string }): Route => {
+    if (page && !at) return { name: "plugin", plugin, page: page.page, params: page.params, panel: { id, params: params ?? {} } };
     const w = at ?? here;
     if (!w) throw new Error("どのセッションのパネルかが分かりません（openPanel に at を渡してください）。");
     return { name: "session", machine: w.machine, sessionId: w.sessionId, panel: { kind: "plugin", plugin, id, params: params ?? {} } };
@@ -251,6 +254,7 @@ function useNavigation(): Navigation {
     replacePanel: (id, params) => go(panelRoute(id, params), { replace: true }),
     closePanel: () => {
       if (route.name === "session") go({ name: "session", machine: route.machine, sessionId: route.sessionId }, { replace: true });
+      else if (page?.panel) go({ name: "plugin", plugin, page: page.page, params: page.params }, { replace: true });
     },
     back: (panel) => backTo(panelRoute(panel.id, panel.params)),
     sessionHref: (machine, sessionId) => hrefOf({ name: "session", machine, sessionId }),
@@ -290,7 +294,14 @@ function Page({ title, description, actions, children }: { title: React.ReactNod
 function Panel({ title, subtitle, actions, children }: { title: React.ReactNode; subtitle?: React.ReactNode; actions?: React.ReactNode; children?: React.ReactNode }) {
   const scope = useContext(PanelScopeContext);
   return (
-    <SidePanel title={title} subtitle={subtitle} actions={actions} docked={scope?.docked ?? true} onClose={scope?.onClose ?? (() => undefined)}>
+    <SidePanel
+      title={title}
+      subtitle={subtitle}
+      actions={actions}
+      docked={scope?.docked ?? true}
+      onClose={scope?.onClose ?? (() => undefined)}
+      {...(scope?.backLabel ? { backLabel: scope.backLabel } : {})}
+    >
       {children}
     </SidePanel>
   );

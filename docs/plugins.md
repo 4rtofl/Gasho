@@ -55,8 +55,9 @@ Gasho のプラグインは、Gasho の画面の決まった場所に、項目�
 | P16 | テーマ。画面全体の色と角の丸みを変える。同時に有効にできるのは1つ（API 1.6） |
 | P17 | サイドバーの worktree の一覧の代わりに、プラグインが決めたカテゴリに分けてセッションを並べる。使えるのは1つのプラグインの一覧だけ（API 1.7） |
 | P18 | サイドバーの worktree の一覧を、プラグインが決めたカテゴリに分けて出す。分け方は一覧のメニューで選び、いくつのプラグインのものからでも選べる（API 1.8）。行を別のカテゴリへドラッグしたことを、プラグインに伝える（API 1.9） |
+| P19 | プラグインのページの横に、セッションのパネル（P4）と同じパネルを開く（API 1.11） |
 
-P6 は、いまの GitHub の機能がホームにタイルを持っているので足した。P8 は GitHub では使わないが、working server の様子を監視するプラグインのために、API 1.5 で足した。P13 は、エージェントが作業しているあいだ、その様子を会話に出すプラグインのために、API 1.2 で足した。P14 は、セッションの Context Window の使用率と、Claude.ai のプランで決まっている使用量の上限を出すプラグインのために、API 1.4 で足した。P15 は、worktree の Issue と Pull request を、セッションと並んだタブで開くプラグイン（GashoPlugins の github-allmighty）のために、API 1.5 で足した。P16 は、Gasho の見た目を好みの色に変えるテーマを1つずつプラグインにして、GashoPlugins のカタログから選んで入れるために、API 1.6 で足した。P17 は、サイドバーに worktree の行の代わりに、リポジトリごとのカテゴリでセッションを並べるプラグイン（GashoPlugins の Session List Rewind）のために、API 1.7 で足した。P18 は、worktree の行のまま、リポジトリごとや作業中・待機中のカテゴリに分けて出すプラグイン（GashoPlugins の Better WorktreeList）のために、API 1.8 で足した。API 1.9 では、利用者が作った見出しに worktree を手で入れて分けるプラグイン（GashoPlugins の worktree-status）のために、P18 の分け方に行を別のカテゴリへ動かしたときに呼ぶ関数（`useOnMove`）と、すべてのブラウザーで共通の値を Gasho サーバーに保存するフック（`useSharedState`）を足した。
+P6 は、いまの GitHub の機能がホームにタイルを持っているので足した。P8 は GitHub では使わないが、working server の様子を監視するプラグインのために、API 1.5 で足した。P13 は、エージェントが作業しているあいだ、その様子を会話に出すプラグインのために、API 1.2 で足した。P14 は、セッションの Context Window の使用率と、Claude.ai のプランで決まっている使用量の上限を出すプラグインのために、API 1.4 で足した。P15 は、worktree の Issue と Pull request を、セッションと並んだタブで開くプラグイン（GashoPlugins の github-allmighty）のために、API 1.5 で足した。P16 は、Gasho の見た目を好みの色に変えるテーマを1つずつプラグインにして、GashoPlugins のカタログから選んで入れるために、API 1.6 で足した。P17 は、サイドバーに worktree の行の代わりに、リポジトリごとのカテゴリでセッションを並べるプラグイン（GashoPlugins の Session List Rewind）のために、API 1.7 で足した。P18 は、worktree の行のまま、リポジトリごとや作業中・待機中のカテゴリに分けて出すプラグイン（GashoPlugins の Better WorktreeList）のために、API 1.8 で足した。API 1.9 では、利用者が作った見出しに worktree を手で入れて分けるプラグイン（GashoPlugins の worktree-status）のために、P18 の分け方に行を別のカテゴリへ動かしたときに呼ぶ関数（`useOnMove`）と、すべてのブラウザーで共通の値を Gasho サーバーに保存するフック（`useSharedState`）を足した。P19 は、レビューする Pull request の一覧のページで、行を押すとその Pull request をセッションのパネルと同じ形で横に開くプラグイン（GashoPlugins の github-review）のために、API 1.11 で足した。
 
 ## 構成
 
@@ -151,7 +152,7 @@ GitHub プラグインの場合は、次のようになる。
 | `name`、`description` | 画面に出す名前（40文字まで）と説明 |
 | `genre` | ジャンルの ID。GashoPlugins のプラグインでは必ず書き、GashoPlugins の `genres.json` にあるジャンル（連携の `integration`、開発ツールの `devtools` など）から1つ選ぶ。GashoPlugins の GitHub Actions が、Pull request と main への push のたびに確かめる。プラグインの画面は、カードにジャンルの名前を出し、「GashoPlugins にあるもの」をジャンルごとに分けて並べる（P9）。ジャンルの名前と並びは、カタログから読む（P10）。Gasho サーバーは、ID の形だけを確かめる |
 | `version` | プラグインの版（1.2.0 の形）。GashoPlugins に新しい版を出すときに上げる。プラグインの画面は、カタログの版が入れた版より新しいときに「更新」を出す。ホットリロードで入れ替えるかは、版ではなく中身のハッシュで判断する |
-| `api` | プラグインが前提にする、プラグインの API の版。Gasho は、メジャーが同じで、マイナーが Gasho の対応する版以下のものだけを読み込む。daemon の部分は、マイナーがその gasho-daemon の版以下の working server でだけ使える（それより古い gasho-daemon は「古い」と出す）。拡張点を足すなど、前の版のプラグインがそのまま動く変更ではマイナーを上げ、動かなくなる変更ではメジャーを上げる。1.1 で、`session.launch`、`useLaunchSession`、`useNavigation` の `openSession`、daemon の部分の `ctx.folders()` と `ctx.dataDir` を足した。1.2 で、会話の末尾（P13、`conversationEnd`）と `useSessionActivity` を足した。1.3 で、daemon の部分の `ctx.github` を足した。1.4 で、入力欄の下（P14、`composerFooter`）、SDK の `Popover`、`SessionInfo` の `context` と `limits` を足し、プラグイン専用のフォルダーで動く Claude Code をセッションとして扱わないようにした。1.5 で、daemon の部分の `ctx.emit` と画面の部分の `useEvent`（P8）、worktree のタブ（P15、`worktreeTabs`・`worktreeViews`）、`useNavigation` の `worktreeHref`・`openWorktreeView` を足した。1.6 で、テーマ（P16、`theme`）を足した。1.7 で、サイドバーのセッションの一覧（P17、`sessionList`）を足した。1.8 で、サイドバーの worktree の一覧の分け方（P18、`worktreeGroupings`）を足した。1.9 で、分け方の `useOnMove` と、`useSharedState` を足した。1.10 で、`useRemoveWorktree`、`removeWorktreeProblem`、`permissions` の `worktree.remove` を足した。gasho-daemon は、1.5 から 1.10 を名乗るようにした（`worktree.remove` に答えるのはこの gasho-daemon からなので、api 1.10 の daemon の部分は、これより古い gasho-daemon では「古い」と出る） |
+| `api` | プラグインが前提にする、プラグインの API の版。Gasho は、メジャーが同じで、マイナーが Gasho の対応する版以下のものだけを読み込む。daemon の部分は、マイナーがその gasho-daemon の版以下の working server でだけ使える（それより古い gasho-daemon は「古い」と出す）。拡張点を足すなど、前の版のプラグインがそのまま動く変更ではマイナーを上げ、動かなくなる変更ではメジャーを上げる。1.1 で、`session.launch`、`useLaunchSession`、`useNavigation` の `openSession`、daemon の部分の `ctx.folders()` と `ctx.dataDir` を足した。1.2 で、会話の末尾（P13、`conversationEnd`）と `useSessionActivity` を足した。1.3 で、daemon の部分の `ctx.github` を足した。1.4 で、入力欄の下（P14、`composerFooter`）、SDK の `Popover`、`SessionInfo` の `context` と `limits` を足し、プラグイン専用のフォルダーで動く Claude Code をセッションとして扱わないようにした。1.5 で、daemon の部分の `ctx.emit` と画面の部分の `useEvent`（P8）、worktree のタブ（P15、`worktreeTabs`・`worktreeViews`）、`useNavigation` の `worktreeHref`・`openWorktreeView` を足した。1.6 で、テーマ（P16、`theme`）を足した。1.7 で、サイドバーのセッションの一覧（P17、`sessionList`）を足した。1.8 で、サイドバーの worktree の一覧の分け方（P18、`worktreeGroupings`）を足した。1.9 で、分け方の `useOnMove` と、`useSharedState` を足した。1.10 で、`useRemoveWorktree`、`removeWorktreeProblem`、`permissions` の `worktree.remove` を足した。gasho-daemon は、1.5 から 1.10 を名乗るようにした（`worktree.remove` に答えるのはこの gasho-daemon からなので、api 1.10 の daemon の部分は、これより古い gasho-daemon では「古い」と出る）。1.11 で、ページのパネル（P19、`pagePanels`）を足した。P19 は画面だけの変更だが、api 1.11 の daemon の部分が動くよう、gasho-daemon も 1.11 を名乗る（それより古い gasho-daemon では「古い」と出る） |
 | `web`、`daemon` | 画面の部分と daemon の部分のファイル。`web`・`daemon`・`theme` のうち、少なくとも1つは要る |
 | `methods` | 画面の部分から呼べる、daemon の部分のメソッド。`kind` は、読むだけのもの（`read`）か、何かを変えるもの（`write`）か。`write` の呼び出しは操作のログに残す。`timeoutSeconds` は待つ時間で、既定は15秒、長くても120秒まで |
 | `permissions` | 読む・出す以外に、画面の部分がすること。`session.input`（セッションに発言を送る）、`session.launch`（セッションを起動する。API 1.1）、`worktree.remove`（worktree を中のセッションとともに削除する。API 1.10） |
@@ -186,6 +187,7 @@ P3 ヘッダーの項目   ─▶ P4 のパネルを右に開く（スマホで�
 P13 会話の末尾      ─▶ 最後の発言の下に出し、会話と一緒にスクロールする
 P14 入力欄の下      ─▶ 入力欄の下の行で、文字数の左に出す（スマホでも出す）
 P15 worktree のタブ ─▶ タブの下に、セッションの代わりにプラグインの画面を出す
+P19 ページのパネル  ─▶ P2 のページの右に、P4 と同じパネルを開く（スマホでは画面全体）
 ```
 
 サイドバーのセッションの一覧（P17）を足すプラグインがあれば、サイドバーの worktree の一覧の代わりに、そのプラグインが決めたカテゴリにセッションを並べる。worktree の一覧の分け方（P18）を足すプラグインがあれば、一覧の見出しのメニューで選んだ分け方のカテゴリに、worktree の行を分けて出す。
@@ -268,6 +270,8 @@ sidebar: [{ id: "repos", label: "リポジトリ", icon: FolderGit2, page: { id:
 ページの URL は `#/p/<プラグインの ID>/<ページの ID>` で、引数はクエリにする（`#/p/git/repos?repo=4rtofl%2FGasho`）。ページの部品は、引数を `params` で受け取る。
 
 ページは、ホームや設定と同じく、メインの領域に出す。枠は SDK の `Page`（見出し、説明、右上のボタン）を使い、幅と余白をほかのページにそろえる。プラグインがまだ読み込まれていないあいだは「読み込み中…」を出す。プラグインが無効か、ないか、読み込めなかったときは、そのことと、プラグインの画面へのリンクを出す。
+
+ページの横にパネルを開くときは、ページのパネル（P19）を使う。
 
 ### セッションのヘッダー（P3）
 
@@ -594,6 +598,29 @@ function useMoveToHeading() {
 - Gasho は、落とした行を、落とした場所にすぐ出し、関数が返す Promise が終わるまでそのまま出す。そのあとは、`useCategories` の答えのとおりに出す。ポインターが一覧の上にあるあいだは、P18 のほかの行と同じく、行を落としたカテゴリに止めておき、ポインターが離れてから答えのとおりに並べ直す。関数は、`useCategories` の答えを変えるもの（下の `useSharedState` の値など）を変える。何も変えなければ、行は元のカテゴリに戻る
 - 落としたカテゴリの中の順は、同じカテゴリの中で並べ替えたときと同じく、Gasho がブラウザーごとに覚える。`index` は、プラグインが順も覚えたいときに使う
 - 関数がエラーを投げたとき、返した Promise が失敗したときは、行を元のカテゴリに戻し、一覧の見出しの下に理由を10秒出す。`useOnMove` 自身がエラーを投げたときは、`useCategories` のときと同じく、分けない一覧に戻す
+
+### ページのパネル（P19）
+
+プラグインのページ（P2）の横に、セッションのパネル（P4）と同じパネルを開く（API 1.11）。一覧のページで1件を押したとき、一覧を出したまま、その1件の中身を横に出すためのものである。GashoPlugins の github-review は、レビューする Pull request の一覧のページで、行を押すとその Pull request のパネルを開く。
+
+```tsx
+pages: { review: ReviewPage },
+pagePanels: { pr: PrPanel },
+
+// ReviewPage の行で
+const nav = useNavigation();
+nav.openPanel("pr", { repo: pr.repo, number: String(pr.number) });
+
+function PrPanel({ params, docked }: PagePanelProps) {
+  return <Panel title={params.repo} subtitle={`#${params.number}`} actions={…}>…</Panel>;
+}
+```
+
+- URL は `#/p/<プラグインの ID>/<ページの ID>/p/<パネルの ID>/<パネルの引数>` で、ページの引数はこれまでどおりクエリにする。パネルの引数は、クエリの形（`number=14&repo=org%2Fapp`）で1つの区切りにする（`#/p/github-review/review/p/pr/number=14&repo=org%2Fapp?q=is%3Aopen`）。ページとパネルは、それぞれの引数を受け取る
+- 開き方と閉じ方は、P4 と同じ `useNavigation` で書く。ページの部品と、ページのパネルの部品の中では、`at` を渡さない `openPanel`・`panelHref`・`replacePanel`・`back` は、そのページのパネルを指す（`at` を渡せば、これまでどおりそのセッションのパネルを開く）。`closePanel` は、ページのパネルを閉じてページだけに戻す
+- 出し方は、P4 と同じにする。PC では、ページの右に、セッションのパネルと同じ枠（左の端をドラッグして幅を変えられ、幅はセッションのパネルと共通で覚える）で出し、× か Esc で閉じる。ページはそのまま残るので、ページの状態とスクロールの位置は変わらない。スマホでは、ページの代わりに出し、見出しと副題と右上のボタンを画面上部のバーに出す。バーの ←（戻る）でページに戻る
+- パネルの部品は、SDK の `Panel` に、見出し、副題、右上のボタンと中身を渡す。閉じるボタンと「戻る」は Gasho が付ける。部品は、引数（`params`）と、ページの横に出しているか（`docked`）を受け取る。セッションに付いたパネルではないので、`useSessionContext` は undefined を返す
+- プラグインが無効か読み込めないときと、そのパネルが無いときは、`Panel` の枠にそのことを出す
 
 ## 画面の部分から使えるもの
 

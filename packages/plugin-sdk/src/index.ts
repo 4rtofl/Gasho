@@ -57,6 +57,17 @@ export interface PanelProps {
 }
 
 /**
+ * A panel of a page of the plugin (P19, plugin API 1.11): #/p/<plugin>/<page>/p/<panel>/<params>. The page opens it
+ * with useNavigation's openPanel; it shows as a session's panel does, beside the page on a computer and in its place on
+ * a phone.
+ */
+export interface PagePanelProps {
+  params: Params;
+  /** Beside the page (a computer), rather than in its place (a phone). */
+  docked: boolean;
+}
+
+/**
  * An item of the row of a session's header (P3), where "Issues" and "ファイル" are. Pressing it does one of: open a
  * panel of the plugin, open a page of the plugin, open a link (https) in a new tab, or call `onClick`.
  */
@@ -373,6 +384,8 @@ export interface PluginDefinition {
   pages?: Record<string, ComponentType<PageProps>>;
   sessionHeader?: SessionHeaderItem[];
   sessionPanels?: Record<string, ComponentType<PanelProps>>;
+  /** Panels of the plugin's pages, opened beside the page on screen (P19). Plugin API 1.11. */
+  pagePanels?: Record<string, ComponentType<PagePanelProps>>;
   homeTiles?: HomeTile[];
   /** More on the settings screen, below the inputs made from gasho-plugin.json `settings` (P5). */
   settings?: ComponentType;
@@ -425,12 +438,16 @@ export type CallResult<T> = { ok: true; data: T } | { ok: false; error: string }
 export interface Navigation {
   pageHref(id: string, params?: Params): string;
   openPage(id: string, params?: Params): void;
-  /** A panel of the session on screen, or of `at` (from outside a session, such as a home tile). */
+  /**
+   * A panel of the session on screen, or of `at` (from outside a session, such as a home tile). On a page of the plugin
+   * without `at` (plugin API 1.11): a panel of that page (pagePanels, P19).
+   */
   panelHref(id: string, params?: Params, at?: { machine: string; sessionId: string }): string;
-  /** Opens a panel (a new entry of the browser's history: back returns to what was open). */
+  /** Opens a panel, as panelHref (a new entry of the browser's history: back returns to what was open). */
   openPanel(id: string, params?: Params, at?: { machine: string; sessionId: string }): void;
   /** Shows another panel, or the same with other params, in place of the open one (no new history entry): tabs. */
   replacePanel(id: string, params?: Params): void;
+  /** Closes the panel open beside the session or the page on screen. */
   closePanel(): void;
   /** Back to `panel`: through the browser's history when the current one was opened from it, else by replacing. */
   back(panel: { id: string; params?: Params }): void;
@@ -602,7 +619,7 @@ export interface GashoSdk {
   cn(...classes: unknown[]): string;
   /** The frame of a page: title, description, buttons at the top right. */
   Page: ComponentType<{ title: ReactNode; description?: ReactNode; actions?: ReactNode; children?: ReactNode }>;
-  /** The frame of a panel: Gasho adds the close button (computer) and "セッションに戻る" (phone). */
+  /** The frame of a panel: Gasho adds the close button (computer) and "セッションに戻る" (phone; "戻る" for a page's panel). */
   Panel: ComponentType<{ title: ReactNode; subtitle?: ReactNode; actions?: ReactNode; children?: ReactNode }>;
   /** The class of the small bordered buttons in a panel's header (reload, open on GitHub). */
   PANEL_BUTTON: string;

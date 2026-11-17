@@ -69,7 +69,7 @@ import {
   type PendingMove,
 } from "@/lib/worktree-groupings";
 import { PANEL_WIDTH_MAX, PANEL_WIDTH_MIN, clampPanelWidth, defaultPanelWidth, usePanelWidth } from "@/lib/widths";
-import { PluginBadgeProbes, PluginPageView, PluginPanelView, usePluginBadges } from "@/plugins/parts";
+import { PluginBadgeProbes, PluginPagePanelView, PluginPageView, PluginPanelView, usePluginBadges } from "@/plugins/parts";
 import { usePluginRegistry } from "@/plugins/registry";
 import { PluginSessionListProbe, useSessionListMode } from "@/plugins/session-list";
 import { PluginWorktreeGroupingProbe, useWorktreeGroupings } from "@/plugins/worktree-groupings";
@@ -577,6 +577,11 @@ export function App() {
         ? (pluginItems.find((i) => i.plugin === route.plugin && i.page.id === route.page)?.id ?? "")
         : route.name;
   const panel = route.name === "session" ? route.panel : undefined;
+  // A panel of a plugin's page (P19), shown as a session's panel is.
+  const pagePanel = route.name === "plugin" ? route.panel : undefined;
+  const closePagePanel = () => {
+    if (route.name === "plugin") go({ name: "plugin", plugin: route.plugin, page: route.page, params: route.params }, { replace: true });
+  };
   // The session on a phone's screen (not while one of its panels takes the screen): the top bar shows its name and
   // state, and its header leaves them out (see SessionView), so the two bars become one.
   const onScreen = route.name === "session" && !panel && openSession?.managed ? openSession : undefined;
@@ -639,7 +644,7 @@ export function App() {
               holdList(true);
             }}
           />
-          {route.name === "session" && !desktop && panel ? (
+          {!desktop && (panel || pagePanel) ? (
             <div ref={setPanelBar} className="flex min-w-0 flex-1 items-center gap-2" />
           ) : onScreen && onScreenMachine ? (
             <>
@@ -667,7 +672,13 @@ export function App() {
             {route.name === "devices" && <DevicesView />}
             {route.name === "settings" && <SettingsView />}
             {route.name === "plugins" && <PluginsView />}
-            {route.name === "plugin" && <PluginPageView plugin={route.plugin} page={route.page} params={route.params} />}
+            {/* The page stays where it is while its panel opens beside it, so it keeps its state and its scroll. */}
+            {route.name === "plugin" && (desktop || !pagePanel) && <PluginPageView plugin={route.plugin} page={route.page} params={route.params} />}
+            {route.name === "plugin" && !desktop && pagePanel && (
+              <PanelBarContext.Provider value={panelBar}>
+                <PluginPagePanelView plugin={route.plugin} panel={pagePanel} docked={false} onClose={closePagePanel} />
+              </PanelBarContext.Provider>
+            )}
             {route.name === "worktree" && (
               <WorktreeView
                 key={worktreeKey(route.machine, route.path)}
@@ -691,6 +702,11 @@ export function App() {
               </PanelBarContext.Provider>
             )}
           </motion.main>
+          {route.name === "plugin" && desktop && pagePanel && (
+            <DockedPanel>
+              <PluginPagePanelView key={`${route.plugin}/${route.page}`} plugin={route.plugin} panel={pagePanel} docked onClose={closePagePanel} />
+            </DockedPanel>
+          )}
           {route.name === "session" && desktop && panel && (
             <DockedPanel>
               <PanelView machine={route.machine} sessionId={route.sessionId} panel={panel} docked />

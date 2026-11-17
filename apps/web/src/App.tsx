@@ -493,10 +493,10 @@ export function App() {
     groupings.mode.kind === "grouped" ? moveError : undefined,
   ].filter(Boolean);
   const worktreeSection: SidebarSection = {
-    // Shown even without sessions, for its "＋".
+    // Shown even without worktrees, for its menu that registers the repositories. No "＋": the rows are worktrees, and
+    // a "＋" there reads as adding one. A session starts from a worktree's tabs, or from "新しいセッション" at home.
     title: narrowed.length > 0 ? `worktree · ${narrowed.map((r) => r.name).join("、")}` : "worktree",
     notice: notices.length > 0 ? notices.join(" ") : undefined,
-    action: { label: "新しいセッション", icon: <Plus />, onClick: () => openLaunch() },
     secondaryAction: grouped
       ? hasOrder(groupingPrefs)
         ? { label: "最後に使った順に戻す", icon: <ListRestart />, onClick: () => changeGroupingPrefs(withoutOrder) }

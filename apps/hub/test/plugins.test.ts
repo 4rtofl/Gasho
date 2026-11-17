@@ -32,9 +32,10 @@ function tmp(): string {
 function writePlugin(dir: string, m: object = manifest, files: Record<string, string> = {}): string {
   const folder = path.join(dir, (m as { id: string }).id);
   fs.mkdirSync(folder, { recursive: true });
-  fs.writeFileSync(path.join(folder, "gasho-plugin.json"), JSON.stringify(m));
   const all = { "web.js": "export default {}", "web.css": ".x{}", "daemon.js": "export default { methods: {} }", ...files };
   for (const [name, text] of Object.entries(all)) fs.writeFileSync(path.join(folder, name), text);
+  // Last, as gasho-plugin build writes it: a linked folder with a file newer than its manifest is a build under way.
+  fs.writeFileSync(path.join(folder, "gasho-plugin.json"), JSON.stringify(m));
   return folder;
 }
 

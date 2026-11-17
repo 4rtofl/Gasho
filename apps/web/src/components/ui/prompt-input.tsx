@@ -25,6 +25,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, animate, motion, useMotionValue, useReducedMotion } from "framer-motion";
 import { emptyShellInput, isShellInput } from "@/lib/shell";
 import { matchSlash, slashQuery, type SlashCommand, type SlashMatch } from "@/lib/slash";
+import { composing } from "@/lib/text-input";
 
 /* -------------------------------------------------------------------------- */
 /*  PromptInput — the chat composer. Pairs with <AIResponse /> to finish the   */
@@ -863,7 +864,7 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
   }, [autoFocus]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.nativeEvent.isComposing || e.keyCode === 229) return; // IME composition
+    if (composing(e)) return;
     if (slashShown && slash !== undefined) {
       const n = matches.length;
       const plain = !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey;

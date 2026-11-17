@@ -20,6 +20,7 @@ import type {
   RequestOptions,
   RemoveWorktreeResult,
   RequestTarget,
+  SendInputResult,
   SessionActivity,
   SessionContext,
 } from "@gasho/plugin-sdk";
@@ -381,19 +382,34 @@ export const sdk: GashoSdk = {
   useNavigation,
   useSendInput: () => {
     const info = usePluginInfo();
-    return async ({ machine, sessionId, text }): Promise<CallResult<undefined>> => {
+    return async ({ machine, sessionId, text, model, effort, ultracode }): Promise<CallResult<SendInputResult>> => {
       if (!info.manifest.permissions?.includes("session.input")) {
         return { ok: false, error: `${info.manifest.name} には、セッションに発言を送る権限がありません（gasho-plugin.json の permissions）。` };
       }
       const key = transcriptKey(machine, sessionId);
       const pending = addPending(key, { text: text.trim(), files: [], after: getAppState().transcripts[key]?.total ?? 0 });
-      const r = await sendCommand(machine, { type: "session.input", sessionId, text, via: info.id }, 160_000);
+      const r = await sendCommand(
+        machine,
+        {
+          type: "session.input",
+          sessionId,
+          text,
+          ...(model ? { model } : {}),
+          ...(effort ? { effort } : {}),
+          ...(ultracode !== undefined ? { ultracode } : {}),
+          via: info.id,
+        },
+        160_000,
+      );
       if (!r.ok) {
         removePending(key, pending);
         return { ok: false, error: r.error ?? "送れませんでした。" };
       }
       settlePending(key, pending, r.queued ? "queued" : "sent");
-      return { ok: true, data: undefined };
+      return {
+        ok: true,
+        data: { queued: r.queued === true, ...(r.warning ? { warning: r.warning } : {}), ...(r.unapplied?.length ? { unapplied: r.unapplied } : {}) },
+      };
     };
   },
   useLaunchSession: () => {

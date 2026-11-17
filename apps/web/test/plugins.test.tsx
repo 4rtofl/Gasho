@@ -110,6 +110,24 @@ test("a plugin sends to a session only with the permission for it, and says it i
   expect(hub.sent).toHaveLength(sent);
 });
 
+test("a plugin switches the session's effort level with what it sends, and hears what was not switched (API 1.12)", async () => {
+  const user = userEvent.setup();
+  const hub = await connectHub({ machines: [m1], plugins: [info()] });
+  render(<PluginPanelView machine="m1" sessionId="s1" panel={{ kind: "plugin", plugin: "notes", id: "notes", params: {} }} docked onClose={() => {}} />);
+  const button = await screen.findByRole("button", { name: "Max で見直してと送る" });
+
+  await user.click(button);
+  expect(hub.commands().at(-1)).toMatchObject({ type: "session.input", sessionId: "s1", text: "見直して", effort: "max", via: "notes" });
+  expect(hub.commands().at(-1)).not.toHaveProperty("model");
+  expect(hub.commands().at(-1)).not.toHaveProperty("ultracode");
+  await hub.answer({ ok: true, queued: true });
+  expect(screen.getByText("送りました（待ち）")).toBeTruthy();
+
+  await user.click(button);
+  await hub.answer({ ok: true, warning: "Effort を Max にできませんでした。いまの Effort のまま送ります。", unapplied: ["effort"] });
+  expect(screen.getByText("送りました（effort はそのまま：Effort を Max にできませんでした。いまの Effort のまま送ります。）")).toBeTruthy();
+});
+
 test("a part that throws shows an error in its place, and the session's other parts stay", async () => {
   await connectHub({ machines: [m1], plugins: [info()] });
   const boom = session("s1", { name: "boom" });

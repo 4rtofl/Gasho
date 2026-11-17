@@ -140,6 +140,15 @@ test("the registry reads plugin folders, copies each version into the cache, and
   assert.equal(reg.get("hello")?.revision?.hash, second);
   assert.match(reg.get("hello")?.error ?? "", /新しい版に問題があります/);
 
+  // So does a file that cannot be read, as one gone while the folder is replaced (root reads any file).
+  if (process.getuid?.() !== 0) {
+    fs.writeFileSync(path.join(folder, "gasho-plugin.json"), JSON.stringify(manifest));
+    fs.chmodSync(path.join(folder, "web.js"), 0);
+    await reg.scan();
+    assert.equal(reg.get("hello")?.revision?.hash, second);
+    assert.match(reg.get("hello")?.error ?? "", /新しい版に問題があります/);
+  }
+
   // A link is a plugin being developed.
   fs.rmSync(path.join(dir, "hello"), { recursive: true });
   const dev = writePlugin(tmp());

@@ -11,6 +11,7 @@ import type {
   SentFiles,
   TranscriptBlock,
   TranscriptEntry,
+  TranscriptPage,
 } from "@gasho/protocol";
 import { SEND_FILE_TOOL, sentFiles } from "./media.ts";
 import { clip, inputSummary, str } from "./util.ts";
@@ -526,11 +527,13 @@ export function parseRecord(rec: Record<string, unknown>, meta: TranscriptMeta):
   return entry;
 }
 
-function parseLines(buf: Buffer, meta: TranscriptMeta, out: TranscriptEntry[]): void {
+/** Each complete line's entry, with where its line starts in `buf`. */
+function parseLines(buf: Buffer, meta: TranscriptMeta, each: (entry: TranscriptEntry, at: number) => void): void {
   let start = 0;
   for (;;) {
     const nl = buf.indexOf(10, start);
     if (nl < 0) break;
+    const at = start;
     const line = buf.subarray(start, nl).toString("utf8");
     start = nl + 1;
     if (!line.trim()) continue;
@@ -542,40 +545,40 @@ function parseLines(buf: Buffer, meta: TranscriptMeta, out: TranscriptEntry[]): 
     }
     if (rec && typeof rec === "object") {
       const entry = parseRecord(rec as Record<string, unknown>, meta);
-      if (entry) out.push(entry);
+      if (entry) each(entry, at);
     }
   }
 }
 
-/** Reads every complete line. `consumed` is the byte offset just after the last newline. */
-export async function readTranscript(
-  file: string,
-): Promise<{ entries: TranscriptEntry[]; meta: TranscriptMeta; consumed: number }> {
-  const buf = await fs.readFile(file);
-  const consumed = buf.lastIndexOf(10) + 1;
-  const meta = emptyMeta();
-  const entries: TranscriptEntry[] = [];
-  parseLines(buf.subarray(0, consumed), meta, entries);
-  return { entries, meta, consumed };
-}
+/**
+ * How much of a transcript is read and parsed at a time. A long conversation runs to hundreds of MB, and parsing it
+ * whole stops the daemon for seconds: between pieces, it answers the hooks and the terminals.
+ */
+const READ_BYTES = 1024 * 1024;
 
-/** Follows a transcript from a byte offset and returns entries appended since the last poll. */
+/**
+ * Follows a transcript from its start: reads what was appended since the last read, and keeps where each entry's line
+ * starts, so that a page of entries is read from those lines only.
+ */
 export class TranscriptTail {
   readonly file: string;
-  private offset: number;
+  /** Bytes read; the last `rest.length` of them are a line not complete yet. */
+  private offset = 0;
   private rest: Buffer = Buffer.alloc(0);
+  /** Where the line of each entry read starts, by the entry's index. */
+  private starts: number[] = [];
 
-  constructor(file: string, offset: number) {
+  constructor(file: string) {
     this.file = file;
-    this.offset = offset;
   }
 
-  async poll(meta: TranscriptMeta): Promise<TranscriptEntry[]> {
+  /** The entries appended since the last read, a piece of the file at a time; `meta` takes what they say. */
+  async *read(meta: TranscriptMeta): AsyncGenerator<TranscriptEntry[]> {
     let fh: fs.FileHandle;
     try {
       fh = await fs.open(this.file, "r");
     } catch {
-      return [];
+      return;
     }
     try {
       const { size } = await fh.stat();
@@ -583,21 +586,72 @@ export class TranscriptTail {
         // The file was rewritten; start over.
         this.offset = 0;
         this.rest = Buffer.alloc(0);
+        this.starts = [];
       }
-      if (size === this.offset) return [];
-      const chunk = Buffer.alloc(size - this.offset);
-      await fh.read(chunk, 0, chunk.length, this.offset);
-      this.offset = size;
-      const data = Buffer.concat([this.rest, chunk]);
-      const lastNl = data.lastIndexOf(10);
-      this.rest = Buffer.from(data.subarray(lastNl + 1));
-      const out: TranscriptEntry[] = [];
-      parseLines(data.subarray(0, lastNl + 1), meta, out);
-      return out;
+      while (this.offset < size) {
+        const chunk = Buffer.alloc(Math.min(READ_BYTES, size - this.offset));
+        const { bytesRead } = await fh.read(chunk, 0, chunk.length, this.offset);
+        if (bytesRead === 0) break;
+        const data = Buffer.concat([this.rest, chunk.subarray(0, bytesRead)]);
+        const base = this.offset - this.rest.length;
+        this.offset += bytesRead;
+        const lastNl = data.lastIndexOf(10);
+        this.rest = Buffer.from(data.subarray(lastNl + 1));
+        const out: TranscriptEntry[] = [];
+        parseLines(data.subarray(0, lastNl + 1), meta, (entry, at) => {
+          out.push(entry);
+          this.starts.push(base + at);
+        });
+        if (out.length > 0) yield out;
+      }
     } finally {
       await fh.close();
     }
   }
+
+  /** Up to `limit` entries just before the entry `before` (the latest without it), of those read so far. */
+  async page(before: number | undefined, limit: number): Promise<TranscriptPage> {
+    const total = this.starts.length;
+    const end = Math.max(0, Math.min(before ?? total, total));
+    const start = Math.max(0, end - limit);
+    if (start === end) return { entries: [], start, total };
+    const from = this.starts[start] as number;
+    const to = end < total ? (this.starts[end] as number) : this.offset - this.rest.length;
+    const entries: TranscriptEntry[] = [];
+    // An entry is made from its own line alone; what the lines say about the session was taken when they were read.
+    parseLines(await readRange(this.file, from, to - from), emptyMeta(), (entry) => entries.push(entry));
+    return { entries, start, total };
+  }
+}
+
+/** Reads a transcript to its end for what it says about the session; browsers load its entries a page at a time. */
+export async function followTranscript(file: string): Promise<{ tail: TranscriptTail; meta: TranscriptMeta }> {
+  const tail = new TranscriptTail(file);
+  const meta = emptyMeta();
+  for await (const _ of tail.read(meta));
+  return { tail, meta };
+}
+
+/** How many bytes of entries one transcript.append holds at most: the hub closes the connection on a message over 16 MB. */
+const MAX_APPEND_BYTES = 4 * 1024 * 1024;
+
+/** Entries in runs that each fit in one transcript.append, in order; an entry larger than that goes alone. */
+export function appendBatches(entries: TranscriptEntry[], max = MAX_APPEND_BYTES): TranscriptEntry[][] {
+  const out: TranscriptEntry[][] = [];
+  let batch: TranscriptEntry[] = [];
+  let bytes = 0;
+  for (const entry of entries) {
+    const size = Buffer.byteLength(JSON.stringify(entry));
+    if (batch.length > 0 && bytes + size > max) {
+      out.push(batch);
+      batch = [];
+      bytes = 0;
+    }
+    batch.push(entry);
+    bytes += size;
+  }
+  if (batch.length > 0) out.push(batch);
+  return out;
 }
 
 /** Claude Code's directory for a folder's transcripts (~/.claude/projects/<this>): what is not a letter or a digit becomes "-". */

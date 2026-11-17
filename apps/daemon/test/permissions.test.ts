@@ -142,9 +142,9 @@ test("the hook server holds a PermissionRequest until it is answered, and answer
   const { port } = server.address() as AddressInfo;
   const url = `http://127.0.0.1:${port}/hooks`;
   try {
-    const stop = await fetch(url, { method: "POST", body: JSON.stringify({ hook_event_name: "Stop", session_id: "s1" }) });
+    const stop = await fetch(url, { method: "POST", body: JSON.stringify({ hook_event_name: "Stop", session_id: "s1" }), headers: { "content-type": "application/json" } });
     assert.equal(await stop.text(), "");
-    const pending = fetch(url, { method: "POST", body: JSON.stringify(request()) });
+    const pending = fetch(url, { method: "POST", body: JSON.stringify(request()), headers: { "content-type": "application/json" } });
     await t.waitFor(() => assert.ok(p.of("s1")), WAIT);
     const id = p.of("s1")?.[0]?.id ?? "";
     p.answer("s1", id, "allow");
@@ -154,7 +154,7 @@ test("the hook server holds a PermissionRequest until it is answered, and answer
 
     // Claude Code gives up (closes the connection): the request is dropped.
     const ac = new AbortController();
-    const gone = fetch(url, { method: "POST", body: JSON.stringify(request()), signal: ac.signal }).catch(() => undefined);
+    const gone = fetch(url, { method: "POST", body: JSON.stringify(request()), headers: { "content-type": "application/json" }, signal: ac.signal }).catch(() => undefined);
     await t.waitFor(() => assert.ok(p.of("s1")), WAIT);
     ac.abort();
     await gone;

@@ -147,6 +147,9 @@ test("the relay sends the context window and the limits, and prints the user's s
     assert.equal(r.code, 3);
     assert.equal(got.length, 1);
     assert.equal(got[0]?.headers["x-gasho-secret"], "s3cret");
+    // What the hook server takes (#99).
+    assert.equal(got[0]?.headers["content-type"], "application/json");
+    assert.equal(got[0]?.headers.origin, undefined);
     assert.deepEqual(got[0]?.body, { session_id: AFTER_REPLY.session_id, context_window: AFTER_REPLY.context_window, rate_limits: AFTER_REPLY.rate_limits });
 
     // No status line of the user's: nothing is printed, and the update is still sent.
@@ -178,8 +181,8 @@ test("the hook server passes what the relay sends to onStatusLine, with the same
   try {
     const url = `http://127.0.0.1:${port}/statusline`;
     const body = JSON.stringify({ session_id: "s1", context_window: AFTER_REPLY.context_window });
-    assert.equal((await fetch(url, { method: "POST", body, headers: { "x-gasho-secret": "nope" } })).status, 401);
-    const ok = await fetch(url, { method: "POST", body, headers: { "x-gasho-secret": "s3cret" } });
+    assert.equal((await fetch(url, { method: "POST", body, headers: { "content-type": "application/json", "x-gasho-secret": "nope" } })).status, 401);
+    const ok = await fetch(url, { method: "POST", body, headers: { "content-type": "application/json", "x-gasho-secret": "s3cret" } });
     assert.equal(ok.status, 200);
     await t.waitFor(() => assert.equal(lines.length, 1), WAIT);
     assert.equal(lines[0]?.session_id, "s1");

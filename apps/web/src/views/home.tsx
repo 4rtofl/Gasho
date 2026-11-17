@@ -56,7 +56,7 @@ import { arrangeTiles, sameOrder, useSavedOrder } from "@/lib/order";
 import { go } from "@/lib/route";
 import { notificationShown, shownSessions } from "@/lib/sessions";
 import { useSortable, type Sortable } from "@/lib/sortable";
-import { markRead, useAppState } from "@/lib/store";
+import { MAX_OPERATIONS, markRead, useAppState } from "@/lib/store";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
 import { usePluginTiles, type PluginTile } from "@/plugins/parts";
@@ -141,8 +141,6 @@ const NOTIFICATION_TYPE: Record<GashoNotification["kind"], NotificationItem["typ
 /** Waiting first (they need an answer), then working, then idle; the latest activity first within each. */
 const STATUS_ORDER: Record<SessionStatus, number> = { waiting: 0, busy: 1, idle: 2, unknown: 3 };
 const HOUR = 3600_000;
-/** The snapshot the Gasho server sends holds this many of the latest events (Store.recentEvents). */
-const SNAPSHOT_EVENTS = 200;
 /** Sessions shown before "すべて表示". */
 const SESSIONS_SHOWN = 9;
 /** Operations shown in their tile. */
@@ -153,7 +151,7 @@ function openSession(machine: string, sessionId: string): void {
 }
 
 export function HomeView() {
-  const { machines, notifications, events } = useAppState();
+  const { machines, notifications, operations } = useAppState();
   const now = useNow();
   const [launching, setLaunching] = useState(false);
 
@@ -177,7 +175,7 @@ export function HomeView() {
     return list.length <= 2 ? list.join("、") : `${list.slice(0, 2).join("、")} ほか ${list.length - 2} 件`;
   };
   const unread = notifications.filter((n) => !n.read && notificationShown(n, machines));
-  const sent = useMemo(() => sentTrend(events, now), [events, now]);
+  const sent = useMemo(() => sentTrend(operations, now), [operations, now]);
   const tokens = useMemo(() => tokenTrend(rows, now), [rows, now]);
 
   const [stored, saveOrder] = useSavedOrder(TILE_ORDER_KEY);
@@ -320,7 +318,7 @@ export function HomeView() {
       size: "medium",
       content: (
         <Tile title="最近の操作" icon={<CircleDot className="size-4" />}>
-          <Operations events={events} machines={machines} now={now} />
+          <Operations operations={operations} machines={machines} now={now} />
         </Tile>
       ),
     },
@@ -588,10 +586,10 @@ function TokenBreakdown({ tokens }: { tokens: TokenTrend }) {
 
 /**
  * The instructions sent from Gasho in the last 24 hours, in twelve 2-hour steps, and in the 24 hours before when the
- * events on hand reach back that far.
+ * operations on hand reach back that far.
  */
-function sentTrend(events: MachineHookEvent[], now: number): { total: number; trend: number[]; labels: string[]; previous?: number } {
-  const sent = events.filter((e) => e.event === "Gasho:session.input").map((e) => e.at);
+function sentTrend(operations: MachineHookEvent[], now: number): { total: number; trend: number[]; labels: string[]; previous?: number } {
+  const sent = operations.filter((e) => e.event === "Gasho:session.input").map((e) => e.at);
   const start = now - 24 * HOUR;
   const trend = Array.from({ length: 12 }, (_, i) => {
     const from = start + i * 2 * HOUR;
@@ -604,9 +602,10 @@ function sentTrend(events: MachineHookEvent[], now: number): { total: number; tr
     return `${hm(from)}〜${hm(to)}`;
   });
   const total = trend.reduce((a, b) => a + b, 0);
-  // All events are on hand when fewer than a snapshot holds arrived, or when the oldest is older than 48 hours.
-  const oldest = events[0]?.at ?? now;
-  const covered = events.length < SNAPSHOT_EVENTS || oldest <= now - 48 * HOUR;
+  // All operations of the 48 hours are on hand when fewer than the most kept are, or when the oldest is older than 48
+  // hours.
+  const oldest = operations[0]?.at ?? now;
+  const covered = operations.length < MAX_OPERATIONS || oldest <= now - 48 * HOUR;
   const previous = covered ? sent.filter((at) => at >= now - 48 * HOUR && at < start).length : undefined;
   return { total, trend, labels, ...(previous !== undefined ? { previous } : {}) };
 }
@@ -726,8 +725,8 @@ const OPERATION_ICONS: Record<string, LucideIcon> = {
  * folders made and repositories cloned to start sessions in, the repositories registered and taken off, the worktrees
  * removed, and the files saved or made in sessions' folders (the Gasho server's records).
  */
-function Operations({ events, machines, now }: { events: MachineHookEvent[]; machines: MachineInfo[]; now: number }) {
-  const items = events
+function Operations({ operations, machines, now }: { operations: MachineHookEvent[]; machines: MachineInfo[]; now: number }) {
+  const items = operations
     .filter((e) => Object.hasOwn(OPERATION_ICONS, e.event))
     .slice(-OPERATIONS_SHOWN)
     .reverse();

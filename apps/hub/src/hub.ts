@@ -727,6 +727,7 @@ export class Hub {
       machines: [...this.machines.values()],
       notifications: this.store.recentNotifications(),
       events: this.store.recentEvents(),
+      operations: this.store.recentOperations(),
       ...(this.plugins ? { plugins: this.plugins.infos(), pluginEvents: this.plugins.retainedEvents() } : {}),
       ...(this.plugins?.catalog() ? { catalog: this.plugins.catalog() } : {}),
       ...(this.latest ? { latest: this.latest.latest() } : {}),

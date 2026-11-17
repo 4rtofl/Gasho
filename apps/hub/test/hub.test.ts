@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { HubToClient, HubToDaemon, ServerInfo, SessionInfo } from "@gasho/protocol";
+import type { HubToClient, HubToDaemon, MachineHookEvent, ServerInfo, SessionInfo } from "@gasho/protocol";
 import {
   CLOSE_INVALID_CREDENTIALS,
   CLOSE_UNAUTHORIZED,
@@ -89,6 +89,39 @@ test("sessions and hooks reach the browser, and Stop becomes a notification", ()
   hub.onDaemonClose(d);
   const last = c.sent.at(-1);
   assert.ok(last?.type === "machine" && last.machine.connected === false);
+});
+
+test("the snapshot sends the operations apart from the hooks of tools, which outnumber them", () => {
+  const { hub, store, machineId, machineToken, browserId } = setup();
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.2.0" });
+  const asking = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(asking);
+  hub.onClientMessage(asking, { type: "session.input", requestId: "a", machine: machineId, sessionId: "s1", text: "直して" });
+  for (let i = 0; i < 300; i++) {
+    hub.onDaemonMessage(d, { type: "hook", event: { sessionId: "s1", event: i % 2 ? "PostToolUse" : "PreToolUse", at: Date.now(), toolName: "Bash" } });
+  }
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const snap = c.sent[0];
+  assert.ok(snap?.type === "snapshot");
+  assert.ok(!snap.events.some((e) => e.event === "Gasho:session.input"));
+  assert.deepEqual(snap.operations?.map((e) => e.event), ["Gasho:session.input"]);
+
+  // Those of the last 48 hours; the latest 20 when fewer.
+  const now = Date.now();
+  const op = (at: number): MachineHookEvent => ({ machine: machineId, sessionId: "", event: "Gasho:folder.create", at, summary: "/tmp/x" });
+  const older = new Store(":memory:");
+  for (let i = 0; i < 25; i++) older.addEvent(op(now - 72 * 3600_000 + i));
+  assert.deepEqual(
+    older.recentOperations(now).map((e) => e.at),
+    Array.from({ length: 20 }, (_, i) => now - 72 * 3600_000 + 5 + i),
+  );
+  for (let i = 0; i < 5; i++) store.addEvent(op(now - 72 * 3600_000 + i));
+  for (let i = 0; i < 30; i++) store.addEvent(op(now - 3600_000 + i));
+  const recent = store.recentOperations(now);
+  assert.equal(recent.length, 31);
+  assert.ok(recent.every((e) => e.at >= now - 48 * 3600_000));
 });
 
 test("transcript.get is relayed to the daemon and the page goes back to the asking browser", () => {

@@ -272,6 +272,26 @@ npm run typecheck
 
 PR と main への push のたびに、GitHub Actions（`.github/workflows/ci.yml`）が Ubuntu で `npm run typecheck`・`npm test`・`npm run web:build` を流す。PR の画面に、それぞれの結果が別々に出る。
 
+### E2E テスト
+
+`e2e/` に、Playwright で実際の画面を操作するテストがある。ビルドした画面（`apps/web/dist`）を、Chromium（PC の幅）と WebKit（iPhone の幅・タッチ）で開く。
+
+```bash
+npx playwright install chromium webkit   # 初回だけ。ブラウザーを入れる
+npm run e2e                              # 画面をビルドしてから、全部のテストを流す
+npm run e2e -- --project chromium        # Chromium だけ。後ろに Playwright の引数を付けられる
+npx playwright show-trace e2e/test-results/<テスト>/trace.zip   # 落ちたテストの操作と画面を見る
+```
+
+- テストごとに、`/tmp/ge2e-*` に置き場を作り、Gasho サーバーを 127.0.0.1 の空いているポートで起動する。DB・プラグイン・キャッシュ・`HOME` もそこに置くので、ふだん使う Gasho サーバー・gasho-daemon・Claude Code の設定と会話には触れない。テストが終わると置き場を消す
+- ブラウザーは、登録コードで登録した状態（Cookie）で始まる
+- working server は、テストから動かす偽の gasho-daemon（`hub.fakeDaemon()`）を主に使う。版・できること・セッション・会話・答えの遅れや失敗・オフラインを、テストから決められる
+- 本物の gasho-daemon（`hub.startDaemon()`）も起動できる。claude と gh は偽物（`e2e/harness/bin/`）で、テストが渡した表から答え、受けた引数を記録する。偽の claude は、端末で動かすと入力欄を描き、送られた文に答えて会話のファイルに書く
+- Gasho サーバーが使う gh（プラグインの一覧）と npm（公開されている最新の版）も偽物にしてある
+- 起動の処理（`e2e/harness/index.ts`）は `@playwright/test` を読み込まないので、GashoPlugins のテストからも使える。Playwright の fixture は `e2e/tests/fixtures.ts` で組む
+
+main では、GitHub Actions の `.github/workflows/e2e.yml` が毎日 5:00（日本時間）に流す。起動するのは Cloudflare Worker（`infra/release-trigger`）である。手で流すときは `gh workflow run e2e.yml`。テストが落ちると、trace・スクリーンショット・動画を run の artifact（`e2e-results`）に残し、落ちたテストの名前と run の URL を書いた Issue（`bug` ラベル）を立てる。同じテストの Issue が開いていれば、そこにコメントを足す。PR の CI では流さない。
+
 ### 公開
 
 gasho-daemon（`@4rtofl/gasho-daemon`）、Gasho サーバー（`@4rtofl/gasho-hub`。画面も入る）、プラグインの SDK（`@4rtofl/gasho-plugin-sdk`）は、GitHub Actions（`.github/workflows/release.yml`）が GitHub Packages に公開する。15分ごとに main を見て、前に公開してから中身が変わったパッケージだけを公開する。まだ一度も公開していないパッケージ（タグが無いもの）は、ソースに書いてある版のまま公開する。

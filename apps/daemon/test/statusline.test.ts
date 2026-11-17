@@ -9,6 +9,9 @@ import { test } from "node:test";
 import { startHookServer } from "../src/hooks.ts";
 import { isInside, RELAY_FILE, shellQuote, statusLineLaunch, statusLineOf, userStatusLine } from "../src/statusline.ts";
 
+/** How t.waitFor waits for what the hook server does after answering: up to 5 seconds, for a machine under load. */
+const WAIT = { interval: 10, timeout: 5_000 };
+
 /** What Claude Code 2.1.325 passed to the status line after a first reply (a Claude.ai plan without a 5-hour limit). */
 const AFTER_REPLY = {
   session_id: "00ac671e-4a2a-4519-a349-923e94127b77",
@@ -169,7 +172,7 @@ test("the relay prints the user's status line when gasho-daemon is away, and tak
   assert.deepEqual(await runRelay(env, "not json"), { code: 0, stdout: "away" });
 });
 
-test("the hook server passes what the relay sends to onStatusLine, with the same secret", async () => {
+test("the hook server passes what the relay sends to onStatusLine, with the same secret", async (t) => {
   const lines: Array<Record<string, unknown>> = [];
   const events: Array<Record<string, unknown>> = [];
   const server = startHookServer({ host: "127.0.0.1", port: 0, secret: "s3cret", onEvent: (p) => events.push(p), onStatusLine: (p) => lines.push(p) });
@@ -181,8 +184,7 @@ test("the hook server passes what the relay sends to onStatusLine, with the same
     assert.equal((await fetch(url, { method: "POST", body, headers: { "content-type": "application/json", "x-gasho-secret": "nope" } })).status, 401);
     const ok = await fetch(url, { method: "POST", body, headers: { "content-type": "application/json", "x-gasho-secret": "s3cret" } });
     assert.equal(ok.status, 200);
-    await new Promise((r) => setTimeout(r, 20));
-    assert.equal(lines.length, 1);
+    await t.waitFor(() => assert.equal(lines.length, 1), WAIT);
     assert.equal(lines[0]?.session_id, "s1");
     // A status line update is not a hook.
     assert.equal(events.length, 0);

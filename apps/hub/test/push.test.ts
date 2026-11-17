@@ -264,6 +264,8 @@ function setup() {
 
 /** Lets the sending (not awaited by the Gasho server) finish. */
 const settle = () => new Promise((r) => setTimeout(r, 10));
+/** How t.waitFor waits for that sending: up to 5 seconds, for a machine under load. */
+const WAIT = { interval: 10, timeout: 5_000 };
 
 test("the Gasho server answers ping with pong, and its snapshot says so with this browser's Web Push", () => {
   const { hub, phone } = setup();
@@ -286,7 +288,7 @@ test("the Gasho server answers ping with pong, and its snapshot says so with thi
   assert.deepEqual(d.sent.at(-1), { type: "pong" });
 });
 
-test("subscribing from one page tells every page of that browser, and a notification is pushed with the badge", async () => {
+test("subscribing from one page tells every page of that browser, and a notification is pushed with the badge", async (t) => {
   const { hub, svc, phone, stop } = setup();
   const c1 = fakePeer<HubToClient>(phone);
   const c2 = fakePeer<HubToClient>(phone);
@@ -299,8 +301,7 @@ test("subscribing from one page tells every page of that browser, and a notifica
   // Its pages are connected but in the background: it is sent the notification.
   hub.onClientMessage(c1, { type: "presence", visible: false });
   stop();
-  await settle();
-  assert.equal(svc.posts.length, 1);
+  await t.waitFor(() => assert.equal(svc.posts.length, 1), WAIT);
   const payload = JSON.parse(decrypt(svc.posts[0]?.body ?? Buffer.alloc(0), ua.keys).toString()) as PushPayload;
   // s2 waits for a confirmation.
   assert.equal(payload.badge, 1);
@@ -328,14 +329,13 @@ test("a browser with a page on screen is not pushed to, until the page goes away
   t.mock.timers.reset();
   hub.onClientMessage(c, { type: "presence", visible: false });
   stop();
-  await settle();
-  assert.equal(svc.posts.length, 1);
+  await t.waitFor(() => assert.equal(svc.posts.length, 1), WAIT);
   hub.onClientMessage(c, { type: "presence", visible: true });
   hub.onClientClose(c);
   assert.equal(hub.onScreen(phone), false);
 });
 
-test("a permission prompt counts its session in the badge before the sessions say it waits", async () => {
+test("a permission prompt counts its session in the badge before the sessions say it waits", async (t) => {
   const { hub, svc, phone } = setup();
   const c = fakePeer<HubToClient>(phone);
   hub.onClientConnect(c);
@@ -345,7 +345,7 @@ test("a permission prompt counts its session in the badge before the sessions sa
   const machine = [...(hub as unknown as { daemons: Map<string, ReturnType<typeof fakePeer<HubToDaemon>>> }).daemons.values()][0];
   assert.ok(machine);
   hub.onDaemonMessage(machine, { type: "hook", event: { sessionId: "s1", event: "Notification", notificationType: "permission_prompt", at: 2, summary: "rm -rf" } });
-  await settle();
+  await t.waitFor(() => assert.equal(svc.posts.length, 1), WAIT);
   const payload = JSON.parse(decrypt(svc.posts[0]?.body ?? Buffer.alloc(0), ua.keys).toString()) as PushPayload;
   assert.deepEqual([payload.body, payload.badge], ["確認を待っています", 2]);
 });

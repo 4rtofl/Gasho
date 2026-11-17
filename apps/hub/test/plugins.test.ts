@@ -8,6 +8,9 @@ import { Hub } from "../src/hub.ts";
 import { checkManifest, PluginRegistry, settingProblem } from "../src/plugins.ts";
 import { Store } from "../src/store.ts";
 
+/** How t.waitFor waits for what is done without being awaited: up to 5 seconds, for a machine under load. */
+const WAIT = { interval: 10, timeout: 5_000 };
+
 const manifest = {
   id: "hello",
   name: "Hello",
@@ -29,9 +32,10 @@ function tmp(): string {
 function writePlugin(dir: string, m: object = manifest, files: Record<string, string> = {}): string {
   const folder = path.join(dir, (m as { id: string }).id);
   fs.mkdirSync(folder, { recursive: true });
-  fs.writeFileSync(path.join(folder, "gasho-plugin.json"), JSON.stringify(m));
   const all = { "web.js": "export default {}", "web.css": ".x{}", "daemon.js": "export default { methods: {} }", ...files };
   for (const [name, text] of Object.entries(all)) fs.writeFileSync(path.join(folder, name), text);
+  // Last, as gasho-plugin build writes it: a linked folder with a file newer than its manifest is a build under way.
+  fs.writeFileSync(path.join(folder, "gasho-plugin.json"), JSON.stringify(m));
   return folder;
 }
 
@@ -180,7 +184,7 @@ const lastPlugins = (sent: HubToClient[]): PluginInfo[] | undefined => {
   return undefined;
 };
 
-test("browsers get the plugins with their files' URLs, and the daemon part's state per working server", async () => {
+test("browsers get the plugins with their files' URLs, and the daemon part's state per working server", async (t) => {
   const { client, daemon, hub, machineId } = await setup();
   const snapshot = client.sent[0];
   assert.ok(snapshot?.type === "snapshot");
@@ -208,7 +212,7 @@ test("browsers get the plugins with their files' URLs, and the daemon part's sta
 
   // It gets the code it asks for.
   hub.onDaemonMessage(daemon, { type: "plugin.code.get", plugin: "hello", hash: p?.hash ?? "" });
-  await new Promise((r) => setTimeout(r, 50));
+  await t.waitFor(() => assert.ok(daemon.sent.some((m) => m.type === "plugin.code")), WAIT);
   const code = daemon.sent.find((m) => m.type === "plugin.code");
   assert.ok(code?.type === "plugin.code");
   assert.equal(code.code, "export default { methods: {} }");

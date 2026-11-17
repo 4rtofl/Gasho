@@ -305,7 +305,8 @@ function mediaAnswerOf(msg: Extract<DaemonToHub, { type: "media" }>, offset: num
   if (typeof p.data !== "string" || !BASE64_RE.test(p.data)) return { status: 502, error: "working server の答えが正しくありません。" };
   const bytes = Buffer.from(p.data, "base64");
   if (bytes.length > length || offset + bytes.length > p.size) return { status: 502, error: "working server の答えが正しくありません。" };
-  return { part: { mime: p.mime, size: p.size, mtime: p.mtime, offset }, bytes };
+  // Browsers ignore a type's case. Lowercased here, an SVG is always found by media.ts and sent with a sandbox.
+  return { part: { mime: p.mime.toLowerCase(), size: p.size, mtime: p.mtime, offset }, bytes };
 }
 
 /** Files sent with one input: how many, and their size in all. */

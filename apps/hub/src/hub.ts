@@ -1152,9 +1152,12 @@ export class Hub {
     return true;
   }
 
-  /** Closes connections of devices revoked elsewhere, e.g. with the command line tool. */
+  /**
+   * Closes connections of devices revoked elsewhere, e.g. with the command line tool, and takes their machines off the
+   * browsers, offline ones too.
+   */
   checkRevocations(): void {
-    const ids = [...this.daemons.keys(), ...[...this.clients].map((c) => c.deviceId)];
+    const ids = [...this.machines.keys(), ...[...this.clients].map((c) => c.deviceId)];
     const revoked = this.store.revokedSince([...new Set(ids)]);
     if (revoked.length > 0) this.disconnectRevoked(revoked);
   }
@@ -1172,8 +1175,10 @@ export class Hub {
         this.presence.delete(c);
         c.close(CLOSE_UNAUTHORIZED, "registration revoked");
       }
+      // The daemon was taken out of `daemons` before it was closed, so onDaemonClose leaves this to be done here.
       if (this.machines.delete(id)) {
         this.failPending((req) => req.machine === id, "machine was removed");
+        this.failCommands((c) => c.machine === id, "working server の登録が外されました。");
         this.failMedia(id, "working server の登録が外されました。");
         this.broadcast({ type: "machine.removed", id });
         this.plugins?.onDaemonClose(id);

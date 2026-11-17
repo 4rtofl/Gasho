@@ -127,14 +127,24 @@ test("transcript.get for an offline machine answers with an error", () => {
   assert.equal(page.error, "machine is offline");
 });
 
-test("revoking a machine disconnects it and removes it from browsers", () => {
+test("revoking a machine disconnects it, fails the commands under way on it, and removes it from browsers", () => {
   const { hub, machineId, machineToken, browserId } = setup();
   const d = fakePeer<HubToDaemon>();
   hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.1.0" });
   const c = fakePeer<HubToClient>(browserId);
   hub.onClientConnect(c);
+  hub.onClientMessage(c, { type: "session.input", requestId: "a", machine: machineId, sessionId: "s1", text: "テスト" });
+  assert.equal(d.sent.at(-1)?.type, "session.input");
   assert.equal(hub.revokeDevice(machineId), true);
   assert.equal(d.closed?.[0], CLOSE_INVALID_CREDENTIALS);
+  hub.onDaemonClose(d); // as the socket's close follows
+  assert.equal(hub.inFlight(), 0);
+  assert.deepEqual(c.sent.at(-2), {
+    type: "command.result",
+    requestId: "a",
+    machine: machineId,
+    result: { ok: false, error: "working server の登録が外されました。" },
+  });
   assert.deepEqual(c.sent.at(-1), { type: "machine.removed", id: machineId });
   assert.equal(hub.revokeDevice(machineId), false);
 });
@@ -156,6 +166,22 @@ test("browsers revoked from the command line are disconnected by checkRevocation
   store.revokeDevice(browserId); // what `cli.ts revoke` does in another process
   hub.checkRevocations();
   assert.equal(c.closed?.[0], CLOSE_UNAUTHORIZED);
+});
+
+test("an offline machine revoked from the command line is taken off browsers by checkRevocations", () => {
+  const { hub, store, machineId, browserId } = setup();
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const snap = c.sent[0];
+  assert.ok(snap?.type === "snapshot" && snap.machines.some((m) => m.id === machineId && !m.connected));
+  store.revokeDevice(machineId);
+  hub.checkRevocations();
+  assert.deepEqual(c.sent.at(-1), { type: "machine.removed", id: machineId });
+  const later = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(later);
+  const again = later.sent[0];
+  assert.ok(again?.type === "snapshot");
+  assert.deepEqual(again.machines, []);
 });
 
 test("machines are restored from the store as disconnected; revoked ones are not", () => {

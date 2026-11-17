@@ -1,6 +1,6 @@
 import { ArrowLeft, ExternalLink, FolderOpen, GitBranch, GitPullRequest } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import type { CommandResult, InputFeature, MachineInfo, SessionInfo, SessionModel } from "@gasho/protocol";
+import type { InputFeature, MachineInfo, SessionInfo, SessionModel } from "@gasho/protocol";
 import { BackgroundTasks } from "@/components/background-tasks";
 import { RepoPicker } from "@/components/repo-picker";
 import { EffortPicker, UltracodeToggle } from "@/components/session-controls";
@@ -26,7 +26,7 @@ import { go, type SessionPanel } from "@/lib/route";
 import { closeSessionHeaderOnPhone, useSessionHeaderShown } from "@/lib/session-header";
 import { daemonAtLeast, rememberOpened, worktreeId, worktreesByLastUse } from "@/lib/sessions";
 import { loadSkills, useSkills } from "@/lib/skills";
-import { loadTranscript, sendCommand, transcriptKey, useAppState } from "@/lib/store";
+import { loadTranscript, sendCommand, type SentResult, transcriptKey, useAppState } from "@/lib/store";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
 import { PluginComposerFooter, PluginConversationEnd, PluginHeaderItems } from "@/plugins/parts";
@@ -426,7 +426,7 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
           // Shown at the end of the conversation at once: Claude Code records the message only once it is typed into
           // the session, after switching the model (/model) and the like.
           const pending = addPending(key, { text, files: files.map((f) => f.name), after: entries });
-          let r: CommandResult;
+          let r: SentResult;
           try {
             const encoded = await Promise.all(files.map(async (f) => ({ name: f.name, data: await toBase64(f) })));
             r = await sendCommand(
@@ -446,6 +446,12 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
           } catch (e) {
             removePending(key, pending);
             throw e;
+          }
+          if (r.unknown) {
+            // It may have been typed into the session: put back in the box, it could be sent twice.
+            removePending(key, pending);
+            setWarning("Gasho サーバーとの接続が切れたので、送れたか分かりません。会話に出ていなければ、もう一度送ってください。");
+            return;
           }
           if (!r.ok) {
             removePending(key, pending);

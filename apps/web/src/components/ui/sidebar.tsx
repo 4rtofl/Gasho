@@ -226,7 +226,7 @@ export function Sidebar({
             <motion.aside
               role="dialog"
               aria-modal="true"
-              aria-label="Navigation"
+              aria-label="サイドバー"
               className="absolute inset-y-0 left-0 w-[17rem] max-w-[85vw] overflow-hidden border-r border-neutral-200 bg-white pt-(--safe-top) pl-(--safe-left) shadow-2xl dark:border-neutral-800 dark:bg-neutral-950"
               initial={{ x: "-100%" }}
               animate={{ x: 0 }}
@@ -264,7 +264,7 @@ export function SidebarTrigger({ className, ...props }: React.ComponentProps<"bu
   return (
     <button
       type="button"
-      aria-label="Open navigation"
+      aria-label="サイドバーを開く"
       className={cn(
         "grid size-9 place-items-center rounded-lg text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900 md:hidden dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-white",
         className
@@ -835,7 +835,7 @@ function Panel({
         <motion.nav
           ref={nav}
           layoutScroll
-          aria-label="Main"
+          aria-label="メニュー"
           onMouseEnter={() => onPointerInside?.(true)}
           onMouseLeave={() => {
             setHovering(false);

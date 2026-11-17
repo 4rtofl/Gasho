@@ -319,6 +319,7 @@ export class Daemon {
         this.emitRepos();
         // Also tells the Gasho server that this gasho-daemon runs plugins.
         this.plugins.status(true);
+        this.plugins.connected();
       },
       onMessage: (m) => void this.onHubMessage(m),
       onRejected: (reason) => {

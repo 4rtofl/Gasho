@@ -48,7 +48,7 @@ const HASH1 = "aaaaaaaaaaaaaaaa";
 const HASH2 = "bbbbbbbbbbbbbbbb";
 const HASH3 = "cccccccccccccccc";
 
-function setup(enabled = true) {
+function setup(enabled = true, answerCode = true) {
   const sent: DaemonToHub[] = [];
   const logs: string[] = [];
   const codes: Record<string, string> = { [HASH1]: V1, [HASH2]: V2, [HASH3]: V3 };
@@ -59,10 +59,11 @@ function setup(enabled = true) {
   const ghBin = path.join(ghDir, "gh");
   fs.writeFileSync(ghBin, `#!/bin/sh\necho "$*" >> "${ghDir}/runs"\ncase "$*" in fail) echo boom >&2; exit 3;; esac\necho "gh $*"\n`, { mode: 0o755 });
   const ghRuns = () => (fs.existsSync(path.join(ghDir, "runs")) ? fs.readFileSync(path.join(ghDir, "runs"), "utf8").trim().split("\n") : []);
+  const giveCode = (hash: string) => runner.onCode({ type: "plugin.code", plugin: "hello", hash, code: codes[hash] });
   const send = (m: DaemonToHub) => {
     sent.push(m);
     // The Gasho server hands over the code asked for.
-    if (m.type === "plugin.code.get") setTimeout(() => runner.onCode({ type: "plugin.code", plugin: m.plugin, hash: m.hash, code: codes[m.hash] }), 5);
+    if (m.type === "plugin.code.get" && answerCode) setTimeout(() => giveCode(m.hash), 5);
   };
   runner = new PluginRunner({
     cacheDir: fs.mkdtempSync(path.join(os.tmpdir(), "gasho-daemon-plugins-")),
@@ -90,7 +91,7 @@ function setup(enabled = true) {
     for (let i = 0; i < 200 && !ok(); i++) await new Promise((r) => setTimeout(r, 25));
     assert.ok(ok(), "timed out");
   };
-  return { runner, sent, logs, call, state, until, local, ghRuns };
+  return { runner, sent, logs, call, state, until, local, ghRuns, giveCode };
 }
 
 test("a daemon part runs in a process of its own, gets its session and settings, and answers calls", async () => {
@@ -200,6 +201,27 @@ test("a daemon part's events go to the Gasho server, at most once a second for e
     runner.update([{ id: "hello", hash: HASH3, run: false, settings: {} }]);
     await new Promise((r) => setTimeout(r, 1200));
     assert.equal(events("progress").length, before);
+  } finally {
+    await runner.stopAll();
+  }
+});
+
+test("the code of a version is asked for once while it comes, and again after reconnecting", async () => {
+  const { runner, sent, state, until, giveCode } = setup(true, false);
+  const asks = () => sent.filter((m) => m.type === "plugin.code.get").length;
+  const entry = { id: "hello", hash: HASH1, run: true, settings: {} };
+  try {
+    runner.update([entry]);
+    // The list again while the code comes (another plugin changed): the ask on its way is waited for.
+    runner.update([entry]);
+    assert.equal(asks(), 1);
+    // An answer on its way is lost with the old connection.
+    runner.connected();
+    assert.equal(asks(), 2);
+    giveCode(HASH1);
+    giveCode(HASH1);
+    await until(() => state()?.state === "running");
+    assert.equal(asks(), 2);
   } finally {
     await runner.stopAll();
   }

@@ -168,6 +168,8 @@ async function setup(c: FakeClaude, enterWaitMs = 400) {
   d.currentStatus = async () => "idle";
   d.scheduleRefresh = () => undefined;
   d.emitSessions = () => undefined;
+  // As after the first refresh, which the session tracked below stands for.
+  d.refreshed = true;
   d.managed.add({ sessionId: SID, terminal: "z", pid: 1, cwd: dir, name: "fake", launchedAt: 1 });
   d.tracked.set(SID, {
     info: { sessionId: SID, cwd: dir, status: "idle", rcMode: "none", prLinks: [], model: name(c.model), effort: "medium", ultracode: false },

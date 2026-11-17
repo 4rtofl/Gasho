@@ -232,6 +232,11 @@ export class Daemon {
    */
   private ownPids = new Set<number>();
   private lastSent = "";
+  /**
+   * Whether a refresh has ended since the start. Until then no sessions are sent: the list would be empty, and the
+   * Gasho server would drop the sessions it kept from before the restart (open ones would show as gone).
+   */
+  private refreshed = false;
   private refreshing = false;
   private refreshAgain = false;
   private refreshTimer: NodeJS.Timeout | undefined;
@@ -489,6 +494,11 @@ export class Daemon {
       log("refresh failed", e);
     } finally {
       this.refreshing = false;
+      // Also after a failed one: the sessions from before the restart would otherwise show on as if they still ran.
+      if (!this.refreshed) {
+        this.refreshed = true;
+        this.emitSessions();
+      }
       if (this.refreshAgain) {
         this.refreshAgain = false;
         void this.refresh();
@@ -634,6 +644,7 @@ export class Daemon {
   }
 
   private emitSessions(): void {
+    if (!this.refreshed) return;
     const sessions = [...this.tracked.values()]
       // Not yet, or no longer, among Gasho's sessions: sent, it would show as one opened outside Gasho.
       .filter((t) => this.managed.has(t.info.sessionId) || !this.isOwn(t.info.pid))

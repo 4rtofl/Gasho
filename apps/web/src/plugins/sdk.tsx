@@ -25,7 +25,7 @@ import type {
 } from "@gasho/plugin-sdk";
 import { PLUGIN_API, SDK_EXPORTS } from "@gasho/plugin-sdk/exports";
 import type { PluginInfo, PluginSettingSpec, SessionInfo } from "@gasho/protocol";
-import { MarkdownText } from "@/components/markdown";
+import { GitHubMarkdown } from "@/components/markdown";
 import { removeWorktree } from "@/components/worktree-menu";
 import { removeWorktreeProblem } from "@/lib/worktree-remove";
 import { PANEL_BUTTON, panelRepo, RepoTabs, SidePanel } from "@/components/side-panel";
@@ -421,7 +421,7 @@ export const sdk: GashoSdk = {
   PANEL_BUTTON,
   RepoTabs,
   Tile,
-  Markdown: MarkdownText,
+  Markdown: GitHubMarkdown,
   RelativeTime,
   Popover,
 };

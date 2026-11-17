@@ -629,7 +629,7 @@ function useMoveToHeading() {
 | `PANEL_BUTTON` | パネルの見出しの右に置く小さいボタン（再読み込み、GitHub で開く）のクラス名 |
 | `RepoTabs` | セッションのフォルダーの中のリポジトリを切り替えるタブ |
 | `Tile` | ホームのタイルの枠 |
-| `Markdown` | 会話と同じ Markdown の表示。HTML は出さず、画像は読み込まずにリンクにする |
+| `Markdown` | GitHub の Issue・Pull request・コメントの本文の表示。HTML は、GitHub が本文で出すもの（`<img>`・`<details>`・`<summary>`・`<br>` など）だけを出し、スクリプト・`on` で始まる属性・`style` は消す。画像は http と https のものだけを読み込み、読み込めなかったら会話と同じリンクにする |
 | `RelativeTime` | 「3分前」の表示。ポインターを乗せると時刻を出す |
 | `Popover` | ボタンから開く小さな画面（API 1.4）。開くボタン（`trigger`）、開く向き（`side`、`align`）、読み上げる名前（`label`）、クラス（`className`）を受け取る。開いているかをプラグインが持つときは、`open` と `onOpenChange` も渡す。Esc、外を押す、ボタンをもう一度押すと閉じる。モーダルにしないので、後ろの会話はスクロールできる。中身は、開いているあいだだけ描く |
 
@@ -1154,7 +1154,7 @@ Gasho の CSS（Tailwind CSS）には、Gasho のコードが使うクラスし�
 - daemon の部分は、gasho-daemon と同じ OS のユーザーで動き、そのユーザーのファイルを読み書きし、コマンドを実行できる。daemon の部分は、プラグインが有効なら、すべての working server で動く。動かしたくない working server では、gasho-daemon を `GASHO_PLUGINS=none` で動かす
 - gasho-daemon は、daemon の部分に、自分が見ているセッションのフォルダーと、その中で見つけたリポジトリのフォルダーだけを渡す。引数はブラウザーから来るので、daemon の部分が確かめる
 - 次のことは、端末とプラグインの ID とともに操作のログに残す。プラグインを追加・更新・外したこと、有効・無効にしたこと、`scope: "server"` の設定を変えたこと、`write` のメソッドを呼んだこと、`useSendInput` で発言を送ったことである。`read` の呼び出しは残さない
-- GitHub のコメントのように外から来た文は、SDK の `Markdown` で出す。会話と同じく、HTML は出さず、画像は読み込まない
+- GitHub のコメントのように外から来た文は、SDK の `Markdown` で出す。HTML は GitHub が本文で出すものだけを出し、スクリプトと `on` で始まる属性は消す。画像は http と https のものを読み込む（Referer は送らない）
 - Gasho は、プラグインのための秘密の値（トークンなど）を保存しない。外のサービスにログインが要るプラグインは、gh と同じく、working server の CLI のログインを使う
 
 ## GitHub の機能をプラグインに移す

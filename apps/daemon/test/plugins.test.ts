@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import type { DaemonToHub } from "@gasho/protocol";
+import { exec } from "../src/exec.ts";
 import { GitHubProxy } from "../src/github.ts";
 import { PluginRunner } from "../src/plugins.ts";
 
@@ -263,4 +264,50 @@ test("with GASHO_PLUGINS=none no daemon part runs", async () => {
   assert.ok(!sent.some((m) => m.type === "plugin.code.get"));
   assert.match((await call("version")).error ?? "", /GASHO_PLUGINS/);
   await runner.stopAll();
+});
+
+// ctx.exec itself (exec.ts): a command that hangs or says too much is stopped with everything it started.
+
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+test("a command that takes too long is stopped with the processes it started, and says so", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-exec-"));
+  const pidFile = path.join(dir, "pid");
+  // Long enough for sh to write the pid on a busy machine.
+  const failed = await exec("/bin/sh", ["-c", `sleep 60 & echo $! > "${pidFile}"; wait`], { timeoutMs: 2000 }).catch((e: unknown) => e);
+  assert.ok(failed instanceof Error);
+  assert.match(failed.message, /^Command failed: \/bin\/sh -c .* \(stopped \(took too long or was aborted\)\)/);
+  assert.equal((failed as { killed?: boolean }).killed, true);
+  const pid = Number(fs.readFileSync(pidFile, "utf8"));
+  await t.waitFor(() => assert.equal(alive(pid), false), { timeout: 10_000 });
+});
+
+test("an aborted call stops its command", async () => {
+  const controller = new AbortController();
+  const running = exec("sleep", ["60"], {}, controller.signal);
+  setTimeout(() => controller.abort(), 100);
+  await assert.rejects(running, (e: Error & { killed?: boolean }) => e.killed === true && /stopped/.test(e.message));
+});
+
+test("a command that writes more than it may is stopped; one that fails says its exit code and what it wrote", async () => {
+  await assert.rejects(exec("/bin/sh", ["-c", "yes | head -c 100000"], { maxBuffer: 1000 }), /\(output too large\)/);
+  const failed = await exec("/bin/sh", ["-c", "echo partial; echo oops >&2; exit 3"]).catch((e: unknown) => e as Error & { code?: number; stdout?: string });
+  assert.ok(failed instanceof Error);
+  assert.equal(failed.message, "Command failed: /bin/sh -c echo partial; echo oops >&2; exit 3 (exit code 3)\noops\n");
+  assert.equal(failed.code, 3);
+  assert.equal(failed.stdout, "partial\n");
+});
+
+test("a command runs where it is told, never asked anything by gh or git, and only with arguments as strings", async () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "gasho-exec-")));
+  const { stdout } = await exec("/bin/sh", ["-c", 'pwd; echo "$GH_PROMPT_DISABLED $GIT_TERMINAL_PROMPT $NO_COLOR $EXTRA"'], { cwd: dir, env: { EXTRA: "x" } });
+  assert.equal(stdout, `${dir}\n1 0 1 x\n`);
+  await assert.rejects(exec("echo", [1 as unknown as string]), /^Error: exec: give the command and its arguments as strings$/);
 });

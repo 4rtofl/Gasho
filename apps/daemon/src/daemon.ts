@@ -295,7 +295,12 @@ export class Daemon {
       log: (s) => log(s),
       trialMs: cfg.trialMs,
     });
-    this.terminals = new SessionTerminals(new Terminals({ stateDir: cfg.stateDir, env: cleanEnv() }), new Zellij(cleanEnv()));
+    // On Linux, run as the service means in its cgroup, which systemd stops as a whole (terminal.ts).
+    const inService = setup.service && process.platform === "linux";
+    this.terminals = new SessionTerminals(
+      new Terminals({ stateDir: cfg.stateDir, env: cleanEnv(), inService, log: (s) => log(s) }),
+      new Zellij(cleanEnv()),
+    );
     this.managed = new ManagedSessions(path.join(cfg.stateDir, "managed.json"));
     this.registered = new RegisteredRepos(path.join(cfg.stateDir, "repos.json"));
     this.plugins = new PluginRunner({

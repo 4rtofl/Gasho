@@ -110,7 +110,9 @@ npx @4rtofl/gasho-daemon service install
 loginctl enable-linger "$USER"
 ```
 
-Gasho から起動したセッション（端末と Claude Code）は、セッションごとに systemd のスコープ（`gasho-<名前>-xxxx.scope`）を作って、その中で動かす。gasho-daemon のサービスの外なので、gasho-daemon を動かし直したり止めたりしても、セッションは止まらない。動いているセッションは `systemctl --user list-units 'gasho-*.scope'` で見られる。端末を直接見て操作するには `gasho-daemon attach <名前>` を使う（Ctrl+] で抜ける）。
+Gasho から起動したセッション（端末と Claude Code）は、セッションごとに systemd のスコープ（`gasho-<名前>-xxxx.scope`）を作って、その中で動かす。gasho-daemon のサービスの外なので、gasho-daemon を動かし直したり止めたりしても、セッションは止まらない。動いているセッションは `systemctl --user list-units 'gasho-*.scope'` で見られる。
+
+`systemd-run` でスコープを作れないマシンでは、セッションを gasho-daemon のサービスの中で起動し、ログに `terminal <名前> runs inside gasho-daemon's service` と出す。このセッションは、gasho-daemon を動かし直したり更新したりすると、systemd がサービスごと止める。会話は残るので、端末で `claude --resume` を使えば開き直せる。端末を直接見て操作するには `gasho-daemon attach <名前>` を使う（Ctrl+] で抜ける）。
 
 | すること | コマンド |
 |---|---|

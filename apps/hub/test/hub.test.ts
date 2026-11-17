@@ -235,6 +235,35 @@ test("machines are restored from the store as disconnected; revoked ones are not
   assert.equal(snap.machines[0]?.sessions[0]?.title, "プラグインの整理");
 });
 
+test("messages of the wrong shape are left and change nothing; a hello of the wrong shape is refused (#97)", () => {
+  const { hub, store, machineId, machineToken, browserId } = setup();
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  for (const hello of [{ type: "hello" }, { type: "hello", machineId, token: 1 }]) {
+    const d = fakePeer<HubToDaemon>();
+    hub.onDaemonMessage(d, hello as never);
+    assert.equal(d.closed?.[0], CLOSE_INVALID_CREDENTIALS);
+  }
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: {} as never });
+  assert.deepEqual(d.sent, [{ type: "welcome" }]);
+  hub.onDaemonMessage(d, { type: "sessions", sessions: [session] });
+  const sent = c.sent.length;
+
+  hub.onDaemonMessage(d, { type: "sessions" } as never);
+  hub.onDaemonMessage(d, { type: "sessions", sessions: [null] } as never);
+  hub.onDaemonMessage(d, { type: "hook" } as never);
+  hub.onDaemonMessage(d, { type: "hook", event: { sessionId: "s1", event: "Stop" } } as never);
+  hub.onClientMessage(c, { type: "notification.read" } as never);
+  hub.onClientMessage(c, { type: "notification.read", ids: [{}] } as never);
+  assert.equal(c.sent.length, sent);
+  assert.equal(d.closed, undefined);
+  const [m] = store.loadMachines();
+  assert.deepEqual(m?.sessions, [session]);
+  assert.equal(m?.daemonVersion, undefined);
+  assert.deepEqual(store.recentEvents(), []);
+});
+
 test("notificationFor covers permission, idle and errors, and ignores other events", () => {
   const ev = { sessionId: "s1", at: 1 };
   assert.equal(

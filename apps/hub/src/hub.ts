@@ -7,6 +7,7 @@ import type {
   DaemonToHub,
   DaemonUpdateInfo,
   DeviceInfo,
+  HookEvent,
   HubToClient,
   HubToDaemon,
   InputFeature,
@@ -16,6 +17,7 @@ import type {
   PermissionRequestInfo,
   ServerInfo,
   SessionCommand,
+  SessionInfo,
 } from "@gasho/protocol";
 import type { LatestCheck } from "./latest.ts";
 import { NotificationGate, notificationFor, sessionLabel } from "./notify.ts";
@@ -309,6 +311,23 @@ function mediaAnswerOf(msg: Extract<DaemonToHub, { type: "media" }>, offset: num
   return { part: { mime: p.mime.toLowerCase(), size: p.size, mtime: p.mtime, offset }, bytes };
 }
 
+/**
+ * Whether a working server's sessions have what the Gasho server reads of each (the database and the browsers take the
+ * rest as it is).
+ */
+function isSessionList(v: unknown): v is SessionInfo[] {
+  return Array.isArray(v) && v.every((s: unknown) => {
+    const x = s as Partial<SessionInfo> | null;
+    return typeof x === "object" && x !== null && typeof x.sessionId === "string" && typeof x.cwd === "string";
+  });
+}
+
+/** Whether a hook event has what the Gasho server reads and keeps of it. */
+function isHookEvent(v: unknown): v is HookEvent {
+  const e = v as Partial<HookEvent> | null;
+  return typeof e === "object" && e !== null && typeof e.sessionId === "string" && typeof e.event === "string" && Number.isFinite(e.at);
+}
+
 /** Files sent with one input: how many, and their size in all. */
 export const MAX_FILES = 5;
 export const MAX_FILES_BYTES = 10 * 1024 * 1024;
@@ -521,7 +540,8 @@ export class Hub {
 
   onDaemonMessage(peer: DaemonPeer, msg: DaemonToHub): void {
     if (msg.type === "hello") {
-      const device = this.store.verifyDevice(msg.machineId, msg.token, "machine");
+      const device =
+        typeof msg.machineId === "string" && typeof msg.token === "string" ? this.store.verifyDevice(msg.machineId, msg.token, "machine") : undefined;
       if (!device) {
         peer.close(CLOSE_INVALID_CREDENTIALS, "invalid credentials");
         return;
@@ -534,7 +554,7 @@ export class Hub {
       m.name = device.name;
       m.connected = true;
       m.lastSeen = Date.now();
-      m.daemonVersion = msg.daemonVersion;
+      m.daemonVersion = typeof msg.daemonVersion === "string" ? msg.daemonVersion : undefined;
       // Said again by its capabilities and plugin.status; an update that ended with the restart is over.
       m.update = undefined;
       m.pluginApi = undefined;
@@ -556,6 +576,7 @@ export class Hub {
     m.lastSeen = Date.now();
     switch (msg.type) {
       case "sessions":
+        if (!isSessionList(msg.sessions)) break;
         m.sessions = msg.sessions;
         this.store.saveMachine(m);
         this.broadcast({ type: "machine", machine: m });
@@ -646,6 +667,7 @@ export class Hub {
         this.plugins?.onDaemonMessage(id, peer, msg);
         break;
       case "hook": {
+        if (!isHookEvent(msg.event)) break;
         const event: MachineHookEvent = { ...msg.event, machine: id };
         this.store.addEvent(event);
         this.broadcast({ type: "event", event });
@@ -846,6 +868,7 @@ export class Hub {
         break;
       }
       case "notification.read":
+        if (!Array.isArray(msg.ids) || !msg.ids.every((id) => typeof id === "string")) break;
         this.store.markRead(msg.ids);
         this.broadcast({ type: "notification.read", ids: msg.ids });
         break;

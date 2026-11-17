@@ -7,8 +7,9 @@ test("the screen runs plugins written for its API's major and a minor up to its 
   const [major = 0, minor = 0] = PLUGIN_API.split(".").map(Number);
   assert.equal(apiSupported(PLUGIN_API), true);
   assert.equal(apiSupported(`${major}.0`), true);
-  // 1.9 is older than 1.10, though "9" comes after "10" as text.
   assert.equal(apiSupported(`${major}.${Math.max(0, minor - 1)}`), true);
+  // 1.9 is older than 1.10, though "9" comes after "10" as text.
+  assert.equal(apiSupported(`${major}.9`), minor >= 9);
   assert.equal(apiSupported(`${major}.${minor + 1}`), false);
   assert.equal(apiSupported(`${major + 1}.0`), false);
   assert.equal(apiSupported(`${major - 1}.${minor}`), false);

@@ -116,19 +116,27 @@ export interface HookServerOptions {
  */
 export function startHookServer(opts: HookServerOptions): http.Server {
   let lastRejectLog = 0;
+  const reject = (res: http.ServerResponse, status: number, why: string): void => {
+    if (Date.now() - lastRejectLog > 60_000) {
+      lastRejectLog = Date.now();
+      log(`rejected a hook ${why}`);
+    }
+    res.writeHead(status).end();
+  };
   const server = http.createServer((req, res) => {
     const statusLine = req.url === "/statusline";
     if (req.method !== "POST" || (req.url !== "/hooks" && !statusLine)) {
       res.writeHead(404).end();
       return;
     }
+    // A web page open in a browser on this machine can post here too. The browser sends Origin with it, and sends it
+    // without asking first (CORS) only as text/plain or a form. Claude Code's hooks and the relay send JSON, no Origin.
+    const { origin } = req.headers;
+    if (origin !== undefined) return reject(res, 403, `with an Origin header (${clip(origin, 100)}), sent by a web page`);
+    const type = req.headers["content-type"] ?? "";
+    if (type.split(";")[0]?.trim().toLowerCase() !== "application/json") return reject(res, 415, `that is not application/json (${clip(type, 100)})`);
     if (opts.secret && req.headers[SECRET_HEADER] !== opts.secret) {
-      if (Date.now() - lastRejectLog > 60_000) {
-        lastRejectLog = Date.now();
-        log(`rejected a hook without a valid ${SECRET_HEADER} header (run "hooks install" again with the same ${SECRET_ENV})`);
-      }
-      res.writeHead(401).end();
-      return;
+      return reject(res, 401, `without a valid ${SECRET_HEADER} header (run "hooks install" again with the same ${SECRET_ENV})`);
     }
     const chunks: Buffer[] = [];
     let size = 0;

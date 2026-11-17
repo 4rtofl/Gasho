@@ -25,6 +25,7 @@ import { hasDrafts } from "./drafts";
 import { hasUnsavedFiles } from "./file-drafts";
 import { usePageVisible } from "./media";
 import { type AutoReload, onOutOfDate, outOfDate } from "./server-update";
+import { sameEntry, takePage } from "./transcript-page";
 
 /** Close code the Gasho server uses when this browser is not (or no longer) registered. */
 const CLOSE_UNAUTHORIZED = 4401;
@@ -505,10 +506,6 @@ export function sendCommand(machine: string, cmd: SessionCommand, timeoutMs = 60
   });
 }
 
-function sameEntry(a: TranscriptEntry, b: TranscriptEntry): boolean {
-  return a.uuid !== "" && a.uuid === b.uuid;
-}
-
 function handle(m: HubToClient): void {
   for (const l of messageListeners) l(m);
   switch (m.type) {
@@ -575,17 +572,7 @@ function handle(m: HubToClient): void {
         setTranscript(key, { entries: cur?.entries ?? [], start: cur?.start ?? 0, total: cur?.total ?? 0, loading: false, error: m.error });
         break;
       }
-      const isOlderPage = cur && cur.entries.length > 0 && m.start + m.entries.length <= cur.start;
-      if (isOlderPage) {
-        setTranscript(key, { entries: [...m.entries, ...cur.entries], start: m.start, total: m.total, loading: false });
-      } else {
-        // Keep live entries that arrived after the page was read.
-        const extra = (cur?.entries ?? []).filter((e) => e.uuid && !m.entries.some((p) => sameEntry(p, e)));
-        const lastTs = m.entries.at(-1)?.ts;
-        // With an empty page (a brand-new session) every live entry is newer than the page.
-        const tail = lastTs ? extra.filter((e) => e.ts && e.ts > lastTs) : extra;
-        setTranscript(key, { entries: [...m.entries, ...tail], start: m.start, total: m.total + tail.length, loading: false });
-      }
+      setTranscript(key, takePage(cur, m));
       break;
     }
     case "transcript.append": {

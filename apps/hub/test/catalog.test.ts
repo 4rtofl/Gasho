@@ -13,6 +13,8 @@ import { Store } from "../src/store.ts";
 import { readTgz } from "../src/tar.ts";
 
 const LIMITS = { maxBytes: 1024 * 1024, maxFiles: 50 };
+/** How t.waitFor waits for what is done without being awaited: up to 5 seconds, for a machine under load. */
+const WAIT = { interval: 10, timeout: 5_000 };
 
 /** One entry of a tar archive (ustar). */
 function entry(name: string, data: string | Buffer = "", type = "0", linkname = ""): Buffer {
@@ -235,16 +237,15 @@ const lastCatalog = (sent: HubToClient[]): PluginCatalog | undefined =>
 const lastPlugins = (sent: HubToClient[]): PluginInfo[] | undefined =>
   sent.flatMap((m) => (m.type === "plugins" || m.type === "snapshot" ? [m.plugins ?? []] : [])).at(-1);
 
-test("the catalog is read with gh when a browser asks (at most every 10 minutes), and kept when it cannot be read", async () => {
+test("the catalog is read with gh when a browser asks (at most every 10 minutes), and kept when it cannot be read", async (t) => {
   const one = release("1.0.0");
   const assets = new Map([["catalog/catalog.json", catalogJson([one.entry])]]);
   const { client, hub, gh, later } = await setup(assets);
   assert.deepEqual(lastCatalog(client.sent), { repo: "o/plugins", plugins: [] });
 
   hub.onClientMessage(client, { type: "plugin.catalog.get" });
-  await new Promise((r) => setTimeout(r, 50));
+  await t.waitFor(() => assert.equal(lastCatalog(client.sent)?.plugins[0]?.version, "1.0.0"), WAIT);
   const read = lastCatalog(client.sent);
-  assert.equal(read?.plugins[0]?.version, "1.0.0");
   assert.equal(read?.updatedAt, "2026-11-14T09:00:00Z");
   assert.ok(read?.checkedAt);
   assert.deepEqual(gh.calls[0]?.slice(0, 7), ["release", "download", "catalog", "--repo", "o/plugins", "--pattern", "catalog.json"]);
@@ -255,10 +256,9 @@ test("the catalog is read with gh when a browser asks (at most every 10 minutes)
   assert.equal(gh.calls.length, 1);
   assets.delete("catalog/catalog.json");
   hub.onClientMessage(client, { type: "plugin.catalog.get", refresh: true });
-  await new Promise((r) => setTimeout(r, 50));
+  await t.waitFor(() => assert.match(lastCatalog(client.sent)?.error ?? "", /カタログ（リリース catalog）がまだありません/), WAIT);
   assert.equal(gh.calls.length, 2);
   const failed = lastCatalog(client.sent);
-  assert.match(failed?.error ?? "", /カタログ（リリース catalog）がまだありません/);
   assert.equal(failed?.plugins[0]?.version, "1.0.0");
   assert.equal(failed?.loading, undefined);
 
@@ -269,9 +269,8 @@ test("the catalog is read with gh when a browser asks (at most every 10 minutes)
   assert.equal(gh.calls.length, 2);
   later(61_000);
   hub.onClientMessage(client, { type: "plugin.catalog.get" });
-  await new Promise((r) => setTimeout(r, 50));
+  await t.waitFor(() => assert.match(lastCatalog(client.sent)?.error ?? "", /JSON/), WAIT);
   assert.equal(gh.calls.length, 3);
-  assert.match(lastCatalog(client.sent)?.error ?? "", /JSON/);
 });
 
 test("the genres of the catalog reach browsers with it, and a catalog that names none has no genres", async () => {

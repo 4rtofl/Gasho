@@ -8,6 +8,9 @@ import { hooksConfig, installedHookEvents, installHooks, startHookServer, summar
 
 type Group = { hooks: Array<Record<string, unknown>> };
 
+/** How t.waitFor waits for what the hook server does after answering: up to 5 seconds, for a machine under load. */
+const WAIT = { interval: 10, timeout: 5_000 };
+
 test("summarizeHook keeps the command, the notification type and the last message", () => {
   assert.deepEqual(
     summarizeHook(
@@ -79,7 +82,7 @@ test("installHooks keeps other settings and hooks, and does not duplicate its ow
   }
 });
 
-test("hook server answers 200 at once and rejects a wrong secret", async () => {
+test("hook server answers 200 at once and rejects a wrong secret", async (t) => {
   const received: Array<Record<string, unknown>> = [];
   const server = startHookServer({ host: "127.0.0.1", port: 0, secret: "s3cret", onEvent: (p) => received.push(p) });
   await new Promise<void>((resolve) => server.once("listening", () => resolve()));
@@ -92,8 +95,7 @@ test("hook server answers 200 at once and rejects a wrong secret", async () => {
     const ok = await fetch(url, { method: "POST", body, headers: { "x-gasho-secret": "s3cret" } });
     assert.equal(ok.status, 200);
     assert.equal(await ok.text(), "");
-    await new Promise((r) => setTimeout(r, 20));
-    assert.equal(received.length, 1);
+    await t.waitFor(() => assert.equal(received.length, 1), WAIT);
     assert.equal(received[0]?.hook_event_name, "Stop");
   } finally {
     server.close();

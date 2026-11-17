@@ -446,19 +446,13 @@ export function PluginWorktreeView({ worktree, view }: { worktree: WorktreeSessi
 
 // ---- home tiles (P6) ----
 
-const TILE_CLASSES: Record<TileSize, string> = {
-  stat: "",
-  small: "col-span-2 lg:col-span-1",
-  medium: "col-span-2",
-  large: "col-span-2 lg:col-span-3",
-};
-
 export interface PluginTile {
   /** `<plugin>.<tile>` */
   id: string;
   name: string;
   after?: string;
-  className: string;
+  size: TileSize;
+  tall: boolean;
   content: ReactNode;
 }
 
@@ -472,7 +466,8 @@ export function usePluginTiles(): PluginTile[] {
         id: `${part.info.id}.${t.id}`,
         name: t.title,
         ...(t.after ? { after: t.after } : {}),
-        className: cn(TILE_CLASSES[t.size ?? "small"] ?? TILE_CLASSES.small, t.tall && "lg:row-span-2"),
+        size: t.size ?? "small",
+        tall: t.tall === true,
         content: (
           <Part part={part}>
             <Tile />

@@ -647,8 +647,10 @@ export function App() {
           {onScreen && <SessionHeaderToggle className={cn("-mr-1", connected && "ml-auto")} />}
         </header>
         <div className="flex min-h-0 flex-1">
-          {/* layoutScroll: the home screen's tiles slide to new places inside it, also while it scrolls. */}
-          <motion.main layoutScroll className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+          {/* layoutScroll: the home screen's tiles slide to new places inside it, also while it scrolls. relative: an
+              absolutely placed element with no placed parent of its own (an sr-only status line) is placed in here and
+              scrolls with the screen. Otherwise it is placed on the page and makes the page longer than the window. */}
+          <motion.main layoutScroll className="relative min-h-0 min-w-0 flex-1 overflow-y-auto">
             {route.name === "home" && <HomeView />}
             {route.name === "devices" && <DevicesView />}
             {route.name === "settings" && <SettingsView />}

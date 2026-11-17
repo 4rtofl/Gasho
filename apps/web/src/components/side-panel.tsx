@@ -6,6 +6,7 @@ import { ArrowLeft, X } from "lucide-react";
 import { createContext, useContext, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { SessionInfo, SessionRepo } from "@gasho/protocol";
+import { closesPanel } from "@/lib/text-input";
 import { cn } from "@/lib/utils";
 
 /**
@@ -49,7 +50,7 @@ export function SidePanel({
       aria-label={typeof title === "string" ? title : undefined}
       className="flex h-full min-h-0 flex-col"
       onKeyDown={(e) => {
-        if (docked && e.key === "Escape") onClose();
+        if (docked && closesPanel(e)) onClose();
       }}
     >
       {!docked && bar ? (

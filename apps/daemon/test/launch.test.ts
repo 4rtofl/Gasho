@@ -223,8 +223,8 @@ test("with trust, the cursor is moved to yes before the one Enter, and the sessi
     // Claude Code runs with Remote Control in the folder, in a terminal named after the session, and its status line
     // is the relay that reports the context window and the plan's limits (statusline.ts).
     assert.equal(started.length, 1);
-    assert.deepEqual(started[0]?.args.slice(0, 3), ["--remote-control", "clone-test", "--settings"]);
-    assert.deepEqual(JSON.parse(started[0]?.args[3] ?? ""), {
+    assert.deepEqual(started[0]?.args.slice(0, 2), ["--remote-control=clone-test", "--settings"]);
+    assert.deepEqual(JSON.parse(started[0]?.args[2] ?? ""), {
       statusLine: { type: "command", command: `${shellQuote(process.execPath)} ${shellQuote(RELAY_FILE)}` },
     });
     assert.equal(started[0]?.env.GASHO_STATUSLINE_URL, "http://127.0.0.1:0/statusline");
@@ -243,7 +243,7 @@ test("the status line the user set up for the folder keeps running, through the 
     await fs.mkdir(path.join(folder, ".claude"));
     await fs.writeFile(path.join(folder, ".claude", "settings.json"), JSON.stringify({ statusLine: { type: "command", command: "./line.sh", padding: 0 } }));
     assert.equal((await d.launch(folder, "clone-test", true)).ok, true);
-    assert.deepEqual(JSON.parse(started[0]?.args[3] ?? "").statusLine.padding, 0);
+    assert.deepEqual(JSON.parse(started[0]?.args[2] ?? "").statusLine.padding, 0);
     assert.equal(started[0]?.env.GASHO_STATUSLINE_COMMAND, "./line.sh");
   } finally {
     await done();

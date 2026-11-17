@@ -1282,7 +1282,7 @@ export class Daemon {
   }
 
   /**
-   * Starts `claude --remote-control <rcName> [claudeArgs…]` in `dir` in a new terminal, and waits until
+   * Starts `claude --remote-control=<rcName> [claudeArgs…]` in `dir` in a new terminal, and waits until
    * `claude agents` lists it with a session id (one that `accept` takes). With `resuming`, Claude Code's question about
    * resuming an old, long session is answered with Esc (the full session, as it is; see resumeQuestionOpen), and
    * `resumeAsked` says so. Claude Code's question whether to trust the folder is answered with yes only when `trust`
@@ -1316,7 +1316,8 @@ export class Daemon {
         name: terminal,
         cwd: dir,
         file: this.cfg.claudeBin,
-        args: ["--remote-control", rcName, ...claudeArgs, ...statusLine.args],
+        // One argument: a name starting with "-" (say "-wip") given on its own would be read as Claude Code's options.
+        args: [`--remote-control=${rcName}`, ...claudeArgs, ...statusLine.args],
         env: { ...cleanEnv(), ...statusLine.env },
       });
     } catch (e) {
@@ -1416,7 +1417,7 @@ export class Daemon {
   }
 
   /**
-   * Forks a session started from Gasho: `claude --remote-control <name> --resume <id> --fork-session` in its folder, in
+   * Forks a session started from Gasho: `claude --remote-control=<name> --resume <id> --fork-session` in its folder, in
    * a new terminal. The copy starts with the conversation so far; the session itself goes on as it was. Claude
    * Code writes a fork's transcript only once something is recorded, so the copy is named with /rename right away:
    * that names it in Claude Code too (the Remote Control name is set already), and its conversation can be read at once.
@@ -1518,7 +1519,7 @@ export class Daemon {
 
   /**
    * Opens a conversation that no Claude Code has open again, in its folder, as a session started from Gasho:
-   * `claude --remote-control <name> --resume <id>` in a new terminal. Its name is the conversation's (see
+   * `claude --remote-control=<name> --resume <id>` in a new terminal. Its name is the conversation's (see
    * conversationFacts); without one, it is named after its next message, as a new session is.
    */
   private async resume(sessionId: string): Promise<CommandResult> {

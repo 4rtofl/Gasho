@@ -2,9 +2,22 @@
 // plugin's build (gasho-plugin build) replaces `import … from "@gasho/plugin-sdk"` with what Gasho puts on globalThis,
 // so this file only describes it (GashoSdk), for TypeScript. See docs/plugins.md of Gasho.
 import type { ComponentType, ReactNode } from "react";
-import type { GitHubRepo, MachineInfo, PluginInfo, SessionInfo, SessionRepo, SessionStatus } from "@gasho/protocol";
+import type { EffortLevel, GitHubRepo, MachineInfo, PluginInfo, SessionInfo, SessionModel, SessionRepo, SessionStatus, SwitchField } from "@gasho/protocol";
 
-export type { ContextWindow, GitHubRepo, MachineInfo, PlanLimits, PluginInfo, SessionInfo, SessionRepo, SessionStatus, UsageWindow } from "@gasho/protocol";
+export type {
+  ContextWindow,
+  EffortLevel,
+  GitHubRepo,
+  MachineInfo,
+  PlanLimits,
+  PluginInfo,
+  SessionInfo,
+  SessionModel,
+  SessionRepo,
+  SessionStatus,
+  SwitchField,
+  UsageWindow,
+} from "@gasho/protocol";
 
 /** The arguments of a page or a panel: the query of its URL. */
 export type Params = Record<string, string>;
@@ -468,6 +481,29 @@ export interface Navigation {
  * What starting a session gave: the new session, or why none was started. `needsTrust`: Claude Code asked whether to
  * trust the folder, so nothing was started; ask the person, and start it again with `trust: true` if they agree.
  */
+/**
+ * What useSendInput sends: the text, and (plugin API 1.12) what to switch the session to before it, for this session
+ * only, as the chat box's pickers do. Switching works in sessions started from Gasho, with a gasho-daemon that lists the
+ * field in `MachineInfo.features` (0.6.0 and later); elsewhere the text is sent as it is and the field is `unapplied`.
+ */
+export interface SendInput {
+  machine: string;
+  sessionId: string;
+  text: string;
+  model?: SessionModel;
+  effort?: EffortLevel;
+  ultracode?: boolean;
+}
+
+/** What useSendInput did besides sending (plugin API 1.12): what it could not switch, and why, for people. */
+export interface SendInputResult {
+  /** The input waits for the session to become idle (Gasho types it in then). */
+  queued: boolean;
+  warning?: string;
+  /** Fields asked to switch that were not: the session keeps what it had. */
+  unapplied?: SwitchField[];
+}
+
 export type LaunchResult =
   | { ok: true; sessionId: string }
   | { ok: false; error: string; needsTrust?: boolean; trustWarnings?: string[] };
@@ -580,8 +616,11 @@ export interface GashoSdk {
    */
   useSharedState<T>(key: string, initial: T): [T, (value: T | ((prev: T) => T)) => Promise<void>];
   useNavigation(): Navigation;
-  /** Sends a message to a session (needs the permission "session.input"), as the chat box does. */
-  useSendInput(): (input: { machine: string; sessionId: string; text: string }) => Promise<CallResult<undefined>>;
+  /**
+   * Sends a message to a session (needs the permission "session.input"), as the chat box does. Plugin API 1.12: the
+   * model, the effort level and ultracode to switch to first (SendInput), and what was not switched (SendInputResult).
+   */
+  useSendInput(): (input: SendInput) => Promise<CallResult<SendInputResult>>;
   /**
    * Starts a Claude Code session in a folder of a working server (needs the permission "session.launch"), as "新しい
    * セッション" does. Plugin API 1.1.

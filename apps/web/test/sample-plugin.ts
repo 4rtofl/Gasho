@@ -30,6 +30,17 @@ function Notes() {
       },
       "続けてと送る",
     ),
+    h(
+      "button",
+      {
+        type: "button",
+        onClick: async () => {
+          const r = await send({ machine: ctx!.machine.id, sessionId: ctx!.session.sessionId, text: "見直して", effort: "max" });
+          setSaid(r.ok ? `送りました${r.data.queued ? "（待ち）" : ""}${r.data.unapplied ? `（${r.data.unapplied.join("・")} はそのまま：${r.data.warning}）` : ""}` : r.error);
+        },
+      },
+      "Max で見直してと送る",
+    ),
     said && h("p", null, said),
   );
 }

@@ -1,7 +1,6 @@
 // What the fakes share: record the call, then give the first answer of the table that fits it (fakes.ts).
 import fs from "node:fs/promises";
 import os from "node:os";
-import path from "node:path";
 import { callsFile, type FakeName, type FakeTable, matches, readTable } from "../fakes.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -13,9 +12,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export async function runFake<T extends FakeTable>(name: FakeName, builtIn?: (table: T, args: string[]) => Promise<number | undefined>): Promise<never> {
   const args = process.argv.slice(2);
   const home = os.homedir();
-  const file = callsFile(home, name);
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  await fs.appendFile(file, `${JSON.stringify({ args, cwd: process.cwd(), at: Date.now() })}\n`);
+  // Not made when it is not there: the test is over, and its folder removed (a call that gasho-daemon started just
+  // before it was stopped).
+  await fs.appendFile(callsFile(home, name), `${JSON.stringify({ args, cwd: process.cwd(), at: Date.now() })}\n`).catch(() => undefined);
   const table = await readTable<T>(home, name);
   const answer = table.answers?.find((a) => matches(a.args, args));
   if (answer) {

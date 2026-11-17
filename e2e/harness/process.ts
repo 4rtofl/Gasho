@@ -10,11 +10,26 @@ export const GASHO_DIR = fileURLToPath(new URL("../..", import.meta.url));
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Each process still running when the test runner ends is killed with it. */
-const running = new Set<ChildProcess>();
+/**
+ * What a test started and has not stopped yet, undone (latest first) if the test runner ends before the test does
+ * (a test that ran out of time): its processes, its terminals, its folder. Each undo is synchronous.
+ */
+const leftovers = new Set<() => void>();
 process.once("exit", () => {
-  for (const p of running) p.kill("SIGKILL");
+  for (const undo of [...leftovers].reverse()) {
+    try {
+      undo();
+    } catch {
+      // the next one still runs
+    }
+  }
 });
+
+/** Registers what to undo at exit; the function it gives takes it back once the test has undone it itself. */
+export function onExit(undo: () => void): () => void {
+  leftovers.add(undo);
+  return () => leftovers.delete(undo);
+}
 
 export function isolatedEnv(home: string, more: Record<string, string> = {}): Record<string, string> {
   const env: Record<string, string> = {};
@@ -60,7 +75,7 @@ export class Proc {
       env,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    running.add(this.child);
+    const forget = onExit(() => this.child.kill("SIGKILL"));
     for (const s of [this.child.stdout, this.child.stderr]) {
       s?.setEncoding("utf8");
       let rest = "";
@@ -74,7 +89,7 @@ export class Proc {
     this.exited = new Promise((resolve) => {
       // "close": after what it printed has been read too.
       this.child.on("close", (code) => {
-        running.delete(this.child);
+        forget();
         resolve(code);
       });
     });

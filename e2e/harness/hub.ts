@@ -3,12 +3,14 @@
 // Gasho server are of one build (a page of another build reloads). Working servers are added to it as fake daemons, or
 // as real gasho-daemons that run the fake claude and gh. Nothing of the person's own Gasho server, gasho-daemon or
 // Claude Code is read or written.
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { Terminals } from "../../apps/daemon/src/terminal.ts";
 import { FakeDaemon, type FakeDaemonOptions } from "./fake-daemon.ts";
 import { type ClaudeTable, FakeCommand, type FakeAnswer, npmLatestAnswer, catalogAnswer } from "./fakes.ts";
-import { freePort, GASHO_DIR, isolatedEnv, Proc, runScript } from "./process.ts";
+import { freePort, GASHO_DIR, isolatedEnv, onExit, Proc, runScript } from "./process.ts";
 
 const HUB_CLI = "apps/hub/src/cli.ts";
 const DAEMON_CLI = "apps/daemon/src/cli.ts";
@@ -66,20 +68,27 @@ export class RealDaemon {
   /** Its registration's folder, where its terminals' sockets are (<stateDir>/terminals/<name>.sock). */
   readonly stateDir: string;
   readonly proc: Proc;
+  private forget: () => void;
 
   constructor(name: string, machineId: string, stateDir: string, proc: Proc) {
     this.name = name;
     this.machineId = machineId;
     this.stateDir = stateDir;
     this.proc = proc;
+    // The terminals are no children of the test runner's: found by the folder in their command line.
+    this.forget = onExit(() => spawnSync("pkill", ["-f", `${stateDir}/terminals/`]));
   }
 
   log(): string {
     return this.proc.log();
   }
 
-  stop(): Promise<void> {
-    return this.proc.stop();
+  /** Stops gasho-daemon, and closes the terminals it started, which outlive it (apps/daemon/src/terminal.ts). */
+  async stop(): Promise<void> {
+    await this.proc.stop();
+    const terminals = new Terminals({ stateDir: this.stateDir, env: {}, scopes: false });
+    for (const name of (await terminals.live()).keys()) await terminals.kill(name);
+    this.forget();
   }
 }
 
@@ -96,11 +105,20 @@ export class GashoHub {
   readonly fakeDaemons: FakeDaemon[] = [];
   readonly daemons: RealDaemon[] = [];
   private env: Record<string, string>;
+  private forget: () => void;
   /** The first browser registered, which asks for the codes after it. */
   private cookie: BrowserCookie | undefined;
 
-  constructor(o: { root: string; port: number; env: Record<string, string>; proc: Proc; fakes: [FakeCommand, FakeCommand, FakeCommand<ClaudeTable>] }) {
+  constructor(o: {
+    root: string;
+    port: number;
+    env: Record<string, string>;
+    proc: Proc;
+    fakes: [FakeCommand, FakeCommand, FakeCommand<ClaudeTable>];
+    forget: () => void;
+  }) {
     this.root = o.root;
+    this.forget = o.forget;
     this.home = path.join(o.root, "home");
     this.port = o.port;
     this.url = `http://127.0.0.1:${o.port}`;
@@ -201,6 +219,7 @@ export class GashoHub {
     await Promise.all(this.daemons.map((d) => d.stop()));
     await this.proc.stop();
     await fsp.rm(this.root, { recursive: true, force: true, maxRetries: 5 });
+    this.forget();
   }
 
   private async pair(kind: "browser" | "machine", name: string): Promise<Response> {
@@ -216,6 +235,7 @@ export async function startHub(o: HubOptions = {}): Promise<GashoHub> {
   if (!fs.existsSync(path.join(webDist, "index.html"))) throw new Error(`${webDist}/index.html がありません。先に npm run web:build を流してください。`);
   // Under /tmp, not the longer os.tmpdir() of macOS: the sockets of a real gasho-daemon's terminals are in it.
   const root = await fsp.realpath(await fsp.mkdtemp("/tmp/ge2e-"));
+  const forget = onExit(() => fs.rmSync(root, { recursive: true, force: true }));
   const home = path.join(root, "home");
   const gh = new FakeCommand("gh", home);
   const npm = new FakeCommand("npm", home);
@@ -244,12 +264,13 @@ export async function startHub(o: HubOptions = {}): Promise<GashoHub> {
     const proc = new Proc("gasho-hub", HUB_CLI, ["start"], env);
     try {
       await proc.waitForLog(/listening on /, START_MS);
-      return new GashoHub({ root, port, env, proc, fakes: [gh, npm, claude] });
+      return new GashoHub({ root, port, env, proc, fakes: [gh, npm, claude], forget });
     } catch (e) {
       await proc.stop();
       // Another process took the port after freePort let it go.
       if (attempt < 3 && /is in use/.test(proc.log())) continue;
       await fsp.rm(root, { recursive: true, force: true });
+      forget();
       throw e;
     }
   }

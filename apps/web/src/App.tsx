@@ -14,7 +14,7 @@ import { showNotice, useNotice } from "@/lib/notice";
 import { LAUNCH_WAIT_MS } from "@/components/session-tabs";
 import { StatusDot } from "@/components/status-badge";
 import { Sidebar, SidebarTrigger, useSidebar, type SidebarGroup, type SidebarItem, type SidebarMove, type SidebarSection } from "@/components/ui/sidebar";
-import { updateTo } from "@/lib/daemon-update";
+import { updateToTell } from "@/lib/daemon-update";
 import { hubUpdateToTell } from "@/lib/server-update";
 import { useChoices } from "@/lib/flag";
 import { sessionLabel } from "@/lib/format";
@@ -545,7 +545,7 @@ export function App() {
           label: "端末",
           icon: <KeyRound />,
           // gasho-daemon on a working server, or the Gasho server itself, can be updated.
-          badge: machines.some((m) => updateTo(m, latest)) || hubUpdateToTell(server, latest) ? "更新" : undefined,
+          badge: machines.some((m) => updateToTell(m, latest)) || hubUpdateToTell(server, latest) ? "更新" : undefined,
         },
         // The plugins that the catalog has a newer version of.
         { id: "plugins", label: "プラグイン", icon: <Puzzle />, badge: updateCount(plugins, catalog) || undefined },

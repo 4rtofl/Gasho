@@ -1,10 +1,16 @@
 // Updating gasho-daemon from Gasho (daemon.update). Each version is installed in a folder of its own (Layout in
 // install.ts) and the service runs the one `current` links to. An update installs the new version beside the running
 // one, runs it once to see that it starts, waits for the inputs still to be typed into sessions (they are not kept over
-// a restart), switches `current` and ends with UPDATE_EXIT_CODE; the service manager (systemd: Restart=on-failure,
-// launchd: KeepAlive) starts the new version. Until the switch nothing changes, so a failed update leaves the running
-// version as it was. The sessions' terminals are processes of their own and go on (each runs from the folder of the
-// version that started it, which is kept while it runs).
+// a restart), writes the trial and switches `current`, and ends with UPDATE_EXIT_CODE; the service manager (systemd:
+// Restart=on-failure, launchd: KeepAlive) starts the new version. Until the switch nothing changes, so a failed update
+// leaves the running version as it was. The sessions' terminals are processes of their own and go on (each runs from the
+// folder of the version that started it, which is kept while it runs).
+//
+// The new version is on trial until it has been up for a while and its check passed (confirm). One that ends before
+// that is taken back at its next start, which it makes itself (startOnTrial): it switches `current` to the version
+// before and ends, for the service to start that one. The Gasho server has a launcher of the last good version do this
+// (apps/hub/src/launcher.ts); gasho-daemon's service runs `current` itself, so that the services set up before need no
+// new `service install`. A version that cannot even be loaded is caught by the check before the switch.
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -22,15 +28,30 @@ const WAIT_INPUTS_MS = 5 * 60_000;
 const WAIT_POLL_MS = 1000;
 /** After the switch: time for the last step to reach the Gasho server before the process ends. */
 const EXIT_DELAY_MS = 500;
+/** How long a version started by an update is on trial, as the Gasho server's (GASHO_DAEMON_PROBATION_MS). */
+export const TRIAL_MS = 60_000;
+/** How long a version that went back by itself is told about. */
+const ROLLBACK_SHOWN_MS = 7 * 24 * 3600_000;
+/** Why a version on trial ended, when it did not record it (it was killed, or ended without an exception). */
+const ENDED_UNCONFIRMED = "起動したあと、確かめが済む前に止まりました。";
 
 /** What runs on the working server to make gasho-daemon updatable from Gasho, or to update it by hand. */
 export const INSTALL_COMMAND = `npx ${PACKAGE_NAME}@latest service install`;
 
-/** The last update, kept beside the versions: the version to go back to. */
+/** The last update, kept beside the versions (the version to go back to), or the last one that went back by itself. */
 interface UpdateRecord {
   from: string;
   to: string;
   at: number;
+  error?: string;
+}
+
+/** An update on trial: the version it came from and went to, and how many times the new one was started. */
+export interface Trial {
+  from: string;
+  to: string;
+  at: number;
+  starts: number;
 }
 
 function run(cmd: string, args: string[], o: { cwd: string; env: NodeJS.ProcessEnv; timeout: number }): Promise<string> {
@@ -130,13 +151,90 @@ export async function recordUpdate(layout: Layout, from: string, to: string): Pr
   await fsp.writeFile(layout.updateFile, `${JSON.stringify(record, null, 2)}\n`);
 }
 
-async function readRecord(layout: Layout): Promise<UpdateRecord | undefined> {
+async function readRecord(file: string): Promise<UpdateRecord | undefined> {
   try {
-    const r = JSON.parse(await fsp.readFile(layout.updateFile, "utf8")) as Partial<UpdateRecord>;
-    return typeof r.from === "string" && typeof r.to === "string" && typeof r.at === "number" ? (r as UpdateRecord) : undefined;
+    const r = JSON.parse(await fsp.readFile(file, "utf8")) as Partial<UpdateRecord>;
+    if (typeof r.from !== "string" || typeof r.to !== "string" || typeof r.at !== "number") return undefined;
+    return { from: r.from, to: r.to, at: r.at, ...(typeof r.error === "string" ? { error: r.error } : {}) };
   } catch {
     return undefined;
   }
+}
+
+/** Written aside and renamed over the file, so that it is never read half written; at once (also as the process ends). */
+function writeJson(file: string, value: unknown): void {
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`);
+  fs.renameSync(tmp, file);
+}
+
+export function readTrial(file: string): Trial | undefined {
+  try {
+    const t = JSON.parse(fs.readFileSync(file, "utf8")) as Partial<Trial>;
+    if (typeof t.from !== "string" || typeof t.to !== "string" || !VERSION_RE.test(t.from) || !VERSION_RE.test(t.to)) return undefined;
+    return { from: t.from, to: t.to, at: typeof t.at === "number" ? t.at : 0, starts: typeof t.starts === "number" ? t.starts : 0 };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Starts the trial of `to`: written before `current` is switched, so that the new version's starts are counted. */
+export async function beginTrial(layout: Layout, from: string, to: string, now = Date.now()): Promise<void> {
+  await fsp.mkdir(layout.root, { recursive: true });
+  await fsp.rm(layout.lastErrorFile, { force: true });
+  writeJson(layout.trialFile, { from, to, at: now, starts: 0 } satisfies Trial);
+  await switchTo(layout, to);
+}
+
+/** What gasho-daemon run as the service does first, by the trial on record and the version `current` links to. */
+export type StartPlan =
+  /** No trial, or a trial of `current` that is not this version (started by hand): start. */
+  | { action: "start" }
+  /** A trial of another version than `current` (a switch that did not finish, one done by hand): forget it, start. */
+  | { action: "drop-trial" }
+  /** The first start of this version on trial: count it, then start. */
+  | { action: "try"; trial: Trial }
+  /** This version on trial started before and ended without being confirmed: go back to the version before. */
+  | { action: "rollback"; trial: Trial };
+
+export function planStart(trial: Trial | undefined, current: string | undefined, version: string): StartPlan {
+  if (!trial) return { action: "start" };
+  if (trial.to !== current) return { action: "drop-trial" };
+  if (trial.to !== version) return { action: "start" };
+  if (trial.starts >= 1) return { action: "rollback", trial };
+  return { action: "try", trial };
+}
+
+/**
+ * What gasho-daemon `version`, run as the service, does before anything else (see the top of this file): counts its
+ * start when it is on trial, or takes it back when it started before and was not confirmed: `current` goes back to the
+ * version before, with why (rollback.json). Returns the version it went back to; the process then ends with
+ * UPDATE_EXIT_CODE, for the service to start that one.
+ */
+export async function startOnTrial(layout: Layout, version: string, log: (s: string) => void, now = Date.now()): Promise<string | undefined> {
+  const plan = planStart(readTrial(layout.trialFile), await currentVersion(layout), version);
+  if (plan.action === "drop-trial") await fsp.rm(layout.trialFile, { force: true });
+  if (plan.action === "try") writeJson(layout.trialFile, { ...plan.trial, starts: plan.trial.starts + 1 });
+  if (plan.action !== "rollback") return undefined;
+  const { from, to } = plan.trial;
+  if (!fs.existsSync(cliIn(versionDir(layout, from)))) {
+    log(`${to} did not start well, but ${from} is not installed any more; staying with ${to}`);
+    await fsp.rm(layout.trialFile, { force: true });
+    return undefined;
+  }
+  let error = ENDED_UNCONFIRMED;
+  try {
+    const last = JSON.parse(await fsp.readFile(layout.lastErrorFile, "utf8")) as { message?: unknown };
+    if (typeof last.message === "string" && last.message) error = last.message;
+  } catch {
+    // it ended without saying why
+  }
+  await switchTo(layout, from);
+  writeJson(layout.rollbackFile, { from: to, to: from, error, at: now } satisfies UpdateRecord);
+  await fsp.rm(layout.trialFile, { force: true });
+  await fsp.rm(layout.lastErrorFile, { force: true });
+  log(`${to} did not start well; went back to ${from}: ${error}`);
+  return from;
 }
 
 /**
@@ -201,8 +299,11 @@ export interface UpdaterOptions {
   /** Ends the process, for the service to start the new version. */
   exit: (code: number) => void;
   log: (s: string) => void;
+  /** How long a version started by an update is on trial (TRIAL_MS). */
+  trialMs?: number;
   waitMs?: number;
   pollMs?: number;
+  now?: () => number;
 }
 
 const STEP_LOG: Record<DaemonUpdateStep, string> = {
@@ -210,26 +311,52 @@ const STEP_LOG: Record<DaemonUpdateStep, string> = {
   check: "checking",
   wait: "waiting for the inputs still to be typed",
   restart: "switched; ending so that the service starts it",
+  trial: "on trial",
 };
 
-/** The update of this gasho-daemon from Gasho: whether it can be, and the one under way. */
+/** The update of this gasho-daemon from Gasho: whether it can be, the one under way, and this version's trial. */
 export class Updater {
   private o: UpdaterOptions;
   private progress: DaemonUpdateInfo["progress"];
   private failed: DaemonUpdateInfo["failed"];
   private installed: string[] = [];
   private previous: string | undefined;
+  private rolledBack: DaemonUpdateInfo["rolledBack"];
+  /** This version's trial, when it was started by an update as the service and is not confirmed yet. */
+  private trial: Trial | undefined;
 
   constructor(o: UpdaterOptions) {
     this.o = o;
   }
 
-  /** Reads the versions installed beside this one and the one it replaced. */
+  private now(): number {
+    return this.o.now?.() ?? Date.now();
+  }
+
+  /** How long a version started by an update is on trial. */
+  trialMs(): number {
+    return this.o.trialMs ?? TRIAL_MS;
+  }
+
+  /** Reads the versions installed beside this one, the one it replaced, its trial and what went back by itself. */
   async load(): Promise<void> {
     if (this.o.install.kind !== "managed") return;
-    this.installed = await installedVersions(this.o.layout);
-    const record = await readRecord(this.o.layout);
-    this.previous = record?.to === this.o.version && this.installed.includes(record.from) ? record.from : undefined;
+    const { layout, version } = this.o;
+    this.installed = await installedVersions(layout);
+    const trial = readTrial(layout.trialFile);
+    // Only the service's process counts its starts (startOnTrial); one started by hand is not on trial.
+    this.trial = this.o.service && trial?.to === version ? trial : undefined;
+    const record = await readRecord(layout.updateFile);
+    const from = this.trial?.from ?? (record?.to === version ? record.from : undefined);
+    this.previous = from && this.installed.includes(from) ? from : undefined;
+    const back = await readRecord(layout.rollbackFile);
+    this.rolledBack = back && back.to === version && this.now() - back.at < ROLLBACK_SHOWN_MS ? back : undefined;
+    if (this.trial && !this.progress) this.progress = { version, step: "trial", at: this.trial.at };
+  }
+
+  /** Whether this version is on trial (just started by an update). */
+  onTrial(): boolean {
+    return this.trial !== undefined;
   }
 
   info(): DaemonUpdateInfo {
@@ -261,23 +388,25 @@ export class Updater {
       previous: this.previous,
       progress: this.progress,
       failed: this.failed,
+      rolledBack: this.rolledBack,
+      trialMs: this.trialMs(),
     };
   }
 
-  /** Begins an update to `version`; the result says whether it has begun. */
+  /** Begins an update to `version` (or back to it); the result says whether it has begun. */
   start(version: string): CommandResult {
     const info = this.info();
     if (!info.canUpdate) return { ok: false, error: info.reason ?? "Gasho からは更新できません。" };
     if (typeof version !== "string" || !VERSION_RE.test(version)) return { ok: false, error: "版の指定が正しくありません。" };
     if (version === this.o.version) return { ok: false, error: `すでに ${version} で動いています。` };
-    if (this.progress) return { ok: false, error: `${this.progress.version} に更新している途中です。` };
+    if (this.progress && this.progress.step !== "trial") return { ok: false, error: `${this.progress.version} に更新している途中です。` };
     this.failed = undefined;
     void this.run(version);
     return { ok: true };
   }
 
   private step(version: string, step: DaemonUpdateStep): void {
-    this.progress = { version, step, at: Date.now() };
+    this.progress = { version, step, at: this.now() };
     this.o.log(`update to ${version}: ${STEP_LOG[step]}`);
     this.o.changed();
   }
@@ -291,16 +420,58 @@ export class Updater {
       await checkVersion(dir, version, { node, env });
       await this.load();
       await this.waitForInputs(version);
-      await switchTo(layout, version);
+      // A version still on trial is replaced as if it had been confirmed: it is the one the new version came from.
+      await beginTrial(layout, this.o.version, version, this.now());
+      this.trial = undefined;
       await recordUpdate(layout, this.o.version, version);
       this.step(version, "restart");
       setTimeout(() => this.o.exit(UPDATE_EXIT_CODE), EXIT_DELAY_MS);
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
       this.o.log(`update to ${version} failed: ${error}`);
-      this.progress = undefined;
-      this.failed = { version, error, at: Date.now() };
+      this.progress = this.trial ? { version: this.o.version, step: "trial", at: this.trial.at } : undefined;
+      this.failed = { version, error, at: this.now() };
       this.o.changed();
+    }
+  }
+
+  /**
+   * Ends this version's trial once it has been up for a while and its check passed (Daemon): what went back by itself
+   * before is forgotten, and the versions no longer needed are removed.
+   */
+  async confirm(list?: () => Promise<string>): Promise<void> {
+    if (!this.trial) return;
+    const { layout, version } = this.o;
+    // Not the trial of a version an update under way has just switched to.
+    if (readTrial(layout.trialFile)?.to === version) await fsp.rm(layout.trialFile, { force: true });
+    await fsp.rm(layout.rollbackFile, { force: true });
+    await fsp.rm(layout.lastErrorFile, { force: true });
+    this.trial = undefined;
+    if (this.progress?.step === "trial") this.progress = undefined;
+    this.o.log(`${version} started well; it is no longer on trial`);
+    await this.load();
+    this.o.changed();
+    await this.prune(list);
+  }
+
+  /** On trial, why this version is ending (an exception): its next start goes back to the version before, with it. */
+  recordFailure(message: string): void {
+    if (!this.trial) return;
+    try {
+      writeJson(this.o.layout.lastErrorFile, { message: message.slice(0, 2000), at: this.now() });
+    } catch {
+      // the next start goes back all the same, without saying why
+    }
+  }
+
+  /** On trial, a stop (SIGTERM, a restart of the machine) is not a failure: the next start tries this version again. */
+  stoppedOnTrial(): void {
+    const trial = readTrial(this.o.layout.trialFile);
+    if (!this.trial || !trial || trial.to !== this.o.version) return;
+    try {
+      writeJson(this.o.layout.trialFile, { ...trial, starts: 0 });
+    } catch {
+      // the next start then goes back: better than not starting at all
     }
   }
 

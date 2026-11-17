@@ -10,10 +10,11 @@ import { credentialsPath, loadCredentials, register, saveCredentials } from "./c
 import { DAEMON_VERSION, Daemon } from "./daemon.ts";
 import { hooksConfig, installHooks, SECRET_ENV } from "./hooks.ts";
 import { commandOf, type Install, installOf, layoutOf, serviceCommand } from "./install.ts";
-import { checkVersion, currentVersion, installVersion, npmOf, recordUpdate, runAsService, switchTo } from "./self-update.ts";
+import { checkVersion, currentVersion, installVersion, npmOf, recordUpdate, runAsService, startOnTrial, switchTo, UPDATE_EXIT_CODE } from "./self-update.ts";
 import { stableNode } from "./node-path.ts";
 import { activateCommands, doctor, formatChecks, launchdPlist, serviceFile, servicePath, systemdUnit } from "./setup.ts";
 import { attach, listTerminals } from "./terminal.ts";
+import { log } from "./util.ts";
 
 // How this copy was installed (a clone, npx, npm install -g, or `service install`): the command to suggest and what a
 // service runs.
@@ -81,8 +82,11 @@ try {
       break;
     }
     case "run": {
+      const service = await runAsService();
+      // After an update, a version on trial that ended before it was confirmed goes back first (self-update.ts).
+      if (install.kind === "managed" && service && (await startOnTrial(layout, DAEMON_VERSION, log))) process.exit(UPDATE_EXIT_CODE);
       const creds = await loadCredentials(credentialsPath());
-      await new Daemon(loadConfig(creds), { update: { install, layout, service: await runAsService() } }).start();
+      await new Daemon(loadConfig(creds), { update: { install, layout, service } }).start();
       break;
     }
     case "doctor": {

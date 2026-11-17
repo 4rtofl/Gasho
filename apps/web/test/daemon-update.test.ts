@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { MachineInfo } from "@gasho/protocol";
-import { changesUrl, compareVersions, newerPublished, pendingWork, updateTo } from "../src/lib/daemon-update.ts";
+import { changesUrl, compareVersions, newerPublished, pendingWork, updateTo, updateToTell } from "../src/lib/daemon-update.ts";
 
 const machine = (o: Partial<MachineInfo>): MachineInfo => ({ id: "m", name: "ubuntu", connected: true, lastSeen: 0, sessions: [], ...o });
 
@@ -23,6 +23,13 @@ test("an update is offered only for a newer version, to a connected gasho-daemon
   assert.equal(updateTo(machine({ daemonVersion: "0.14.0" }), latest), undefined);
   assert.equal(updateTo(machine({ daemonVersion: "0.15.0", update: { canUpdate: true, progress: { version: "0.16.0", step: "check", at: 1 } } }), latest), undefined);
   assert.equal(updateTo(machine({ daemonVersion: "0.15.0", update: can }), undefined), undefined);
+  // On trial after an update, it can be updated again; one that went back by itself is offered, but not told of.
+  const trial = { canUpdate: true, progress: { version: "0.15.0", step: "trial" as const, at: 1 } };
+  assert.equal(updateTo(machine({ daemonVersion: "0.15.0", update: trial }), latest), "0.16.0");
+  const back = { canUpdate: true, rolledBack: { from: "0.16.0", to: "0.15.0", at: 1 } };
+  assert.equal(updateTo(machine({ daemonVersion: "0.15.0", update: back }), latest), "0.16.0");
+  assert.equal(updateToTell(machine({ daemonVersion: "0.15.0", update: back }), latest), undefined);
+  assert.equal(updateToTell(machine({ daemonVersion: "0.15.0", update: can }), latest), "0.16.0");
   // Published, but not updatable from Gasho: the row still says so.
   assert.ok(newerPublished(machine({ daemonVersion: "0.14.0" }), latest));
   assert.ok(!newerPublished(machine({ daemonVersion: "0.16.0" }), latest));

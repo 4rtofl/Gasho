@@ -134,10 +134,18 @@ function MachineRow({ machine: m, now, updated, onUpdate }: { machine: MachineIn
   const { latest } = useAppState();
   const u = m.update;
   const to = updateTo(m, latest);
-  const previous = m.connected && u?.canUpdate && !u.progress ? u.previous : undefined;
+  // The version it came from; after going back from the latest, "update" offers it already.
+  const previous = m.connected && u?.canUpdate && (!u.progress || u.progress.step === "trial") && u.previous !== to ? u.previous : undefined;
 
   let status: React.ReactNode;
-  if (u?.progress && (m.connected || u.progress.step === "restart")) {
+  if (u?.progress && u.progress.step === "trial" && m.connected) {
+    status = (
+      <p className="flex items-center gap-1.5 text-xs text-foreground/80">
+        <LoaderCircle className="size-3.5 shrink-0 animate-spin" />
+        {STEP_LABEL.trial}
+      </p>
+    );
+  } else if (u?.progress && (m.connected || u.progress.step === "restart")) {
     const slow = !m.connected && now - u.progress.at > RESTART_SLOW_MS;
     status = (
       <>
@@ -188,7 +196,12 @@ function MachineRow({ machine: m, now, updated, onUpdate }: { machine: MachineIn
           <span className="font-mono text-xs text-muted-foreground">{m.daemonVersion ? `gasho-daemon ${m.daemonVersion}` : "バージョンは不明"}</span>
         </p>
         <div className="mt-0.5">{status}</div>
-        {m.connected && u?.failed && !u.progress && (
+        {m.connected && u?.rolledBack && (
+          <p className="mt-1 text-xs text-amber-500">
+            {u.rolledBack.from} がうまく起動しなかったので、{u.rolledBack.to} に自動で戻しました（{relativeTime(u.rolledBack.at, now)}）。{u.rolledBack.error}
+          </p>
+        )}
+        {m.connected && u?.failed && (!u.progress || u.progress.step === "trial") && (
           <p className="mt-1 text-xs text-red-400">
             {u.failed.version} への更新に失敗しました（{relativeTime(u.failed.at, now)}）。何も変えていません。{u.failed.error}
           </p>
@@ -220,11 +233,16 @@ function ConfirmUpdate({ machine, version, onClose, onStarted }: { machine: Mach
   const back = from !== undefined && compareVersions(version, from) < 0;
   const installed = machine.update?.installed?.includes(version) ?? false;
   const { inputs, requests } = pendingWork(machine);
+  const trialMs = machine.update?.trialMs;
   const lines = [
     installed
       ? `入っている ${version} に切り替えて、gasho-daemon を動かし直します。`
       : `${version} を取り込み、起動できることを確かめてから切り替えて、gasho-daemon を動かし直します。うまくいかなかったときは、何も変えません。`,
     "セッションは止まりません。動かし直すあいだ（10秒ほど）は、この working server の様子が届きません。",
+    // A version older than the running one may not go back by itself.
+    trialMs !== undefined &&
+      !back &&
+      `新しいバージョンがうまく起動しなかったとき（${trialMs % 60_000 === 0 ? `${trialMs / 60_000}分` : `${Math.round(trialMs / 1000)}秒`}のうちに止まったとき）は、自動で前のバージョンに戻します。`,
     inputs > 0 && `送るのを待っている入力が ${inputs} 件あります。送り終えてから切り替えます。5分たっても残っているときは、更新をやめます。`,
     requests > 0 &&
       `権限の確認を待っているものが ${requests} 件あります。動かし直したあとは Gasho から答えられなくなるので、端末か公式アプリで答えてください。`,

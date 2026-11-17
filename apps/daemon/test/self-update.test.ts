@@ -9,7 +9,17 @@ import { test } from "node:test";
 import type { DaemonUpdateInfo, HubToDaemon } from "@gasho/protocol";
 import { Daemon } from "../src/daemon.ts";
 import { cliIn, type Install, layoutOf, type Layout } from "../src/install.ts";
-import { currentVersion, installedVersions, switchTo, UPDATE_EXIT_CODE, Updater, versionsInUse } from "../src/self-update.ts";
+import {
+  beginTrial,
+  currentVersion,
+  installedVersions,
+  readTrial,
+  startOnTrial,
+  switchTo,
+  UPDATE_EXIT_CODE,
+  Updater,
+  versionsInUse,
+} from "../src/self-update.ts";
 
 /**
  * A stand-in for npm: `install <name>@<version>` makes node_modules/<name>/lib/cli.js in the folder it runs in, which
@@ -55,7 +65,17 @@ interface Run {
 }
 
 function updater(
-  o: { layout: Layout; npm: string; version?: string; install?: Install; service?: boolean; env?: NodeJS.ProcessEnv; waiting?: () => number; waitMs?: number },
+  o: {
+    layout: Layout;
+    npm: string;
+    version?: string;
+    install?: Install;
+    service?: boolean;
+    env?: NodeJS.ProcessEnv;
+    waiting?: () => number;
+    waitMs?: number;
+    now?: () => number;
+  },
 ): Run {
   const states: DaemonUpdateInfo[] = [];
   let exit: (code: number) => void = () => undefined;
@@ -75,6 +95,7 @@ function updater(
     log: () => undefined,
     waitMs: o.waitMs,
     pollMs: 10,
+    now: o.now,
   });
   return { updater: u, states, exited };
 }
@@ -109,7 +130,15 @@ test("only a gasho-daemon installed by service install and run as its service ca
   assert.equal(foreground.command, "npx @4rtofl/gasho-daemon@latest service install");
 
   const r = updater({ layout, npm });
-  assert.deepEqual(r.updater.info(), { canUpdate: true, installed: undefined, previous: undefined, progress: undefined, failed: undefined });
+  assert.deepEqual(r.updater.info(), {
+    canUpdate: true,
+    installed: undefined,
+    previous: undefined,
+    progress: undefined,
+    failed: undefined,
+    rolledBack: undefined,
+    trialMs: 60_000,
+  });
   assert.deepEqual(r.updater.start("latest"), { ok: false, error: "版の指定が正しくありません。" });
   assert.deepEqual(r.updater.start("0.14.0"), { ok: false, error: "すでに 0.14.0 で動いています。" });
   assert.equal(updater({ layout, npm, install: { kind: "npx" } }).updater.start("0.15.0").ok, false);
@@ -134,14 +163,103 @@ test("an update installs the version beside the running one, checks it, switches
   // Nothing half-done is left in versions.
   assert.deepEqual((await fs.readdir(layout.versions)).sort(), ["0.14.0", "0.15.0"]);
 
-  // The new version knows the one it replaced, to go back to; going back installs nothing.
+  // The new version is on trial: its starts are counted.
+  const trial = readTrial(layout.trialFile);
+  assert.deepEqual([trial?.from, trial?.to, trial?.starts], ["0.14.0", "0.15.0", 0]);
+
+  // The new version knows the one it replaced, to go back to; going back installs nothing, also while on trial.
   const next = updater({ layout, npm, version: "0.15.0", env: { FAKE_NPM_FAIL: "1" } });
   await next.updater.load();
+  assert.equal(next.updater.info().progress?.step, "trial");
   assert.equal(next.updater.info().previous, "0.14.0");
   assert.deepEqual(next.updater.info().installed, ["0.14.0"]);
   assert.deepEqual(next.updater.start("0.14.0"), { ok: true });
   assert.equal(await settled(next), "exited");
   assert.equal(await currentVersion(layout), "0.14.0");
+  // The version on trial was replaced as if it had been confirmed: going back is on trial in turn.
+  const back = readTrial(layout.trialFile);
+  assert.deepEqual([back?.from, back?.to], ["0.15.0", "0.14.0"]);
+});
+
+test("a version on trial counts its first start, is tried again after a stop, and is confirmed after its check", async () => {
+  const { layout, npm } = await setup();
+  for (const v of ["0.13.0", "0.14.0", "0.15.0"]) await installed(layout, v);
+  await switchTo(layout, "0.14.0");
+  await beginTrial(layout, "0.14.0", "0.15.0", 5);
+  await fs.writeFile(layout.updateFile, JSON.stringify({ from: "0.14.0", to: "0.15.0", at: 5 }));
+  assert.equal(await currentVersion(layout), "0.15.0");
+
+  assert.equal(await startOnTrial(layout, "0.15.0", () => undefined), undefined);
+  assert.equal(readTrial(layout.trialFile)?.starts, 1);
+  const r = updater({ layout, npm, version: "0.15.0" });
+  await r.updater.load();
+  assert.ok(r.updater.onTrial());
+  assert.deepEqual(r.updater.info().progress, { version: "0.15.0", step: "trial", at: 5 });
+  assert.equal(r.updater.info().previous, "0.14.0");
+  // Started by hand rather than by the service: not on trial.
+  const byHand = updater({ layout, npm, version: "0.15.0", service: false });
+  await byHand.updater.load();
+  assert.ok(!byHand.updater.onTrial());
+
+  // A stop is not a failure: the next start tries it again rather than going back.
+  r.updater.stoppedOnTrial();
+  assert.equal(readTrial(layout.trialFile)?.starts, 0);
+  assert.equal(await startOnTrial(layout, "0.15.0", () => undefined), undefined);
+  assert.equal(await currentVersion(layout), "0.15.0");
+
+  await r.updater.confirm(async () => "");
+  assert.ok(!r.updater.onTrial());
+  assert.ok(!existsSync(layout.trialFile));
+  assert.equal(r.updater.info().progress, undefined);
+  assert.equal(r.updater.info().previous, "0.14.0");
+  assert.deepEqual((await fs.readdir(layout.versions)).sort(), ["0.14.0", "0.15.0"]);
+  // Confirmed, its starts are no longer counted.
+  assert.equal(await startOnTrial(layout, "0.15.0", () => undefined), undefined);
+  assert.ok(!existsSync(layout.trialFile));
+});
+
+test("a version on trial that ended before it was confirmed goes back at its next start, and the version before says why for a week", async () => {
+  const { layout, npm } = await setup();
+  for (const v of ["0.14.0", "0.15.0"]) await installed(layout, v);
+  await switchTo(layout, "0.14.0");
+  await beginTrial(layout, "0.14.0", "0.15.0", 5);
+  assert.equal(await startOnTrial(layout, "0.15.0", () => undefined), undefined);
+  const r = updater({ layout, npm, version: "0.15.0" });
+  await r.updater.load();
+  r.updater.recordFailure("Cannot read properties of undefined");
+
+  const logged: string[] = [];
+  assert.equal(await startOnTrial(layout, "0.15.0", (s) => logged.push(s), 1000), "0.14.0");
+  assert.equal(await currentVersion(layout), "0.14.0");
+  assert.ok(!existsSync(layout.trialFile));
+  assert.ok(!existsSync(layout.lastErrorFile));
+  assert.match(logged.join("\n"), /0\.15\.0 did not start well; went back to 0\.14\.0/);
+  const at = (now: number) => {
+    const back = updater({ layout, npm, version: "0.14.0", now: () => now });
+    return back.updater.load().then(() => back.updater.info().rolledBack);
+  };
+  assert.deepEqual(await at(1000 + 3600_000), { from: "0.15.0", to: "0.14.0", error: "Cannot read properties of undefined", at: 1000 });
+  assert.equal(await at(1000 + 8 * 24 * 3600_000), undefined);
+
+  // One that ended without saying why (killed) goes back all the same.
+  await beginTrial(layout, "0.14.0", "0.15.0", 2000);
+  await startOnTrial(layout, "0.15.0", () => undefined);
+  assert.equal(await startOnTrial(layout, "0.15.0", () => undefined, 3000), "0.14.0");
+  assert.equal((await at(3000))?.error, "起動したあと、確かめが済む前に止まりました。");
+
+  // A trial of another version than current (a switch that did not finish) is forgotten.
+  await fs.writeFile(layout.trialFile, JSON.stringify({ from: "0.14.0", to: "0.16.0", at: 1, starts: 1 }));
+  assert.equal(await startOnTrial(layout, "0.14.0", () => undefined), undefined);
+  assert.ok(!existsSync(layout.trialFile));
+  assert.equal(await currentVersion(layout), "0.14.0");
+
+  // With the version before gone, there is nothing to go back to.
+  await beginTrial(layout, "0.14.0", "0.15.0", 4000);
+  await startOnTrial(layout, "0.15.0", () => undefined);
+  await fs.rm(path.join(layout.versions, "0.14.0"), { recursive: true });
+  assert.equal(await startOnTrial(layout, "0.15.0", () => undefined), undefined);
+  assert.equal(await currentVersion(layout), "0.15.0");
+  assert.ok(!existsSync(layout.trialFile));
 });
 
 test("a failed install or a version that does not start changes nothing, and says why", async () => {

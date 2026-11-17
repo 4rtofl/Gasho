@@ -227,8 +227,12 @@ interface Slot {
   proc?: HostProcess;
   /** A new version being started. */
   starting?: HostProcess;
-  /** The version that failed, and why; not started again until the plugin changes or is turned off and on. */
-  failed?: { hash: string; error: string };
+  /**
+   * The version that failed, and why; not started again until the plugin changes or is turned off and on. `retry`: it
+   * failed before a process started (its code was not handed over, or its folder not made), so the next list tries
+   * again; the Gasho server sends the list after each reconnection.
+   */
+  failed?: { hash: string; error: string; retry?: true };
   crashes: number[];
   backoff: number;
   restart?: NodeJS.Timeout;
@@ -298,7 +302,7 @@ export class PluginRunner {
       if (!was.run || was.hash !== entry.hash) {
         slot.failed = undefined;
         slot.crashes = [];
-      }
+      } else if (slot.failed?.retry) slot.failed = undefined;
       if (slot.proc?.hash === entry.hash) slot.proc.settings(entry.settings);
       void this.ensure(slot);
     }
@@ -454,7 +458,7 @@ export class PluginRunner {
       file = await this.codeFile(slot.id, hash);
       await fsp.mkdir(dataDir, { recursive: true, mode: 0o700 });
     } catch (e) {
-      if (slot.entry.hash === hash) slot.failed = { hash, error: e instanceof Error ? e.message : String(e) };
+      if (slot.entry.hash === hash) slot.failed = { hash, error: e instanceof Error ? e.message : String(e), retry: true };
       this.status();
       return;
     }

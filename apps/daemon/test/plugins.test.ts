@@ -46,12 +46,14 @@ export default {
 `;
 const HASH1 = "aaaaaaaaaaaaaaaa";
 const HASH2 = "bbbbbbbbbbbbbbbb";
+const BROKEN = `export default { start() { throw new Error("動き始められません"); }, methods: {} };`;
 const HASH3 = "cccccccccccccccc";
+const HASH4 = "dddddddddddddddd";
 
 function setup(enabled = true, answerCode = true) {
   const sent: DaemonToHub[] = [];
   const logs: string[] = [];
-  const codes: Record<string, string> = { [HASH1]: V1, [HASH2]: V2, [HASH3]: V3 };
+  const codes: Record<string, string> = { [HASH1]: V1, [HASH2]: V2, [HASH3]: V3, [HASH4]: BROKEN };
   let runner: PluginRunner;
   const local = { folders: ["/work"], dataDir: fs.mkdtempSync(path.join(os.tmpdir(), "gasho-plugin-data-")) };
   // A gh that writes down each time it runs.
@@ -222,6 +224,33 @@ test("the code of a version is asked for once while it comes, and again after re
     giveCode(HASH1);
     await until(() => state()?.state === "running");
     assert.equal(asks(), 2);
+  } finally {
+    await runner.stopAll();
+  }
+});
+
+test("code that was not handed over is asked for again with the next list; a version that did not start is not tried again", async () => {
+  const { runner, sent, state, until, giveCode } = setup(true, false);
+  const asks = () => sent.filter((m) => m.type === "plugin.code.get").length;
+  const entry = { id: "hello", hash: HASH1, run: true, settings: {} };
+  try {
+    runner.update([entry]);
+    runner.onCode({ type: "plugin.code", plugin: "hello", hash: HASH1, error: "このプラグインの版は、Gasho サーバーにもうありません。" });
+    await until(() => state()?.state === "failed");
+    // Reconnected: the Gasho server sends the list again after its welcome.
+    runner.connected();
+    runner.update([entry]);
+    assert.equal(asks(), 2);
+    giveCode(HASH1);
+    await until(() => state()?.state === "running");
+
+    const broken = { id: "hello", hash: HASH4, run: true, settings: {} };
+    runner.update([broken]);
+    giveCode(HASH4);
+    await until(() => state()?.state === "failed");
+    runner.update([broken]);
+    // Tried again, it would be told as running (HASH1) until it failed once more.
+    assert.equal(state()?.state, "failed");
   } finally {
     await runner.stopAll();
   }

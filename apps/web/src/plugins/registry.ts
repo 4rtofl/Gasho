@@ -11,6 +11,7 @@ import { PLUGIN_API } from "@gasho/plugin-sdk/exports";
 import type { PluginInfo } from "@gasho/protocol";
 import { getAppState, subscribeAppState, useAppState } from "@/lib/store";
 import { checkWorktreeGroupings } from "@/lib/worktree-groupings";
+import { darkSelector } from "./dark-selector";
 import { installShared } from "./sdk";
 
 /** How long a plugin's files may take to load. */
@@ -60,6 +61,18 @@ function timeout<T>(p: Promise<T>, what: string): Promise<T> {
 /** The layers of a plugin's web.css that are left for the whole page: the theme's variables (on :root) and Tailwind's own. */
 const PAGE_LAYERS = new Set(["theme", "properties"]);
 
+/** A style rule or a rule with rules inside (@media, @supports…) of a plugin's web.css, with darkSelector's selectors. */
+function ruleText(rule: CSSRule): string {
+  if (rule instanceof CSSStyleRule) {
+    const selector = darkSelector(rule.selectorText);
+    // CSSOM writes a style rule as its selectorText and then its block.
+    if (selector && rule.cssText.startsWith(rule.selectorText)) return selector + rule.cssText.slice(rule.selectorText.length);
+  } else if (rule instanceof CSSGroupingRule) {
+    return `${rule.cssText.slice(0, rule.cssText.indexOf("{"))}{${Array.from(rule.cssRules, ruleText).join("")}}`;
+  }
+  return rule.cssText;
+}
+
 /**
  * The rules of a plugin's web.css, with each style rule applying only inside the elements its parts are drawn in
  * (parts.tsx). A plugin's Tailwind classes share Gasho's layer and come after Gasho's, so that, unlimited, the plugin's
@@ -79,7 +92,7 @@ function scopeRules(rules: CSSRuleList, plugin: string, top = true): string {
       flush();
       out += top && PAGE_LAYERS.has(rule.name) ? rule.cssText : `@layer ${rule.name}{${scopeRules(rule.cssRules, plugin, false)}}`;
     } else if (rule instanceof CSSStyleRule || rule instanceof CSSGroupingRule) {
-      run += rule.cssText;
+      run += ruleText(rule);
     } else {
       // @property, @keyframes, @font-face and the like name things for the whole page; they cannot be nested in a rule.
       flush();

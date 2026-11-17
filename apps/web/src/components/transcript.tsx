@@ -617,8 +617,8 @@ export function Transcript({
     <div
       ref={scroller}
       // relative: an absolutely placed element with no placed parent of its own (a plugin's sr-only status line at the
-      // end of the conversation) is placed in here. Otherwise it is placed on the page, where the end of the
-      // conversation would be unscrolled, and makes the whole page longer than the screen.
+      // end of the conversation) is placed in here. Otherwise it is placed in the screen's main box, where the end of
+      // the conversation would be unscrolled, and makes that box scroll below the conversation.
       className="relative h-full overflow-y-auto"
       // The rows on screen are kept in place here (keepAnchor); the browser's own anchoring would move them twice.
       style={{ overflowAnchor: "none" }}

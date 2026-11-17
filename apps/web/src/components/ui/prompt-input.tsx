@@ -25,7 +25,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, animate, motion, useMotionValue, useReducedMotion } from "framer-motion";
 import { emptyShellInput, isShellInput } from "@/lib/shell";
 import { matchSlash, slashQuery, type SlashCommand, type SlashMatch } from "@/lib/slash";
-import { composing } from "@/lib/text-input";
+import { composing, pastedFiles } from "@/lib/text-input";
 
 /* -------------------------------------------------------------------------- */
 /*  PromptInput — the chat composer. Pairs with <AIResponse /> to finish the   */
@@ -922,9 +922,10 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
   };
 
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
-    if (e.clipboardData.files.length) {
+    const files = pastedFiles(e.clipboardData, allowAttachments && !disabled);
+    if (files.length) {
       e.preventDefault();
-      addFiles(e.clipboardData.files);
+      addFiles(files);
     }
   };
 

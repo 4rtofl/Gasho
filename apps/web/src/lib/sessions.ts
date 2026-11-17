@@ -242,6 +242,15 @@ export function tabAfterRemoval(w: WorktreeSessions, sessionId: string): Session
   return w.sessions[i + 1] ?? w.sessions[i - 1];
 }
 
+/**
+ * The session that a page open on `sessionId` is to go to: after /clear, Claude Code goes on in the same process under
+ * a new id (see SessionInfo.previousSessionIds). Undefined while the machine lists `sessionId`, or when no session had it.
+ */
+export function movedSession(m: MachineInfo | undefined, sessionId: string): SessionInfo | undefined {
+  if (!m || m.sessions.some((s) => s.sessionId === sessionId)) return undefined;
+  return m.sessions.find((s) => s.previousSessionIds?.includes(sessionId));
+}
+
 /** The session each worktree had open last, by worktreeId, while this page is open. */
 const lastOpened = new Map<string, string>();
 

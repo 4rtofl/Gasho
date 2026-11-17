@@ -350,3 +350,52 @@ test("a Claude Code that Gasho is starting or removing is neither sent nor ended
     await done();
   }
 });
+
+test("after /clear, a session started from Gasho goes on under its new id, with its waiting inputs and attachments", async () => {
+  const { d, agentsFile, folder, done } = await setup();
+  const claude = await child('process.on("SIGTERM", () => process.exit(0))');
+  const OLD = "aaaaaaaa-0000-4000-8000-000000000001";
+  const NEW = "aaaaaaaa-0000-4000-8000-000000000002";
+  const OTHER = "aaaaaaaa-0000-4000-8000-000000000003";
+  const agents = (sessionId: string, startedAt: number) =>
+    writeFileSync(agentsFile, JSON.stringify([{ pid: claude.pid, sessionId, cwd: folder, status: "idle", startedAt }]));
+  const sent: { sessionId: string; managed?: boolean; name?: string; previousSessionIds?: string[] }[][] = [];
+  try {
+    d.cfg.pluginDataDir = path.join(folder, "plugin-data");
+    d.refresh = Object.getPrototypeOf(d).refresh;
+    d.readManagedScreens = async () => undefined;
+    d.countTokens = async () => undefined;
+    d.flushInput = async () => undefined;
+    d.hub = { connected: true, send: (m: { type: string; sessions?: [] }) => m.type === "sessions" && sent.push(m.sessions!) };
+    const launchedAt = Date.now();
+    d.managed.add({ sessionId: OLD, terminal: "t-old", pid: claude.pid, cwd: folder, name: "-wip", launchedAt });
+    d.managed.enqueue(OLD, { text: "次の指示" });
+    for (const id of [OLD, NEW, OTHER]) await fs.mkdir(path.join(d.cfg.attachmentsDir, id), { recursive: true });
+
+    // A Claude Code that got the same PID after the session was recorded is another one.
+    agents(NEW, launchedAt + 1000);
+    await d.refresh();
+    assert.ok(d.managed.has(OLD));
+
+    // /clear: the same Claude Code, listed under a new id.
+    agents(NEW, launchedAt - 1000);
+    await d.refresh();
+    assert.equal(d.managed.has(OLD), false);
+    assert.deepEqual(d.managed.waiting(NEW).map((i: { text: string }) => i.text), ["次の指示"]);
+    const s = sent.at(-1)?.find((x) => x.sessionId === NEW);
+    assert.equal(s?.managed, true);
+    assert.equal(s?.name, "-wip");
+    assert.deepEqual(s?.previousSessionIds, [OLD]);
+    const saved = JSON.parse(await fs.readFile(path.join(d.cfg.stateDir, "managed.json"), "utf8"));
+    assert.deepEqual(saved.map((x: { sessionId: string; previousIds?: string[] }) => [x.sessionId, x.previousIds]), [[NEW, [OLD]]]);
+
+    // The files attached before /clear stay while the session runs, and go with it.
+    await d.pruneAttachments();
+    assert.deepEqual((await fs.readdir(d.cfg.attachmentsDir)).sort(), [OLD, NEW]);
+    assert.equal((await d.remove(NEW)).ok, true);
+    assert.deepEqual(await fs.readdir(d.cfg.attachmentsDir), []);
+  } finally {
+    claude.kill("SIGKILL");
+    await done();
+  }
+});

@@ -699,7 +699,15 @@ export interface ManagedSession {
    * a /rename lost with a restart of gasho-daemon (waiting inputs are not saved) is sent again.
    */
   autoName?: boolean;
+  /**
+   * The ids the session had before, oldest first: /clear (and /resume) make Claude Code go on in the same process under
+   * a new id. The files attached to inputs are kept under those ids too (see Daemon.attachmentsOf).
+   */
+  previousIds?: string[];
 }
+
+/** At most this many earlier ids are kept for a session (see ManagedSession.previousIds). */
+export const MAX_PREVIOUS_IDS = 20;
 
 /** Names of sessions started from Gasho: at most this many characters. */
 export const MAX_SESSION_NAME = 60;
@@ -937,6 +945,24 @@ export class ManagedSessions {
   remove(sessionId: string): void {
     this.sessions.delete(sessionId);
     this.queues.delete(sessionId);
+  }
+
+  /**
+   * The session goes on under the id `to` (see ManagedSession.previousIds), with its waiting inputs. The record stays the
+   * same object, so code that holds it across an await sees the new id.
+   */
+  rekey(from: string, to: string): ManagedSession | undefined {
+    const m = this.sessions.get(from);
+    if (!m || this.sessions.has(to)) return undefined;
+    this.sessions.delete(from);
+    // Back to an earlier conversation (/resume): that id is the session's again, not an earlier one.
+    m.previousIds = [...(m.previousIds ?? []).filter((id) => id !== to), from].slice(-MAX_PREVIOUS_IDS);
+    m.sessionId = to;
+    this.sessions.set(to, m);
+    const q = this.queues.get(from);
+    this.queues.delete(from);
+    if (q) this.queues.set(to, q);
+    return m;
   }
 
   enqueue(sessionId: string, input: QueuedInput): number {

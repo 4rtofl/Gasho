@@ -118,6 +118,11 @@ export interface SessionInfo {
   managed?: boolean;
   /** Inputs waiting until the session is idle. */
   pendingInputs?: number;
+  /**
+   * Sessions started from Gasho: the ids the session had before, oldest first. /clear (and /resume) make Claude Code go
+   * on in the same process under a new id; a page still open on an earlier id goes to this session.
+   */
+  previousSessionIds?: string[];
   /** Repositories inside the folder, when the folder is not in a repository but holds some (a workspace of repos). */
   repos?: SessionRepo[];
   /** Absent when the folder is not in a repository. */

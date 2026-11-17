@@ -43,6 +43,7 @@ import {
 } from "@/lib/session-list";
 import { useGroupingPrefs, useSessionListPrefs } from "@/lib/session-list-prefs";
 import {
+  movedSession,
   narrowWorktrees,
   notificationShown,
   rememberedOf,
@@ -208,6 +209,11 @@ export function App() {
     if (isOldGitHubLink(location.hash)) go(route, { replace: true });
   }, [route]);
   const { auth, me, machines, notifications, connected, plugins, catalog, latest, server, outdated } = useAppState();
+  // After /clear, the session goes on under a new id: its page (and the panel open beside it) goes there too.
+  const movedTo = route.name === "session" ? movedSession(machines.find((m) => m.id === route.machine), route.sessionId)?.sessionId : undefined;
+  useEffect(() => {
+    if (movedTo && route.name === "session") go({ ...route, sessionId: movedTo }, { replace: true });
+  }, [route, movedTo]);
   const [mobileOpen, setMobileOpen] = useState(false);
   // The logo's easter egg while it is out (where the logo's 🙏 was when it started), drawn over everything.
   const [gassho, setGassho] = useState<GasshoFrom | null>(null);

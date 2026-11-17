@@ -2,9 +2,22 @@
 // plugin's build (gasho-plugin build) replaces `import … from "@gasho/plugin-sdk"` with what Gasho puts on globalThis,
 // so this file only describes it (GashoSdk), for TypeScript. See docs/plugins.md of Gasho.
 import type { ComponentType, ReactNode } from "react";
-import type { GitHubRepo, MachineInfo, PluginInfo, SessionInfo, SessionRepo, SessionStatus } from "@gasho/protocol";
+import type { EffortLevel, GitHubRepo, MachineInfo, PluginInfo, SessionInfo, SessionModel, SessionRepo, SessionStatus, SwitchField } from "@gasho/protocol";
 
-export type { ContextWindow, GitHubRepo, MachineInfo, PlanLimits, PluginInfo, SessionInfo, SessionRepo, SessionStatus, UsageWindow } from "@gasho/protocol";
+export type {
+  ContextWindow,
+  EffortLevel,
+  GitHubRepo,
+  MachineInfo,
+  PlanLimits,
+  PluginInfo,
+  SessionInfo,
+  SessionModel,
+  SessionRepo,
+  SessionStatus,
+  SwitchField,
+  UsageWindow,
+} from "@gasho/protocol";
 
 /** The arguments of a page or a panel: the query of its URL. */
 export type Params = Record<string, string>;
@@ -53,6 +66,17 @@ export interface PanelProps {
   session: SessionInfo;
   params: Params;
   /** Beside the session (a computer), rather than in its place (a phone). */
+  docked: boolean;
+}
+
+/**
+ * A panel of a page of the plugin (P19, plugin API 1.11): #/p/<plugin>/<page>/p/<panel>/<params>. The page opens it
+ * with useNavigation's openPanel; it shows as a session's panel does, beside the page on a computer and in its place on
+ * a phone.
+ */
+export interface PagePanelProps {
+  params: Params;
+  /** Beside the page (a computer), rather than in its place (a phone). */
   docked: boolean;
 }
 
@@ -373,6 +397,8 @@ export interface PluginDefinition {
   pages?: Record<string, ComponentType<PageProps>>;
   sessionHeader?: SessionHeaderItem[];
   sessionPanels?: Record<string, ComponentType<PanelProps>>;
+  /** Panels of the plugin's pages, opened beside the page on screen (P19). Plugin API 1.11. */
+  pagePanels?: Record<string, ComponentType<PagePanelProps>>;
   homeTiles?: HomeTile[];
   /** More on the settings screen, below the inputs made from gasho-plugin.json `settings` (P5). */
   settings?: ComponentType;
@@ -425,12 +451,16 @@ export type CallResult<T> = { ok: true; data: T } | { ok: false; error: string }
 export interface Navigation {
   pageHref(id: string, params?: Params): string;
   openPage(id: string, params?: Params): void;
-  /** A panel of the session on screen, or of `at` (from outside a session, such as a home tile). */
+  /**
+   * A panel of the session on screen, or of `at` (from outside a session, such as a home tile). On a page of the plugin
+   * without `at` (plugin API 1.11): a panel of that page (pagePanels, P19).
+   */
   panelHref(id: string, params?: Params, at?: { machine: string; sessionId: string }): string;
-  /** Opens a panel (a new entry of the browser's history: back returns to what was open). */
+  /** Opens a panel, as panelHref (a new entry of the browser's history: back returns to what was open). */
   openPanel(id: string, params?: Params, at?: { machine: string; sessionId: string }): void;
   /** Shows another panel, or the same with other params, in place of the open one (no new history entry): tabs. */
   replacePanel(id: string, params?: Params): void;
+  /** Closes the panel open beside the session or the page on screen. */
   closePanel(): void;
   /** Back to `panel`: through the browser's history when the current one was opened from it, else by replacing. */
   back(panel: { id: string; params?: Params }): void;
@@ -451,6 +481,29 @@ export interface Navigation {
  * What starting a session gave: the new session, or why none was started. `needsTrust`: Claude Code asked whether to
  * trust the folder, so nothing was started; ask the person, and start it again with `trust: true` if they agree.
  */
+/**
+ * What useSendInput sends: the text, and (plugin API 1.12) what to switch the session to before it, for this session
+ * only, as the chat box's pickers do. Switching works in sessions started from Gasho, with a gasho-daemon that lists the
+ * field in `MachineInfo.features` (0.6.0 and later); elsewhere the text is sent as it is and the field is `unapplied`.
+ */
+export interface SendInput {
+  machine: string;
+  sessionId: string;
+  text: string;
+  model?: SessionModel;
+  effort?: EffortLevel;
+  ultracode?: boolean;
+}
+
+/** What useSendInput did besides sending (plugin API 1.12): what it could not switch, and why, for people. */
+export interface SendInputResult {
+  /** The input waits for the session to become idle (Gasho types it in then). */
+  queued: boolean;
+  warning?: string;
+  /** Fields asked to switch that were not: the session keeps what it had. */
+  unapplied?: SwitchField[];
+}
+
 export type LaunchResult =
   | { ok: true; sessionId: string }
   | { ok: false; error: string; needsTrust?: boolean; trustWarnings?: string[] };
@@ -563,8 +616,11 @@ export interface GashoSdk {
    */
   useSharedState<T>(key: string, initial: T): [T, (value: T | ((prev: T) => T)) => Promise<void>];
   useNavigation(): Navigation;
-  /** Sends a message to a session (needs the permission "session.input"), as the chat box does. */
-  useSendInput(): (input: { machine: string; sessionId: string; text: string }) => Promise<CallResult<undefined>>;
+  /**
+   * Sends a message to a session (needs the permission "session.input"), as the chat box does. Plugin API 1.12: the
+   * model, the effort level and ultracode to switch to first (SendInput), and what was not switched (SendInputResult).
+   */
+  useSendInput(): (input: SendInput) => Promise<CallResult<SendInputResult>>;
   /**
    * Starts a Claude Code session in a folder of a working server (needs the permission "session.launch"), as "新しい
    * セッション" does. Plugin API 1.1.
@@ -602,7 +658,7 @@ export interface GashoSdk {
   cn(...classes: unknown[]): string;
   /** The frame of a page: title, description, buttons at the top right. */
   Page: ComponentType<{ title: ReactNode; description?: ReactNode; actions?: ReactNode; children?: ReactNode }>;
-  /** The frame of a panel: Gasho adds the close button (computer) and "セッションに戻る" (phone). */
+  /** The frame of a panel: Gasho adds the close button (computer) and "セッションに戻る" (phone; "戻る" for a page's panel). */
   Panel: ComponentType<{ title: ReactNode; subtitle?: ReactNode; actions?: ReactNode; children?: ReactNode }>;
   /** The class of the small bordered buttons in a panel's header (reload, open on GitHub). */
   PANEL_BUTTON: string;

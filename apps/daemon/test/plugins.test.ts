@@ -72,13 +72,15 @@ export default {
 `;
 const HASH1 = "aaaaaaaaaaaaaaaa";
 const HASH2 = "bbbbbbbbbbbbbbbb";
+const BROKEN = `export default { start() { throw new Error("動き始められません"); }, methods: {} };`;
 const HASH3 = "cccccccccccccccc";
 const HASH4 = "dddddddddddddddd";
+const HASH5 = "eeeeeeeeeeeeeeee";
 
 function setup(enabled = true, answerCode = true) {
   const sent: DaemonToHub[] = [];
   const logs: string[] = [];
-  const codes: Record<string, string> = { [HASH1]: V1, [HASH2]: V2, [HASH3]: V3, [HASH4]: STOPS };
+  const codes: Record<string, string> = { [HASH1]: V1, [HASH2]: V2, [HASH3]: V3, [HASH4]: BROKEN, [HASH5]: STOPS };
   let runner: PluginRunner;
   const local = { folders: ["/work"], dataDir: fs.mkdtempSync(path.join(os.tmpdir(), "gasho-plugin-data-")) };
   // A gh that writes down each time it runs.
@@ -254,6 +256,33 @@ test("the code of a version is asked for once while it comes, and again after re
   }
 });
 
+test("code that was not handed over is asked for again with the next list; a version that did not start is not tried again", async () => {
+  const { runner, sent, state, until, giveCode } = setup(true, false);
+  const asks = () => sent.filter((m) => m.type === "plugin.code.get").length;
+  const entry = { id: "hello", hash: HASH1, run: true, settings: {} };
+  try {
+    runner.update([entry]);
+    runner.onCode({ type: "plugin.code", plugin: "hello", hash: HASH1, error: "このプラグインの版は、Gasho サーバーにもうありません。" });
+    await until(() => state()?.state === "failed");
+    // Reconnected: the Gasho server sends the list again after its welcome.
+    runner.connected();
+    runner.update([entry]);
+    assert.equal(asks(), 2);
+    giveCode(HASH1);
+    await until(() => state()?.state === "running");
+
+    const broken = { id: "hello", hash: HASH4, run: true, settings: {} };
+    runner.update([broken]);
+    giveCode(HASH4);
+    await until(() => state()?.state === "failed");
+    runner.update([broken]);
+    // Tried again, it would be told as running (HASH1) until it failed once more.
+    assert.equal(state()?.state, "failed");
+  } finally {
+    await runner.stopAll();
+  }
+});
+
 test("with GASHO_PLUGINS=none no daemon part runs", async () => {
   const { runner, call, state, sent } = setup(false);
   runner.update([{ id: "hello", hash: HASH1, run: true, settings: {} }]);
@@ -266,7 +295,7 @@ test("with GASHO_PLUGINS=none no daemon part runs", async () => {
 test("when gasho-daemon stops, each daemon part runs its stop at once, without waiting for its calls, and none starts again", async () => {
   const { runner, call, state, until, local, logs, sent } = setup();
   try {
-    runner.update([{ id: "hello", hash: HASH4, run: true, settings: {} }]);
+    runner.update([{ id: "hello", hash: HASH5, run: true, settings: {} }]);
     await until(() => state()?.state === "running");
     const slow = call("slow", { timeoutMs: 60_000 });
     await until(() => logs.includes("plugin hello: slow begins"));
@@ -350,7 +379,7 @@ test("gasho-daemon ends (an update, a signal) only once its plugins' daemon part
     },
   };
   try {
-    await d.onHubMessage({ type: "plugins", plugins: [{ id: "hello", hash: HASH4, run: true, settings: {} }] });
+    await d.onHubMessage({ type: "plugins", plugins: [{ id: "hello", hash: HASH5, run: true, settings: {} }] });
     // A daemon part may take its 10 s to start on a busy machine.
     await t.waitFor(() => assert.ok(running), { interval: 10, timeout: 15_000 });
 

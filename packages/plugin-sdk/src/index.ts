@@ -666,7 +666,10 @@ export interface GashoSdk {
   RepoTabs: ComponentType<{ repos: SessionRepo[]; selected: string; onSelect: (path: string) => void }>;
   /** The frame of a home tile: title and icon. */
   Tile: ComponentType<{ title?: string; icon?: ReactNode; className?: string; children?: ReactNode }>;
-  /** Markdown as the conversation shows it: no HTML, images as links. */
+  /**
+   * GitHub's Markdown of issues, pull requests and comments: also the HTML GitHub shows in them (<img>, <details>,
+   * <br> and the like; no scripts, event attributes or style), and images from http or https.
+   */
   Markdown: ComponentType<{ text: string }>;
   /** "3分前", with the exact time on hover. */
   RelativeTime: ComponentType<{ at: string | number; now: number }>;

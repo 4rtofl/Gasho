@@ -35,6 +35,15 @@ test("summarizeHook keeps the command, the notification type and the last messag
   assert.equal(summarizeHook({ session_id: "s1" }), null);
 });
 
+test("summarizeHook marks the prompts Claude Code submits by itself (#91)", () => {
+  const prompt = (text: string) => summarizeHook({ hook_event_name: "UserPromptSubmit", session_id: "s1", prompt: text });
+  assert.equal(prompt("<task-notification>\n<task-id>b1</task-id>")?.automatic, true);
+  assert.equal(prompt('<agent-message from="a1">done</agent-message>')?.automatic, true);
+  assert.equal(prompt('<cross-session-message from="uds:/x.sock" from-name="x">hi')?.automatic, true);
+  assert.equal(prompt("テストを流して")?.automatic, undefined);
+  assert.equal(prompt('\n\n<pasted_content id="ab12">\n<task-notification>')?.automatic, undefined);
+});
+
 test("hooksConfig registers http hooks with a literal secret header and leaves out SessionStart", () => {
   const cfg = hooksConfig(7741, "s3cret");
   assert.ok(!("SessionStart" in cfg));

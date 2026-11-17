@@ -43,3 +43,58 @@ export function notificationFor(
   }
   return null;
 }
+
+interface GateState {
+  /** The session has been reported waiting for input (a Stop, StopFailure or idle_prompt) since it last did anything. */
+  told: boolean;
+  /** The turn going on began with a prompt Claude Code submitted by itself (HookEvent.automatic). */
+  automatic: boolean;
+  /** The last notification of the session. */
+  last?: string;
+}
+
+/**
+ * Keeps notifications that only repeat what the user already knows from reaching them (#91), per session:
+ *
+ * - idle_prompt comes 60 s after the session last did anything, also when that was a reply that a Stop already
+ *   reported, or something that runs no turn and sends no hook (/compact, /context). It is dropped when the session
+ *   has been reported waiting since its last hook of any other kind.
+ * - A turn that Claude Code began by itself (a background task ended, a message from another session) ends in a Stop
+ *   with no input from the user. Its notification is dropped while the session's last one is still unread.
+ *
+ * Kept in memory: after a restart of the Gasho server, the first idle_prompt of a session may be notified again.
+ */
+export class NotificationGate {
+  private sessions = new Map<string, GateState>();
+
+  /**
+   * Called with every hook event of a session Gasho notifies about, and the notification notificationFor made of it
+   * (if any). Says whether to send that notification. `unread` tells whether a notification is still unread.
+   */
+  pass(machine: string, ev: HookEvent, n: GashoNotification | null, unread: (id: string) => boolean): boolean {
+    const key = `${machine}/${ev.sessionId}`;
+    if (ev.event === "SessionEnd") {
+      this.sessions.delete(key);
+      return n !== null;
+    }
+    let s = this.sessions.get(key);
+    if (!s) this.sessions.set(key, (s = { told: false, automatic: false }));
+    let send = n !== null;
+    if (ev.event === "UserPromptSubmit") {
+      s.told = false;
+      s.automatic = ev.automatic === true;
+    } else if (ev.event === "Stop" || ev.event === "StopFailure") {
+      // A failure is notified even in a turn of its own: it may need the user.
+      if (ev.event === "Stop" && s.automatic && s.last !== undefined && unread(s.last)) send = false;
+      s.automatic = false;
+      s.told = true;
+    } else if (ev.event === "Notification" && ev.notificationType === "idle_prompt") {
+      if (s.told) send = false;
+      s.told = true;
+    } else {
+      s.told = false;
+    }
+    if (send && n) s.last = n.id;
+    return send;
+  }
+}

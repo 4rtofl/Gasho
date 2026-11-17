@@ -48,6 +48,12 @@ export function hooksConfig(port: number, secret?: string): Record<string, unkno
   );
 }
 
+/**
+ * The prompts Claude Code submits by itself: a background task or subagent ended, or another agent or session sent a
+ * message. The user typed none of them.
+ */
+const AUTOMATIC_PROMPT = /^\s*<(task-notification|agent-message|cross-session-message)[\s>]/;
+
 /** Reduces a hook payload to what the dashboard needs. Tool inputs and outputs are not forwarded in full. */
 export function summarizeHook(p: Record<string, unknown>, now = Date.now()): HookEvent | null {
   const event = str(p.hook_event_name);
@@ -59,9 +65,12 @@ export function summarizeHook(p: Record<string, unknown>, now = Date.now()): Hoo
   const toolName = str(p.tool_name);
   if (toolName) ev.toolName = toolName;
   switch (event) {
-    case "UserPromptSubmit":
-      ev.summary = clip(str(p.prompt) ?? "", 300);
+    case "UserPromptSubmit": {
+      const prompt = str(p.prompt) ?? "";
+      ev.summary = clip(prompt, 300);
+      if (AUTOMATIC_PROMPT.test(prompt)) ev.automatic = true;
       break;
+    }
     case "PreToolUse":
     case "PostToolUse":
     case "PostToolUseFailure":

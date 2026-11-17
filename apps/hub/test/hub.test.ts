@@ -465,6 +465,81 @@ test("a session started elsewhere gets no notification; one not known yet still 
   assert.equal(c.sent.filter((m) => m.type === "notification").length, 1);
 });
 
+test("a session already reported waiting gets no idle_prompt notification (#91)", () => {
+  const { hub, machineId, machineToken, browserId } = setup();
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.21.0" });
+  hub.onDaemonMessage(d, { type: "sessions", sessions: [session] });
+  const hook = (event: string, at: number, extra: Record<string, unknown> = {}) =>
+    hub.onDaemonMessage(d, { type: "hook", event: { sessionId: "s1", event, at, ...extra } });
+  const kinds = () => c.sent.flatMap((m) => (m.type === "notification" ? [m.notification.kind] : []));
+  const idle = { notificationType: "idle_prompt" };
+
+  // A reply, then idle_prompt 60 s later: only the reply is notified.
+  hook("UserPromptSubmit", 1000, { summary: "こんにちは" });
+  hook("Stop", 2000);
+  hook("Notification", 62_000, idle);
+  assert.deepEqual(kinds(), ["done"]);
+  // /compact or /context sends no hook, but makes Claude Code send idle_prompt again.
+  hook("Notification", 200_000, idle);
+  assert.deepEqual(kinds(), ["done"]);
+  // A session that did something since (here, a permission prompt answered in the terminal) is told again.
+  hook("PreToolUse", 300_000, { toolName: "Bash" });
+  hook("Notification", 360_000, idle);
+  assert.deepEqual(kinds(), ["done", "idle"]);
+  hook("Notification", 500_000, idle);
+  assert.deepEqual(kinds(), ["done", "idle"]);
+  // A failure ends a reply as a Stop does.
+  hook("UserPromptSubmit", 600_000, { summary: "続けて" });
+  hook("StopFailure", 601_000);
+  hook("Notification", 661_000, idle);
+  assert.deepEqual(kinds(), ["done", "idle", "error"]);
+  // Without a reply before it (a session Gasho has not heard from), idle_prompt is notified.
+  hub.onDaemonMessage(d, { type: "hook", event: { sessionId: "s2", event: "Notification", at: 700_000, ...idle } });
+  assert.deepEqual(kinds(), ["done", "idle", "error", "idle"]);
+});
+
+test("a turn Claude Code began by itself is notified only once the last notification has been read (#91)", () => {
+  const { hub, machineId, machineToken, browserId } = setup();
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.21.0" });
+  hub.onDaemonMessage(d, { type: "sessions", sessions: [session] });
+  const hook = (event: string, at: number, extra: Record<string, unknown> = {}) =>
+    hub.onDaemonMessage(d, { type: "hook", event: { sessionId: "s1", event, at, ...extra } });
+  const sent = () => c.sent.flatMap((m) => (m.type === "notification" ? [m.notification] : []));
+  const task = { summary: "<task-notification> <task-id>b1</task-id>", automatic: true };
+
+  hook("UserPromptSubmit", 1000, { summary: "裏でテストを流して" });
+  hook("Stop", 2000, { summary: "started" });
+  assert.equal(sent().length, 1);
+  // The background task ends while the first notification is unread: its turn is not notified.
+  hook("UserPromptSubmit", 20_000, task);
+  hook("Stop", 21_000, { summary: "finished" });
+  hook("Notification", 81_000, { notificationType: "idle_prompt" });
+  assert.equal(sent().length, 1);
+  // Once it is read, the next turn of its own is.
+  hub.onClientMessage(c, { type: "notification.read", ids: [sent()[0]!.id] });
+  hook("UserPromptSubmit", 100_000, task);
+  hook("Stop", 101_000, { summary: "finished again" });
+  assert.deepEqual(sent().map((n) => n.body), ["started", "finished again"]);
+  // A turn of the user's own is always notified, read or not; so is one that fails.
+  hook("UserPromptSubmit", 200_000, { summary: "次へ" });
+  hook("Stop", 201_000, { summary: "next" });
+  hook("UserPromptSubmit", 300_000, task);
+  hook("StopFailure", 301_000, { summary: "overloaded" });
+  assert.deepEqual(sent().map((n) => n.kind), ["done", "done", "done", "error"]);
+  // A `!` command runs a turn with no UserPromptSubmit: it is not taken for one of Claude Code's own.
+  hook("UserPromptSubmit", 400_000, task);
+  hook("Stop", 401_000);
+  assert.equal(sent().length, 4);
+  hook("Stop", 500_000, { summary: "after !ls" });
+  assert.equal(sent().at(-1)?.body, "after !ls");
+});
+
 test("what a browser asked a working server to do reaches the browsers at once (the home screen's latest operations)", () => {
   const { hub, machineId, machineToken, browserId } = setup();
   const d = fakePeer<HubToDaemon>();

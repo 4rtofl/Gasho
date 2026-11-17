@@ -436,6 +436,12 @@ export class Store {
     return rows.map((r) => ({ ...(JSON.parse(String(r.data)) as GashoNotification), read: Number(r.read) === 1 }));
   }
 
+  /** Whether a notification is kept and not read yet. */
+  notificationUnread(id: string): boolean {
+    const r = this.db.prepare("SELECT read FROM notifications WHERE id = ?").get(id) as Row | undefined;
+    return r !== undefined && Number(r.read) === 0;
+  }
+
   markRead(ids: string[]): void {
     const stmt = this.db.prepare("UPDATE notifications SET read = 1 WHERE id = ?");
     for (const id of ids) stmt.run(id);

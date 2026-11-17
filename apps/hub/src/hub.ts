@@ -18,7 +18,7 @@ import type {
   SessionCommand,
 } from "@gasho/protocol";
 import type { LatestCheck } from "./latest.ts";
-import { notificationFor, sessionLabel } from "./notify.ts";
+import { NotificationGate, notificationFor, sessionLabel } from "./notify.ts";
 import type { PluginCatalogSource } from "./catalog.ts";
 import { PluginHub } from "./plugin-hub.ts";
 import type { PluginRegistry } from "./plugins.ts";
@@ -483,6 +483,8 @@ export class Hub {
   private push: PushSender | undefined;
   /** Each page's last word: whether it is on screen, and when it last sent anything. */
   private presence = new Map<ClientPeer, { visible: boolean; at: number }>();
+  /** Drops the notifications that only repeat what the user knows (#91). */
+  private gate = new NotificationGate();
 
   constructor(
     store: Store,
@@ -649,7 +651,8 @@ export class Hub {
         const session = m.sessions.find((s) => s.sessionId === event.sessionId);
         // Gasho shows only the sessions it started; one known to be started elsewhere gets no notification.
         if (session && !session.managed) break;
-        const n = notificationFor(id, event, session, randomUUID());
+        const made = notificationFor(id, event, session, randomUUID());
+        const n = this.gate.pass(id, event, made, (nid) => this.store.notificationUnread(nid)) ? made : null;
         if (n) {
           this.store.addNotification(n);
           this.broadcast({ type: "notification", notification: n });

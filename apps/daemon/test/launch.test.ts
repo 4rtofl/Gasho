@@ -541,3 +541,36 @@ test("an input or a rename that waits while /clear gives the session a new id wa
     await done();
   }
 });
+
+test("the conversation from before /clear, opened again while a refresh runs, is no longer sent among the session's earlier ids", async () => {
+  const { d, agentsFile, folder, done } = await setup();
+  const claude = await child('process.on("SIGTERM", () => process.exit(0))');
+  const OLD = "aaaaaaaa-0000-4000-8000-000000000021";
+  const NEW = "aaaaaaaa-0000-4000-8000-000000000022";
+  const launchedAt = Date.now();
+  writeFileSync(agentsFile, JSON.stringify([{ pid: claude.pid, sessionId: NEW, cwd: folder, status: "idle", startedAt: launchedAt - 1000 }]));
+  const sent: { sessionId: string; previousSessionIds?: string[] }[][] = [];
+  try {
+    d.cfg.pluginDataDir = path.join(folder, "plugin-data");
+    d.refresh = Object.getPrototypeOf(d).refresh;
+    d.readManagedScreens = async () => undefined;
+    d.countTokens = async () => undefined;
+    d.flushInput = async () => undefined;
+    d.hub = { connected: true, send: (m: { type: string; sessions?: [] }) => m.type === "sessions" && sent.push(m.sessions!) };
+    d.managed.add({ sessionId: OLD, terminal: "t-old", pid: claude.pid, cwd: folder, name: "-wip", launchedAt });
+    await d.refresh();
+    assert.deepEqual(sent.at(-1)?.map((s) => [s.sessionId, s.previousSessionIds]), [[NEW, [OLD]]]);
+
+    const project = path.join(d.cfg.claudeDir, "projects", "p");
+    await fs.mkdir(project, { recursive: true });
+    await fs.writeFile(path.join(project, `${OLD}.jsonl`), `${JSON.stringify({ type: "user", cwd: folder, message: { role: "user", content: "前の会話" } })}\n`);
+    d.startClaude = async () => ({ sessionId: OLD, terminal: "t-resumed", pid: process.pid });
+    // `claude agents` is slow, and the refresh resume asks for only has the one running go again.
+    d.refreshing = true;
+    assert.equal((await d.resume(OLD)).ok, true);
+    assert.deepEqual(sent.at(-1)?.map((s) => [s.sessionId, s.previousSessionIds]), [[NEW, undefined]]);
+  } finally {
+    claude.kill("SIGKILL");
+    await done();
+  }
+});

@@ -1816,6 +1816,10 @@ export class Daemon {
       );
     }
     await this.refresh();
+    // Before the answer, also when that refresh only asked the one running to go again: a session /clear took away from
+    // this conversation has it among its earlier ids no longer (see ManagedSessions.add), and a page still told it does
+    // goes on to that session instead (see the web's movedSession).
+    this.emitSessions();
     return { ok: true, sessionId: id, ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}) };
   }
 

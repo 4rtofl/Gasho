@@ -76,6 +76,9 @@ export function moveDraft(from: string, to: string): void {
   // Being typed in: the box drawn for the new id takes the cursor where it was, and the typing goes on there.
   const typing = document.activeElement;
   if (typing instanceof HTMLTextAreaElement && d.box?.contains(typing)) d.caret = [typing.selectionStart, typing.selectionEnd];
+  // A message whose result never came and that waited in the session is typed into the new conversation: it is looked
+  // for from its first entry, as lib/pending's movePending does.
+  if (d.unsent.length > 0) d.unsent = d.unsent.map((u) => ({ ...u, sent: { ...u.sent, after: 0 } }));
   drafts.delete(from);
   drafts.set(to, d);
 }

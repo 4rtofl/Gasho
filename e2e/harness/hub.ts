@@ -1,6 +1,7 @@
 // A Gasho server for one test, in a folder of its own (its database, plugins, caches, and the HOME of the fakes), on a
-// free port of the loopback, with the fake gh and npm. It serves the screen of apps/web/dist, so that the screen and the
-// Gasho server are of one build (a page of another build reloads). Working servers are added to it as fake daemons, or
+// free port of the loopback, with the fake gh and npm. It serves the screen of apps/web/dist (HubOptions.service: its
+// package's, built for its version), so that the screen and the Gasho server are of one build (a page of another build
+// reloads). Working servers are added to it as fake daemons, or
 // as real gasho-daemons that run the fake claude and gh. Nothing of the person's own Gasho server, gasho-daemon or
 // Claude Code is read or written.
 import { spawnSync } from "node:child_process";
@@ -29,11 +30,11 @@ export interface HubOptions {
   claude?: ClaudeTable;
   /** More settings of the Gasho server (GASHO_*). */
   env?: Record<string, string>;
-  /** The screen it serves (apps/web/dist). */
+  /** The screen it serves (apps/web/dist); not with `service`. */
   webDist?: string;
   /**
    * Run as `gasho-hub service install` installs it, which Gasho can update (hub-service.ts), in place of this
-   * checkout's apps/hub/src/cli.ts.
+   * checkout's apps/hub/src/cli.ts. Each version serves its own build of the screen, as the published packages do.
    */
   service?: HubServiceOptions;
 }
@@ -329,6 +330,8 @@ async function serviceOf(root: string, o: HubServiceOptions, base: Record<string
   await fsp.mkdir(layout, { recursive: true });
   const launcher = await makeLayout(layout, o);
   const env: Record<string, string> = { ...base, GASHO_HUB_HOME: layout };
+  // The screen beside the running version (its web/), which a page reloads to after an update.
+  delete env.GASHO_WEB_DIST;
   delete env.XPC_SERVICE_NAME;
   delete env.INVOCATION_ID;
   if (o.asService !== false) Object.assign(env, { XPC_SERVICE_NAME: "local.gasho.hub", INVOCATION_ID: "gasho-e2e" });

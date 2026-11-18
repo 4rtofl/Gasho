@@ -36,6 +36,7 @@ import { isInside, statusLineLaunch, statusLineOf, userStatusLine } from "./stat
 import { HubClient } from "./hub-client.ts";
 import { type Install, type Layout, layoutOf } from "./install.ts";
 import { type MediaFailed, readMediaPart } from "./media.ts";
+import { readMemory } from "./memory.ts";
 import { answersMessage, dialogCall, OPEN_DIALOG, OPEN_QUESTION, openPermissionRequest, openQuestionRequest, PermissionRequests, questionAnswers } from "./permissions.ts";
 import {
   atBottom,
@@ -116,6 +117,8 @@ const GITHUB_CACHE_MS = 5 * 60_000;
 /** How long the worktree a folder is in, or the repositories inside it, and their branches are reused. */
 const REPOS_CACHE_MS = 60_000;
 const FOLDERS_REFRESH_MS = 5 * 60_000;
+/** How often the server's memory is read and told to the Gasho server. */
+const MEMORY_REFRESH_MS = 15_000;
 /** How often the registered repositories' worktrees are read again: one may be made or removed elsewhere (Orca, git). */
 const REGISTERED_REFRESH_MS = 10_000;
 const LAUNCH_TIMEOUT_MS = 30_000;
@@ -326,6 +329,7 @@ export class Daemon {
         this.emitSessions();
         this.emitCapabilities();
         this.emitRepos();
+        void this.emitMemory();
         // Also tells the Gasho server that this gasho-daemon runs plugins.
         this.plugins.status(true);
         this.plugins.connected();
@@ -349,6 +353,11 @@ export class Daemon {
     this.exiting = true;
     await this.plugins.stopAll().catch((e: unknown) => log("could not stop the plugins", e));
     process.exit(code);
+  }
+
+  private async emitMemory(): Promise<void> {
+    const memory = await readMemory();
+    this.hub.send(memory ? { type: "memory", memory } : { type: "memory" });
   }
 
   async start(): Promise<void> {
@@ -388,6 +397,7 @@ export class Daemon {
     setInterval(() => void this.refreshRepos(), REGISTERED_REFRESH_MS).unref();
 
     this.hub.connect();
+    setInterval(() => void this.emitMemory(), MEMORY_REFRESH_MS).unref();
     startHookServer({
       host: "127.0.0.1",
       port: this.cfg.hookPort,

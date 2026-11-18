@@ -1145,3 +1145,72 @@ test("removing a worktree goes to a gasho-daemon that can, checked, and the reco
   assert.ok(reply?.type === "command.result" && reply.requestId === "r1");
   assert.deepEqual(reply.result.changes, { uncommitted: 1, unpushed: 2 });
 });
+
+test("a working server's memory reaches the browsers, is kept for those that connect later, and is never saved", () => {
+  const { hub, store, machineId, machineToken, browserId } = setup();
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.25.0" });
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  c.sent.length = 0;
+
+  const saved = store.saveMachine.bind(store);
+  let saves = 0;
+  store.saveMachine = (m) => {
+    saves++;
+    saved(m);
+  };
+  const memory = { total: 16, used: 4 };
+  hub.onDaemonMessage(d, { type: "memory", memory });
+  assert.deepEqual(c.sent, [{ type: "machine.memory", machine: machineId, memory }]);
+  assert.equal(saves, 0);
+  assert.equal(JSON.stringify(store.loadMachines()).includes("memory"), false);
+
+  const later = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(later);
+  const snapshot = later.sent[0];
+  assert.deepEqual(snapshot?.type === "snapshot" ? snapshot.memory : undefined, { [machineId]: memory });
+});
+
+test("a working server's memory is forgotten when it goes offline, cannot read it, or tells something wrong", () => {
+  const { hub, machineId, machineToken, browserId } = setup();
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.25.0" });
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const memory = { total: 16, used: 4 };
+  const memoryMessages = () => c.sent.filter((m) => m.type === "machine.memory");
+  const snapshotMemory = () => {
+    const later = fakePeer<HubToClient>(browserId);
+    hub.onClientConnect(later);
+    const s = later.sent[0];
+    return s?.type === "snapshot" ? s.memory : undefined;
+  };
+
+  hub.onDaemonMessage(d, { type: "memory", memory });
+  hub.onDaemonMessage(d, { type: "memory" });
+  assert.deepEqual(memoryMessages().at(-1), { type: "machine.memory", machine: machineId });
+  assert.deepEqual(snapshotMemory(), {});
+
+  hub.onDaemonMessage(d, { type: "memory", memory });
+  hub.onDaemonMessage(d, { type: "memory", memory: { total: 0, used: 0 } });
+  assert.deepEqual(snapshotMemory(), {});
+
+  hub.onDaemonMessage(d, { type: "memory", memory });
+  hub.onDaemonClose(d);
+  assert.deepEqual(memoryMessages().at(-1), { type: "machine.memory", machine: machineId });
+  assert.deepEqual(snapshotMemory(), {});
+});
+
+test("a gasho-daemon that does not tell its memory replaces one that did without leaving the old value", () => {
+  const { hub, machineId, machineToken, browserId } = setup();
+  const newer = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(newer, { type: "hello", machineId, token: machineToken, daemonVersion: "0.25.0" });
+  hub.onDaemonMessage(newer, { type: "memory", memory: { total: 16, used: 4 } });
+  const older = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(older, { type: "hello", machineId, token: machineToken, daemonVersion: "0.24.0" });
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const s = c.sent[0];
+  assert.deepEqual(s?.type === "snapshot" ? s.memory : undefined, {});
+});

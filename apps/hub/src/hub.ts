@@ -13,6 +13,7 @@ import type {
   InputFeature,
   MachineHookEvent,
   MachineInfo,
+  MachineMemory,
   MediaPart,
   PermissionRequestInfo,
   ServerInfo,
@@ -311,6 +312,11 @@ function mediaAnswerOf(msg: Extract<DaemonToHub, { type: "media" }>, offset: num
   return { part: { mime: p.mime.toLowerCase(), size: p.size, mtime: p.mtime, offset }, bytes };
 }
 
+function isMemory(v: unknown): v is MachineMemory {
+  const m = v as MachineMemory | undefined;
+  return typeof m?.total === "number" && typeof m.used === "number" && Number.isFinite(m.total) && m.total > 0 && m.used >= 0 && m.used <= m.total;
+}
+
 /**
  * Whether a working server's sessions have what the Gasho server reads of each (the database and the browsers take the
  * rest as it is).
@@ -486,6 +492,8 @@ export const PRESENCE_TTL_MS = 60_000;
 export class Hub {
   private store: Store;
   private machines = new Map<string, MachineInfo>();
+  /** The connected working servers' latest memory: never written to the database, it changes at every reading. */
+  private memory = new Map<string, MachineMemory>();
   private daemons = new Map<string, DaemonPeer>();
   private clients = new Set<ClientPeer>();
   private pending = new Map<string, PendingRequest>();
@@ -562,6 +570,8 @@ export class Hub {
       this.store.touchDevice(device.id);
       peer.send({ type: "welcome" });
       this.broadcast({ type: "machine", machine: m });
+      // What the connection it replaces told: this gasho-daemon may be one that does not tell it.
+      this.forgetMemory(device.id);
       this.plugins?.onDaemonReady(peer);
       this.plugins?.toClients();
       return;
@@ -580,6 +590,12 @@ export class Hub {
         m.sessions = msg.sessions;
         this.store.saveMachine(m);
         this.broadcast({ type: "machine", machine: m });
+        break;
+      case "memory":
+        if (isMemory(msg.memory)) {
+          this.memory.set(id, msg.memory);
+          this.broadcast({ type: "machine.memory", machine: id, memory: msg.memory });
+        } else this.forgetMemory(id);
         break;
       case "transcript.append":
         this.broadcast({ type: "transcript.append", machine: id, sessionId: msg.sessionId, entries: msg.entries });
@@ -701,6 +717,7 @@ export class Hub {
       this.store.saveMachine(m);
       this.broadcast({ type: "machine", machine: m });
     }
+    this.forgetMemory(id);
     this.failPending((req) => req.machine === id, "machine disconnected");
     this.failCommands((c) => c.machine === id, "working server との接続が切れました。");
     this.failMedia(id, "working server との接続が切れました。");
@@ -756,6 +773,7 @@ export class Hub {
       ...(this.server ? { server: this.server.info() } : {}),
       ...(this.push ? { push: this.push.info(peer.deviceId) } : {}),
       heartbeat: true,
+      memory: Object.fromEntries(this.memory),
     });
   }
 
@@ -1201,6 +1219,7 @@ export class Hub {
         c.close(CLOSE_UNAUTHORIZED, "registration revoked");
       }
       // The daemon was taken out of `daemons` before it was closed, so onDaemonClose leaves this to be done here.
+      this.memory.delete(id);
       if (this.machines.delete(id)) {
         this.failPending((req) => req.machine === id, "machine was removed");
         this.failCommands((c) => c.machine === id, "working server の登録が外されました。");
@@ -1220,6 +1239,11 @@ export class Hub {
       this.machines.set(id, m);
     }
     return m;
+  }
+
+  /** Stops telling a working server's memory, to the browsers too, when it was known. */
+  private forgetMemory(id: string): void {
+    if (this.memory.delete(id)) this.broadcast({ type: "machine.memory", machine: id });
   }
 
   private failPending(match: (req: PendingRequest) => boolean, error: string): void {

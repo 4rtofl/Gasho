@@ -1197,7 +1197,7 @@ export type SessionCommand =
   | { type: "session.skills"; sessionId: string }
   /**
    * Opens a conversation of session.history again in its folder, as a session started from Gasho
-   * (`claude --remote-control <name> --resume <id>`). Its name is the conversation's.
+   * (`claude --remote-control=<name> --resume <id>`). Its name is the conversation's.
    */
   | { type: "session.resume"; sessionId: string }
   /**

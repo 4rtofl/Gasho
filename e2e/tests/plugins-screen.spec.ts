@@ -72,7 +72,8 @@ test.describe("一覧の出どころ", () => {
         await hub.gh.set({ answers: [answer] });
         await reload.click();
         await expect(main.getByText(`一覧を読めませんでした：${why}`)).toBeVisible({ timeout: 30_000 });
-        await expect(main.getByText("4rtofl/GashoPlugins の一覧（たった今読んだもの）")).toBeVisible();
+        // Any words of the time: on a slow machine the five failures take more than 45 seconds, and it says "1 分前".
+        await expect(main.getByText(/^4rtofl\/GashoPlugins の一覧（.+読んだもの）$/)).toBeVisible();
         await expect(card(main, "E2E 二つめ")).toBeVisible();
       }
     });

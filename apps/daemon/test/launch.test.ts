@@ -523,9 +523,18 @@ test("an input or a rename that waits while /clear gives the session a new id wa
       d.managed.rekey("s2", "s3");
     };
     assert.deepEqual(await d.rename("s2", "y", "r2"), { ok: true, queued: true });
+    d.managed.save = save;
     assert.deepEqual(
       d.managed.waiting("s3").map((i: { text: string }) => i.text.split("\n")[0]),
       ["見て", "/rename y"],
+    );
+    // A page that has not yet heard of the new id sends the one it shows (the name asked for last takes the place of
+    // the one still waiting).
+    assert.deepEqual(await d.input({ type: "session.input", requestId: "r3", sessionId: "s1", text: "前の ID で" }), { ok: true, queued: true });
+    assert.deepEqual(await d.rename("s2", "z", "r4"), { ok: true, queued: true });
+    assert.deepEqual(
+      d.managed.waiting("s3").map((i: { text: string }) => i.text.split("\n")[0]),
+      ["見て", "前の ID で", "/rename z"],
     );
     assert.equal(d.managed.pending("s1") + d.managed.pending("s2"), 0);
   } finally {

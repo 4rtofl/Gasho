@@ -1789,17 +1789,18 @@ export class Daemon {
    * is idle: it waits while the session works. A /rename still waiting is replaced, not sent too.
    */
   private async rename(sessionId: string, name: string, requestId: string): Promise<CommandResult> {
-    const session = this.managed.get(sessionId);
+    // By session.sessionId from here on: `sessionId` can be one the session had before /clear (see ManagedSessions.find),
+    // and /clear can give it a new id while the name is saved (see followNewIds).
+    const session = this.managed.find(sessionId);
     if (!session) {
       return { ok: false, error: "このセッションの名前は変えられません。変えられるのは、Gasho が起動したセッションだけです。" };
     }
     const checked = sessionName(name);
     if ("error" in checked) return { ok: false, error: checked.error };
     // Also a name from the first message still waiting: the one asked for now wins, and the first message names it no more.
-    this.managed.drop(sessionId, (input) => isRename(input.text));
-    const named = this.managed.named(sessionId);
-    if (this.managed.setName(sessionId, checked.name) || named) await this.managed.save();
-    // From here on by session.sessionId: /clear can give the session a new id meanwhile (see followNewIds).
+    this.managed.drop(session.sessionId, (input) => isRename(input.text));
+    const named = this.managed.named(session.sessionId);
+    if (this.managed.setName(session.sessionId, checked.name) || named) await this.managed.save();
     // Other inputs waiting go first, and typing them can take long (a model switch): the answer does not wait for them.
     const ahead = this.managed.pending(session.sessionId) > 0;
     this.managed.enqueue(session.sessionId, { id: requestId, text: renameCommand(checked.name) });
@@ -1922,7 +1923,9 @@ export class Daemon {
 
   private async input(m: Extract<HubToDaemon, { type: "session.input" }>): Promise<CommandResult> {
     const { sessionId, text, model, effort, ultracode, files } = m;
-    const session = this.managed.get(sessionId);
+    // By session.sessionId from here on: `sessionId` can be one the session had before /clear (see ManagedSessions.find),
+    // and /clear can give it a new id while the files are written (see followNewIds).
+    const session = this.managed.find(sessionId);
     if (!session) {
       return { ok: false, error: "このセッションには Gasho から入力できません。入力できるのは、Gasho が起動したセッションだけです。" };
     }
@@ -1934,10 +1937,9 @@ export class Daemon {
     let message = body;
     if (files?.length) {
       // Claude Code reads the files mentioned as @path when the message is sent.
-      const paths = await this.saveAttachments(sessionId, files);
+      const paths = await this.saveAttachments(session.sessionId, files);
       message = [body, paths.map((p) => `@${p}`).join("\n")].filter(Boolean).join("\n\n");
     }
-    // From here on by session.sessionId: /clear can give the session a new id while the files are written (see followNewIds).
     this.managed.enqueue(session.sessionId, {
       id: m.requestId,
       text: message,

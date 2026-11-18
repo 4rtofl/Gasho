@@ -923,6 +923,14 @@ export class ManagedSessions {
     return this.sessions.get(sessionId);
   }
 
+  /**
+   * The session that runs under `sessionId`, or that had it before /clear: a page that has not yet heard of the new id
+   * still sends the one it shows.
+   */
+  find(sessionId: string): ManagedSession | undefined {
+    return this.sessions.get(sessionId) ?? this.all().find((m) => m.previousIds?.includes(sessionId));
+  }
+
   all(): ManagedSession[] {
     return [...this.sessions.values()];
   }

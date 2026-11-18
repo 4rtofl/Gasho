@@ -281,6 +281,8 @@ export class Daemon {
   private plugins: PluginRunner;
   /** Updates of gasho-daemon from Gasho. */
   private updater: Updater;
+  /** gasho-daemon has begun to end (exit). */
+  private exiting = false;
 
   /** How long the prompt box may take to let go of a text after Enter (see typeInput). */
   private enterWaitMs: number;
@@ -298,7 +300,7 @@ export class Daemon {
       env: process.env,
       waiting: () => this.inputsToType(),
       changed: () => this.emitCapabilities(),
-      exit: (code) => process.exit(code),
+      exit: (code) => void this.exit(code),
       log: (s) => log(s),
     });
     this.terminals = new SessionTerminals(new Terminals({ stateDir: cfg.stateDir, env: cleanEnv() }), new Zellij(cleanEnv()));
@@ -332,9 +334,21 @@ export class Daemon {
       onRejected: (reason) => {
         log(`the Gasho server rejected this machine (${reason}). Its registration was revoked or is unknown;`);
         log("register again: node src/cli.ts register --server <url> --code <code>");
-        process.exit(1);
+        void this.exit(1);
       },
     });
+  }
+
+  /**
+   * Ends gasho-daemon with `code` once the plugins' daemon parts have stopped (each runs its `stop`, killed after a
+   * few seconds: PluginRunner.stopAll), so that what they started, as a command run from a panel, does not stay
+   * behind. Only the first call counts: an update may end it while a signal does.
+   */
+  async exit(code: number): Promise<void> {
+    if (this.exiting) return;
+    this.exiting = true;
+    await this.plugins.stopAll().catch((e: unknown) => log("could not stop the plugins", e));
+    process.exit(code);
   }
 
   async start(): Promise<void> {

@@ -15,6 +15,7 @@ import {
   installedVersions,
   readTrial,
   startOnTrial,
+  stoppedOnTrial,
   switchTo,
   UPDATE_EXIT_CODE,
   Updater,
@@ -189,6 +190,11 @@ test("a version on trial counts its first start, is tried again after a stop, an
   await fs.writeFile(layout.updateFile, JSON.stringify({ from: "0.14.0", to: "0.15.0", at: 5 }));
   assert.equal(await currentVersion(layout), "0.15.0");
 
+  assert.equal(await startOnTrial(layout, "0.15.0", () => undefined), undefined);
+  assert.equal(readTrial(layout.trialFile)?.starts, 1);
+  // Stopped before gasho-daemon got going (cli.ts): tried again, too.
+  stoppedOnTrial(layout, "0.15.0");
+  assert.equal(readTrial(layout.trialFile)?.starts, 0);
   assert.equal(await startOnTrial(layout, "0.15.0", () => undefined), undefined);
   assert.equal(readTrial(layout.trialFile)?.starts, 1);
   const r = updater({ layout, npm, version: "0.15.0" });

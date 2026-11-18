@@ -449,7 +449,7 @@ export class Daemon {
   /**
    * This version on trial, just started by an update (self-update.ts): it is confirmed once it has been up for a while
    * and its hook server answers. Until then an exception ends it with why, and its next start goes back to the version
-   * before; a stop (SIGTERM, a restart of the machine) is not a failure, and the next start tries it again.
+   * before; a stop (SIGTERM, a restart of the machine) is not a failure (cli.ts), and the next start tries it again.
    */
   private watchTrial(): void {
     const fail = (e: unknown) => {
@@ -457,13 +457,7 @@ export class Daemon {
       console.error(new Date().toISOString(), "[gasho-daemon] stopped on trial:", e);
       void this.exit(1);
     };
-    const stop = () => {
-      this.updater.stoppedOnTrial();
-      void this.exit(0);
-    };
     process.on("uncaughtException", fail);
-    process.on("SIGTERM", stop);
-    process.on("SIGINT", stop);
     const ms = this.updater.trialMs();
     log(`on trial: confirmed in ${Math.round(ms / 1000)} s if all is well`);
     setTimeout(() => {
@@ -472,8 +466,6 @@ export class Daemon {
         if (problem) throw new Error(problem);
         await this.updater.confirm();
         process.off("uncaughtException", fail);
-        process.off("SIGTERM", stop);
-        process.off("SIGINT", stop);
       })().catch(fail);
     }, ms);
   }

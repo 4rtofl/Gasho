@@ -238,6 +238,20 @@ export async function startOnTrial(layout: Layout, version: string, log: (s: str
 }
 
 /**
+ * A stop of `version` on trial (SIGTERM, a restart of the machine) is not a failure: its next start tries it again.
+ * By the trial on record, so that it holds from the moment startOnTrial counted the start.
+ */
+export function stoppedOnTrial(layout: Layout, version: string): void {
+  const trial = readTrial(layout.trialFile);
+  if (!trial || trial.to !== version || trial.starts === 0) return;
+  try {
+    writeJson(layout.trialFile, { ...trial, starts: 0 });
+  } catch {
+    // the next start then goes back: better than not starting at all
+  }
+}
+
+/**
  * The versions that running processes use: a session's terminal runs from the folder of the version that started it,
  * and gasho-daemon itself from its own. Undefined when the processes cannot be listed (then nothing is removed).
  */
@@ -467,13 +481,7 @@ export class Updater {
 
   /** On trial, a stop (SIGTERM, a restart of the machine) is not a failure: the next start tries this version again. */
   stoppedOnTrial(): void {
-    const trial = readTrial(this.o.layout.trialFile);
-    if (!this.trial || !trial || trial.to !== this.o.version) return;
-    try {
-      writeJson(this.o.layout.trialFile, { ...trial, starts: 0 });
-    } catch {
-      // the next start then goes back: better than not starting at all
-    }
+    if (this.trial) stoppedOnTrial(this.o.layout, this.o.version);
   }
 
   /** Waits until no input is left to type (they would be lost with the restart); gives up after a while. */

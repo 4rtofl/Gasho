@@ -31,6 +31,9 @@ test("files copied in the Finder are attached in Safari, which also gives their 
   // Lines ended by a CR alone, and a name whose voiced mark is a letter of its own (NFD) beside the same name in one.
   const kana = new File([new Uint8Array([5])], "\u30d5\u3099\u30fc\u30c4.txt", { type: "text/plain" });
   assert.deepEqual(pastedFiles(clipboard([png, kana], "image.png\r\u30d6\u30fc\u30c4.txt"), true), [png, kana]);
+  // A name that ends in a space, which the line of text loses.
+  const spaced = new File([new Uint8Array([6])], "a.png ", { type: "image/png" });
+  assert.deepEqual(pastedFiles(clipboard([spaced], "a.png "), true), [spaced]);
   // Text that mentions a file's name stays text.
   assert.deepEqual(pastedFiles(clipboard([png], "see image.png"), true), []);
   assert.deepEqual(pastedFiles(clipboard([png, pdf], "image.png"), true), []);

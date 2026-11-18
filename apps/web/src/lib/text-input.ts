@@ -28,7 +28,7 @@ export function pastedFiles(data: { files: ArrayLike<File>; getData(type: string
     .split(/\r\n|\r|\n/)
     .map((l) => l.trim().normalize("NFC"))
     .filter(Boolean);
-  const names = files.map((f) => f.name.normalize("NFC"));
+  const names = files.map((f) => f.name.trim().normalize("NFC"));
   if (lines.length && lines.sort().join("\n") !== names.sort().join("\n")) return [];
   return files;
 }

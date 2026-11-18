@@ -700,6 +700,11 @@ export interface ManagedSession {
    * a /rename lost with a restart of gasho-daemon (waiting inputs are not saved) is sent again.
    */
   autoName?: boolean;
+  /**
+   * The other ids `claude agents` has listed for this Claude Code. /clear gives the conversation a new id, while work
+   * started in the background goes on writing to the temporary folder of the id it was started under.
+   */
+  otherIds?: string[];
 }
 
 /** Names of sessions started from Gasho: at most this many characters. */
@@ -921,6 +926,19 @@ export class ManagedSessions {
 
   add(m: ManagedSession): void {
     this.sessions.set(m.sessionId, m);
+  }
+
+  /** Records an id listed for the Claude Code with this PID (see ManagedSession.otherIds). Whether it was new. */
+  noteId(pid: number, id: string): boolean {
+    const m = this.all().find((s) => s.pid === pid);
+    if (!m || m.sessionId === id || m.otherIds?.includes(id)) return false;
+    m.otherIds = [...(m.otherIds ?? []), id];
+    return true;
+  }
+
+  /** Whether a session kept here started under this id, or has gone by it since. */
+  usesId(id: string): boolean {
+    return this.has(id) || this.all().some((m) => m.otherIds?.includes(id));
   }
 
   /** Whether the name changed. */

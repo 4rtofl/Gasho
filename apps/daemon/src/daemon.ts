@@ -558,6 +558,7 @@ export class Daemon {
     this.refreshing = true;
     try {
       const rows = await listAgents(this.cfg.claudeBin);
+      await this.noteSessionIds(rows);
       const seen = new Set<string>();
       for (const row of rows) {
         // A Claude Code that a plugin runs in its own folder is no session (see fromPlugin).
@@ -593,6 +594,15 @@ export class Daemon {
         void this.refresh();
       }
     }
+  }
+
+  /** Keeps the ids the sessions started from Gasho go by after a /clear, for sweepClaudeTmp (see ManagedSession.otherIds). */
+  private async noteSessionIds(rows: AgentRow[]): Promise<void> {
+    let changed = false;
+    for (const { pid, sessionId } of rows) {
+      if (pid !== undefined && sessionId && this.managed.noteId(pid, sessionId)) changed = true;
+    }
+    if (changed) await this.managed.save();
   }
 
   /** Managed sessions whose Claude Code has exited: drop them and close their terminal. */
@@ -1846,7 +1856,7 @@ export class Daemon {
     this.sweepingClaudeTmp = true;
     try {
       const running = new Set((await listAgents(this.cfg.claudeBin)).map((r) => r.sessionId));
-      const keep = (id: string) => running.has(id) || this.managed.has(id) || this.tracked.has(id) || this.openingClaudeTmp(id);
+      const keep = (id: string) => running.has(id) || this.managed.usesId(id) || this.tracked.has(id) || this.openingClaudeTmp(id);
       const { removed, failed } = await sweepClaudeTmp(this.cfg.claudeTmpDir, { keep });
       if (removed.length > 0) log(`removed ${removed.length} temporary folder(s) of sessions that no longer run`);
       for (const { dir, error } of failed) log(`could not remove the temporary folder ${dir}`, error);

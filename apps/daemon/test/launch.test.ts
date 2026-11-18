@@ -480,6 +480,35 @@ test("a temporary folder that cannot be removed does not fail the removal of the
   }
 });
 
+test("the clean-up keeps the folder of an id a running session went by before a /clear, until that session is gone", async () => {
+  const { d, folder, agentsFile, done } = await setup();
+  const id = (n: number) => `11111111-2222-3333-4444-${String(n).padStart(12, "0")}`;
+  const list = (rows: object[]) => fs.writeFile(agentsFile, JSON.stringify(rows));
+  try {
+    const [, cleared, , another] = await Promise.all([1, 2, 3, 4].map((n) => oldTmpFolder(d.cfg.claudeTmpDir, id(n))));
+    d.managed.add({ sessionId: id(1), terminal: "t", pid: process.pid, cwd: folder, name: "s", launchedAt: Date.now() });
+    delete d.refresh; // the real one, which setup replaces
+
+    // Started as 1, then /clear made it 2 and 3. Another Claude Code's id is not this session's.
+    await list([{ pid: process.pid, sessionId: id(2), cwd: folder, status: "idle" }, { pid: 0x7ffffff0, sessionId: id(4), cwd: folder, status: "idle" }]);
+    await d.refresh();
+    await list([{ pid: process.pid, sessionId: id(3), cwd: folder, status: "idle" }]);
+    await d.refresh();
+    const saved = JSON.parse(await fs.readFile(path.join(d.cfg.stateDir, "managed.json"), "utf8"));
+    assert.deepEqual(saved[0].otherIds, [id(2), id(3)]);
+
+    await d.sweepClaudeTmp();
+    assert.equal(await present(cleared!), true);
+    assert.equal(await present(another!), false);
+
+    d.managed.remove(id(1));
+    await d.sweepClaudeTmp();
+    assert.equal(await present(cleared!), false);
+  } finally {
+    await done();
+  }
+});
+
 test("the clean-up keeps what runs, what Gasho keeps and what is being opened, and removes nothing without the list of what runs", async () => {
   const { d, folder, agentsFile, done } = await setup();
   const id = (n: number) => `11111111-2222-3333-4444-${String(n).padStart(12, "0")}`;

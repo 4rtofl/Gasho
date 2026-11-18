@@ -1127,7 +1127,7 @@ Gasho の CSS（Tailwind CSS）には、Gasho のコードが使うクラスし�
 プラグインの CSS は、そのプラグインの部品の中にだけ当てる。プラグインのクラスは、Gasho のクラスと同じ Tailwind CSS の層に入り、Gasho の CSS より後にあるので、そのまま足すと Gasho の要素にも当たる。たとえば、プラグインの `.flex` が、Gasho のヘッダーの `md:hidden` を上書きし、広い画面でもスマホ用のヘッダーが出る。ほかのプラグインの部品にも同じことが起きる。そこで画面は、`web.css` のスタイルの規則を、部品を包む要素（`data-gasho-plugin="<ID>"`）の中だけに当たるように書き換えてから足す。テーマの変数（`theme` の層）、`@property`、`@keyframes` は、ページ全体に当てる。
 
 - 当たるのは、ページ、セッションのパネル、ホームのタイル、設定、会話の末尾、入力欄の下の部品、worktree のタブの画面と、SDK の `Popover` の中。セッションのヘッダー、サイドバーの項目、セッションの一覧（P17）と worktree の一覧の分け方（P18）、worktree のタブは Gasho が描くので、プラグインの CSS は当たらない
-- 部品の外（`document.body` など）に要素を出すときは、`data-gasho-plugin="<ID>"` を付けた要素で包む。SDK の `Popover` は、中身をこの要素で包んでページの末尾に出すので、プラグインの CSS が当たる
+- 部品の外（`document.body` など）に要素を出すときは、`data-gasho-plugin="<ID>"` を付けた要素で包む。SDK の `Popover` は、中身をこの要素で包んでページの末尾に出すので、プラグインの CSS が当たる。この要素には、部品を包む要素と同じく `display: contents`（Tailwind CSS の `contents`）を付ける。下に書く `:root`・`body`・`.dark` だけの規則はこの要素にも当たるので、付けないと `padding`・`background` などがこの要素に出る
 - 暗い画面の色は、Tailwind CSS の `dark:` か、`.dark` で始まる規則（`.dark .foo`）で書く。`<html class="dark">` のときに当たるよう、画面が `.dark` で始まる規則を `.dark & .foo, & .dark .foo`（`&` は部品を包む要素）に書き換える。`@media`・`@supports`・`@container`・`@layer` の中の規則も同じ
 - `:root`・`html`・`body` で始まる規則（`:root { --x: … }`・`:root .foo`）は、部品を包む要素とその中に当てる。画面が `:root & .foo` のように書き換えるので、`:root:not(.dark)`・`html.dark` のような条件は、`<html>` がそれに合うときだけ当たる。`html body .foo`・`html > body .foo` も同じ。`body > .foo` は、部品を包む要素の直下の要素に当たる。`@media` などの中の規則も同じ
 - 書き換えるのは、部品の外の要素に当たらないと言える次の形だけである。ほかの形の `.dark` で始まる規則は `<html class="dark">` では当たらず、ほかの形の `:root`・`html`・`body` で始まる規則はどの要素にも当たらない。規則の全体を書き換えないので、同じ規則に書いた変数（`--x`）も当たらない

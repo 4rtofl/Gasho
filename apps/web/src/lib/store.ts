@@ -12,6 +12,7 @@ import type {
   LatestVersions,
   MachineHookEvent,
   MachineInfo,
+  MachineMemory,
   PluginCatalog,
   PluginCommand,
   PluginInfo,
@@ -70,6 +71,8 @@ export interface State {
   me?: DeviceInfo;
   connected: boolean;
   machines: MachineInfo[];
+  /** The latest memory of the working servers that tell it, by machine id. */
+  memory: Record<string, MachineMemory>;
   notifications: GashoNotification[];
   events: MachineHookEvent[];
   /**
@@ -119,6 +122,7 @@ export const fileKey = (machine: string, sessionId: string, path: string): strin
 const EMPTY: Omit<State, "auth"> = {
   connected: false,
   machines: [],
+  memory: {},
   notifications: [],
   events: [],
   operations: [],
@@ -530,6 +534,7 @@ function handle(m: HubToClient): void {
       update({
         push: m.push,
         machines: m.machines,
+        memory: m.memory ?? {},
         notifications: m.notifications,
         events: m.events.slice(-MAX_EVENTS),
         operations: (m.operations ?? m.events.filter(isOperation)).slice(-MAX_OPERATIONS),
@@ -551,13 +556,19 @@ function handle(m: HubToClient): void {
       update({ machines });
       break;
     }
+    case "machine.memory": {
+      const { [m.machine]: _old, ...memory } = state.memory;
+      update({ memory: m.memory ? { ...memory, [m.machine]: m.memory } : memory });
+      break;
+    }
     case "machine.removed": {
+      const { [m.id]: _gone, ...memory } = state.memory;
       const prefix = transcriptKey(m.id, "");
       const transcripts = Object.fromEntries(Object.entries(state.transcripts).filter(([k]) => !k.startsWith(prefix)));
       const graphs = Object.fromEntries(Object.entries(state.graphs).filter(([k]) => !k.startsWith(prefix)));
       const dirs = Object.fromEntries(Object.entries(state.dirs).filter(([k]) => !k.startsWith(prefix)));
       const files = Object.fromEntries(Object.entries(state.files).filter(([k]) => !k.startsWith(prefix)));
-      update({ machines: state.machines.filter((x) => x.id !== m.id), transcripts, graphs, dirs, files });
+      update({ machines: state.machines.filter((x) => x.id !== m.id), memory, transcripts, graphs, dirs, files });
       break;
     }
     case "transcript.page": {

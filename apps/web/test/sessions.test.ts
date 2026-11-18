@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { GashoNotification, MachineInfo, SessionInfo } from "@gasho/protocol";
 import {
+  movedSession,
   narrowWorktrees,
   rememberedOf,
   repoChoices,
@@ -238,6 +239,15 @@ test("a worktree's dot is its most pressing session's, gray without sessions, an
   // After /clear, what came under the id from before rings the bell of the session it went on as.
   const cleared = machine("mac", [session("a2", { cwd: "/src/app", worktree: app, previousSessionIds: ["a"] })]);
   assert.equal(dots([note("mac", "a", false)], [cleared])[0], "main /src/app: idle true");
+});
+
+test("a page open on an id from before /clear goes to the session that had it; one on a listed or unknown id stays", () => {
+  const mac = machine("mac", [session("b", { previousSessionIds: ["a", "c"] }), session("c")]);
+  assert.equal(movedSession(mac, "a")?.sessionId, "b");
+  // "c" runs again as a session of its own (an earlier conversation opened again): its page stays.
+  assert.equal(movedSession(mac, "c"), undefined);
+  assert.equal(movedSession(mac, "x"), undefined);
+  assert.equal(movedSession(undefined, "a"), undefined);
 });
 
 test("an open session reads its unread notifications, those under an id it had before /clear too", () => {

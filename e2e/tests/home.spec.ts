@@ -219,6 +219,13 @@ test.describe("通知", () => {
     const watched = worktreeSession("watched");
     const outside = worktreeSession("outside", { managed: false, pid: 4242 });
     const daemon = await hub.fakeDaemon({ name: "mac", sessions: [done, failed, asking, planning, permitting, idle, watched, outside] });
+    // What the Gasho server tells the browsers is read: the screen has sent it, and the page can be left.
+    let readTold = 0;
+    page.on("websocket", (ws) =>
+      ws.on("framereceived", (f) => {
+        if ((JSON.parse(String(f.payload)) as { type?: string }).type === "notification.read") readTold++;
+      }),
+    );
 
     await page.goto("/");
     // The hooks of a session started elsewhere come first: by the time the others' notifications show, it is known
@@ -259,7 +266,9 @@ test.describe("通知", () => {
     // Open on the screen, a session's new notification is read at once.
     await tile(page, "セッション").getByRole("button", { name: /\bwatched\b/ }).click();
     await expect(page.getByRole("heading", { name: "watched" })).toBeVisible();
+    const told = readTold;
     sendHook(daemon, watched.sessionId, "Stop", { summary: "見ていた答え" });
+    await expect.poll(() => readTold).toBeGreaterThan(told);
     await page.goto("/");
     await expect(stack).toContainText("通知（6）");
     await expect(stack).not.toContainText("watched");

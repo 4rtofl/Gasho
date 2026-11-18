@@ -38,6 +38,8 @@ test("the other selectors stay as they are", () => {
     "html ~ .a",
     "html body + .a",
     "body::before",
+    "html body::before",
+    "html.dark > body::after",
     "html-x .a",
     ".a :root",
     // Selectors with & match as they did before.
@@ -145,9 +147,9 @@ test("a :root rule is written anew in @media, and only when the rules nested in 
   ]) {
     assert.equal(ruleText(rule), rule.cssText, rule.cssText);
   }
-});
   // Below :root .a, & is an element inside the part.
   for (const rule of [nest(":root .a", style("&.b")), nest(":root", nest("& .a", style("&.b")))]) {
     const selector = rule.selectorText!;
     assert.equal(ruleText(rule), `${selector.replace(/^:root/, ":root &")}${rule.cssText.slice(selector.length)}`, rule.cssText);
   }
+});

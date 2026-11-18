@@ -91,13 +91,13 @@ function hasPseudoElement(compound: string): boolean {
 
 /**
  * The end of the compound selectors of `:root`, `html` and `body` at the start of `selector`, each in or below the one
- * before it (`html body`, `html > body`), or 0.
+ * before it (`html body`, `html > body`), 0 when there are none, or -1 when one has a pseudo-element (`html body::before`).
  */
 function rootEnd(selector: string): number {
   let end = 0;
   for (let from = 0; ROOT.test(selector.slice(from)); ) {
     const compound = compoundEnd(selector, from);
-    if (hasPseudoElement(selector.slice(from, compound))) break;
+    if (hasPseudoElement(selector.slice(from, compound))) return -1;
     end = compound;
     const combinator = /^\s*>?\s*/.exec(selector.slice(end))![0];
     if (!combinator) break;
@@ -114,6 +114,7 @@ function inPart(selector: string, nested: ArrayLike<CssRule>): string {
   // CSS nesting puts `& ` before a selector only when it has no `&` (even in `:is()`): one with `&` places the part itself.
   if (find(selector, 0, (i) => selector[i] === "&", true) < selector.length) return selector;
   const root = rootEnd(selector);
+  if (root < 0) return selector;
   const first = selector.slice(0, root || compoundEnd(selector, 0));
   const rest = selector.slice(first.length);
   if (!root && find(first, 0, (i) => first[i] === "." && DARK.test(first.slice(i))) === first.length) return selector;

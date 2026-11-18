@@ -19,12 +19,15 @@ export interface Picks {
  */
 export interface Unsent {
   id: string;
-  /** As sent; empty once it has been put back in the box. */
+  /** Its text that has not been put back in the box (empty once it has). */
   text: string;
   /** The files sent with it that have not been put back in the box. */
   files: File[];
-  /** How many entries the conversation had when it was sent (see lib/pending's recorded). */
-  after: number;
+  /**
+   * Its text and the names of its files as sent, and how many entries the conversation had then: to find it in the
+   * conversation should it show there (see lib/pending's recordedAsSent).
+   */
+  sent: { text: string; files: string[]; after: number };
 }
 
 interface Draft {

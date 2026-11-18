@@ -21,7 +21,7 @@ import {
   waitingLabel,
 } from "@/lib/format";
 import { promptDraft, usePicks, useUnsent } from "@/lib/drafts";
-import { addPending, noneWaiting, pendingShown, recorded, removePending, sessionWorking, settlePending, usePending } from "@/lib/pending";
+import { addPending, noneWaiting, pendingShown, recordedAsSent, removePending, sessionWorking, settlePending, usePending } from "@/lib/pending";
 import { go, type SessionPanel } from "@/lib/route";
 import { closeSessionHeaderOnPhone, useSessionHeaderShown } from "@/lib/session-header";
 import { daemonAtLeast, rememberOpened, worktreeId, worktreesByLastUse } from "@/lib/sessions";
@@ -354,11 +354,11 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
   const box = useRef<PromptInputHandle>(null);
   // Sent when the connection closed before their results came: put back in the box only when asked (see UNKNOWN_SENT).
   const [unsent, setUnsent] = useUnsent(key);
-  // One the conversation shows was typed into the session after all.
+  // One the conversation shows as it was sent was typed into the session after all.
   useEffect(() => {
     if (!transcript) return;
     setUnsent((list) => {
-      const left = list.filter((u) => !recorded(u, transcript.entries, transcript.start));
+      const left = list.filter((u) => !recordedAsSent(u.sent, transcript.entries, transcript.start));
       return left.length < list.length ? left : list;
     });
   }, [transcript, setUnsent]);
@@ -492,7 +492,7 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
           if (r.unknown) {
             // Not put back in the box at once: it may have been typed into the session, and could be sent twice.
             removePending(key, pending);
-            setUnsent((list) => [...list, { id: pending, text, files, after: entries }]);
+            setUnsent((list) => [...list, { id: pending, text, files, sent: { text, files: files.map((f) => f.name), after: entries } }]);
             return;
           }
           if (!r.ok) {

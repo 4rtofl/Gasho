@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { TranscriptEntry } from "@gasho/protocol";
-import { pendingShown, recorded, SENT_GRACE_MS, type PendingMessage } from "../src/lib/pending.ts";
+import { pendingShown, recorded, recordedAsSent, SENT_GRACE_MS, type PendingMessage } from "../src/lib/pending.ts";
 
 const message = (text: string, extra: Partial<PendingMessage> = {}): PendingMessage => ({
   id: "p1",
@@ -59,6 +59,33 @@ test("files sent alone, shell commands and slash commands are recognized as Clau
   // A note is the message only for a slash command, and only when it starts with it.
   assert.equal(recorded(message("ok", { after: 0 }), [entry("system", "Kept model as Opus 5.5 (token budget ok)")], 0), false);
   assert.equal(recorded(slash, [entry("system", "Ultracode on: /effort ultracode on")], 0), false);
+});
+
+test("a message whose result never came is found only as it was sent, not by another that starts alike", () => {
+  const dir = "@/home/u/.local/share/gasho/attachments/s1";
+  const sent = (text: string, files: string[] = []) => ({ text, files, after: 0 });
+  // Not reached: another message shows in the conversation.
+  const url = sent("https://github.com/4rtofl/Gasho/pull/118 をレビューしてください。", ["notes.txt"]);
+  assert.equal(recordedAsSent(url, [entry("user", "https://github.com/4rtofl/Gasho/pull/119 をレビューしてください。")], 0), false);
+  const test1 = sent("テストして", ["notes.txt"]);
+  assert.equal(recordedAsSent(test1, [entry("user", "先にテストしてから直してください")], 0), false);
+  assert.equal(recordedAsSent(sent("テストして"), [entry("user", "先にテストしてから直してください")], 0), false);
+  const alone = sent("", ["a.png"]);
+  assert.equal(recordedAsSent(alone, [entry("user", `別の資料です\n\n${dir}/20261118T100000-1-b.png`)], 0), false);
+  assert.equal(recordedAsSent(alone, [entry("user", `${dir}/20261118T100000-1-b.png`)], 0), false);
+  assert.equal(recordedAsSent(test1, [entry("user", "テストして")], 0), false);
+
+  // Reached: it shows as it was sent (spaces laid out otherwise, names as gasho-daemon saves them).
+  assert.equal(recordedAsSent(url, [entry("user", `${url.text}\n\n${dir}/20261118T100000-1-notes.txt`)], 0), true);
+  assert.equal(recordedAsSent(alone, [entry("user", `${dir}/20261118T100000-1-a.png`)], 0), true);
+  const two = sent("見て", ["my notes.txt", "図.png"]);
+  const both = `見 て\n\n${dir}/20261118T100000-1-my_notes.txt\n${dir}/20261118T100000-2-図.png`;
+  assert.equal(recordedAsSent(two, [entry("user", both)], 0), true);
+  assert.equal(recordedAsSent(sent("!git status"), [entry("user", "<bash-input>git status</bash-input>")], 0), true);
+  assert.equal(recordedAsSent(sent("/effort ultracode on"), [entry("system", "/effort ultracode on")], 0), true);
+  // Sent before, or by a subagent: not this one.
+  assert.equal(recordedAsSent({ ...sent("テストして"), after: 1 }, [entry("user", "テストして")], 0), false);
+  assert.equal(recordedAsSent(sent("テストして"), [entry("user", "テストして", { isSidechain: true })], 0), false);
 });
 
 test("a message waiting on the working server is shown while the session has messages waiting there", () => {

@@ -29,13 +29,13 @@ test("an update is offered only for a newer version, to a connected gasho-daemon
 });
 
 test("the inputs to send and the permission requests an update would affect are counted; questions read from the screen are not", () => {
-  const s = { cwd: "/r", status: "idle" as const, rcMode: "server", prLinks: [] };
+  const s = { cwd: "/r", status: "idle" as const, rcMode: "server" as const, prLinks: [] };
   const m = machine({
     sessions: [
-      { ...s, sessionId: "a", pendingInputs: 2, permissionRequests: [{ id: "p1", toolName: "Bash", at: 1 }] },
-      { ...s, sessionId: "b", permissionRequests: [{ id: "question:1", toolName: "AskUserQuestion", at: 1 }] },
+      { ...s, sessionId: "a", pendingInputs: 2, permissionRequests: [{ id: "p1", toolName: "Bash", input: "{}", at: 1 }] },
+      { ...s, sessionId: "b", permissionRequests: [{ id: "question:1", toolName: "AskUserQuestion", input: "{}", at: 1 }] },
     ],
-  } as Partial<MachineInfo>);
+  });
   assert.deepEqual(pendingWork(m), { inputs: 2, requests: 1 });
   assert.equal(changesUrl("0.15.0", "0.16.0"), "https://github.com/4rtofl/Gasho/compare/daemon-v0.15.0...daemon-v0.16.0");
 });

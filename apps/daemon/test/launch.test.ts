@@ -671,6 +671,7 @@ test("the clean-up keeps the folders of the ids a running session had before /cl
     const [first, cleared, , another] = await Promise.all([1, 2, 3, 4].map((n) => oldTmpFolder(d.cfg.claudeTmpDir, id(n))));
     d.managed.add({ sessionId: id(1), terminal: "t", pid: process.pid, cwd: folder, name: "s", launchedAt: Date.now() });
     delete d.refresh; // the real one, which setup replaces
+    d.sessionsRead = true; // no clean-up of its own after the first refresh: this test runs them
 
     // Started as 1, then /clear made it 2 and 3. Another Claude Code's id is not this session's.
     await list([{ pid: process.pid, sessionId: id(2), cwd: folder, status: "idle" }, { pid: 0x7ffffff0, sessionId: id(4), cwd: folder, status: "idle" }]);
@@ -688,6 +689,79 @@ test("the clean-up keeps the folders of the ids a running session had before /cl
     await d.sweepClaudeTmp();
     assert.equal(await present(first!), false);
     assert.equal(await present(cleared!), false);
+  } finally {
+    await done();
+  }
+});
+
+test("a folder stays while a running session shows a file from it or was forked from it, but a session's own files do not keep it", async () => {
+  const { d, folder, done } = await setup();
+  const id = (n: number) => `11111111-2222-3333-4444-${String(n).padStart(12, "0")}`;
+  const ended = 0x7ffffff0;
+  try {
+    const [shown, forked, own] = await Promise.all([1, 2, 3].map((n) => oldTmpFolder(d.cfg.claudeTmpDir, id(n))));
+    d.tracked.set(id(5), { info: {}, meta: { sentFiles: new Set([path.join(shown!, "scratchpad", "a.png")]) } });
+    d.managed.add({ sessionId: id(6), terminal: "t", pid: ended, cwd: folder, name: "fork", launchedAt: Date.now(), forkOf: id(2) });
+    d.tracked.set(id(3), { info: {}, meta: { sentFiles: new Set([path.join(own!, "scratchpad", "b.png")]) } });
+
+    await d.removeClaudeTmp(id(1), ended);
+    await d.removeClaudeTmp(id(2), ended);
+    await d.removeClaudeTmp(id(3), ended);
+    await d.sweepClaudeTmp();
+    assert.equal(await present(shown!), true);
+    assert.equal(await present(forked!), true);
+    assert.equal(await present(own!), false);
+
+    d.tracked.delete(id(5));
+    d.managed.remove(id(6));
+    await d.sweepClaudeTmp();
+    assert.equal(await present(shown!), false);
+    assert.equal(await present(forked!), false);
+  } finally {
+    await done();
+  }
+});
+
+test("a session that opens an earlier id of a running one again does not take that id's folder with it when removed", async () => {
+  const { d, folder, done } = await setup();
+  const id = (n: number) => `11111111-2222-3333-4444-${String(n).padStart(12, "0")}`;
+  const ended = 0x7ffffff0;
+  try {
+    const dir = await oldTmpFolder(d.cfg.claudeTmpDir, id(1));
+    d.managed.add({ sessionId: id(2), terminal: "a", pid: ended, cwd: folder, name: "a", launchedAt: Date.now(), previousIds: [id(1)] });
+    d.managed.add({ sessionId: id(1), terminal: "b", pid: ended - 1, cwd: folder, name: "b", launchedAt: Date.now() });
+    assert.equal(d.managed.get(id(2)).previousIds, undefined);
+
+    d.managed.remove(id(1));
+    await d.managed.save();
+    const saved = JSON.parse(await fs.readFile(path.join(d.cfg.stateDir, "managed.json"), "utf8"));
+    assert.deepEqual(saved[0].releasedIds, [id(1)]);
+    await d.removeClaudeTmp(id(1), ended);
+    await d.sweepClaudeTmp();
+    assert.equal(await present(dir), true);
+
+    d.managed.remove(id(2));
+    await d.sweepClaudeTmp();
+    assert.equal(await present(dir), false);
+  } finally {
+    await done();
+  }
+});
+
+test("the first clean-up waits for the first refresh that reads the sessions", async () => {
+  const { d, folder, done } = await setup();
+  let sweeps = 0;
+  try {
+    d.sweepClaudeTmp = async () => void sweeps++;
+    delete d.refresh; // the real one, which setup replaces
+    const claudeBin = d.cfg.claudeBin;
+    d.cfg.claudeBin = path.join(folder, "no-such-claude");
+    await d.refresh();
+    assert.equal(sweeps, 0);
+    d.cfg.claudeBin = claudeBin;
+    await d.refresh();
+    await d.refresh();
+    assert.equal(sweeps, 1);
   } finally {
     await done();
   }

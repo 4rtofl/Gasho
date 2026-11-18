@@ -736,6 +736,11 @@ export interface ManagedSession {
    * the background goes on writing to the temporary folder of the id it was started under (see Daemon.sweepClaudeTmp).
    */
   previousIds?: string[];
+  /**
+   * Earlier ids that another session has taken over by opening that conversation again. They are no longer this session's,
+   * but work it started in the background under them can still be writing to their temporary folders.
+   */
+  releasedIds?: string[];
 }
 
 /** At most this many earlier ids are kept for a session (see ManagedSession.previousIds). */
@@ -981,7 +986,13 @@ export class ManagedSessions {
       const rest = m.previousIds.filter((x) => x !== id);
       if (rest.length > 0) m.previousIds = rest;
       else delete m.previousIds;
+      m.releasedIds = [...(m.releasedIds ?? []).filter((x) => x !== id), id].slice(-MAX_PREVIOUS_IDS);
     }
+  }
+
+  /** Whether a session kept here may still need the temporary folder of `id`: its own, an earlier one, or the one it was forked from. */
+  needsTmpOf(id: string): boolean {
+    return this.find(id) !== undefined || this.all().some((m) => m.forkOf === id || m.releasedIds?.includes(id));
   }
 
   /** Whether the name changed. */

@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { CLAUDE_TMP_MAX_AGE_MS, claudeTmpRoot, prepareClaudeTmp, removeSessionTmp, sessionTmpDirs, sweepClaudeTmp } from "../src/claude-tmp.ts";
+import { CLAUDE_TMP_MAX_AGE_MS, claudeTmpRoot, prepareClaudeTmp, removeSessionTmp, sessionOfTmpFile, sessionTmpDirs, sweepClaudeTmp } from "../src/claude-tmp.ts";
 import { loadConfig } from "../src/config.ts";
 
 const UID = 1000;
@@ -99,6 +99,14 @@ test("a folder is ready when Claude Code can make its own in it, and leaves noth
   } finally {
     await done();
   }
+});
+
+test("a file in a session's temporary folder names that session; other paths name none", () => {
+  assert.equal(sessionOfTmpFile(`/c/claude-${UID}/-w/${A}/scratchpad/a.png`, UID), A);
+  assert.equal(sessionOfTmpFile(`/c/claude-${UID}/-w/${A}`, UID), undefined);
+  assert.equal(sessionOfTmpFile(`/c/claude-${UID}/-w/not-a-session/a.png`, UID), undefined);
+  assert.equal(sessionOfTmpFile(`/c/claude-1/-w/${A}/a.png`, UID), undefined);
+  assert.equal(sessionOfTmpFile(`/home/rg/${A}/a.png`, UID), undefined);
 });
 
 test("removing a session removes its folder in every working folder, and nothing else", async () => {

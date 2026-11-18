@@ -38,6 +38,14 @@ export async function prepareClaudeTmp(root: string, uid = process.getuid?.() ??
   await fsp.rmdir(await fsp.mkdtemp(path.join(own, ".gasho-try-")));
 }
 
+/** The session whose temporary folder a file is in, by Claude Code's layout. A fork's conversation still names the files of the one it was forked from. */
+export function sessionOfTmpFile(file: string, uid = process.getuid?.() ?? 0): string | undefined {
+  const parts = file.split(path.sep);
+  const at = parts.indexOf(`claude-${uid}`);
+  const id = parts[at + 2];
+  return at >= 0 && parts.length > at + 3 && id !== undefined && SESSION_DIR_RE.test(id) ? id : undefined;
+}
+
 /** A real folder: not a symbolic link, and not a file. */
 async function isRealDir(dir: string): Promise<boolean> {
   const stat = await fsp.lstat(dir).catch(() => undefined);

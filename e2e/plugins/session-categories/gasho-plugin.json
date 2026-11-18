@@ -1,0 +1,7 @@
+{
+  "id": "session-categories",
+  "name": "Session categories (E2E)",
+  "version": "1.0.0",
+  "api": "1.7",
+  "web": { "js": "web.js" }
+}

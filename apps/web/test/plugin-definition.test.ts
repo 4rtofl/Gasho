@@ -40,10 +40,13 @@ test("a web.js definition that would fail to be drawn is refused, saying what to
     return assert.fail(`taken: ${JSON.stringify(d)}`);
   };
   for (const d of [undefined, null, [], "plugin", () => ({})]) assert.match(refused(d), /^web\.js が、プラグイン/);
-  assert.equal(refused({ sidebar: {} }), "sidebar は配列にしてください。");
-  assert.equal(refused({ worktreeTabs: [{ id: "" }] }), "worktreeTabs の項目に id がありません。");
+  // Every place of the SDK's PluginDefinition is checked, each a list of items with an id or an object.
+  for (const k of ["sidebar", "sessionHeader", "homeTiles", "conversationEnd", "composerFooter", "worktreeTabs"]) {
+    assert.equal(refused({ [k]: {} }), `${k} は配列にしてください。`);
+    assert.equal(refused({ [k]: [{ id: "" }] }), `${k} の項目に id がありません。`);
+  }
   assert.equal(refused({ conversationEnd: [null] }), "conversationEnd の項目に id がありません。");
-  assert.equal(refused({ sessionPanels: [] }), "sessionPanels はオブジェクトにしてください。");
+  for (const k of ["pages", "sessionPanels", "pagePanels", "worktreeViews"]) assert.equal(refused({ [k]: [] }), `${k} はオブジェクトにしてください。`);
   assert.equal(refused({ pagePanels: "notes" }), "pagePanels はオブジェクトにしてください。");
   assert.equal(refused({ settings: {} }), "settings は部品にしてください。");
   assert.equal(refused({ sessionList: { useCategories: [] } }), "sessionList には、関数 useCategories を書いてください。");

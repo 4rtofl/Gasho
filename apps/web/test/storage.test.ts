@@ -65,7 +65,18 @@ test("worktrees are kept new ones first; one kept already is updated where it is
 
 test("kept worktrees of a wrong shape are left out, and storage that cannot be read starts with none", async () => {
   const good = wt("good", { repo: "r", branch: "main", github: { owner: "o", name: "n", url: "https://github.com/o/n" } });
-  const bad = [{ ...wt("x"), subfolders: "no" }, { ...wt("y"), github: { owner: "o" } }, { ...wt("z"), branch: 1 }, null, "mac:/src/w"];
+  const bad = [
+    { ...wt("m"), machine: 1 },
+    { ...wt("p"), path: null },
+    { ...wt("l"), label: undefined },
+    { ...wt("x"), subfolders: "no" },
+    { ...wt("r"), repo: 1 },
+    { ...wt("z"), branch: 1 },
+    { ...wt("f"), repoFolder: false },
+    { ...wt("y"), github: { owner: "o" } },
+    null,
+    "mac:/src/w",
+  ];
   const s = storage({ "gasho.worktrees": JSON.stringify([...bad, good]) });
   const read = await fresh<Worktrees>("../src/lib/remembered-worktrees.ts");
   read.forgetWorktree("mac", "/src/none");

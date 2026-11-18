@@ -173,7 +173,7 @@ test("hub.env is read into the environment, a value set in the shell wins, and o
     assert.equal(said.length, 0);
     loadEnvFile({ GASHO_HUB_ENV: dir }, (s) => said.push(s));
     assert.equal(said.length, 1);
-    assert.match(said[0] ?? "", new RegExp(`^could not read ${dir}: `));
+    assert.ok(said[0]?.startsWith(`could not read ${dir}: `), said[0]);
   } finally {
     delete process.env.GASHO_TEST_FROM_FILE;
     delete process.env.GASHO_TEST_SET;

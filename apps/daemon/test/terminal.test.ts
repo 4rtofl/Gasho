@@ -241,9 +241,9 @@ test("a terminal that refuses a request, answers what is not JSON, or hangs up s
   );
   try {
     await assert.rejects(t.screen("refuses"), /^Error: no such key$/);
-    await assert.rejects(t.screen("vague"), new RegExp(`^Error: ${t.socketOf("vague")} refused the request$`));
-    await assert.rejects(t.screen("garbage"), new RegExp(`^Error: a bad answer from ${t.socketOf("garbage")}$`));
-    await assert.rejects(t.keys("hangs", "Enter"), new RegExp(`^Error: ${t.socketOf("hangs")} closed the connection$`));
+    await assert.rejects(t.screen("vague"), { message: `${t.socketOf("vague")} refused the request` });
+    await assert.rejects(t.screen("garbage"), { message: `a bad answer from ${t.socketOf("garbage")}` });
+    await assert.rejects(t.keys("hangs", "Enter"), { message: `${t.socketOf("hangs")} closed the connection` });
   } finally {
     for (const s of servers) s.close();
     await fs.rm(stateDir, { recursive: true, force: true });

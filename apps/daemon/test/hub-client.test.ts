@@ -20,7 +20,7 @@ function tmp(): string {
 
 test("the registration is saved for this user only and read back; a missing or incomplete file says to register again", async () => {
   const file = path.join(tmp(), "gasho", "daemon.json");
-  await assert.rejects(loadCredentials(file), new RegExp(`^Error: ${file} not found\\. Register this machine first`));
+  await assert.rejects(loadCredentials(file), (e: Error) => e.message.startsWith(`${file} not found. Register this machine first`));
 
   await saveCredentials(file, { server: "http://hub:7740", machineId: "m1", token: "secret", name: "ubuntu" });
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);

@@ -3,11 +3,14 @@
 // From easyui.site (NotificationStack). Changed for Gasho: the list is controlled by the caller
 // (notifications / onDismiss / onSelect), the demo "Simulate" button is removed, and labels are Japanese.
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle2, AlertCircle, Info, X, Bell } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { motionTransitions } from '../../lib/motion-tokens';
+
+/** How far the pointer moves before framer-motion starts a drag (its pan session's distanceThreshold). */
+const DRAG_DISTANCE = 3;
 
 export interface NotificationItem {
   id: string;
@@ -37,6 +40,9 @@ export const NotificationStack: React.FC<NotificationStackProps> = ({
   maxVisible = 3,
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
+  // Where a body was pressed. framer-motion calls onDragStart and onDragEnd a frame later, after the click that ends
+  // a mouse drag, so that click is told from a press by how far it is from here.
+  const pressedAt = useRef<{ x: number; y: number } | null>(null);
 
   const getIcon = (type?: 'success' | 'info' | 'warning') => {
     switch (type) {
@@ -120,7 +126,15 @@ export const NotificationStack: React.FC<NotificationStackProps> = ({
                   <div className="flex items-start justify-between gap-2">
                     <div
                       className="flex items-start gap-2.5 min-w-0"
-                      onClick={() => onSelect?.(item.id)}
+                      onPointerDown={(e) => {
+                        pressedAt.current = { x: e.clientX, y: e.clientY };
+                      }}
+                      onClick={(e) => {
+                        const p = pressedAt.current;
+                        pressedAt.current = null;
+                        if (p && Math.hypot(e.clientX - p.x, e.clientY - p.y) >= DRAG_DISTANCE) return;
+                        onSelect?.(item.id);
+                      }}
                       role={onSelect ? 'button' : undefined}
                     >
                       <div className="mt-0.5 shrink-0">{getIcon(item.type)}</div>

@@ -15,6 +15,7 @@ import {
   encryptPayload,
   type PushFetch,
   PushSender,
+  pushPayloadOf,
   vapidAuthorization,
   vapidKeysOf,
 } from "../src/push.ts";
@@ -348,4 +349,12 @@ test("a permission prompt counts its session in the badge before the sessions sa
   await t.waitFor(() => assert.equal(svc.posts.length, 1), WAIT);
   const payload = JSON.parse(decrypt(svc.posts[0]?.body ?? Buffer.alloc(0), ua.keys).toString()) as PushPayload;
   assert.deepEqual([payload.body, payload.badge], ["確認を待っています", 2]);
+});
+
+test("the lock screen shows a plugin's title, and Gasho's fixed words for the others", () => {
+  const n: GashoNotification = { id: "1", machine: "m", sessionId: "s", at: 1, kind: "done", title: "s の応答が終わりました", body: "会話の中身", read: false };
+  assert.equal(pushPayloadOf(n, "s", 0).body, "応答が終わりました");
+  const said = pushPayloadOf({ ...n, title: "#5 のレビューが終わりました", plugin: "github-review" }, "s", 0);
+  assert.equal(said.body, "#5 のレビューが終わりました");
+  assert.equal(said.kind, "done");
 });

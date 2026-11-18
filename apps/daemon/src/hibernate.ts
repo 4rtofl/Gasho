@@ -1,5 +1,5 @@
 // Sessions started from Gasho that nobody uses are hibernated: their Claude Code and terminal end, the session stays in
-// Gasho, and `claude --resume` brings it back when it is used (docs/spec.md, docs/research.md 検証10). What decides
+// Gasho, and `claude --resume` brings it back when it is used (docs/spec.md, docs/research.md 検証11). What decides
 // is kept here, free of the daemon, so that it can be tested alone.
 import type { EffortLevel } from "@gasho/protocol";
 

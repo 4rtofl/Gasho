@@ -13,7 +13,7 @@ import { sessionLabel } from "@/lib/format";
 import { showNotice } from "@/lib/notice";
 import { forgetWorktree } from "@/lib/remembered-worktrees";
 import { go, parseHash } from "@/lib/route";
-import { sessionDotStatus, type WorktreeSessions } from "@/lib/sessions";
+import { sessionDotStatus, shownStatus, type WorktreeSessions } from "@/lib/sessions";
 import { getAppState, sendCommand } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { removeWorktreeProblem, sessionsInWorktree, showsWorktree } from "@/lib/worktree-remove";
@@ -115,7 +115,7 @@ function RemoveDialog({ worktree, onClose }: { worktree: WorktreeSessions; onClo
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [changes, setChanges] = useState<WorktreeChanges>();
-  const working = sessions.some((s) => s.status === "busy" || s.status === "waiting");
+  const working = sessions.some((s) => shownStatus(s) === "busy" || s.status === "waiting");
 
   const remove = async () => {
     setBusy(true);

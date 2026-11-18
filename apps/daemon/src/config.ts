@@ -13,6 +13,8 @@ export interface DaemonConfig {
   hookSecret: string | undefined;
   claudeDir: string;
   claudeBin: string;
+  /** Codex: GASHO_CODEX_BIN, or `codex` on PATH (codex.ts). */
+  codexBin: string;
   /** The GitHub CLI, used with its own login to clone a repository for a new session (folders.ts). */
   ghBin: string;
   pollIntervalMs: number;
@@ -44,6 +46,7 @@ export function loadConfig(creds: Credentials, env: NodeJS.ProcessEnv = process.
     hookSecret: env.GASHO_HOOK_SECRET || undefined,
     claudeDir: env.GASHO_CLAUDE_DIR ?? path.join(os.homedir(), ".claude"),
     claudeBin: env.GASHO_CLAUDE_BIN ?? "claude",
+    codexBin: env.GASHO_CODEX_BIN || "codex",
     ghBin: env.GASHO_GH_BIN ?? "gh",
     pollIntervalMs: Number(env.GASHO_POLL_MS ?? 3000),
     stateDir,

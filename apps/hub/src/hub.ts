@@ -2,6 +2,9 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type {
+  AgentInfo,
+  AgentKind,
+  AgentStatus,
   ClientToHub,
   CommandResult,
   DaemonToHub,
@@ -12,6 +15,7 @@ import type {
   HubToDaemon,
   InputFeature,
   MachineHookEvent,
+  MachineAgents,
   MachineInfo,
   MachineMemory,
   MediaPart,
@@ -21,7 +25,7 @@ import type {
   SessionInfo,
 } from "@gasho/protocol";
 import type { LatestCheck } from "./latest.ts";
-import { NotificationGate, notificationFor, sessionLabel } from "./notify.ts";
+import { boundedHook, NotificationGate, notificationFor, sessionLabel } from "./notify.ts";
 import type { PluginCatalogSource } from "./catalog.ts";
 import { PluginHub } from "./plugin-hub.ts";
 import type { PluginRegistry } from "./plugins.ts";
@@ -122,6 +126,23 @@ const MAX_ENDS = 100;
 const MODELS = new Set(["default", "opus", "fable", "sonnet", "haiku"]);
 const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 const FEATURES = new Set<InputFeature>(["model", "effort", "ultracode", "files"]);
+const AGENT_KINDS: readonly AgentKind[] = ["claude", "codex"];
+const AGENT_STATUSES = new Set<unknown>(["available", "loginRequired", "unknown"] satisfies AgentStatus[]);
+/** An agent's version: x.y.z, with a pre-release after it. */
+const AGENT_VERSION_RE = /^\d{1,9}\.\d{1,9}\.\d{1,9}(?:[-+][0-9A-Za-z.+-]{1,40})?$/;
+
+/** The agents a gasho-daemon says it found, kept to what is expected (they are shown to browsers). */
+export function agentsOf(u: unknown): MachineAgents | undefined {
+  if (!u || typeof u !== "object") return undefined;
+  const agents: MachineAgents = {};
+  for (const kind of AGENT_KINDS) {
+    const a = (u as Record<string, Partial<AgentInfo> | null | undefined>)[kind];
+    if (!a || !AGENT_STATUSES.has(a.status)) continue;
+    const version = typeof a.version === "string" && AGENT_VERSION_RE.test(a.version) ? a.version : undefined;
+    agents[kind] = { status: a.status as AgentStatus, ...(version ? { version } : {}) };
+  }
+  return agents;
+}
 
 /**
  * What a gasho-daemon that does not list its features (older than 0.6.0) can do with an input: 0.5 switches the model
@@ -627,6 +648,7 @@ export class Hub {
         m.canEnd = msg.canEnd === true || undefined;
         m.canRemoveWorktree = msg.canRemoveWorktree === true || undefined;
         m.canListSkills = msg.canListSkills === true || undefined;
+        m.agents = agentsOf(msg.agents);
         m.update = updateInfoFor(m.daemonVersion, msg.update);
         this.broadcast({ type: "machine", machine: m });
         break;
@@ -696,7 +718,7 @@ export class Hub {
         break;
       case "hook": {
         if (!isHookEvent(msg.event)) break;
-        const event: MachineHookEvent = { ...msg.event, machine: id };
+        const event: MachineHookEvent = { ...boundedHook(msg.event), machine: id };
         this.store.addEvent(event);
         this.broadcast({ type: "event", event });
         const session = m.sessions.find((s) => s.sessionId === event.sessionId);

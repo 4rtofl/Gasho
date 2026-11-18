@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { HubToClient, HubToDaemon, MachineHookEvent, ServerInfo, SessionInfo } from "@gasho/protocol";
 import {
+  agentsOf,
   CLOSE_INVALID_CREDENTIALS,
   CLOSE_UNAUTHORIZED,
   Hub,
@@ -12,7 +13,7 @@ import {
   UPDATING,
   validateCommand,
 } from "../src/hub.ts";
-import { notificationFor } from "../src/notify.ts";
+import { NotificationGate, notificationFor } from "../src/notify.ts";
 import { Store } from "../src/store.ts";
 
 function fakePeer<T>(deviceId = "") {
@@ -280,6 +281,50 @@ test("notificationFor covers permission, idle and errors, and ignores other even
   assert.equal(notificationFor("m", { ...ev, event: "Stop" }, undefined, "5")?.title, "s1 の応答が終わりました");
 });
 
+test("what a plugin says of a Stop replaces Gasho's notification, and is not dropped in a turn of its own (API 1.15)", () => {
+  const ev = { sessionId: "s1", event: "Stop", at: 1, summary: "会話の中身" };
+  const said = notificationFor("m", { ...ev, notification: { plugin: "github-review", title: " #5 のレビューが終わりました ", body: "o/r" } }, undefined, "1");
+  assert.deepEqual(
+    { kind: said?.kind, title: said?.title, body: said?.body, plugin: said?.plugin },
+    { kind: "done", title: "#5 のレビューが終わりました", body: "o/r", plugin: "github-review" },
+  );
+  const empty = notificationFor("m", { ...ev, notification: { plugin: "p", title: "  " } }, undefined, "2");
+  assert.equal(empty?.title, "s1 の応答が終わりました");
+  assert.equal(empty?.plugin, undefined);
+
+  const gate = new NotificationGate();
+  gate.pass("m", { sessionId: "s1", event: "UserPromptSubmit", at: 1, automatic: true }, null, () => true);
+  const stop = { sessionId: "s1", event: "Stop", at: 2 };
+  assert.equal(gate.pass("m", stop, notificationFor("m", stop, undefined, "3"), () => false), true);
+  gate.pass("m", { sessionId: "s1", event: "UserPromptSubmit", at: 3, automatic: true }, null, () => true);
+  assert.equal(gate.pass("m", stop, notificationFor("m", stop, undefined, "4"), () => true), false);
+  gate.pass("m", { sessionId: "s1", event: "UserPromptSubmit", at: 4, automatic: true }, null, () => true);
+  assert.equal(gate.pass("m", stop, said, () => true), true);
+});
+
+test("what a plugin says of a Stop is kept and shown only as long as a notification holds it", () => {
+  const { hub, store, machineId, machineToken, browserId } = setup();
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.1.0" });
+  hub.onDaemonMessage(d, { type: "sessions", sessions: [session] });
+
+  const long = { plugin: "p".repeat(100), title: "長".repeat(1000), body: "本".repeat(1000) };
+  hub.onDaemonMessage(d, { type: "hook", event: { sessionId: "s1", event: "Stop", at: 1, notification: long } });
+  const cut = { plugin: "p".repeat(32), title: "長".repeat(120), body: "本".repeat(300) };
+  assert.deepEqual(store.recentEvents().at(-1)?.notification, cut);
+  const shown = c.sent.filter((m) => m.type === "event").at(-1);
+  assert.ok(shown?.type === "event");
+  assert.deepEqual(shown.event.notification, cut);
+
+  // What cannot be shown is not kept.
+  hub.onDaemonMessage(d, { type: "hook", event: { sessionId: "s1", event: "Stop", at: 2, notification: { plugin: "p", title: " ".repeat(1000), body: "本".repeat(1000) } } });
+  assert.equal(store.recentEvents().at(-1)?.notification, undefined);
+  hub.onDaemonMessage(d, { type: "hook", event: { sessionId: "s1", event: "PreToolUse", at: 3, notification: "長".repeat(1000) } } as never);
+  assert.equal(store.recentEvents().at(-1)?.notification, undefined);
+});
+
 test("a permission prompt for Claude's question or plan is notified as such", () => {
   const ev = { sessionId: "s1", at: 1, event: "Notification", notificationType: "permission_prompt", summary: "Claude needs your permission" };
   const waiting = (r: Record<string, unknown>) =>
@@ -520,6 +565,35 @@ test("effort and ultracode of inputs are checked, and machines carry the model n
   hub.onClientMessage(c, { type: "session.input", requestId: "e", machine: machineId, sessionId: "s1", text: "考えて", effort: "high", ultracode: false });
   const relayed = d.sent.at(-1);
   assert.ok(relayed?.type === "session.input" && relayed.effort === "high" && relayed.ultracode === false);
+});
+
+test("the agents a gasho-daemon found reach the browsers, kept to what is expected", () => {
+  const { hub, machineId, machineToken, browserId } = setup();
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.30.0" });
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const agents = () => {
+    const got = c.sent.filter((m) => m.type === "machine").at(-1);
+    assert.ok(got?.type === "machine");
+    return got.machine.agents;
+  };
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: [], agents: { codex: { status: "loginRequired", version: "0.170.0" } } });
+  assert.deepEqual(agents(), { codex: { status: "loginRequired", version: "0.170.0" } });
+  // One that no longer finds it, and one that does not look for it.
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: [], agents: {} });
+  assert.deepEqual(agents(), {});
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: [] });
+  assert.equal(agents(), undefined);
+});
+
+test("what a gasho-daemon says about its agents is dropped when it is not what is expected", () => {
+  assert.equal(agentsOf(undefined), undefined);
+  assert.equal(agentsOf("codex"), undefined);
+  assert.deepEqual(agentsOf({ codex: { status: "broken" } }), {});
+  assert.deepEqual(agentsOf({ codex: null, other: { status: "available" } }), {});
+  assert.deepEqual(agentsOf({ codex: { status: "available", version: "<b>1</b>", extra: "x" } }), { codex: { status: "available" } });
+  assert.deepEqual(agentsOf({ codex: { status: "unknown", version: "0.171.0-alpha.2" } }), { codex: { status: "unknown", version: "0.171.0-alpha.2" } });
 });
 
 test("a gasho-daemon that does not list its features gets no effort or ultracode switch, with a clear error", () => {

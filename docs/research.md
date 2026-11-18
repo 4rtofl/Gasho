@@ -170,7 +170,22 @@ zellij を操作するときは、`--session` で対象を必ず指定する。r
 
 確かめられなかったこと：サンドボックスの中の Bash。このマシンでサンドボックスを有効にすると、Bash は `apply-seccomp: write /proc/self/setgroups (nested userns is capability-restricted; caller must provide CAP_SYS_ADMIN): Permission denied` で失敗した。`CLAUDE_CODE_TMPDIR` を渡さない既定の場所でも同じエラーになるので、場所を変えたことが原因ではない（このマシンは `kernel.apparmor_restrict_unprivileged_userns = 1`）。公式の文書には、サンドボックスの中の Bash には、パスが長くなりすぎないように短い別の `$TMPDIR` を渡すとある。
 
-## 検証10：セッションの休止と `--resume`
+## 検証10：Codex が使えるかの調べ方
+
+2026年11月18日に、Ubuntu の codex-cli 0.170.0 で確かめた。発言は送っていない。未ログインと設定の異常は、`CODEX_HOME` に空のフォルダーと存在しないフォルダーを渡して再現した。
+
+| 場面 | `codex login status` の終了コード | stderr |
+|---|---|---|
+| ログイン済み（ChatGPT） | 0 | `Logged in using ChatGPT` |
+| 未ログイン | 1 | `Not logged in` |
+| 設定を読めない | 1 | `Error loading configuration: …` |
+
+- 結果は stdout ではなく stderr に出る。終了コードだけでは、未ログインと設定の異常を区別できない
+- `codex --version` は stdout に `codex-cli 0.170.0` と出す
+- どちらのコマンドも 100ms 以内に終わった
+- 空の `CODEX_HOME` で `codex login status` を実行すると、その中に `tmp` フォルダーができた
+
+## 検証11：セッションの休止と `--resume`
 
 2026年11月18日に、Claude Code 2.1.327 で確かめた。作業用の一時フォルダーで試し、試したあとで `claude purge` で消した。
 

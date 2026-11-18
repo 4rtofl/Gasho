@@ -13,7 +13,7 @@ export type DotStatus = SessionStatus | "hibernated" | "none";
 /** A session's state for its dot: one coming back counts as working. */
 export function sessionDotStatus(s: SessionInfo): DotStatus {
   if (s.hibernation === "resuming") return "busy";
-  return s.hibernation === "hibernated" ? "hibernated" : s.status;
+  return s.hibernation === "hibernated" ? "hibernated" : shownStatus(s);
 }
 
 /** What the chat box says about a hibernated session. Undefined while the session runs. */
@@ -44,6 +44,15 @@ function idsOf(s: SessionInfo): string[] {
 }
 
 const hasUnread = (machine: string, s: SessionInfo, unread: ReadonlySet<string>) => idsOf(s).some((id) => unread.has(unreadKey(machine, id)));
+
+/**
+ * The state to show for a session. Its turn has ended (idle) while work it started runs on in the background: it is
+ * shown as working, since Claude usually goes on once that work ends. `status` stays idle, which is what decides that
+ * input goes in at once.
+ */
+export function shownStatus(s: Pick<SessionInfo, "status" | "background">): SessionStatus {
+  return s.status === "idle" && (s.background?.length ?? 0) > 0 ? "busy" : s.status;
+}
 
 /** A session's dot. The bell shows also while its working server is offline: what was not read stays so. */
 export function sessionDot(m: MachineInfo, s: SessionInfo, unread: ReadonlySet<string>): Dot {
@@ -204,7 +213,7 @@ export function worktreesByLastUse(machines: MachineInfo[], remembered: Remember
  */
 export function worktreeStatus(w: Pick<WorktreeSessions, "machine" | "sessions">): SessionStatus {
   if (!w.machine.connected) return "unknown";
-  return (["waiting", "busy", "idle"] as const).find((st) => w.sessions.some((s) => s.status === st)) ?? "unknown";
+  return (["waiting", "busy", "idle"] as const).find((st) => w.sessions.some((s) => shownStatus(s) === st)) ?? "unknown";
 }
 
 /** When a worktree was last used: when its session used last was. Undefined without sessions. */

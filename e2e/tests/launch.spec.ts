@@ -343,6 +343,24 @@ for (const surface of SURFACES) {
       expect(launches(daemon).map((m) => m.trust)).toEqual([undefined, undefined, true]);
     });
 
+    test("信頼するかを聞いた working server が切れると、確認を閉じ、残りの working server に信頼させない", async ({ page, hub }) => {
+      const mac = await hub.fakeDaemon({ name: "mac", capabilities: { folders: ["/work/a"] } });
+      const linux = await hub.fakeDaemon({ name: "linux", capabilities: { folders: ["/work/a"] } });
+      linux.handle("session.launch", (msg) => commandResult(msg, { ok: false, needsTrust: true, trustWarnings: [] }));
+      const form = await surface.open(page, 2);
+      const server = form.getByRole("combobox", { name: "working server" });
+      await server.selectOption({ label: "linux" });
+      await form.getByRole("button", LAUNCH).click();
+      const ask = form.getByRole("region", { name: "このフォルダーは、まだ Claude Code に信頼されていません" });
+      await expect(ask).toBeVisible();
+
+      await linux.disconnect();
+      await expect(server).toHaveValue(mac.machineId);
+      await expect(ask).toHaveCount(0);
+      await expect(form.getByRole("button", LAUNCH)).toBeVisible();
+      expect(launches(mac)).toEqual([]);
+    });
+
     test("警告つきで起動すると「起動しました。」と警告を出し、「セッションを開く」でセッションが開く", async ({ page, hub }) => {
       const daemon = await hub.fakeDaemon({ name: "mac", capabilities: { folders: ["/work/a"] } });
       daemon.handle("session.launch", (msg) => started(daemon, msg, { warning: "Remote Control を有効にできませんでした。" }));
@@ -439,9 +457,29 @@ test.describe("サイドバーのダイアログだけ", () => {
     expect(launches(daemon).map((m) => m.trust)).toEqual([undefined, true]);
   });
 
+  test("セッションの無い worktree の画面から信頼して起動すると、画面が移っても起動時の警告が出る", async ({ page, hub }) => {
+    const daemon = await hub.fakeDaemon({
+      name: "mac",
+      capabilities: { folders: ["/work/app"] },
+      repos: [{ path: "/work/app", worktrees: [{ path: "/work/app", branch: "main" }] }],
+    });
+    daemon.handle("session.launch", (msg) =>
+      msg.trust ? started(daemon, msg, { warning: "MCP サーバーを使わない設定にしました。" }) : commandResult(msg, { ok: false, needsTrust: true, trustWarnings: [] }),
+    );
+    await page.goto(`/#/w/${encodeURIComponent(daemon.machineId)}/${encodeURIComponent("/work/app")}`);
+    await page.getByRole("main").getByRole("button", { name: "この worktree で新しいセッションを起動" }).click();
+
+    const dialog = dialogOf(page);
+    await dialog.getByRole("region", { name: "このフォルダーは、まだ Claude Code に信頼されていません" }).getByRole("button", { name: "信頼して起動する" }).click();
+    await expect(dialog.getByText("MCP サーバーを使わない設定にしました。")).toBeVisible();
+    await dialog.getByRole("button", { name: "セッションを開く" }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expectSessionOpen(page, daemon, "/work/app");
+    expect(launches(daemon).map((m) => m.trust)).toEqual([undefined, true]);
+  });
+
   test("スマホで、カテゴリーの「＋」で開いたダイアログを Esc で閉じても、ドロワーは開いたまま", async ({ page, hub, isMobile }) => {
     test.skip(!isMobile, "ドロワーはスマホの幅だけ");
-    test.fail(true, "#183: ドロワーが Esc を window の keydown で受けるので、ダイアログを閉じた Esc でドロワーも閉じる");
     const daemon = await hub.fakeDaemon({ name: "mac", repos: [{ path: "/work/app", worktrees: [{ path: "/work/app", branch: "main" }] }] });
     daemon.handle("session.launch", (msg) => commandResult(msg, { ok: false, error: "端末を作れませんでした。" }));
     await openHome(page, 1);

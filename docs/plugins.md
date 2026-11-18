@@ -152,10 +152,10 @@ GitHub プラグインの場合は、次のようになる。
 | `name`、`description` | 画面に出す名前（40文字まで）と説明 |
 | `genre` | ジャンルの ID。GashoPlugins のプラグインでは必ず書き、GashoPlugins の `genres.json` にあるジャンル（連携の `integration`、開発ツールの `devtools` など）から1つ選ぶ。GashoPlugins の GitHub Actions が、Pull request と main への push のたびに確かめる。プラグインの画面は、カードにジャンルの名前を出し、「GashoPlugins にあるもの」をジャンルごとに分けて並べる（P9）。ジャンルの名前と並びは、カタログから読む（P10）。Gasho サーバーは、ID の形だけを確かめる |
 | `version` | プラグインの版（1.2.0 の形）。GashoPlugins に新しい版を出すときに上げる。プラグインの画面は、カタログの版が入れた版より新しいときに「更新」を出す。ホットリロードで入れ替えるかは、版ではなく中身のハッシュで判断する |
-| `api` | プラグインが前提にする、プラグインの API の版。Gasho は、メジャーが同じで、マイナーが Gasho の対応する版以下のものだけを読み込む。daemon の部分は、マイナーがその gasho-daemon の版以下の working server でだけ使える（それより古い gasho-daemon は「古い」と出す）。拡張点を足すなど、前の版のプラグインがそのまま動く変更ではマイナーを上げ、動かなくなる変更ではメジャーを上げる。1.1 で、`session.launch`、`useLaunchSession`、`useNavigation` の `openSession`、daemon の部分の `ctx.folders()` と `ctx.dataDir` を足した。1.2 で、会話の末尾（P13、`conversationEnd`）と `useSessionActivity` を足した。1.3 で、daemon の部分の `ctx.github` を足した。1.4 で、入力欄の下（P14、`composerFooter`）、SDK の `Popover`、`SessionInfo` の `context` と `limits` を足し、プラグイン専用のフォルダーで動く Claude Code をセッションとして扱わないようにした。1.5 で、daemon の部分の `ctx.emit` と画面の部分の `useEvent`（P8）、worktree のタブ（P15、`worktreeTabs`・`worktreeViews`）、`useNavigation` の `worktreeHref`・`openWorktreeView` を足した。1.6 で、テーマ（P16、`theme`）を足した。1.7 で、サイドバーのセッションの一覧（P17、`sessionList`）を足した。1.8 で、サイドバーの worktree の一覧の分け方（P18、`worktreeGroupings`）を足した。1.9 で、分け方の `useOnMove` と、`useSharedState` を足した。1.10 で、`useRemoveWorktree`、`removeWorktreeProblem`、`permissions` の `worktree.remove` を足した。gasho-daemon は、1.5 から 1.10 を名乗るようにした（`worktree.remove` に答えるのはこの gasho-daemon からなので、api 1.10 の daemon の部分は、これより古い gasho-daemon では「古い」と出る）。1.11 で、ページのパネル（P19、`pagePanels`）を足した。P19 は画面だけの変更だが、api 1.11 の daemon の部分が動くよう、gasho-daemon も 1.11 を名乗る（それより古い gasho-daemon では「古い」と出る）。1.12 で、`useSendInput` の `model`・`effort`・`ultracode` と結果の `data`（`SendInputResult`）を足した。これも画面だけの変更だが、gasho-daemon も 1.12 を名乗る。1.14 で、`useRemoveSession` と `permissions` の `session.remove` を足した。これも画面だけの変更だが、gasho-daemon も 1.14 を名乗る |
+| `api` | プラグインが前提にする、プラグインの API の版。Gasho は、メジャーが同じで、マイナーが Gasho の対応する版以下のものだけを読み込む。daemon の部分は、マイナーがその gasho-daemon の版以下の working server でだけ使える（それより古い gasho-daemon は「古い」と出す）。拡張点を足すなど、前の版のプラグインがそのまま動く変更ではマイナーを上げ、動かなくなる変更ではメジャーを上げる。1.1 で、`session.launch`、`useLaunchSession`、`useNavigation` の `openSession`、daemon の部分の `ctx.folders()` と `ctx.dataDir` を足した。1.2 で、会話の末尾（P13、`conversationEnd`）と `useSessionActivity` を足した。1.3 で、daemon の部分の `ctx.github` を足した。1.4 で、入力欄の下（P14、`composerFooter`）、SDK の `Popover`、`SessionInfo` の `context` と `limits` を足し、プラグイン専用のフォルダーで動く Claude Code をセッションとして扱わないようにした。1.5 で、daemon の部分の `ctx.emit` と画面の部分の `useEvent`（P8）、worktree のタブ（P15、`worktreeTabs`・`worktreeViews`）、`useNavigation` の `worktreeHref`・`openWorktreeView` を足した。1.6 で、テーマ（P16、`theme`）を足した。1.7 で、サイドバーのセッションの一覧（P17、`sessionList`）を足した。1.8 で、サイドバーの worktree の一覧の分け方（P18、`worktreeGroupings`）を足した。1.9 で、分け方の `useOnMove` と、`useSharedState` を足した。1.10 で、`useRemoveWorktree`、`removeWorktreeProblem`、`permissions` の `worktree.remove` を足した。gasho-daemon は、1.5 から 1.10 を名乗るようにした（`worktree.remove` に答えるのはこの gasho-daemon からなので、api 1.10 の daemon の部分は、これより古い gasho-daemon では「古い」と出る）。1.11 で、ページのパネル（P19、`pagePanels`）を足した。P19 は画面だけの変更だが、api 1.11 の daemon の部分が動くよう、gasho-daemon も 1.11 を名乗る（それより古い gasho-daemon では「古い」と出る）。1.12 で、`useSendInput` の `model`・`effort`・`ultracode` と結果の `data`（`SendInputResult`）を足した。これも画面だけの変更だが、gasho-daemon も 1.12 を名乗る。1.14 で、`useRemoveSession` と `permissions` の `session.remove` を足した。これも画面だけの変更だが、gasho-daemon も 1.14 を名乗る。1.15 で、daemon の部分の `onSessionStop` と、`permissions` の `session.notification` を足した。`onSessionStop` を呼ぶのはこの gasho-daemon からなので、api 1.15 の daemon の部分は、これより古い gasho-daemon では「古い」と出る |
 | `web`、`daemon` | 画面の部分と daemon の部分のファイル。`web`・`daemon`・`theme` のうち、少なくとも1つは要る |
 | `methods` | 画面の部分から呼べる、daemon の部分のメソッド。`kind` は、読むだけのもの（`read`）か、何かを変えるもの（`write`）か。`write` の呼び出しは操作のログに残す。`timeoutSeconds` は待つ時間で、既定は15秒、長くても120秒まで |
-| `permissions` | 読む・出す以外に、画面の部分がすること。`session.input`（セッションに発言を送る）、`session.launch`（セッションを起動する。API 1.1）、`session.remove`（Gasho が起動したセッションを削除する。API 1.14）、`worktree.remove`（worktree を中のセッションとともに削除する。API 1.10） |
+| `permissions` | 読む・出す以外に、画面の部分がすること。`session.input`（セッションに発言を送る）、`session.launch`（セッションを起動する。API 1.1）、`session.remove`（Gasho が起動したセッションを削除する。API 1.14）、`worktree.remove`（worktree を中のセッションとともに削除する。API 1.10）、`session.notification`（セッションの応答が終わったときの通知を、daemon の部分の `onSessionStop` で置き換える。API 1.15） |
 | `settings` | 設定の項目（P5） |
 | `theme` | テーマ（P16）の、名前と CSS の値 |
 
@@ -549,7 +549,7 @@ worktreeGroupings: [
 | `worktrees` | サイドバーの一覧に出す worktree。絞り込みで選んだリポジトリのものだけで、並びは、セッションのある worktree を最後に使った順、登録したリポジトリのほかの worktree、セッションが無くなってブラウザーが覚えている worktree の順（ドラッグで並べ替えた順ではない）。P17 の `SessionListWorktree` に、行の点と同じ状態（`status`）と、最後に使った時刻（`lastUsed`）を足したもの |
 | `machines` | working server |
 
-`status` は、その worktree のセッションのうち、いちばん急ぐものの状態である。確認待ち（`waiting`）、作業中（`busy`）、待機中（`idle`）の順に見る。working server がオフラインのときと、セッションの無い worktree では `unknown` になる。`lastUsed` は、セッションの最後に使った時刻のうち、いちばん新しいもので、セッションが無ければ無い。
+`status` は、その worktree のセッションのうち、いちばん急ぐものの状態である。確認待ち（`waiting`）、作業中（`busy`）、待機中（`idle`）の順に見る。応答が終わっていても、バックグラウンドで動いているものがあるセッションは作業中とする。working server がオフラインのときと、セッションの無い worktree では `unknown` になる。`lastUsed` は、セッションの最後に使った時刻のうち、いちばん新しいもので、セッションが無ければ無い。
 
 返すのはカテゴリの配列で、その順が既定の順になる。カテゴリは、ID（`id`）、見出し（`title`）、見出しの後ろの薄い文字（`description`）、ポインターを乗せたときの説明（`hint`）、「＋」で起動する worktree の `key`（`launch`）、worktree（`worktrees`）を持つ。worktree は、`key` と、行の2行目（`description`）である。2行目を書かなければ、いまの一覧と同じ2行目（リポジトリ名と、working server が2台以上ならその名前）を出し、空の文字列にすれば2行目を出さない。
 
@@ -808,6 +808,26 @@ await ctx.github.write(["issue", "edit", "12", "--repo", "4rtofl/Gasho", "--add-
 - `read` の記録がどのリポジトリのものかは、引数の `--repo`（`-R`）か、`gh api repos/<owner>/<name>/…` のパスで決める。ほかの形（`gh api graphql` など）では、`repo` に書く
 - `write` は、`gasho-plugin.json` の `kind` が `write` のメソッドの中でだけ使える。ほかのメソッドと `start` から使うと、`PluginError` になる。GitHub を変えたことが、そのメソッドの呼び出しとして操作のログに残るようにするためである
 - gasho-daemon は、gh を `GASHO_GH_BIN`（既定は `gh`）で実行し、gasho-daemon を動かしている人のログインを使う
+
+### セッションの応答が終わったときの通知（API 1.15）
+
+`permissions` に `session.notification` を書いたプラグインは、Gasho から起動したセッションの応答が終わったときの通知（「○○ の応答が終わりました」）を、自分の通知に置き換えられる。daemon の部分に `onSessionStop` を書く。
+
+```ts
+export default defineDaemonPlugin({
+  methods: {},
+  async onSessionStop(ctx) {
+    if (!watching(ctx.session.sessionId)) return undefined; // Gasho の通知のまま
+    return { title: "#158 のレビューが終わりました（マージできます）", body: "4rtofl/Gasho「通知を直す」" };
+  },
+});
+```
+
+- `ctx` は、メソッドの呼び出しと同じもので、`ctx.session` は応答が終わったセッションである。`ctx.github.write` は使えない
+- 何も返さないと、Gasho の通知をそのまま送る。投げたとき、5秒以内に答えないとき（`ctx.signal` で中断を知らせる）も同じである
+- Gasho の通知は答えを待つ。ほかのセッションの通知を遅らせないよう、関係のないセッションにはすぐ返す。待っているあいだに届いた、そのセッションのフックは、そのあとに順に Gasho サーバーへ送る
+- `title` は120文字まで、`body` は300文字まで。ロック画面の通知（Web Push）には `title` だけを出すので、`title` には会話の中身を書かない
+- 複数のプラグインが答えたときは、プラグインの並びで最初のものを使う
 
 ### プラグインが動かす Claude Code（API 1.4）
 

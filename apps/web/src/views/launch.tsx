@@ -87,10 +87,16 @@ function LaunchForm({
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(initial?.error);
-  // A launch that stopped at Claude Code's question whether to trust the folder, and what Claude Code pointed out.
-  const [trustAsk, setTrustAsk] = useState<{ cwd: string; warnings: string[] } | undefined>(
-    initial?.trust ? { cwd: initial.folder, warnings: initial.trust } : undefined,
+  // A launch that stopped at Claude Code's question whether to trust the folder, and what Claude Code pointed out. The
+  // answer holds for the working server that asked: when the form moves to another (the one asking went offline, say),
+  // the question goes, for good, and "信頼して起動する" cannot reach a working server nobody was asked about.
+  const [trustAsked, setTrustAsk] = useState<{ machine: string; cwd: string; warnings: string[] } | undefined>(
+    initial?.trust ? { machine: initial.machine, cwd: initial.folder, warnings: initial.trust } : undefined,
   );
+  const trustAsk = trustAsked?.machine === machine?.id ? trustAsked : undefined;
+  useEffect(() => {
+    if (trustAsked && trustAsked.machine !== machine?.id) setTrustAsk(undefined);
+  }, [trustAsked, machine?.id]);
   // A session that started with something to tell, shown before it opens.
   const [started, setStarted] = useState<{ machine: string; sessionId: string; warning: string }>();
   const [tool, setTool] = useState<Tool>();
@@ -125,7 +131,7 @@ function LaunchForm({
     );
     setBusy(false);
     if (!r.ok || !r.sessionId) {
-      if (r.needsTrust) setTrustAsk({ cwd: dir, warnings: r.trustWarnings ?? [] });
+      if (r.needsTrust) setTrustAsk({ machine: machine.id, cwd: dir, warnings: r.trustWarnings ?? [] });
       else setError(r.error ?? "起動できませんでした。");
       return;
     }

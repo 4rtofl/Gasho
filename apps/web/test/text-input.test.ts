@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { closesPanel, pastedFiles } from "../src/lib/text-input.ts";
+import { appleKeys, closesPanel, pastedFiles } from "../src/lib/text-input.ts";
 
 const esc = (isComposing: boolean, keyCode: number) => ({ key: "Escape", nativeEvent: { isComposing }, keyCode });
 
@@ -27,4 +27,20 @@ test("cells copied with a picture of them paste as text", () => {
 
 test("nothing is attached where files cannot be", () => {
   assert.deepEqual(pastedFiles(clipboard([png]), false), []);
+});
+
+test("Ctrl+B is left to a text box on a Mac, iPhone and iPad, not on Windows, Linux or Android", () => {
+  const apple = [
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (iPad; CPU OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
+  ];
+  const others = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0",
+    "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36",
+  ];
+  for (const ua of apple) assert.equal(appleKeys(ua), true, ua);
+  for (const ua of others) assert.equal(appleKeys(ua), false, ua);
 });

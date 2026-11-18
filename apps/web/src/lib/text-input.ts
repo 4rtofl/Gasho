@@ -18,6 +18,12 @@ export function pastedFiles(data: { files: ArrayLike<File>; getData(type: string
   return Array.from(data.files);
 }
 
+/**
+ * Whether the keys are those of a Mac, iPhone or iPad: ⌘ is the key for the page's shortcuts, and Ctrl with a letter
+ * moves the cursor in a text box (Ctrl+B goes back a character). Elsewhere Ctrl+B does nothing in a text box.
+ */
+export const appleKeys = (userAgent: string) => /Mac|iPhone|iPad/i.test(userAgent);
+
 const TEXT_TYPES = new Set(["text", "search", "url", "email", "password", "tel", "number"]);
 
 /** Whether the keys go to a box that text is written in, where the system's keys (Ctrl+B on a Mac) move the cursor. */

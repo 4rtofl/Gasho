@@ -25,7 +25,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, animate, motion, useMotionValue, useReducedMotion } from "framer-motion";
 import { emptyShellInput, isShellInput } from "@/lib/shell";
 import { matchSlash, slashQuery, type SlashCommand, type SlashMatch } from "@/lib/slash";
-import { composing, pastedFiles } from "@/lib/text-input";
+import { appleKeys, composing, pastedFiles } from "@/lib/text-input";
 
 /* -------------------------------------------------------------------------- */
 /*  PromptInput — the chat composer. Pairs with <AIResponse /> to finish the   */
@@ -671,7 +671,7 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
   const [modKey, setModKey] = useState<string | null>(null);
   useEffect(() => {
     setFinePointer(window.matchMedia("(pointer: fine)").matches);
-    setModKey(/Mac|iPhone|iPad/i.test(navigator.userAgent) ? "⌘" : "Ctrl");
+    setModKey(appleKeys(navigator.userAgent) ? "⌘" : "Ctrl");
   }, []);
   const enter = enterToSend ?? finePointer;
 

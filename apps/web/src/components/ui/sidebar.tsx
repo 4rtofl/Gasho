@@ -14,7 +14,7 @@ import { ChevronRight, GripVertical, PanelLeft } from "lucide-react";
 import { useWindowWidth } from "../../lib/media";
 import { SIDEBAR_WIDTH_DEFAULT, SIDEBAR_WIDTH_MAX, SIDEBAR_WIDTH_MIN, clampSidebarWidth, useSidebarWidth } from "../../lib/widths";
 import { groupDrop, itemsByGroup, useSortable, type Sortable } from "../../lib/sortable";
-import { typingIn } from "../../lib/text-input";
+import { appleKeys, typingIn } from "../../lib/text-input";
 import { cn } from "../../lib/utils";
 import { ResizeHandle } from "../resize-handle";
 
@@ -158,7 +158,7 @@ export function Sidebar({
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
-        if (!e.metaKey && typingIn(e.target)) return;
+        if (!e.metaKey && appleKeys(navigator.userAgent) && typingIn(e.target)) return;
         e.preventDefault();
         if (window.matchMedia("(min-width: 768px)").matches) setCollapsed(!collapsed);
         else setMobileOpen(!mobileOpen);

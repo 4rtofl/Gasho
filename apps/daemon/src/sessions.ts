@@ -1,7 +1,8 @@
 // Finds Claude Code sessions on this machine.
 // `claude agents --json` is the supported interface; ~/.claude/sessions/<pid>.json is internal
-// and only read for the Remote Control session id and for the state it records ("shell", which the list does not
-// tell from "busy"; see sessionStatus). Without it, the list's state is used.
+// and only read for the Remote Control session id, for the state it records ("shell", which the list does not
+// tell from "busy"; see sessionStatus), and for the session id of a Claude Code being started (the list took 20 s and
+// more on a busy machine). Without it, the list's state is used.
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -56,6 +57,8 @@ export function mapStatus(row: AgentRow): SessionStatus {
 }
 
 export interface RegistryInfo {
+  /** The conversation's id, as `claude agents` lists it. */
+  sessionId?: string;
   bridgeSessionId?: string;
   entrypoint?: string;
   /**
@@ -72,7 +75,13 @@ export async function readRegistry(claudeDir: string, pid: number): Promise<Regi
     const raw = await fs.readFile(path.join(claudeDir, "sessions", `${pid}.json`), "utf8");
     const d = JSON.parse(raw) as Record<string, unknown>;
     const statusAt = typeof d.statusUpdatedAt === "number" ? d.statusUpdatedAt : undefined;
-    return { bridgeSessionId: str(d.bridgeSessionId), entrypoint: str(d.entrypoint), status: str(d.status), ...(statusAt ? { statusAt } : {}) };
+    return {
+      sessionId: str(d.sessionId),
+      bridgeSessionId: str(d.bridgeSessionId),
+      entrypoint: str(d.entrypoint),
+      status: str(d.status),
+      ...(statusAt ? { statusAt } : {}),
+    };
   } catch {
     return undefined;
   }

@@ -340,6 +340,7 @@ gasho-daemon（`@4rtofl/gasho-daemon`）、Gasho サーバー（`@4rtofl/gasho-h
 | `GASHO_HOOK_PORT` | daemon | `7741` |
 | `GASHO_HOOK_SECRET` | daemon・hooks install | なし |
 | `GASHO_CLAUDE_DIR` / `GASHO_CLAUDE_BIN` | daemon | `~/.claude` / `claude` |
+| `GASHO_CODEX_BIN` | daemon | `codex` |
 | `GASHO_GH_BIN` | hub・daemon | `gh` |
 | `GASHO_POLL_MS` | daemon | `3000` |
 | `GASHO_PLUGINS` | daemon | なし。`none` にすると、この working server ではプラグインの daemon の部分を動かさない |

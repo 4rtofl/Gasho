@@ -114,6 +114,8 @@ test("質問のカードで、単一選択・複数選択・自分の言葉の�
   await expect(naming.getByRole("radio", { name: "その他（自分の言葉で答える）" })).toBeChecked();
 
   await expect(answer).toBeEnabled();
+  // Stopped, the page's clock moves only as the test moves it, not while an expect waits.
+  await page.clock.pauseAt(Date.now() + 60_000);
   await answer.click();
   expect(await answerTo(daemon, asked.id)).toMatchObject({
     decision: "allow",
@@ -123,8 +125,11 @@ test("質問のカードで、単一選択・複数選択・自分の言葉の�
   await expect(answer).toBeDisabled();
   await expect(page.getByRole("button", { name: "答えずに止める" })).toBeDisabled();
 
-  // Still there after a while (its dialog did not close): it can be answered again.
-  await page.clock.fastForward("00:16");
+  // Still there after a while (its dialog did not close): it can be answered again after 15 seconds, not before.
+  await page.clock.fastForward("00:14");
+  await expect(page.getByText("送りました")).toBeVisible();
+  await expect(answer).toBeDisabled();
+  await page.clock.fastForward("00:02");
   await expect(page.getByText("送りました")).toHaveCount(0);
   await expect(answer).toBeEnabled();
 });

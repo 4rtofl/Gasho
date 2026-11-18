@@ -5,6 +5,7 @@ import type { Locator, Page } from "@playwright/test";
 import { type FakeDaemon, TEST_PLUGINS } from "../harness/index.ts";
 import { PLUGIN_API } from "../../apps/hub/src/plugins.ts";
 import { expect } from "./fixtures.ts";
+import { onPhone } from "./screen.ts";
 
 export const plugin = (id: string) => `${TEST_PLUGINS}/${id}`;
 
@@ -13,21 +14,22 @@ export const plugin = (id: string) => `${TEST_PLUGINS}/${id}`;
  * before it is used).
  */
 export async function sidebar(page: Page): Promise<Locator> {
-  const open = page.getByRole("button", { name: "Open navigation" });
-  if (!(await open.isVisible())) return page.getByRole("navigation", { name: "Main" });
+  if (!onPhone(page)) return page.getByRole("navigation", { name: "Main" });
   const drawer = page.getByRole("dialog", { name: "Navigation" });
   if ((await drawer.count()) > 0) await page.keyboard.press("Escape");
   await expect(drawer).toHaveCount(0);
-  await open.click();
+  await page.getByRole("button", { name: "Open navigation" }).click();
   const nav = drawer.getByRole("navigation", { name: "Main" });
   await expect(nav).toBeVisible();
   return nav;
 }
 
-/** The session header's second row, which a phone hides until asked. */
+/** The session header's second row, which a phone hides until asked: shown by the toggle of the top bar. */
 export async function showHeader(page: Page): Promise<void> {
-  const show = page.getByRole("button", { name: "ヘッダーを表示" });
-  if (await show.isVisible()) await show.click();
+  if (!onPhone(page)) return;
+  const toggle = page.getByRole("banner").getByRole("button", { name: /^ヘッダーを(表示|隠す)$/ });
+  if ((await toggle.getAttribute("aria-pressed")) === "false") await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
 }
 
 /**

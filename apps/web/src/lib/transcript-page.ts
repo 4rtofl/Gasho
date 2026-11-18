@@ -7,14 +7,16 @@ export function sameEntry(a: TranscriptEntry, b: TranscriptEntry): boolean {
 }
 
 /**
- * Where the latest page starts among the entries loaded (`had`, entries[0] being entry `start`): at its first entry,
- * found by its uuid, or else by its index, within them or right after them. -1 when it starts before them, or further
- * on (more entries came meanwhile than a page holds).
+ * Where the latest page starts among the entries loaded (`had`, entries[0] being entry `start`): by its first entry
+ * with a uuid, found among them, or else by its index, within them or right after them. -1 when it starts before them,
+ * or further on (more entries came meanwhile than a page holds).
  */
 function joinAt(had: readonly TranscriptEntry[], start: number, page: TranscriptPage): number {
-  const first = page.entries[0];
+  // The indexes loaded can be off (an entry missing): a uuid places the page even then.
+  const k = page.entries.findIndex((p) => p.uuid !== "");
+  const first = page.entries[k];
   const found = first ? had.findIndex((e) => sameEntry(e, first)) : -1;
-  if (found >= 0) return found;
+  if (found >= 0) return Math.max(found - k, 0);
   const at = page.start - start;
   return at >= 0 && at <= had.length ? at : -1;
 }
@@ -30,9 +32,10 @@ export function takePage(cur: TranscriptState | undefined, page: TranscriptPage)
     return { entries: [...page.entries, ...had], start: page.start, total: page.total, loading: false };
   }
   const at = cur ? joinAt(had, cur.start, page) : -1;
-  const kept = at > 0 ? had.slice(0, at) : [];
+  // Should `at` be off still, an entry would show twice (and with the same key).
+  const kept = at > 0 ? had.slice(0, at).filter((e) => !page.entries.some((p) => sameEntry(p, e))) : [];
   // Keep live entries that arrived after the page was read.
-  const extra = had.slice(kept.length).filter((e) => e.uuid && !page.entries.some((p) => sameEntry(p, e)));
+  const extra = had.slice(Math.max(at, 0)).filter((e) => e.uuid && !page.entries.some((p) => sameEntry(p, e)));
   const lastTs = page.entries.at(-1)?.ts;
   // With an empty page (a brand-new session) every live entry is newer than the page.
   const tail = lastTs ? extra.filter((e) => e.ts && e.ts > lastTs) : extra;

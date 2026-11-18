@@ -49,3 +49,12 @@ test("live entries that came after the latest page was read stay below it", () =
   assert.deepEqual(uuids(t.entries), uuids(range(100, 272)));
   assert.equal(t.total, 272);
 });
+
+test("the latest page that starts with an entry without a uuid shows no entry twice", () => {
+  // Two entries are missing from what is loaded: placed by its index, the page would start two entries too far on.
+  const plain = { ...entry(190), uuid: "" };
+  const loaded = [...range(100, 150), ...range(152, 190), plain, ...range(191, 262)];
+  const cur = { entries: loaded, start: 100, total: 260, loading: true };
+  const t = takePage(cur, { entries: [plain, ...range(191, 270)], start: 190, total: 270 });
+  assert.deepEqual(uuids(t.entries), uuids([...range(100, 150), ...range(152, 190), plain, ...range(191, 270)]));
+});

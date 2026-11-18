@@ -98,8 +98,10 @@ import {
   mayRun,
   rcModeOf,
   readRegistry,
+  type RegistryInfo,
   runningTasks,
   sessionStatus,
+  waitingForOf,
 } from "./sessions.ts";
 import { SessionTerminals, Terminals } from "./terminal.ts";
 import { foldersRepos, RegisteredRepos } from "./repos.ts";
@@ -163,6 +165,8 @@ const PROBE_MIN_AGE_MS = 30_000;
 const TOKENS_IDLE_MS = 30_000;
 /** How long the sessions wait to be sent after a status line report, for the reports that follow it. */
 const EMIT_DELAY_MS = 500;
+/** How long the state of the sessions is read after a change in Claude Code's files: they come several at a time. */
+const STATUS_READ_DELAY_MS = 100;
 /** After a look at the model names whose "/model" was not taken in time, how long to watch for the picker it opens. */
 const LATE_PICKER_WATCH_MS = 5 * 60_000;
 const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -242,6 +246,7 @@ export class Daemon {
   private refreshing = false;
   private refreshAgain = false;
   private refreshTimer: NodeJS.Timeout | undefined;
+  private statusTimer: NodeJS.Timeout | undefined;
   private emitTimer: NodeJS.Timeout | undefined;
   private polling = false;
   private github = new Map<string, { at: number; repo?: GitHubRepo }>();
@@ -394,6 +399,7 @@ export class Daemon {
         if (!ev) return;
         this.hub.send({ type: "hook", event: ev });
         // Hooks often mean the status changed; refresh soon instead of waiting for the next poll.
+        this.scheduleStatuses();
         this.scheduleRefresh(250);
       },
       onStatusLine: (payload) => this.applyStatusLine(payload),
@@ -406,7 +412,10 @@ export class Daemon {
     setInterval(() => void this.refresh(), this.cfg.pollIntervalMs);
     setInterval(() => void this.pollTails(), 1000);
     try {
-      fs.watch(path.join(this.cfg.claudeDir, "sessions"), () => this.scheduleRefresh(300));
+      fs.watch(path.join(this.cfg.claudeDir, "sessions"), () => {
+        this.scheduleStatuses();
+        this.scheduleRefresh(300);
+      });
     } catch (e) {
       log("cannot watch the sessions directory; relying on polling", e);
     }
@@ -460,6 +469,55 @@ export class Daemon {
     }, delayMs);
   }
 
+  private scheduleStatuses(): void {
+    if (this.statusTimer) return;
+    this.statusTimer = setTimeout(() => {
+      this.statusTimer = undefined;
+      void this.readStatuses().catch((e: unknown) => log("could not read the states of the sessions", e));
+    }, STATUS_READ_DELAY_MS);
+  }
+
+  /**
+   * The state each session's Claude Code wrote last in its file, read again without the list: `claude agents` reads
+   * the same files, but took 20 s and more on a busy machine, and a session showed as idle meanwhile (also to a stop).
+   */
+  private async readStatuses(): Promise<void> {
+    const read = await Promise.all(
+      [...this.tracked.values()].map(async (t) => ({ t, reg: t.info.pid === undefined ? undefined : await readRegistry(this.cfg.claudeDir, t.info.pid) })),
+    );
+    let changed = false;
+    for (const { t, reg } of read) if (reg?.status && this.applyStatus(t, undefined, reg)) changed = true;
+    if (!changed) return;
+    this.emitSessions();
+    this.flushWaitingInputs();
+  }
+
+  /** A session's state from its file, else from the list's `row` (see sessionStatus); returns whether it changed. */
+  private applyStatus(t: Tracked, row: AgentRow | undefined, reg: RegistryInfo | undefined): boolean {
+    const { info } = t;
+    const before = info.status;
+    info.status = sessionStatus(row, reg);
+    info.waitingFor = waitingForOf(row, reg);
+    this.permissions.status(info.sessionId, info.status);
+    if (info.status === before) return false;
+    // For the sessions started from Gasho (those it stops), when Claude Code wrote a state and when Gasho showed it.
+    const m = this.managed.get(info.sessionId);
+    if (m && before !== "unknown") {
+      const written = reg?.statusAt ? `${Math.round((Date.now() - reg.statusAt) / 100) / 10} s ago` : "-";
+      log(`${m.name}: ${before} → ${info.status} (Claude Code's file: ${reg?.status ?? "-"}, written ${written}; list: ${row ? mapStatus(row) : "-"})`);
+    }
+    return true;
+  }
+
+  /** Types the waiting inputs of the sessions started from Gasho, those that can take them now (see flushInput). */
+  private flushWaitingInputs(): void {
+    for (const m of this.managed.all()) {
+      if (this.managed.pending(m.sessionId) === 0) continue;
+      // A failure leaves the input on the queue for the next try.
+      void this.flushInput(m.sessionId).catch((e) => log(`could not send the waiting input to ${m.name}`, e));
+    }
+  }
+
   async refresh(): Promise<void> {
     if (this.refreshing) {
       this.refreshAgain = true;
@@ -488,11 +546,7 @@ export class Daemon {
       await this.readManagedScreens();
       await this.countTokens();
       this.emitSessions();
-      for (const m of this.managed.all()) {
-        if (this.managed.pending(m.sessionId) === 0) continue;
-        // A failure leaves the input on the queue for the next try.
-        void this.flushInput(m.sessionId).catch((e) => log(`could not send the waiting input to ${m.name}`, e));
-      }
+      this.flushWaitingInputs();
     } catch (e) {
       log("refresh failed", e);
     } finally {
@@ -538,10 +592,8 @@ export class Daemon {
     info.name = row.name;
     info.startedAt = row.startedAt;
     const reg = row.pid ? await readRegistry(this.cfg.claudeDir, row.pid) : undefined;
-    info.status = sessionStatus(row, reg);
+    this.applyStatus(t, row, reg);
     t.claude = reg?.status ? { status: reg.status, ...(reg.statusAt ? { at: reg.statusAt } : {}) } : { status: mapStatus(row) };
-    this.permissions.status(info.sessionId, info.status);
-    info.waitingFor = row.waitingFor;
     info.rcMode = rcModeOf(reg);
 
     if (!t.transcript) {
@@ -1820,9 +1872,12 @@ export class Daemon {
 
   /**
    * The session's status right now (not the last poll), so input is never typed into a busy session. Idle while only
-   * shells and monitors run on in the background (see sessionStatus).
+   * shells and monitors run on in the background (see sessionStatus). From its file while its Claude Code runs (see
+   * readStatuses), else from the list.
    */
   private async currentStatus(pid: number): Promise<string | undefined> {
+    const reg = isAlive(pid) ? await readRegistry(this.cfg.claudeDir, pid) : undefined;
+    if (reg?.status) return sessionStatus(undefined, reg);
     const row = (await listAgents(this.cfg.claudeBin)).find((r) => r.pid === pid);
     return row ? sessionStatus(row, await readRegistry(this.cfg.claudeDir, pid)) : undefined;
   }
@@ -2213,7 +2268,9 @@ export class Daemon {
     const m = this.managed.get(sessionId);
     if (!m) return { ok: false, error: "このセッションは Gasho から止められません。公式アプリで止めてください。" };
     if (Date.now() - (this.lastStop.get(sessionId) ?? 0) < INTERRUPT_REPEAT_MS) return { ok: true };
-    if ((await this.currentStatus(m.pid)) !== "busy") {
+    const status = await this.currentStatus(m.pid);
+    if (status !== "busy") {
+      log(`${m.name}: not stopped, for being ${status ?? "out of Claude Code's list"}`);
       const running = this.tracked.get(sessionId)?.info.background?.length;
       return {
         ok: false,

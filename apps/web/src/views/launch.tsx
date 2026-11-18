@@ -6,7 +6,7 @@ import { Check, FolderGit2, FolderPlus, LoaderCircle, Plus, TriangleAlert, X } f
 import { Dialog } from "radix-ui";
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG_PANEL } from "@/components/dialog-styles";
-import { childPath, folderChoices, folderNameProblem, repoFolderName, repoProblem } from "@/lib/folders";
+import { childPath, CLONE_WAIT_MS, folderChoices, folderNameProblem, repoFolderName, repoProblem } from "@/lib/folders";
 import { go } from "@/lib/route";
 import { daemonAtLeast } from "@/lib/sessions";
 import { sendCommand, useAppState } from "@/lib/store";
@@ -16,10 +16,9 @@ import { cn } from "@/lib/utils";
 const OTHER = "\u0000other";
 const TITLE = "新しいセッションを起動する";
 const NONE: readonly string[] = [];
-/** How long to wait for each answer, a little longer than the Gasho server does: gasho-daemon stops a clone after 10 minutes. */
+/** How long to wait for each answer, a little longer than the Gasho server does. */
 const LAUNCH_WAIT_MS = 60_000;
 const FOLDER_WAIT_MS = 20_000;
-const CLONE_WAIT_MS = 660_000;
 
 type Tool = "folder" | "clone";
 

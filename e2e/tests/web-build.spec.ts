@@ -96,6 +96,12 @@ const busy: { what: string; make: (page: Page, d: FakeDaemon) => Promise<void>; 
     close: async (page) => {
       await page.keyboard.press("Escape");
       await expect(page.getByRole("dialog", { name: "リポジトリの登録" })).toBeHidden();
+      // On a phone, the drawer the dialog was opened from stays open after that Esc, over the band.
+      const drawer = page.getByRole("dialog", { name: "サイドバー" });
+      if (await drawer.isVisible()) {
+        await page.keyboard.press("Escape");
+        await expect(drawer).toHaveCount(0);
+      }
     },
   },
   {

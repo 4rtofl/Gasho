@@ -17,12 +17,13 @@ export const closesPanel = (e: { key: string; nativeEvent: { isComposing: boolea
 export function pastedFiles(data: { files: ArrayLike<File>; getData(type: string): string }, canAttach: boolean): File[] {
   if (!canAttach) return [];
   const files = Array.from(data.files);
+  // The text and the names may write a letter with a voiced mark or accent in different Unicode forms (NFD and NFC).
   const lines = data
     .getData("text/plain")
-    .split(/\r?\n/)
-    .map((l) => l.trim())
+    .split(/\r\n|\r|\n/)
+    .map((l) => l.trim().normalize("NFC"))
     .filter(Boolean);
-  const names = files.map((f) => f.name);
+  const names = files.map((f) => f.name.normalize("NFC"));
   if (lines.length && lines.sort().join("\n") !== names.sort().join("\n")) return [];
   return files;
 }

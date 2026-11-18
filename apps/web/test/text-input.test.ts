@@ -28,6 +28,9 @@ test("cells copied with a picture of them paste as text", () => {
 test("files copied in the Finder are attached in Safari, which also gives their names as text", () => {
   const pdf = new File([new Uint8Array([4])], "spec.pdf", { type: "application/pdf" });
   assert.deepEqual(pastedFiles(clipboard([png, pdf], "spec.pdf\nimage.png"), true), [png, pdf]);
+  // Lines ended by a CR alone, and a name whose voiced mark is a letter of its own (NFD) beside the same name in one.
+  const kana = new File([new Uint8Array([5])], "\u30d5\u3099\u30fc\u30c4.txt", { type: "text/plain" });
+  assert.deepEqual(pastedFiles(clipboard([png, kana], "image.png\r\u30d6\u30fc\u30c4.txt"), true), [png, kana]);
   // Text that mentions a file's name stays text.
   assert.deepEqual(pastedFiles(clipboard([png], "see image.png"), true), []);
   assert.deepEqual(pastedFiles(clipboard([png, pdf], "image.png"), true), []);

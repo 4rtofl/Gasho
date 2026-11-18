@@ -718,6 +718,11 @@ export interface Hibernated {
   renamed?: boolean;
   /** Why it could not be brought back the last time. */
   resumeError?: string;
+  /**
+   * The terminal it is being brought back in, saved before that terminal starts: a restart of gasho-daemon meanwhile
+   * takes that terminal over instead of starting a second Claude Code on the conversation.
+   */
+  resumingIn?: string;
   /** Saved only: the inputs waiting for it, kept over a restart of gasho-daemon. */
   inputs?: QueuedInput[];
 }

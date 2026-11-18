@@ -169,7 +169,7 @@ async function setup() {
   agents([row(procs[0]!.pid!)]);
 
   // The terminal: its prompt box, what was entered into it, and whether ultracode is on.
-  const term = { typed: "", entered: [] as string[], ultracode: false, viewers: 0 };
+  const term = { typed: "", entered: [] as string[], ultracode: false, viewers: 0, live: new Map<string, { pid: number; exited?: object }>() };
   const killed: string[] = [];
   const started: TerminalStart[] = [];
   const terminals = {
@@ -197,7 +197,7 @@ async function setup() {
     kill: async (name: string) => {
       killed.push(name);
     },
-    builtIn: { hello: async () => ({ viewers: term.viewers }), live: async () => new Map() },
+    builtIn: { hello: async () => ({ viewers: term.viewers }), live: async () => term.live },
   };
   const make = () => {
     const d = new Daemon(cfg) as unknown as Record<string, any>;
@@ -380,6 +380,162 @@ test("a hibernated session opened outside Gasho is no longer Gasho's", async () 
     assert.equal(shown().managed, undefined);
     assert.equal(shown().hibernation, undefined);
     assert.equal(shown().pid, outside.pid);
+  } finally {
+    await done();
+  }
+});
+
+test("inputs waiting for a session opened outside Gasho are kept, and it comes back only once that has ended", async () => {
+  const { d, term, started, agents, row, procs, shown, done } = await setup();
+  const start = d.terminals.start;
+  try {
+    await d.hibernateIdle();
+    agents([]);
+    d.terminals.start = async () => {
+      throw new Error("no terminal");
+    };
+    await d.input({ type: "session.input", requestId: "r1", sessionId: SID, text: "預けた発言" });
+    await d.waking.get(SID);
+    d.terminals.start = start;
+
+    const outside = await claudeProcess();
+    procs.push(outside);
+    agents([row(outside.pid!)]);
+    await d.refresh();
+    assert.equal(d.managed.has(SID), true);
+    assert.equal(d.managed.pending(SID), 1);
+    assert.equal(shown().hibernation, "hibernated");
+    assert.match(shown().resumeError, /Gasho の外/);
+
+    // Asked to come back meanwhile: no second Claude Code on the conversation.
+    await d.wake(SID);
+    assert.equal(started.length, 0);
+    assert.match(d.managed.get(SID).hibernated.resumeError, /Gasho の外/);
+
+    outside.kill("SIGKILL");
+    await once(outside, "exit");
+    agents([]);
+    await d.wake(SID);
+    await until(() => term.entered.includes("預けた発言"), "the input was typed");
+    assert.equal(started.length, 1);
+  } finally {
+    await done();
+  }
+});
+
+test("the terminal a session comes back in is saved before it starts", async () => {
+  const { d, agents, started, done } = await setup();
+  const start = d.terminals.start;
+  let saved: { hibernated?: { resumingIn?: string } }[] = [];
+  try {
+    await d.hibernateIdle();
+    agents([]);
+    d.terminals.start = async (o: TerminalStart) => {
+      saved = JSON.parse(await fs.readFile(path.join(d.cfg.stateDir, "managed.json"), "utf8"));
+      return start(o);
+    };
+    await d.wake(SID);
+    assert.equal(saved[0]?.hibernated?.resumingIn, started[0]!.name);
+    assert.equal(d.managed.get(SID).hibernated, undefined);
+  } finally {
+    await done();
+  }
+});
+
+test("a restart while a session is being ended: one that goes on running is not hibernated, and nothing starts a second", async () => {
+  const { d, make, term, started, procs, done } = await setup();
+  try {
+    d.managed.get(SID).hibernated = { at: Date.now() };
+    d.managed.enqueue(SID, { id: "r1", text: "止まらなかった発言" });
+    await d.managed.save();
+    term.live.set("t1", { pid: procs[0]!.pid! });
+
+    const again = make();
+    again.endWaitMs = 300;
+    await again.loadManaged();
+    again.wakeInterrupted();
+    assert.equal(again.managed.get(SID).hibernated, undefined);
+    await again.refresh();
+    await until(() => term.entered.includes("止まらなかった発言"), "the input was typed");
+    assert.equal(started.length, 0);
+    assert.equal(procs[0]!.signalCode, null);
+  } finally {
+    await done();
+  }
+});
+
+test("a restart while a session is being ended: one that has ended stays hibernated, and its terminal is closed", async () => {
+  const { d, make, term, killed, agents, started, procs, done } = await setup();
+  try {
+    d.managed.get(SID).hibernated = { at: Date.now() };
+    await d.managed.save();
+    term.live.set("t1", { pid: procs[0]!.pid! });
+    procs[0]!.kill("SIGTERM");
+    await once(procs[0]!, "exit");
+    agents([]);
+
+    const again = make();
+    await again.loadManaged();
+    assert.deepEqual(killed, ["t1"]);
+    assert.ok(again.managed.get(SID).hibernated);
+    assert.equal(started.length, 0);
+  } finally {
+    await done();
+  }
+});
+
+test("a restart while a session is coming back takes its terminal over, and keeps what waits for it", async () => {
+  const { d, make, term, started, killed, agents, row, procs, done } = await setup();
+  try {
+    procs[0]!.kill("SIGKILL");
+    await once(procs[0]!, "exit");
+    const resumed = await claudeProcess();
+    procs.push(resumed);
+    agents([row(resumed.pid!)]);
+    term.live.set("t2", { pid: resumed.pid! });
+    // "もう一度再開": the reason of the last try is no longer saved once this one has begun.
+    d.managed.get(SID).hibernated = { at: Date.now(), resumingIn: "t2" };
+    d.managed.enqueue(SID, { id: "r1", text: "再開を待つ発言" });
+    await d.managed.save();
+
+    const again = make();
+    await again.loadManaged();
+    // Listed before it is gone on with: it is Gasho's own, not a conversation opened outside.
+    await again.refresh();
+    assert.equal(again.managed.has(SID), true);
+    assert.equal(again.managed.pending(SID), 1);
+
+    again.wakeInterrupted();
+    await again.waking.get(SID);
+    await until(() => term.entered.includes("再開を待つ発言"), "the input was typed");
+    assert.equal(started.length, 0);
+    assert.deepEqual(killed, []);
+    assert.equal(again.managed.get(SID).terminal, "t2");
+    assert.equal(again.managed.get(SID).pid, resumed.pid);
+    assert.equal(again.managed.get(SID).hibernated, undefined);
+  } finally {
+    await done();
+  }
+});
+
+test("a restart after the terminal it was coming back in has gone starts it once more", async () => {
+  const { d, make, term, started, killed, agents, procs, done } = await setup();
+  try {
+    procs[0]!.kill("SIGKILL");
+    await once(procs[0]!, "exit");
+    agents([]);
+    d.managed.get(SID).hibernated = { at: Date.now(), resumingIn: "t2" };
+    d.managed.enqueue(SID, { id: "r1", text: "やり直す発言" });
+    await d.managed.save();
+
+    const again = make();
+    await again.loadManaged();
+    assert.deepEqual(killed, ["t2"]);
+    assert.equal(again.managed.get(SID).hibernated.resumingIn, undefined);
+    again.wakeInterrupted();
+    await again.waking.get(SID);
+    await until(() => term.entered.includes("やり直す発言"), "the input was typed");
+    assert.equal(started.length, 1);
   } finally {
     await done();
   }

@@ -106,7 +106,7 @@ import {
   sessionStatus,
   waitingForOf,
 } from "./sessions.ts";
-import { SessionTerminals, Terminals } from "./terminal.ts";
+import { type HostHello, SessionTerminals, Terminals } from "./terminal.ts";
 import { foldersRepos, RegisteredRepos } from "./repos.ts";
 import { changesProblem, removableWorktree, removeWorktree, worktreeChanges } from "./worktrees.ts";
 import { listSkills } from "./skills.ts";
@@ -147,6 +147,8 @@ const STOP_BUSY_TYPING = "いま端末に入力しているため、止められ
 /** Claude Code's question dialog (AskUserQuestion, 2.1.325), at the bottom of the screen: its last choice. */
 const QUESTION_DIALOG_RE = /Chat about this/;
 /** Said when this machine cannot make a terminal for a session (see terminalWorks). */
+/** Why a hibernated session is not brought back while its conversation is open elsewhere (see hibernatedRow). */
+const OPEN_OUTSIDE = "この会話は Gasho の外の Claude Code で開かれています。そちらを終了してから、もう一度再開してください。";
 const NO_TERMINAL =
   "この working server では、セッションの端末（node-pty）を用意できないので、セッションを起動できません。gasho-daemon の doctor で確かめてください。";
 /** Said when Claude Code asked about a folder's new MCP servers while starting, and was answered "not now". */
@@ -220,6 +222,17 @@ interface InputOutcome {
 /** See Daemon.typeInput. */
 type TypeResult = "sent" | "not-typed" | "unsure";
 
+/** How a Claude Code that is starting is waited for (see startClaude). */
+interface ClaudeStart {
+  accept?: (row: AgentRow) => boolean;
+  resuming?: boolean;
+  trust?: boolean;
+}
+
+type ClaudeStarted =
+  | { sessionId: string; terminal: string; pid: number; resumeAsked: boolean; mcpDeclined: boolean }
+  | { error: string; needsTrust?: true; trustWarnings?: string[] };
+
 /**
  * Claude Code did not show that it took the Enter of a command ("/model", "/effort ultracode …"). It may still take
  * it, so nothing else is typed now (keys typed behind it could land in what it opens); the input is tried again later.
@@ -279,6 +292,8 @@ export class Daemon {
   private waking = new Map<string, Promise<CommandResult>>();
   /** The sessions whose Claude Code is being ended to hibernate them (it may still be listed), and when that is done. */
   private hibernating = new Map<string, Promise<void>>();
+  /** Terminals found still bringing a session back after a restart of gasho-daemon, to be taken over (see settleHibernated). */
+  private interrupted = new Map<string, { terminal: string; pid: number }>();
   private sweepingIdle = false;
   /** Sessions whose /rename to the name from the first message was sent, until Claude Code records it (nameAfterTitle). */
   private titleSent = new Set<string>();
@@ -376,7 +391,7 @@ export class Daemon {
 
   /**
    * The sessions started before this daemon: those whose Claude Code and terminal still run are kept, and those
-   * hibernated, which stay until they are used.
+   * hibernated, which stay until they are used (unless a restart cut that short: see settleHibernated).
    */
   private async loadManaged(): Promise<void> {
     const live = await this.terminals.builtIn.live();
@@ -391,10 +406,12 @@ export class Daemon {
       this.terminals.useZellij(m.terminal);
       return true;
     });
+    for (const m of this.managed.all()) if (m.hibernated) await this.settleHibernated(m, m.hibernated, live);
+    await this.managed.save();
     const old = this.managed.all().filter((m) => m.zellij).length;
     if (old > 0) log(`${old} session(s) started by gasho-daemon 0.10 or before still run in zellij; they are used through zellij until they end`);
     // Not closed: a terminal that no record names may still be someone's work (`gasho-daemon attach` shows it).
-    const kept = new Set(this.managed.all().filter((m) => !m.hibernated).map((m) => m.terminal));
+    const kept = new Set(this.managed.all().flatMap((m) => (m.hibernated ? (m.hibernated.resumingIn ?? []) : m.terminal)));
     for (const [name, h] of live) {
       if (!kept.has(name)) log(`terminal ${name} (pid ${h.pid}, ${h.cwd}) is not one of the sessions Gasho keeps; it is left as it is`);
     }
@@ -465,9 +482,14 @@ export class Daemon {
       log("cannot watch the sessions directory; relying on polling", e);
     }
     void this.refresh();
-    // Inputs kept over a restart, for sessions that were coming back or had not been tried yet.
+    this.wakeInterrupted();
+  }
+
+  /** After a restart: goes on with the sessions that were coming back, and those with inputs not tried yet. */
+  private wakeInterrupted(): void {
     for (const m of this.managed.all()) {
-      if (m.hibernated && !m.hibernated.resumeError && this.managed.pending(m.sessionId) > 0) void this.wake(m.sessionId);
+      if (!m.hibernated) continue;
+      if (this.interrupted.has(m.sessionId) || (!m.hibernated.resumeError && this.managed.pending(m.sessionId) > 0)) void this.wake(m.sessionId);
     }
   }
 
@@ -1453,12 +1475,9 @@ export class Daemon {
       accept = () => true,
       resuming = false,
       trust = false,
-    }: { claudeArgs?: string[]; accept?: (row: AgentRow) => boolean; resuming?: boolean; trust?: boolean } = {},
-  ): Promise<
-    | { sessionId: string; terminal: string; pid: number; resumeAsked: boolean; mcpDeclined: boolean }
-    | { error: string; needsTrust?: true; trustWarnings?: string[] }
-  > {
-    const terminal = terminalName(rcName);
+      terminal = terminalName(rcName),
+    }: ClaudeStart & { claudeArgs?: string[]; terminal?: string } = {},
+  ): Promise<ClaudeStarted> {
     // Its status line reports the context window and the plan's usage limits to gasho-daemon (statusline.ts).
     const statusLine = statusLineLaunch({
       port: this.cfg.hookPort,
@@ -1480,7 +1499,17 @@ export class Daemon {
     }
     this.ownPids.add(pid);
     log(`launching "${rcName}" in ${dir} (terminal ${terminal})${claudeArgs.length > 0 ? ` with ${claudeArgs.join(" ")}` : ""}`);
+    return this.claudeListed(terminal, pid, dir, rcName, { accept, resuming, trust });
+  }
 
+  /** Answers what a Claude Code asks while it starts, until `claude agents` lists it (see startClaude). */
+  private async claudeListed(
+    terminal: string,
+    pid: number,
+    dir: string,
+    rcName: string,
+    { accept = () => true, resuming = false, trust = false }: ClaudeStart,
+  ): Promise<ClaudeStarted> {
     const deadline = Date.now() + LAUNCH_TIMEOUT_MS;
     let resumeAsked = false;
     let mcpDeclined = false;
@@ -1873,6 +1902,42 @@ export class Daemon {
     };
   }
 
+  /**
+   * After a restart of gasho-daemon: a session saved as hibernated may still have a Claude Code running, as the restart
+   * can come while it is being ended or brought back. Two must never have the conversation open. A terminal that was
+   * bringing it back is taken over (wakeInterrupted). One that was being ended gets the time an end takes: if it goes on
+   * running, it was never stopped, and the session simply is not hibernated.
+   */
+  private async settleHibernated(m: ManagedSession, h: Hibernated, live: Map<string, HostHello>): Promise<void> {
+    if (h.resumingIn) {
+      const host = live.get(h.resumingIn);
+      if (host && !host.exited && isAlive(host.pid)) {
+        this.ownPids.add(host.pid);
+        this.interrupted.set(m.sessionId, { terminal: h.resumingIn, pid: host.pid });
+        return;
+      }
+      // Also one that was too slow to answer just now.
+      await this.terminals.kill(h.resumingIn);
+      delete h.resumingIn;
+    }
+    const host = live.get(m.terminal);
+    if (host?.pid !== m.pid) return;
+    for (let waited = 0; waited < this.endWaitMs && !host.exited && isAlive(m.pid); waited += 250) await sleep(250);
+    if (host.exited || !isAlive(m.pid)) {
+      await this.terminals.kill(m.terminal);
+      return;
+    }
+    log(`${m.name} (${m.sessionId}) still runs in ${m.terminal}; it is not hibernated`);
+    delete m.hibernated;
+    if (h.renamed) this.managed.unshift(m.sessionId, { text: renameCommand(m.name), auto: true });
+  }
+
+  /** Whether a Claude Code that is not Gasho's has this hibernated session's conversation open. */
+  private async openOutside(m: ManagedSession): Promise<boolean> {
+    const rows = await listAgents(this.cfg.claudeBin);
+    return rows.some((r) => r.sessionId === m.sessionId && r.pid !== undefined && r.pid !== m.pid && !this.isOwn(r.pid) && isAlive(r.pid));
+  }
+
   /** After a restart of gasho-daemon: a hibernated session is followed again, from its transcript. */
   private async trackHibernated(m: ManagedSession): Promise<void> {
     const t: Tracked = {
@@ -1902,7 +1967,8 @@ export class Daemon {
    * A line of `claude agents` with the id of a hibernated session. The Claude Code that was ended may still be listed
    * (the list can take seconds to read), and one coming back is Gasho's own. Any other has the conversation open outside
    * Gasho: two processes must not write one conversation, so Gasho lets go of the session, which goes on as one started
-   * outside Gasho. Returns whether the line is to be passed over.
+   * outside Gasho. While inputs wait for it, it stays, and the screen says why they cannot be sent. Returns whether the
+   * line is to be passed over.
    */
   private async hibernatedRow(row: AgentRow): Promise<boolean> {
     const id = row.sessionId ?? "";
@@ -1912,6 +1978,14 @@ export class Daemon {
     if (this.waking.has(id)) return false;
     // One that failed to come back, or has ended since the list was read.
     if (row.pid === undefined || this.isOwn(row.pid) || !isAlive(row.pid)) return true;
+    if (this.managed.waiting(id).some((input) => !input.auto)) {
+      if (m.hibernated.resumeError !== OPEN_OUTSIDE) {
+        log(`hibernated session ${m.name} (${id}) was opened outside Gasho; the inputs waiting for it are kept`);
+        m.hibernated.resumeError = OPEN_OUTSIDE;
+        await this.managed.save();
+      }
+      return true;
+    }
     log(`hibernated session ${m.name} (${id}) was opened outside Gasho; it is no longer one of Gasho's sessions`);
     this.managed.remove(id);
     await this.managed.save();
@@ -2018,10 +2092,15 @@ export class Daemon {
     return woken;
   }
 
-  /** The session stays hibernated and keeps the inputs sent to it; the screen says why, and can try again. */
+  /**
+   * The session stays hibernated and keeps the inputs sent to it; the screen says why, and can try again. The terminal
+   * tried in is closed, so that the next try is the only Claude Code on the conversation.
+   */
   private async wakeFailed(sessionId: string, error: string): Promise<CommandResult> {
     const h = this.managed.get(sessionId)?.hibernated;
     if (h) {
+      if (h.resumingIn) await this.terminals.kill(h.resumingIn);
+      delete h.resumingIn;
       h.resumeError = error;
       await this.managed.save();
     }
@@ -2032,7 +2111,7 @@ export class Daemon {
   /**
    * `claude --remote-control <name> --resume <id>` with the model and effort level the session had, in a new terminal.
    * Once its prompt box is shown, ultracode is turned on again and the session is Gasho's to type into: the inputs sent
-   * meanwhile follow.
+   * meanwhile follow. A terminal that a restart of gasho-daemon left bringing it back is gone on with instead.
    */
   private async startHibernated(sessionId: string): Promise<CommandResult> {
     const m = this.managed.get(sessionId);
@@ -2041,14 +2120,22 @@ export class Daemon {
     delete h.resumeError;
     // An input can come in while its Claude Code is still ending: two must never have the conversation open.
     await this.hibernating.get(sessionId)?.catch(() => undefined);
-    if (!this.canLaunch) return this.wakeFailed(sessionId, NO_TERMINAL);
-    const stat = await fsp.stat(m.cwd).catch(() => undefined);
-    if (!stat?.isDirectory()) return this.wakeFailed(sessionId, `会話のフォルダーがありません：${m.cwd}`);
-    const started = await this.startClaude(m.cwd, m.name, {
-      claudeArgs: resumeArgs(sessionId, h),
-      accept: (row) => row.sessionId === sessionId,
-      resuming: true,
-    });
+    const start: ClaudeStart = { accept: (row) => row.sessionId === sessionId, resuming: true };
+    const running = this.interrupted.get(sessionId);
+    this.interrupted.delete(sessionId);
+    let started: ClaudeStarted;
+    if (running) {
+      log(`going on with bringing ${m.name} (${sessionId}) back in ${running.terminal}`);
+      started = await this.claudeListed(running.terminal, running.pid, m.cwd, m.name, start);
+    } else {
+      if (!this.canLaunch) return this.wakeFailed(sessionId, NO_TERMINAL);
+      const stat = await fsp.stat(m.cwd).catch(() => undefined);
+      if (!stat?.isDirectory()) return this.wakeFailed(sessionId, `会話のフォルダーがありません：${m.cwd}`);
+      if (await this.openOutside(m)) return this.wakeFailed(sessionId, OPEN_OUTSIDE);
+      h.resumingIn = terminalName(m.name);
+      await this.managed.save();
+      started = await this.startClaude(m.cwd, m.name, { ...start, claudeArgs: resumeArgs(sessionId, h), terminal: h.resumingIn });
+    }
     if ("error" in started) {
       return this.wakeFailed(
         sessionId,
@@ -2059,7 +2146,6 @@ export class Daemon {
     }
     const { terminal, pid } = started;
     if (!(await this.promptShown(terminal))) {
-      await this.terminals.kill(terminal);
       return this.wakeFailed(sessionId, "Claude Code を再開できませんでした（入力欄が時間内に出ませんでした）。");
     }
     if (h.ultracode) {

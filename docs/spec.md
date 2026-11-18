@@ -284,8 +284,10 @@ Claude Code は、何もしていないあいだも 1 プロセスで 200MB ほ�
 - 再開は、発言（プラグインの `session.input`、`gasho-daemon session send` を含む）か、再開に失敗したあとの「もう一度再開」（`session.wake`）で始まる。`claude --remote-control <名前> --resume <ID> --model <モデル> --effort <Effort>` を新しい端末で起動し、`claude agents` に同じ ID で出て入力欄が出たら、Ultracode を戻し、預かった発言を入力する。`Resume from summary` の問いは、フォークと同じく Esc で答える。再開のあいだ `hibernation` は `resuming` になる
 - 再開に失敗したら、`resumeError` に理由を入れ、発言は預かったままにする。休止中のセッションの送信待ちの入力は `managed.json` に保存するので、gasho-daemon を再起動しても失わない
 - 休止中に名前を変えたときは、Claude Code を起こさずに記録だけを変え、再開のあとで `/rename` を送る
-- gasho-daemon を再起動・更新しても、休止中のセッションは休止中のまま残る
-- 休止中の会話を Gasho の外（`claude --resume` など）で開くと、`claude agents` に別の PID で同じ ID が出る。2 つのプロセスが同じ会話に書き込まないよう、gasho-daemon はそのセッションを Gasho の管理から外し、Gasho の外で起動したセッションとして扱う
+- gasho-daemon を再起動・更新しても、休止中のセッションは休止中のまま残る。ただし、1 つの会話を 2 つの Claude Code が開かないよう、起動時に次のように扱う
+  - 休止の途中で再起動したときは、Claude Code が終わるのを削除と同じ時間だけ待つ。終わったら端末を閉じて休止のままにし、動き続けていれば休止を取り消す
+  - 再開の途中で再起動したときは、起動する前に `managed.json` に保存した端末（`resumingIn`）が動いていれば、それを引き継いで再開を続ける。動いていなければ休止のままにし、送信待ちの入力があれば再開し直す
+- 休止中の会話を Gasho の外（`claude --resume` など）で開くと、`claude agents` に別の PID で同じ ID が出る。2 つのプロセスが同じ会話に書き込まないよう、gasho-daemon はそのセッションを Gasho の管理から外し、Gasho の外で起動したセッションとして扱う。送信待ちの入力があるあいだは管理から外さず、外で開かれていることを `resumeError` で伝え、外の Claude Code が終わるまで再開しない
 
 ## gasho-hub（Gasho サーバー）
 

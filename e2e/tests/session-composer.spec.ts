@@ -470,17 +470,37 @@ test("添付できないセッションと、文字も載っている貼り付�
   }
 });
 
-test("チャット欄で Ctrl+B を押しても、サイドバーを開閉しない（#108）", async ({ page, hub, isMobile }) => {
-  test.skip(isMobile, "サイドバーは 768px 以上の幅で開閉する");
-  test.fail(true, "#108: サイドバーが、フォーカスの場所を見ずに Ctrl+B で開閉する");
-  await openSession(page, hub);
-  await expect(page.getByRole("button", { name: "サイドバーを畳む" })).toBeVisible();
-  const box = chatBox(page);
-  await box.fill("ab");
-  await box.press("Control+B");
-  // Typed after it: by then the screen has done what Ctrl+B does.
-  await box.press("x");
-  await expect(box).toHaveValue(/x/);
-  await expect(page.getByRole("button", { name: "サイドバーを畳む" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "サイドバーを開く" })).toHaveCount(0);
+// Ctrl+B is left to a text box on a Mac, iPhone and iPad only (where it moves the cursor back), told by the userAgent.
+test.describe("Mac", () => {
+  test.use({ userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36" });
+
+  test("Mac のチャット欄で Ctrl+B を押しても、サイドバーを開閉しない（#108）", async ({ page, hub, isMobile }) => {
+    test.skip(isMobile, "サイドバーは 768px 以上の幅で開閉する");
+    await openSession(page, hub);
+    await expect(page.getByRole("button", { name: "サイドバーを畳む" })).toBeVisible();
+    const box = chatBox(page);
+    await box.fill("ab");
+    await box.press("Control+B");
+    // Typed after it: by then the screen has done what Ctrl+B does.
+    await box.press("x");
+    await expect(box).toHaveValue(/x/);
+    await expect(page.getByRole("button", { name: "サイドバーを畳む" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "サイドバーを開く" })).toHaveCount(0);
+  });
+});
+
+test.describe("Linux", () => {
+  test.use({ userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36" });
+
+  test("Windows・Linux では、チャット欄の Ctrl+B でもサイドバーを開閉する（#108）", async ({ page, hub, isMobile }) => {
+    test.skip(isMobile, "サイドバーは 768px 以上の幅で開閉する");
+    await openSession(page, hub);
+    const box = chatBox(page);
+    await box.fill("ab");
+    await box.press("Control+B");
+    await expect(page.getByRole("button", { name: "サイドバーを開く" })).toBeVisible();
+    await box.press("Control+B");
+    await expect(page.getByRole("button", { name: "サイドバーを畳む" })).toBeVisible();
+    await expect(box).toHaveValue("ab");
+  });
 });

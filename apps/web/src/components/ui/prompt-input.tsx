@@ -3,7 +3,8 @@
 // can be laid out like EasyUI's preview (`showCount`: keyboard hint on the left, character count on the right), and
 // what is typed can be kept outside the component (`draft`), so it is still there when the box is shown again. With
 // `shell`, a text that starts with "!" is shown as a shell command (Claude Code's shell mode). With `commands`, a text
-// that starts with "/" offers Claude Code's skills above the box (SlashMenu, from EasyUI's Combobox).
+// that starts with "/" offers Claude Code's skills above the box (SlashMenu, from EasyUI's Combobox). The keyboard
+// hint shows where it fits on the line, not by the window's width (Hint).
 
 import {
   forwardRef,
@@ -1268,7 +1269,7 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
           <p role="alert" aria-live="polite" className={cx("min-w-0 truncate text-rose-500", !error && "sr-only")}>
             {error}
           </p>
-          {!error && hintNode && <p className="hidden min-w-0 items-center gap-1 sm:flex [@media(pointer:coarse)]:hidden">{hintNode}</p>}
+          {!error && hintNode && <Hint>{hintNode}</Hint>}
           <div className="ml-auto flex shrink-0 items-center gap-3">
             {footer}
             <span className={cx("tabular-nums", over && "text-rose-500")}>
@@ -1281,13 +1282,28 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
           <p role="alert" aria-live="polite" className={cx("min-w-0 truncate", error && "text-rose-500")}>
             {error}
           </p>
-          {!error && hintNode && <p className="hidden shrink-0 items-center gap-1 sm:flex [@media(pointer:coarse)]:hidden">{hintNode}</p>}
+          {!error && hintNode && <Hint>{hintNode}</Hint>}
           {footer && <div className="ml-auto flex shrink-0 items-center gap-3">{footer}</div>}
         </div>
       )}
     </div>
   );
 });
+
+/**
+ * The keyboard hint under the box, where it fits beside what is at the right of the line (the parts of Gasho's
+ * plugins, the count) and on one line: one too wide goes onto a second line, which the height leaves out of sight. The
+ * empty span first keeps the hint off the first line then (a line's first item stays on it however wide it is).
+ * Not on touch screens.
+ */
+function Hint({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex h-[18px] min-w-0 flex-1 flex-wrap overflow-hidden [@media(pointer:coarse)]:hidden">
+      <span className="h-full" />
+      <p className="flex items-center gap-1 whitespace-nowrap">{children}</p>
+    </div>
+  );
+}
 
 function Kbd({ children }: { children: ReactNode }) {
   return (

@@ -336,7 +336,7 @@ sidebar: [{ id: "repos", label: "リポジトリ", icon: FolderGit2, page: { id:
 
 設定画面では、いまの「会話の文字の大きさ」のあとに、入れて有効にしたプラグインごとの区切りを出す。区切りの見出しは、プラグインの名前にする。プラグインの画面の「設定」は、その区切りを開く。入力欄で表せない設定は、`definePlugin` の `settings` に部品を渡すと、入力欄の下に出る。値は、どちらからも SDK の `useSetting` で読み書きする。
 
-`server` の値を変えると、Gasho サーバーは、`settings` に書いた型と範囲で確かめてから保存し、すべてのブラウザーと gasho-daemon に送る。変えたことは、操作のログに残す。
+`server` の値を変えると、Gasho サーバーは、`settings` に書いた型と範囲で確かめてから保存し、すべてのブラウザーと gasho-daemon に送る。変えたことは、操作のログに残す。gasho-daemon は、動いている daemon の部分に、画面からの呼び出しを待たずに新しい値を渡す。daemon の部分の `ctx.settings` は、`start` で受け取ったものも呼び出しで受け取ったものも、プロセスのあいだずっと同じオブジェクトで、gasho-daemon がその中身を新しい値に書き換える。一定の間隔で動く処理は、動くたびに `ctx.settings` を読む。値を変数に写しておくと、変わったことが分からない。
 
 ### ホームのタイル（P6）
 
@@ -738,7 +738,7 @@ type RemoveWorktreeResult =
 - 引数が 64KB 以下であること
 - working server がつながっていて、その gasho-daemon でこのプラグインの daemon の部分を使えること
 
-結果は、Gasho サーバーと gasho-daemon のあいだの WebSocket の上限（16MB）に収まるようにする。大きくなりうるものは、いまの GitHub の本文とコメントと同じく、daemon の部分で切り詰める。`timeoutSeconds` を過ぎても答えがなければ、Gasho サーバーが「working server から応答がありません。」を返し、gasho-daemon は daemon の部分に中断を知らせる。gasho-daemon は、1つのプラグインの呼び出しを同時に8つまで動かし、それを超えた分は待たせる。
+結果は、JSON にして 15MB までにする。Gasho サーバーと gasho-daemon のあいだの WebSocket は、1つのメッセージを 16MB までしか受け取らず、超えるとその working server の接続を閉じて、セッションがすべてつながり直すためである。15MB を超えた結果は、gasho-daemon が Gasho サーバーに送らずに、その呼び出しを「<メソッド> の答えが大きすぎます（JSON にして 15MB まで）。」の失敗として返す。大きくなりうるものは、いまの GitHub の本文とコメントと同じく、daemon の部分で切り詰める。`timeoutSeconds` を過ぎても答えがなければ、Gasho サーバーが「working server から応答がありません。」を返し、gasho-daemon は daemon の部分に中断を知らせる。gasho-daemon は、1つのプラグインの呼び出しを同時に8つまで動かし、それを超えた分は待たせる。
 
 `useRequest` は、呼び出しの結果を、ページを開いているあいだ覚えておく。同じ working server、セッション、メソッド、引数の呼び出しは、1つの結果を共有する。ホームの GitHub のタイルとパネルが、同じ一覧を使えるようにするためである。読み込みに失敗したときは、前に読んだ結果を残したまま、エラーを添える。Gasho サーバーとの接続が切れたときは、つながり直したあとで、答えを待っていた呼び出しを送り直す。どれも、いまのブランチグラフや GitHub のパネルと同じ動きである。`staleSeconds` を指定すると、表示したときに結果がそれより古ければ読み直す。前に読んだ結果が無いまま失敗したときは、失敗した時刻から `staleSeconds` を数えて、それより古ければ表示したときに読み直す。`staleSeconds` を指定していなければ、次に表示したときに読み直す。失敗の原因（gh のログインなど）を直したあと、画面を開き直せば読み直すようにするためである。`refreshSeconds` を指定すると、表示していて、ページが画面に出ているあいだ、その間隔で読み直す。
 
@@ -777,7 +777,7 @@ export default defineDaemonPlugin({
 |---|---|
 | `ctx.machine` | working server の ID と名前 |
 | `ctx.session` | 呼び出しで指したセッション。gasho-daemon が見ているセッションだけで、ID、フォルダー、名前、GitHub のリポジトリ、フォルダーの中のリポジトリを持つ。`repo(パス)` は、セッションのフォルダー（パスを渡さないとき）か、gasho-daemon がその中で見つけたリポジトリのフォルダーを、その GitHub のリポジトリと一緒に返す |
-| `ctx.settings` | Gasho サーバーに保存した設定の値（`scope: "server"`） |
+| `ctx.settings` | Gasho サーバーに保存した設定の値（`scope: "server"`）。設定を変えると、呼び出しを待たずに中身が新しい値になる。`start` で受け取ったものも同じ（「設定（P5）」） |
 | `ctx.folders()` | その working server で、Gasho がセッションを起動できるフォルダー（Claude Code が信頼しているフォルダーと、その親）。画面の `MachineInfo.folders` と同じもの。ブラウザーから来たパスで git などを動かす前に、この中にあるかを確かめるのに使う（API 1.1） |
 | `ctx.dataDir` | その working server での、このプラグイン専用のフォルダー（`~/.local/share/gasho/plugin-data/<ID>/`）。呼び出しをまたいで覚えておくもの（選んだ項目など）を置く。プラグインを更新しても外しても残る（API 1.1）。この中で動く Claude Code は、gasho-daemon がセッションとして扱わない（「プラグインが動かす Claude Code」、API 1.4） |
 | `ctx.signal` | 待つ時間を過ぎたときと、子プロセスを止めるときに、中断を知らせる AbortSignal |

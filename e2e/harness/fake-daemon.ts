@@ -147,6 +147,29 @@ export class FakeDaemon {
     await closed;
   }
 
+  /**
+   * The same working server connected again by another gasho-daemon (after an update to `version`): this one goes
+   * offline, and the new one says hello with this one's sessions, repositories and capabilities (with `capabilities`
+   * over them). The handlers are not carried over.
+   */
+  async startAgain(o: { version?: string; capabilities?: Partial<Capabilities> } = {}): Promise<FakeDaemon> {
+    await this.disconnect();
+    const d = new FakeDaemon({
+      name: this.name,
+      url: this.url,
+      machineId: this.machineId,
+      token: this.token,
+      defaultVersion: this.version,
+      ...(o.version ? { version: o.version } : {}),
+      capabilities: { ...this.capabilities, ...o.capabilities },
+      sessions: this.sessions,
+      repos: this.repos,
+      transcripts: this.transcripts,
+    });
+    await d.connect();
+    return d;
+  }
+
   send(msg: DaemonToHub): void {
     if (!this.connected) throw new Error("the fake daemon is not connected");
     this.ws?.send(JSON.stringify(msg));

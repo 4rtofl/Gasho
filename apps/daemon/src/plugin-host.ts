@@ -19,7 +19,11 @@ interface Definition {
 const file = process.argv[2];
 let plugin = "?";
 let machine = { id: "", name: "" };
-let settings: Record<string, unknown> = {};
+/**
+ * One object for the life of the process, its contents replaced when the settings change: what `start` got reads them
+ * as they are now, without waiting for a call.
+ */
+const settings: Record<string, unknown> = {};
 let folders: string[] = [];
 let dataDir = "";
 let def: Definition | undefined;
@@ -42,10 +46,20 @@ function userError(message: string): Error {
 
 const log = (...args: unknown[]) => console.log(...args);
 
+function takeSettings(next: Record<string, unknown>): void {
+  for (const key of Object.keys(settings)) delete settings[key];
+  Object.assign(settings, next);
+}
+
 /** A topic of an event, at most (characters). */
 const MAX_TOPIC = 100;
 /** The data of an event, at most (as JSON, in bytes). */
 const MAX_EVENT_BYTES = 256 * 1024;
+/**
+ * The result of a call, at most (as JSON, in bytes). It goes to the Gasho server in one WebSocket message, which may be
+ * 16 MB at most (maxPayload): one over it closes the connection of the working server, and every session's with it.
+ */
+const MAX_RESULT_BYTES = 15 * 1024 * 1024;
 
 /** ctx.emit: checks the event (a PluginError when it is not right) and hands it to gasho-daemon. */
 function emit(topic: unknown, data: unknown, options?: { retain?: boolean }): void {
@@ -119,7 +133,7 @@ function baseContext() {
 async function init(m: Extract<ToHost, { t: "init" }>): Promise<void> {
   plugin = m.plugin;
   machine = m.machine;
-  settings = m.settings;
+  takeSettings(m.settings);
   folders = m.local.folders;
   dataDir = m.local.dataDir;
   try {
@@ -141,7 +155,7 @@ async function init(m: Extract<ToHost, { t: "init" }>): Promise<void> {
 async function call(m: Extract<ToHost, { t: "call" }>): Promise<void> {
   const controller = new AbortController();
   aborts.set(m.id, controller);
-  settings = m.settings;
+  takeSettings(m.settings);
   try {
     const method = def && Object.hasOwn(def.methods, m.method) ? def.methods[m.method] : undefined;
     if (typeof method !== "function") throw userError(`${plugin} に ${m.method} という処理はありません。`);
@@ -153,6 +167,10 @@ async function call(m: Extract<ToHost, { t: "call" }>): Promise<void> {
       github: githubOf(m.id, controller.signal),
     };
     const data = await method(m.params, ctx);
+    const json = JSON.stringify(data);
+    if (json !== undefined && Buffer.byteLength(json) > MAX_RESULT_BYTES) {
+      throw userError(`${m.method} の答えが大きすぎます（JSON にして ${MAX_RESULT_BYTES / 1024 / 1024}MB まで）。`);
+    }
     send({ t: "result", id: m.id, ok: true, data });
   } catch (e) {
     const user = (e as { gashoPluginError?: unknown } | null)?.gashoPluginError === true;
@@ -196,7 +214,7 @@ process.on("message", (raw) => {
       aborts.get(m.id)?.abort();
       break;
     case "settings":
-      settings = m.settings;
+      takeSettings(m.settings);
       break;
     case "folders":
       folders = m.folders;

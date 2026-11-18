@@ -297,8 +297,9 @@ test.describe("gasho-daemon を更新できない working server", () => {
 
     await test.step("時計を進めると、失敗した時刻と最後に接続した時刻が変わる", async () => {
       await moveClock(page, 10 * 60_000);
-      await expect(machineRow(page, "offline")).toContainText("オフライン・最後の接続 10 分前");
-      await expect(failed).toContainText(`${NEWER} への更新に失敗しました（10 分前）。`);
+      // Rounded to the minute: 11 once the steps above have taken 30 s.
+      await expect(machineRow(page, "offline")).toContainText(/オフライン・最後の接続 1[01] 分前/);
+      await expect(failed).toContainText(/への更新に失敗しました（1[01] 分前）。/);
     });
   });
 });

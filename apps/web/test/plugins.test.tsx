@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { PluginInfo } from "@gasho/protocol";
 import { beforeEach, expect, test, vi } from "vitest";
@@ -150,24 +150,28 @@ test("a plugin removes a session with the permission, naming itself, and the scr
   expect(location.hash).not.toBe("#/s/m1/s1");
 });
 
-test("a plugin hears that the person cancelled its launch, so that it can put away what it made for it (API 1.15)", async () => {
+test("a plugin's launch cannot be cancelled at the question about unused sessions, and goes on once it is answered", async () => {
   const user = userEvent.setup();
   const withLaunch = info({ manifest: { ...info().manifest, permissions: ["session.launch"] } });
   const unused = session("old", { lastActivityAt: Date.now() - 7 * 24 * 60 * 60 * 1000 });
-  const hub = await connectHub({ machines: [machine("m-cancel", [s1, unused], { daemonVersion: "0.24.0" })], plugins: [withLaunch] });
+  const hub = await connectHub({ machines: [machine("m-asked", [s1, unused], { daemonVersion: "0.24.0" })], plugins: [withLaunch] });
   render(
     <>
-      <PluginPanelView machine="m-cancel" sessionId="s1" panel={{ kind: "plugin", plugin: "notes", id: "notes", params: {} }} docked onClose={() => {}} />
+      <PluginPanelView machine="m-asked" sessionId="s1" panel={{ kind: "plugin", plugin: "notes", id: "notes", params: {} }} docked onClose={() => {}} />
       <UnusedSessionsDialog />
     </>,
   );
   await user.click(await screen.findByRole("button", { name: "ここで起動" }));
-  await user.click(await screen.findByRole("button", { name: "キャンセル" }));
-  expect(await screen.findByText("片付けます：セッションの起動をキャンセルしました。")).toBeTruthy();
-  expect(hub.commands().filter((c) => c.type === "session.launch")).toHaveLength(0);
+  await screen.findByRole("alertdialog");
+  expect(screen.queryByRole("button", { name: "キャンセル" })).toBeNull();
+
+  await user.click(screen.getByRole("button", { name: "削除せずに起動" }));
+  await waitFor(() => expect(hub.commands().filter((c) => c.type === "session.launch")).toHaveLength(1));
+  await hub.answer({ ok: true, sessionId: "started" });
+  expect(await screen.findByText("起動しました")).toBeTruthy();
 });
 
-test("a launch that failed is not told as cancelled", async () => {
+test("a plugin hears why its launch failed", async () => {
   const user = userEvent.setup();
   const withLaunch = info({ manifest: { ...info().manifest, permissions: ["session.launch"] } });
   const hub = await connectHub({ machines: [machine("m-failed", [s1], { daemonVersion: "0.24.0" })], plugins: [withLaunch] });

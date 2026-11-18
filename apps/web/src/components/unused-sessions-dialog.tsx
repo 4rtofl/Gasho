@@ -1,7 +1,7 @@
 // The question asked before a new session starts on a working server that has unused sessions: which of them to remove
 // first (see lib/session-launch). There is one for the whole screen, in App.
 import { AlertDialog } from "radix-ui";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { BUTTON_DANGER, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG_PANEL } from "@/components/dialog-styles";
 import { DrawCheckbox } from "@/components/ui/draw-checkbox";
 import { relativeTime, sessionLabel } from "@/lib/format";
@@ -14,6 +14,7 @@ function Question({ question }: { question: UnusedQuestion }) {
   const machine = machines.find((m) => m.id === question.machine);
   const [picked, setPicked] = useState<ReadonlySet<string>>(() => new Set(question.sessions.map((s) => s.sessionId)));
   const [removing, setRemoving] = useState(false);
+  const keep = useRef<HTMLButtonElement>(null);
 
   const toggle = (sessionId: string, on: boolean) => {
     const next = new Set(picked);
@@ -31,7 +32,15 @@ function Question({ question }: { question: UnusedQuestion }) {
     >
       <AlertDialog.Portal>
         <AlertDialog.Overlay className={DIALOG_OVERLAY} />
-        <AlertDialog.Content className={DIALOG_PANEL}>
+        <AlertDialog.Content
+          className={DIALOG_PANEL}
+          // With no "キャンセル" to start on, the focus starts on the answer that removes nothing.
+          onOpenAutoFocus={(e) => {
+            if (question.cancellable) return;
+            e.preventDefault();
+            keep.current?.focus({ preventScroll: true });
+          }}
+        >
           <AlertDialog.Title className="text-base font-semibold tracking-tight">未使用のセッションを削除しますか？</AlertDialog.Title>
           <AlertDialog.Description asChild>
             <div className="mt-2 space-y-1.5 text-sm text-muted-foreground">
@@ -44,6 +53,7 @@ function Question({ question }: { question: UnusedQuestion }) {
                   </>
                 )}
               </p>
+              {!question.cancellable && <p>プラグインが起動を待っているので、キャンセルできません。</p>}
             </div>
           </AlertDialog.Description>
           <ul className="mt-3 max-h-64 space-y-1 overflow-y-auto">
@@ -73,12 +83,14 @@ function Question({ question }: { question: UnusedQuestion }) {
             })}
           </ul>
           <div className="mt-5 flex flex-wrap justify-end gap-2">
-            <AlertDialog.Cancel asChild>
-              <button type="button" disabled={removing} className={BUTTON_SECONDARY}>
-                キャンセル
-              </button>
-            </AlertDialog.Cancel>
-            <button type="button" disabled={removing} onClick={() => launchKeepingUnused(question)} className={BUTTON_SECONDARY}>
+            {question.cancellable && (
+              <AlertDialog.Cancel asChild>
+                <button type="button" disabled={removing} className={BUTTON_SECONDARY}>
+                  キャンセル
+                </button>
+              </AlertDialog.Cancel>
+            )}
+            <button ref={keep} type="button" disabled={removing} onClick={() => launchKeepingUnused(question)} className={BUTTON_SECONDARY}>
               削除せずに起動
             </button>
             <button

@@ -506,17 +506,7 @@ export interface SendInputResult {
 
 export type LaunchResult =
   | { ok: true; sessionId: string }
-  | {
-      ok: false;
-      error: string;
-      needsTrust?: boolean;
-      trustWarnings?: string[];
-      /**
-       * The person chose not to start it when Gasho asked about the working server's unused sessions (plugin API 1.15).
-       * What the plugin made for the session (a worktree, say) is the plugin's to put away.
-       */
-      cancelled?: boolean;
-    };
+  | { ok: false; error: string; needsTrust?: boolean; trustWarnings?: string[] };
 
 /** What removing a session gave (useRemoveSession, plugin API 1.14). */
 export type RemoveSessionResult = { ok: true } | { ok: false; error: string };
@@ -636,10 +626,9 @@ export interface GashoSdk {
   useSendInput(): (input: SendInput) => Promise<CallResult<SendInputResult>>;
   /**
    * Starts a Claude Code session in a folder of a working server (needs the permission "session.launch"), as "新しい
-   * セッション" does. Plugin API 1.1. When the working server has unused sessions, Gasho first asks the person whether to
-   * remove them; one who cancels starts nothing, and the result says so with `cancelled` (plugin API 1.15).
+   * セッション" does. Plugin API 1.1.
    */
-  useLaunchSession():(input: { machine: string; cwd: string; name?: string; trust?: boolean }) => Promise<LaunchResult>;
+  useLaunchSession(): (input: { machine: string; cwd: string; name?: string; trust?: boolean }) => Promise<LaunchResult>;
   /**
    * Removes a session Gasho started (needs the permission "session.remove"), as "削除" of its menu does, without asking:
    * its Claude Code ends, also in the middle of its work, and Gasho lists it no more. Its conversation stays on the

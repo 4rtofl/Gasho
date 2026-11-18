@@ -32,8 +32,8 @@ beforeEach(() => {
 
 // The question lives outside the screen: one left open would stand in front of the next test's.
 afterEach(async () => {
-  const cancel = screen.queryByRole("button", { name: "キャンセル" });
-  if (cancel) await userEvent.click(cancel);
+  const leave = screen.queryByRole("button", { name: "キャンセル" }) ?? screen.queryByRole("button", { name: "削除せずに起動" });
+  if (leave) await userEvent.click(leave);
 });
 
 let launch: ReturnType<typeof useSessionLauncher>;
@@ -169,6 +169,68 @@ test("a person who cancelled is asked again the next time", async () => {
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   start();
   expect(await screen.findByRole("alertdialog")).toBeTruthy();
+});
+
+test("a plugin's launch cannot be cancelled, by the button or by Esc", async () => {
+  const user = userEvent.setup();
+  const hub = await open();
+  const done = start({ cwd: "/repo/review" }, { fromPlugin: true });
+  const dialog = await screen.findByRole("alertdialog");
+  expect(screen.queryByRole("button", { name: "キャンセル" })).toBeNull();
+  expect(dialog.textContent).toContain("プラグインが起動を待っているので、キャンセルできません。");
+  // Nothing is removed by the key a person may press on the way in.
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "削除せずに起動" }));
+
+  await user.keyboard("{Escape}");
+  expect(screen.getByRole("alertdialog")).toBeTruthy();
+  expect(done.outcome).toBeUndefined();
+  expect(ofType(hub, "session.launch")).toHaveLength(0);
+
+  await user.click(screen.getByRole("button", { name: "削除せずに起動" }));
+  await waitFor(() => expect(ofType(hub, "session.launch")).toHaveLength(1));
+  await hub.answer(OK, ofType(hub, "session.launch")[0]);
+  await waitFor(() => expect(done.outcome).toMatchObject(OK));
+});
+
+test("a plugin's launch that joins an open question takes the cancel away, keeps what is picked, and both launches start", async () => {
+  const user = userEvent.setup();
+  const hub = await open();
+  const person = start({ cwd: "/repo/a" });
+  await user.click(await screen.findByRole("checkbox", { name: /画面の直し/ }));
+  expect(screen.getByRole("button", { name: "キャンセル" })).toBeTruthy();
+
+  const plugin = start({ cwd: "/repo/b" }, { fromPlugin: true });
+  await waitFor(() => expect(screen.queryByRole("button", { name: "キャンセル" })).toBeNull());
+  await user.keyboard("{Escape}");
+  expect(screen.getByRole("alertdialog")).toBeTruthy();
+  expect(screen.getByRole<HTMLInputElement>("checkbox", { name: /画面の直し/ }).checked).toBe(false);
+
+  await user.click(screen.getByRole("button", { name: "削除して起動" }));
+  await waitFor(() => expect(ofType(hub, "session.remove")).toHaveLength(1));
+  expect(ofType(hub, "session.remove")[0]).toMatchObject({ sessionId: "old-1" });
+  await answerAll(hub, ofType(hub, "session.remove"));
+  await waitFor(() => expect(ofType(hub, "session.launch")).toHaveLength(2));
+  await answerAll(hub, ofType(hub, "session.launch"), () => OK);
+  await waitFor(() => expect(person.outcome).toMatchObject(OK));
+  await waitFor(() => expect(plugin.outcome).toMatchObject(OK));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+});
+
+test("a person's cancel does not stop the plugin's launch that comes after it", async () => {
+  const user = userEvent.setup();
+  const hub = await open();
+  const person = start();
+  await user.click(await screen.findByRole("button", { name: "キャンセル" }));
+  await waitFor(() => expect(person.outcome).toMatchObject({ ok: false, cancelled: true }));
+
+  const plugin = start({ cwd: "/repo/review" }, { fromPlugin: true });
+  await screen.findByRole("alertdialog");
+  await act(async () => {});
+  expect(plugin.outcome).toBeUndefined();
+  await user.click(screen.getByRole("button", { name: "削除せずに起動" }));
+  await waitFor(() => expect(ofType(hub, "session.launch")).toHaveLength(1));
+  await hub.answer(OK, ofType(hub, "session.launch")[0]);
+  await waitFor(() => expect(plugin.outcome).toMatchObject(OK));
 });
 
 test("starting without removing keeps the question away on that working server", async () => {

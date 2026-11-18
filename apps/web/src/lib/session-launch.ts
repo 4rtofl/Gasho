@@ -35,6 +35,11 @@ export interface UnusedQuestion {
   id: number;
   machine: string;
   sessions: SessionInfo[];
+  /**
+   * False once a plugin's launch waits for the answer: a plugin may have made a worktree for the session before it asks
+   * for one, and a cancel would leave that behind with nothing started in it.
+   */
+  cancellable: boolean;
   answer: Promise<Answer>;
   settle: (answer: Answer) => void;
 }
@@ -59,13 +64,12 @@ export function useUnusedQuestion(): UnusedQuestion | undefined {
   );
 }
 
-/** The answer last given per working server, while the launches it let through run and for FOLLOW_UP_MS after them. */
-interface RecentAnswer {
-  answer: Answer;
+/** The answer to go on last given per working server, while the launches it let through run and for FOLLOW_UP_MS after them. */
+interface RecentGo {
   running: number;
   until: number;
 }
-const recent = new Map<string, RecentAnswer>();
+const recent = new Map<string, RecentGo>();
 
 /** Launches that stopped at Claude Code's question whether to trust the folder: starting them again asks nothing more. */
 const askedTrust = new Set<string>();
@@ -81,8 +85,8 @@ function unusedOn(machine: string): SessionInfo[] {
   return m ? unusedSessions(m, Date.now(), openSessionOn(machine)) : [];
 }
 
-/** The answer that still holds for a launch on this working server, if any. */
-function liveAnswer(machine: string): RecentAnswer | undefined {
+/** The answer to go on that still holds for a launch on this working server, if any. */
+function liveGo(machine: string): RecentGo | undefined {
   const last = recent.get(machine);
   return last && (last.running > 0 || Date.now() < last.until) ? last : undefined;
 }
@@ -90,10 +94,11 @@ function liveAnswer(machine: string): RecentAnswer | undefined {
 function answerFor(machine: string, input: LaunchInput, fromPlugin: boolean): Answer | Promise<Answer> {
   if (input.trust && askedTrust.delete(trustKey(machine, input.cwd))) return "go";
   const open = questions.find((q) => q.machine === machine);
-  if (open) return open.answer;
-  const last = liveAnswer(machine);
-  // A person who cancelled and starts again means it; a plugin going on with its list does not.
-  if (last && (last.answer === "go" || fromPlugin)) return last.answer;
+  if (open) {
+    if (fromPlugin && open.cancellable) setQuestions(questions.map((q) => (q === open ? { ...q, cancellable: false } : q)));
+    return open.answer;
+  }
+  if (liveGo(machine)) return "go";
   if (keepsUnused(machine, Date.now())) return "go";
   const sessions = unusedOn(machine);
   if (sessions.length === 0) return "go";
@@ -101,19 +106,22 @@ function answerFor(machine: string, input: LaunchInput, fromPlugin: boolean): An
   const answer = new Promise<Answer>((resolve) => {
     settle = resolve;
   });
-  const question: UnusedQuestion = { id: ++lastId, machine, sessions, answer, settle };
+  const question: UnusedQuestion = { id: ++lastId, machine, sessions, cancellable: !fromPlugin, answer, settle };
   setQuestions([...questions, question]);
   return answer;
 }
 
 function finish(question: UnusedQuestion, answer: Answer): void {
-  recent.set(question.machine, { answer, running: 0, until: Date.now() + FOLLOW_UP_MS });
-  setQuestions(questions.filter((q) => q !== question));
+  // A person who cancelled and starts again means it: only an answer to go on holds for the launches after it.
+  if (answer === "go") recent.set(question.machine, { running: 0, until: Date.now() + FOLLOW_UP_MS });
+  setQuestions(questions.filter((q) => q.id !== question.id));
   question.settle(answer);
 }
 
 /** "キャンセル": nothing is removed, and the launches that wait for the answer do not start. */
-export const cancelLaunch = (question: UnusedQuestion): void => finish(question, "cancel");
+export function cancelLaunch(question: UnusedQuestion): void {
+  if (questions.find((q) => q.id === question.id)?.cancellable) finish(question, "cancel");
+}
 
 /** "削除せずに起動": this working server is not asked about again for an hour. */
 export function launchKeepingUnused(question: UnusedQuestion): void {
@@ -145,7 +153,7 @@ export async function launchRemovingUnused(question: UnusedQuestion, picked: Rea
 async function launchSession(machine: string, input: LaunchInput, { fromPlugin = false } = {}): Promise<LaunchOutcome> {
   const answer = await answerFor(machine, input, fromPlugin);
   if (answer === "cancel") return { ok: false, cancelled: true, error: "セッションの起動をキャンセルしました。" };
-  const held = liveAnswer(machine);
+  const held = liveGo(machine);
   if (held) held.running++;
   const r = await sendCommand(
     machine,

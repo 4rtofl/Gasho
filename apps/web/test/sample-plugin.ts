@@ -60,7 +60,7 @@ function Notes() {
         type: "button",
         onClick: async () => {
           const r = await launch({ machine: ctx!.machine.id, cwd: ctx!.session.cwd });
-          setSaid(r.ok ? "起動しました" : r.cancelled ? `片付けます：${r.error}` : r.error);
+          setSaid(r.ok ? "起動しました" : r.error);
         },
       },
       "ここで起動",

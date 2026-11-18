@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { Daemon } from "../src/daemon.ts";
 import { TokenDays, tokenDayOf } from "../src/token-days.ts";
 import { TokenCounter, usageOfLine } from "../src/tokens.ts";
 
@@ -181,4 +182,54 @@ test("only the last 371 days are kept and told", async () => {
   assert.deepEqual(days.all(NOW), [["2025-11-13", 2]]);
   await days.save(Date.parse("2026-11-19T03:00:00Z"));
   assert.deepEqual(JSON.parse(await fs.readFile(file, "utf8")), {});
+});
+
+test("when a fork was made stays after a restart, until what it copied is too old to be shown", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-token-days-"));
+  const file = path.join(dir, "token-days.json");
+  const before = new TokenDays(file);
+  before.rememberFork("recent", NOW - 1000);
+  before.rememberFork("old", Date.parse("2025-11-12T03:00:00Z"));
+  await before.save(NOW);
+
+  const after = new TokenDays(file);
+  await after.load();
+  assert.equal(after.forkedAt("recent"), NOW - 1000);
+  assert.equal(after.forkedAt("old"), undefined);
+  assert.equal(after.forkedAt("other"), undefined);
+  await fs.rm(dir, { recursive: true });
+});
+
+test("a fork removed and opened again from the history still leaves out the conversation it was forked from", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-token-days-"));
+  const transcript = path.join(dir, "fork.jsonl");
+  const forkedAt = Date.parse("2026-11-18T02:00:00Z");
+  await fs.writeFile(transcript, reply("m1", "2026-11-18T01:00:00Z", { input_tokens: 1100 }) + reply("m2", "2026-11-18T02:30:00Z", { input_tokens: 1100 }));
+  const earlier = new TokenDays(path.join(dir, "token-days.json"));
+  earlier.rememberFork("fork", forkedAt);
+  await earlier.save(NOW);
+
+  const d = new Daemon({
+    hubUrl: "ws://127.0.0.1:1",
+    machineId: "m",
+    token: "t",
+    hookPort: 0,
+    claudeDir: path.join(dir, "claude-dir"),
+    claudeBin: "claude",
+    ghBin: "gh",
+    pollIntervalMs: 60_000,
+    stateDir: dir,
+    attachmentsDir: path.join(dir, "attachments"),
+    pluginCacheDir: path.join(dir, "plugin-cache"),
+    pluginDataDir: path.join(dir, "plugin-data"),
+    runPlugins: false,
+  } as ConstructorParameters<typeof Daemon>[0]) as unknown as Record<string, any>;
+  await d.tokenDays.load();
+  // As resume records it: nothing in the session's own record says that it is a fork.
+  d.managed.add({ sessionId: "fork", terminal: "t", pid: 1, cwd: dir, name: "fork", launchedAt: NOW });
+  d.tracked.set("fork", { transcript, info: { status: "busy" } });
+  await d.countTokens();
+  assert.deepEqual(d.tokenDays.all(NOW), [["2026-11-18", 1100]]);
+  await d.tokenDays.save();
+  await fs.rm(dir, { recursive: true, force: true });
 });

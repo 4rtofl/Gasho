@@ -1,7 +1,8 @@
 // The tokens used per day, kept in token-days.json in gasho-daemon's state folder: the home screen's heatmap looks back
 // a year, further than transcripts are read for, and a session's days stay after the session is removed. Each session's
 // day holds what its transcripts add up to, so reading them again after a restart replaces the value and counts nothing
-// twice.
+// twice. When each fork was made is kept beside them, in token-forks.json: a fork opened again after it was removed has
+// no other record of it, and its transcript starts with a copy of the conversation it was forked from.
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { TokenDay } from "@gasho/protocol";
@@ -20,7 +21,9 @@ export function tokenDayOf(at: number): string {
 
 export class TokenDays {
   private file: string;
+  private forksFile: string;
   private sessions = new Map<string, Map<string, number>>();
+  private forks = new Map<string, number>();
   /** The days whose total changed since they were last taken. */
   private changed = new Set<string>();
   private unsaved = false;
@@ -28,9 +31,11 @@ export class TokenDays {
 
   constructor(file: string) {
     this.file = file;
+    this.forksFile = path.join(path.dirname(file), "token-forks.json");
   }
 
   async load(): Promise<void> {
+    await this.loadForks();
     let saved: unknown;
     try {
       saved = JSON.parse(await fs.readFile(this.file, "utf8"));
@@ -43,6 +48,31 @@ export class TokenDays {
       const kept = Object.entries(days).filter((d): d is [string, number] => typeof d[1] === "number" && Number.isFinite(d[1]) && d[1] > 0);
       if (kept.length > 0) this.sessions.set(id, new Map(kept));
     }
+  }
+
+  private async loadForks(): Promise<void> {
+    let saved: unknown;
+    try {
+      saved = JSON.parse(await fs.readFile(this.forksFile, "utf8"));
+    } catch {
+      return;
+    }
+    if (typeof saved !== "object" || saved === null) return;
+    for (const [id, at] of Object.entries(saved)) {
+      if (typeof at === "number" && Number.isFinite(at) && at > 0) this.forks.set(id, at);
+    }
+  }
+
+  /** The session is a fork made at `at`: replies in its transcript from before then are not its own. */
+  rememberFork(sessionId: string, at: number): void {
+    if (this.forks.get(sessionId) === at) return;
+    this.forks.set(sessionId, at);
+    this.unsaved = true;
+  }
+
+  /** When the session was forked, if it is a fork. */
+  forkedAt(sessionId: string): number | undefined {
+    return this.forks.get(sessionId);
   }
 
   /** What a session's transcripts add up to, per day. A day they no longer have keeps the value it had. */
@@ -92,14 +122,19 @@ export class TokenDays {
       for (const day of days.keys()) if (day < first) days.delete(day);
       if (days.size === 0) this.sessions.delete(id);
     }
+    // What a fork copied is older than the fork: once that is too old to be shown, it can no longer be counted twice.
+    for (const [id, at] of this.forks) if (tokenDayOf(at) < first) this.forks.delete(id);
     const json = JSON.stringify(Object.fromEntries([...this.sessions].map(([id, days]) => [id, Object.fromEntries(days)])));
+    const forks = JSON.stringify(Object.fromEntries(this.forks));
     this.saving = this.saving
       .catch(() => undefined)
       .then(async () => {
         await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
-        const tmp = `${this.file}.tmp`;
-        await fs.writeFile(tmp, json, { mode: 0o600 });
-        await fs.rename(tmp, this.file);
+        for (const [file, text] of [[this.forksFile, forks], [this.file, json]] as const) {
+          const tmp = `${file}.tmp`;
+          await fs.writeFile(tmp, text, { mode: 0o600 });
+          await fs.rename(tmp, file);
+        }
       })
       .catch((e: unknown) => {
         this.unsaved = true;

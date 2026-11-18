@@ -451,7 +451,10 @@ export class Daemon {
     // The sessions started before this daemon: those whose Claude Code and terminal still run are kept.
     const live = await this.terminals.builtIn.live();
     let inZellij: Set<string> | undefined;
+    await this.tokenDays.load();
     await this.managed.load(async (m) => {
+      // Also for a fork that ended meanwhile: it can be opened again. Under /clear, the id it was forked under is its first.
+      if (m.forkedAt !== undefined) this.tokenDays.rememberFork(m.previousIds?.[0] ?? m.sessionId, m.forkedAt);
       if (!isAlive(m.pid)) return false;
       if (!m.zellij) return live.get(m.terminal)?.pid === m.pid;
       inZellij ??= (await this.terminals.zellij.available()) ? await this.terminals.zellij.liveSessions() : new Set();
@@ -466,7 +469,6 @@ export class Daemon {
     for (const [name, h] of live) {
       if (!kept.has(name)) log(`terminal ${name} (pid ${h.pid}, ${h.cwd}) is not one of the sessions Gasho keeps; it is left as it is`);
     }
-    await this.tokenDays.load();
     await this.pruneAttachments();
     // The first clean-up follows the first refresh that succeeds.
     setInterval(() => {
@@ -1098,8 +1100,9 @@ export class Daemon {
     for (const m of this.managed.all()) {
       const t = this.tracked.get(m.sessionId);
       if (!t?.transcript) continue;
-      // A fork's transcript starts with a copy of the conversation it was forked from: not this session's tokens.
-      t.tokens ??= new TokenCounter(t.transcript, { since: m.forkedAt });
+      // A fork's transcript starts with a copy of the conversation it was forked from: not this session's tokens. A fork
+      // opened again from the history is known as one only by what was remembered when it was made.
+      t.tokens ??= new TokenCounter(t.transcript, { since: this.tokenDays.forkedAt(m.sessionId) ?? m.forkedAt });
       if (t.info.status !== "busy" && t.tokensAt !== undefined && now - t.tokensAt < TOKENS_IDLE_MS) continue;
       t.tokensAt = now;
       try {
@@ -1808,6 +1811,8 @@ export class Daemon {
       return { ok: false, error };
     }
     const { sessionId: forkId, terminal, pid } = started;
+    this.tokenDays.rememberFork(forkId, forkedAt);
+    await this.tokenDays.save();
     const warnings: string[] = started.mcpDeclined ? [MCP_DECLINED] : [];
     let resumeAsked = started.resumeAsked;
     try {

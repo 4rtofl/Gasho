@@ -520,6 +520,117 @@ test("a session whose permission mode cannot be told or gone back to keeps runni
   }
 });
 
+test("an input kept for a session stays saved while it is typed, and no longer", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-hibernate-"));
+  try {
+    const file = path.join(dir, "managed.json");
+    const a = new ManagedSessions(file);
+    a.add({ sessionId: "s", terminal: "t", pid: 1, cwd: "/a", name: "a", launchedAt: 1, wokenFrom: { at: 2, effort: "low" } });
+    a.enqueue("s", { id: "r1", text: "預けた発言" });
+    assert.equal(a.keepWaiting("s"), true);
+    assert.equal(a.next("s")?.text, "預けた発言");
+    await a.save();
+
+    const b = new ManagedSessions(file);
+    await b.load(async () => true);
+    assert.equal(b.waiting("s")[0]?.text, "預けた発言");
+    assert.equal(b.waiting("s")[0]?.recheck, true);
+
+    assert.equal(a.typed("s"), true);
+    await a.save();
+    const c = new ManagedSessions(file);
+    await c.load(async () => true);
+    assert.equal(c.pending("s"), 0);
+    assert.equal(c.get("s")?.wokenFrom, undefined);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+/** A session has come back with an input kept for it, and gasho-daemon stops before typing it. */
+async function backButNotTyped(s: Awaited<ReturnType<typeof setup>>) {
+  const { d, term, started, agents, procs } = s;
+  await d.hibernateIdle();
+  agents([]);
+  d.managed.enqueue(SID, { id: "r1", text: "預けた発言" });
+  await d.managed.save();
+  d.refresh = async () => undefined;
+  d.flushWaitingInputs = () => undefined;
+  await d.wake(SID);
+  assert.equal(d.managed.pending(SID), 1);
+  term.live.set(started[0]!.name, { pid: procs.at(-1)!.pid! });
+  return path.join(d.cfg.claudeDir, "projects", "p", `${SID}.jsonl`);
+}
+
+const said = (text: string, at: number) =>
+  `${JSON.stringify({ type: "user", uuid: `u${at}`, timestamp: new Date(at).toISOString(), message: { role: "user", content: text } })}\n`;
+
+test("a restart right after a session came back types the input kept for it, once", async () => {
+  const s = await setup();
+  const { d, make, term, done } = s;
+  try {
+    const transcript = await backButNotTyped(s);
+    // The same words said earlier are another message.
+    await fs.appendFile(transcript, said("預けた発言", Date.now() - HOUR));
+    const saved = JSON.parse(await fs.readFile(path.join(d.cfg.stateDir, "managed.json"), "utf8"));
+    assert.equal(saved[0].wokenFrom.inputs[0].text, "預けた発言");
+
+    const again = make();
+    await again.loadManaged();
+    assert.equal(again.managed.pending(SID), 1);
+    await again.refresh();
+    await until(() => term.entered.includes("預けた発言"), "the input was typed");
+    await until(() => again.flushing.size === 0, "typing has ended");
+    assert.deepEqual(term.entered, ["預けた発言"]);
+    await again.managed.save();
+    const after = JSON.parse(await fs.readFile(path.join(d.cfg.stateDir, "managed.json"), "utf8"));
+    assert.equal(after[0].wokenFrom, undefined);
+  } finally {
+    await done();
+  }
+});
+
+test("a restart after the kept input was typed does not type it again", async () => {
+  const s = await setup();
+  const { make, term, done } = s;
+  try {
+    const transcript = await backButNotTyped(s);
+    await new Promise((r) => setTimeout(r, 5));
+    await fs.appendFile(transcript, said("預けた発言", Date.now()));
+
+    const again = make();
+    await again.loadManaged();
+    await again.refresh();
+    await until(() => again.managed.pending(SID) === 0 && again.flushing.size === 0, "the input was dealt with");
+    assert.deepEqual(term.entered, []);
+  } finally {
+    await done();
+  }
+});
+
+test("a session that ended before the kept input was typed is hibernated again, and comes back with it", async () => {
+  const s = await setup();
+  const { make, term, started, agents, procs, done } = s;
+  try {
+    await backButNotTyped(s);
+    const resumed = procs.at(-1)!;
+    resumed.kill("SIGKILL");
+    await once(resumed, "exit");
+    agents([]);
+
+    const again = make();
+    await again.loadManaged();
+    assert.equal(again.managed.get(SID).hibernated.permissionMode, "auto");
+    assert.equal(again.managed.pending(SID), 1);
+    again.wakeInterrupted();
+    await again.waking.get(SID);
+    await until(() => term.entered.includes("預けた発言"), "the input was typed");
+    assert.equal(started.length, 2);
+  } finally {
+    await done();
+  }
+});
+
 test("a session that used the 1M context window comes back with it", async () => {
   const { d, started, agents, done } = await setup();
   try {

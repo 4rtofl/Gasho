@@ -591,6 +591,13 @@ export interface QueuedInput {
    * session's terminal: it waits until the box is empty. It does not count as an input waiting (`pendingInputs`).
    */
   auto?: boolean;
+  /**
+   * Sent to a hibernated session, which has come back since (when, in ms): it stays saved until it has been typed, as
+   * the answer to it said that it was kept (see ManagedSession.wokenFrom).
+   */
+  keptAt?: number;
+  /** Read back after a restart of gasho-daemon, which may have typed it already: the transcript tells (see flushInput). */
+  recheck?: boolean;
 }
 
 /**
@@ -778,6 +785,11 @@ export interface ManagedSession {
    * `claude --resume` brings it back when it is used (hibernate.ts).
    */
   hibernated?: Hibernated;
+  /**
+   * What it has just come back from, saved with the inputs kept for it until they are typed. After a restart of
+   * gasho-daemon they are typed then; if its Claude Code has ended meanwhile, it is hibernated again.
+   */
+  wokenFrom?: Hibernated;
 }
 
 /** A hibernated session: what it goes on with once it is brought back. */
@@ -964,6 +976,8 @@ export class ManagedSessions {
   private file: string;
   private sessions = new Map<string, ManagedSession>();
   private queues = new Map<string, QueuedInput[]>();
+  /** The kept input (QueuedInput.keptAt) being typed into each session: off the queue, and still saved. */
+  private typing = new Map<string, QueuedInput>();
   private saving: Promise<void> = Promise.resolve();
 
   constructor(file: string) {
@@ -987,8 +1001,10 @@ export class ManagedSessions {
       const m: ManagedSession = zellijSession !== undefined ? { ...rest, terminal: zellijSession, zellij: true } : rest;
       if (!(await keep(m))) continue;
       this.sessions.set(m.sessionId, m);
-      if (m.hibernated?.inputs?.length) this.queues.set(m.sessionId, m.hibernated.inputs);
+      const inputs = m.hibernated?.inputs ?? m.wokenFrom?.inputs;
+      if (inputs?.length) this.queues.set(m.sessionId, inputs);
       delete m.hibernated?.inputs;
+      delete m.wokenFrom?.inputs;
     }
     await this.save();
   }
@@ -1003,10 +1019,15 @@ export class ManagedSessions {
       .then(async () => {
         await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
         // A session in zellij is saved the way gasho-daemon 0.10 and before saved it (see ManagedSession.zellij).
-        const list = [...this.sessions.values()].map(({ terminal, zellij, ...rest }) => {
+        const list = [...this.sessions.values()].map(({ terminal, zellij, wokenFrom, ...rest }) => {
           // Other sessions' inputs are not kept: they are typed within moments. A hibernated one's wait for it to come back.
           const inputs = rest.hibernated && this.queues.get(rest.sessionId)?.filter((input) => !input.auto);
-          const saved = inputs?.length ? { ...rest, hibernated: { ...rest.hibernated!, inputs } } : rest;
+          const kept = wokenFrom ? this.keptInputs(rest.sessionId) : [];
+          const saved = inputs?.length
+            ? { ...rest, hibernated: { ...rest.hibernated!, inputs } }
+            : kept.length > 0
+              ? { ...rest, wokenFrom: { ...wokenFrom!, inputs: kept } }
+              : rest;
           return zellij ? { ...saved, zellijSession: terminal } : { ...saved, terminal };
         });
         const tmp = `${this.file}.${process.pid}.tmp`;
@@ -1014,6 +1035,26 @@ export class ManagedSessions {
         await fs.rename(tmp, this.file);
       });
     return this.saving;
+  }
+
+  /** The inputs kept for a session that has come back, the one being typed first, as they are saved. */
+  private keptInputs(sessionId: string): QueuedInput[] {
+    const typing = this.typing.get(sessionId);
+    return [...(typing ? [typing] : []), ...(this.queues.get(sessionId) ?? [])]
+      .filter((input) => input.keptAt !== undefined)
+      .map((input) => ({ ...input, recheck: true }));
+  }
+
+  /** The session has come back: what waits for it stays saved until it is typed. Whether anything does. */
+  keepWaiting(sessionId: string): boolean {
+    const waiting = (this.queues.get(sessionId) ?? []).filter((input) => !input.auto);
+    for (const input of waiting) input.keptAt ??= Date.now();
+    return waiting.length > 0;
+  }
+
+  /** The input taken with `next` is dealt with. Whether it was one kept, so that the file changes. */
+  typed(sessionId: string): boolean {
+    return this.typing.delete(sessionId);
   }
 
   has(sessionId: string): boolean {
@@ -1091,6 +1132,7 @@ export class ManagedSessions {
   remove(sessionId: string): void {
     this.sessions.delete(sessionId);
     this.queues.delete(sessionId);
+    this.typing.delete(sessionId);
   }
 
   /**
@@ -1109,6 +1151,9 @@ export class ManagedSessions {
     const q = this.queues.get(from);
     this.queues.delete(from);
     if (q) this.queues.set(to, q);
+    const typing = this.typing.get(from);
+    this.typing.delete(from);
+    if (typing) this.typing.set(to, typing);
     return m;
   }
 
@@ -1120,11 +1165,14 @@ export class ManagedSessions {
   }
 
   next(sessionId: string): QueuedInput | undefined {
-    return this.queues.get(sessionId)?.shift();
+    const item = this.queues.get(sessionId)?.shift();
+    if (item?.keptAt !== undefined) this.typing.set(sessionId, item);
+    return item;
   }
 
   /** Puts a message back at the front, e.g. when sending it failed. */
   unshift(sessionId: string, input: QueuedInput): void {
+    this.typing.delete(sessionId);
     const q = this.queues.get(sessionId) ?? [];
     q.unshift(input);
     this.queues.set(sessionId, q);

@@ -658,6 +658,19 @@ export async function followTranscript(file: string): Promise<{ tail: Transcript
   return { tail, meta };
 }
 
+/** The user's messages in a transcript, and when each was recorded (NaN when it does not say). */
+export async function userPrompts(file: string): Promise<{ at: number; text: string }[]> {
+  const out: { at: number; text: string }[] = [];
+  for await (const entries of new TranscriptTail(file).read(emptyMeta())) {
+    for (const e of entries) {
+      if (e.role !== "user" || e.isSidechain) continue;
+      const text = e.blocks.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n");
+      if (text) out.push({ at: e.ts ? Date.parse(e.ts) : Number.NaN, text });
+    }
+  }
+  return out;
+}
+
 /** How many bytes of entries one transcript.append holds at most: the hub closes the connection on a message over 16 MB. */
 const MAX_APPEND_BYTES = 4 * 1024 * 1024;
 

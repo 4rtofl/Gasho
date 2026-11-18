@@ -289,7 +289,7 @@ Claude Code は、何もしていないあいだも 1 プロセスで 200MB ほ�
 - 休止の直前に、モデル、Effort、Ultracode、権限モードを `managed.json` に記録する。記録できなかったときは休止をやめ、Claude Code を動かし続ける。`--resume` は Effort と Ultracode を戻さず、モデルは最後の返答のものに戻り、`/clear` のあとは権限モードも既定のものに戻るためである。返答の記録には 1M コンテキストかどうかが残らないので、Claude Code がターンの初めに記録するモデルの名前（`Opus 4.6 (1M context)`）から `[1m]` を付ける
 - 休止中のセッションは、`SessionInfo.hibernation` が `hibernated`、`status` が `idle` になる。サイドバーとホームの同じ場所に同じ名前で残り、会話も読める。過去の会話（S15）の一覧には出ない
 - 再開は、発言（プラグインの `session.input`、`gasho-daemon session send` を含む）か、再開に失敗したあとの「もう一度再開」（`session.wake`）で始まる。`claude --remote-control=<名前> --resume <ID> --model <モデル> --effort <Effort> --permission-mode <権限モード>` を新しい端末で起動し、`claude agents` に同じ ID で出て入力欄が出たら、Ultracode を戻し、預かった発言を入力する。`Resume from summary` の問いは、フォークと同じく Esc で答える。再開のあいだ `hibernation` は `resuming` になる
-- 再開に失敗したら、`resumeError` に理由を入れ、発言は預かったままにする。休止中のセッションの送信待ちの入力は `managed.json` に保存するので、gasho-daemon を再起動しても失わない
+- 再開に失敗したら、`resumeError` に理由を入れ、発言は預かったままにする。休止中のセッションの送信待ちの入力は `managed.json` に保存するので、gasho-daemon を再起動しても失わない。再開のあとも、入力し終わるまで保存する。再起動のあとは会話の記録を見て、まだ入っていない発言だけを入力する。Claude Code が終わっていたら休止に戻し、もう一度再開して入力する
 - 休止中に名前を変えたときは、Claude Code を起こさずに記録だけを変え、再開のあとで `/rename` を送る
 - gasho-daemon を再起動・更新しても、休止中のセッションは休止中のまま残る。ただし、1 つの会話を 2 つの Claude Code が開かないよう、起動時に次のように扱う
   - 休止の途中で再起動したときは、Claude Code が終わるのを削除と同じ時間だけ待つ。終わったら端末を閉じて休止のままにし、動き続けていれば休止を取り消す

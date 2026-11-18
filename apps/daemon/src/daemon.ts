@@ -71,6 +71,7 @@ import {
   ManagedSessions,
   mcpQuestionOpen,
   type ManagedSession,
+  type QueuedInput,
   modelPickerOptions,
   PERMISSION_PROMPT_RE,
   pickerCatalog,
@@ -125,7 +126,7 @@ import { type HostHello, SessionTerminals, Terminals } from "./terminal.ts";
 import { foldersRepos, RegisteredRepos } from "./repos.ts";
 import { changesProblem, removableWorktree, removeWorktree, worktreeChanges } from "./worktrees.ts";
 import { listSkills } from "./skills.ts";
-import { appendBatches, conversationFacts, emptyMeta, followTranscript, pastConversations, TranscriptTail, type TranscriptMeta } from "./transcript.ts";
+import { appendBatches, conversationFacts, emptyMeta, followTranscript, userPrompts, pastConversations, TranscriptTail, type TranscriptMeta } from "./transcript.ts";
 import type { SessionWire } from "./plugin-ipc.ts";
 import { HookRelay } from "./hook-relay.ts";
 import { PluginRunner } from "./plugins.ts";
@@ -461,6 +462,12 @@ export class Daemon {
     await this.managed.load(async (m) => {
       // Nothing of it runs: it stays until it is used.
       if (m.hibernated) return true;
+      if (m.wokenFrom && !(isAlive(m.pid) && live.get(m.terminal)?.pid === m.pid)) {
+        // It ended before the inputs kept for it were typed: they wait for it to come back once more.
+        m.hibernated = m.wokenFrom;
+        delete m.wokenFrom;
+        return true;
+      }
       if (!isAlive(m.pid)) return false;
       if (!m.zellij) return live.get(m.terminal)?.pid === m.pid;
       inZellij ??= (await this.terminals.zellij.available()) ? await this.terminals.zellij.liveSessions() : new Set();
@@ -1339,6 +1346,14 @@ export class Daemon {
   private promptTaken(sessionId: string, text: string, since: number): boolean {
     const head = text.replace(/^\s*!/, "").replace(/\s+/g, "").slice(0, 24);
     return (this.prompts.get(sessionId) ?? []).some((p) => p.at >= since && p.text.replace(/\s+/g, "").includes(head));
+  }
+
+  /** Whether the transcript has an input kept over a restart of gasho-daemon, which may have typed it just before it. */
+  private async typedBeforeRestart(m: ManagedSession, item: QueuedInput): Promise<boolean> {
+    const file = this.tracked.get(m.sessionId)?.transcript ?? (await findTranscript(this.cfg.claudeDir, m.sessionId));
+    if (!file) return false;
+    const head = item.text.replace(/^\s*!/, "").replace(/\s+/g, "").slice(0, 24);
+    return (await userPrompts(file)).some((p) => !(p.at < (item.keptAt ?? 0)) && p.text.replace(/\s+/g, "").includes(head));
   }
 
   private async onHubMessage(m: HubToDaemon): Promise<void> {
@@ -2438,6 +2453,11 @@ export class Daemon {
     // What was scheduled ended with the Claude Code before this one.
     delete m.scheduledAt;
     delete m.hibernated;
+    if (this.managed.keepWaiting(sessionId)) {
+      m.wokenFrom = { ...h };
+      delete m.wokenFrom.resumingIn;
+      delete m.wokenFrom.resumeError;
+    }
     if (h.renamed) this.managed.unshift(sessionId, { text: renameCommand(m.name), auto: true });
     await this.managed.save();
     log(`brought ${m.name} (${sessionId}) back`);
@@ -2702,6 +2722,19 @@ export class Daemon {
         log(`${m.name}: ${why}`);
       };
       const t = this.tracked.get(m.sessionId);
+      if (item.recheck) {
+        const typedBefore = await this.typedBeforeRestart(m, item).catch((e: unknown) => {
+          this.managed.unshift(m.sessionId, item);
+          throw e;
+        });
+        if (typedBefore) {
+          log(`${m.name}: the input kept over the restart had been typed already`);
+          this.emitSessions();
+          return out;
+        }
+        // Not in the transcript: whatever an earlier try did to the prompt box, it is typed from the start.
+        for (const done of ["recheck", "entered", "enteredAt", "seenBusy"] as const) delete item[done];
+      }
       if (item.entered) {
         // Taken since the Enter: by its transcript when it is followed (the box can hold the text again after a stop),
         // or else by the session having been busy.
@@ -2735,7 +2768,12 @@ export class Daemon {
         return out;
       }
       // Kept on a retry: the item and its Enter stay as they were.
-      const base = { ...(item.id ? { id: item.id } : {}), text: item.text, ...(item.auto ? { auto: true } : {}) };
+      const base = {
+        ...(item.id ? { id: item.id } : {}),
+        text: item.text,
+        ...(item.auto ? { auto: true } : {}),
+        ...(item.keptAt !== undefined ? { keptAt: item.keptAt } : {}),
+      };
       const entered = item.entered ? { entered: true, enteredAt: item.enteredAt ?? enteredAt, ...(item.seenBusy ? { seenBusy: true } : {}) } : {};
       if (typed === "not-typed") {
         // Model, effort and ultracode are switched already; only the text waits for the next try. A text whose Enter
@@ -2757,6 +2795,7 @@ export class Daemon {
       return out;
     } finally {
       this.flushing.delete(m.terminal);
+      if (this.managed.typed(m.sessionId)) await this.managed.save().catch((e: unknown) => log(`could not save the inputs of ${m.name}`, e));
     }
   }
 

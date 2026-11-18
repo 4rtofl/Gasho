@@ -216,6 +216,7 @@ test("オフラインと gasho-daemon 0.9 未満では、メニューの項目�
   await page.goto(`/#/s/${old.machineId}/${id(7)}`);
   let menu = await openMenu(page, tab(page, "古いセッション"), testInfo);
   await expect(menu.getByText("old の gasho-daemon を 0.9.0 以上に更新すると使えます。")).toBeVisible();
+  await expect(menu.getByRole("menuitem")).toHaveCount(3);
   for (const item of await menu.getByRole("menuitem").all()) await expect(item).toBeDisabled();
   await page.keyboard.press("Escape");
 
@@ -232,6 +233,7 @@ test("オフラインと gasho-daemon 0.9 未満では、メニューの項目�
   await expect(page.getByText("working server がオフラインです。")).toBeVisible();
   menu = await openMenu(page, tab(page, "二つ目"), testInfo);
   await expect(menu.getByText("mac はオフラインです。")).toBeVisible();
+  await expect(menu.getByRole("menuitem")).toHaveCount(3);
   for (const item of await menu.getByRole("menuitem").all()) await expect(item).toBeDisabled();
 });
 

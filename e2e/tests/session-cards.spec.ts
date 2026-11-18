@@ -238,7 +238,9 @@ test("working server がオフラインになると、確認カードとバッ�
   await expect(page.getByText("working server がオフラインです。")).toBeVisible();
   for (const b of buttons) await expect(b).toBeDisabled();
   // The plan's "止める" and each task's.
-  for (const b of await page.getByRole("button", { name: "止める", exact: true }).all()) await expect(b).toBeDisabled();
+  const stops = page.getByRole("button", { name: "止める", exact: true });
+  await expect(stops).toHaveCount(3);
+  for (const b of await stops.all()) await expect(b).toBeDisabled();
   await expect(page.getByRole("radio", { name: /Postgres/ })).toBeDisabled();
 });
 

@@ -50,9 +50,9 @@ const isPhone = (page: Page) => (page.viewportSize()?.width ?? 1280) < 768;
  * pressInSidebar).
  */
 export async function sidebar(page: Page): Promise<Locator> {
-  if (!isPhone(page)) return page.getByRole("navigation", { name: "Main" });
-  const drawer = page.getByRole("dialog", { name: "Navigation" });
-  if (!(await drawer.isVisible())) await page.getByRole("button", { name: "Open navigation" }).click();
+  if (!isPhone(page)) return page.getByRole("navigation", { name: "メニュー" });
+  const drawer = page.getByRole("dialog", { name: "サイドバー" });
+  if (!(await drawer.isVisible())) await page.getByRole("button", { name: "サイドバーを開く" }).click();
   await expect(drawer).toBeVisible();
   return drawer;
 }
@@ -60,7 +60,7 @@ export async function sidebar(page: Page): Promise<Locator> {
 /** Presses a row or the title's action of the sidebar, which close the drawer, and waits until the drawer has gone. */
 export async function pressInSidebar(page: Page, name: string | RegExp): Promise<void> {
   await (await sidebar(page)).getByRole("button", typeof name === "string" ? { name, exact: true } : { name }).click();
-  if (isPhone(page)) await expect(page.getByRole("dialog", { name: "Navigation" })).toBeHidden();
+  if (isPhone(page)) await expect(page.getByRole("dialog", { name: "サイドバー" })).toBeHidden();
 }
 
 /** Waits until the home screen tells how many working servers there are (the form is then made with them). */

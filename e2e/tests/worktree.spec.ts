@@ -141,7 +141,7 @@ test.describe("プラグインがセッションのタブを隠すとき", () =>
     await expect((await sidebar(page)).getByRole("button", { name: "main で新しいセッションを起動" })).toBeVisible();
     if ((page.viewportSize()?.width ?? 1280) < 768) {
       await page.keyboard.press("Escape");
-      await expect(page.getByRole("dialog", { name: "Navigation" })).toBeHidden();
+      await expect(page.getByRole("dialog", { name: "サイドバー" })).toBeHidden();
     }
     await openWorktree(page, daemon, "/work/app");
 

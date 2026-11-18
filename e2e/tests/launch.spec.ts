@@ -182,7 +182,6 @@ for (const surface of SURFACES) {
     });
 
     test("#108: Safari の、変換を確定する Enter（keyCode 229）では、フォルダーを作らない", async ({ page, hub }) => {
-      test.fail(true, "#108: launch.tsx の Enter は isComposing だけを見るので、keyCode 229 の Enter でもフォルダーを作る");
       const daemon = await newFolderDaemon(hub);
       const form = await surface.open(page, 1);
       await form.getByRole("button", { name: "新しいフォルダー" }).click();
@@ -447,7 +446,7 @@ test.describe("サイドバーのダイアログだけ", () => {
     await page.keyboard.press("Escape");
     await expect(dialogOf(page)).toBeHidden();
     // A closing drawer still shows while it slides out; what is pressed in it then leaves the page.
-    const drawer = page.getByRole("dialog", { name: "Navigation" });
+    const drawer = page.getByRole("dialog", { name: "サイドバー" });
     await drawer.getByRole("button", { name: "ホーム", exact: true }).click({ timeout: 10_000 });
     await expect(drawer).toBeHidden();
   });

@@ -173,13 +173,12 @@ test("スマホで、リポジトリの登録のダイアログを Esc で閉じ
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   // A closing drawer still shows while it slides out; what is pressed in it then leaves the page.
-  const drawer = page.getByRole("dialog", { name: "Navigation" });
+  const drawer = page.getByRole("dialog", { name: "サイドバー" });
   await drawer.getByRole("button", { name: "ホーム", exact: true }).click({ timeout: 10_000 });
   await expect(drawer).toBeHidden();
 });
 
 test("#108: 候補の絞り込みで、変換を確定する Enter では登録しない", async ({ page, hub }) => {
-  test.fail(true, "#108: combobox-list.tsx の Enter は変換中かを見ないので、変換を確定する Enter で選ばれている行を登録する");
   const daemon = await hub.fakeDaemon({
     name: "mac",
     capabilities: { folderRepos: [{ path: "/work/app", worktreeCount: 2 }, { path: "/work/lib", worktreeCount: 1 }] },

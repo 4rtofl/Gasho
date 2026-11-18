@@ -92,6 +92,9 @@ test("a refused registration says the status and the Gasho server's reason, and 
   }
 });
 
+/** The clients made by client() below, kept from connecting again once a test's stand-in is closed. */
+const clients: HubClient[] = [];
+
 /** A stand-in for the Gasho server's /ws/daemon: each connection, with what it was sent, in order. */
 async function hubServer() {
   const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
@@ -105,8 +108,10 @@ async function hubServer() {
   return {
     url: `ws://127.0.0.1:${(wss.address() as AddressInfo).port}/ws/daemon`,
     conns,
-    // HubClient connects again after any other close, and its timer would keep a failed test running forever.
+    // HubClient connects again after any close but 4001, and a HubClient that does so even after 4001 would keep
+    // the test file running forever on its timer.
     close: () => {
+      for (const c of clients) c.connect = () => undefined;
       for (const { ws } of conns) ws.close(4001);
       wss.close();
     },
@@ -122,6 +127,7 @@ function client(url: string) {
     onMessage: (m) => seen.messages.push(m),
     onRejected: (reason) => seen.rejected.push(reason),
   });
+  clients.push(c);
   return { c, seen };
 }
 

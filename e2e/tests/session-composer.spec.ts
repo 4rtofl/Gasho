@@ -325,16 +325,25 @@ test("モデル（既定・「いま」の札）・Effort・Ultracode は、い�
   await expect(dot(ultracode)).toHaveCount(0);
 
   // What the working server could not switch is dropped, and the session keeps what it had.
-  daemon.handle("session.input", (msg) => commandResult(msg, { ok: true, unapplied: ["effort"], warning: "Effort を切り替えられませんでした" }));
+  daemon.handle("session.input", (msg) =>
+    commandResult(msg, { ok: true, unapplied: ["effort", "ultracode"], warning: "Effort と Ultracode を切り替えられませんでした" }),
+  );
   await page.getByRole("button", { name: "Effort：High" }).click();
   await page.getByRole("menuitemradio", { name: /Max/ }).click();
   await expect(page.getByRole("button", { name: "Effort：Max（送るときに切り替えます）" })).toBeVisible();
   await expect(dot(effort)).toBeVisible();
+  await ultracode.click();
+  await expect(ultracode).toHaveAttribute("aria-pressed", "false");
+  await expect(dot(ultracode)).toBeVisible();
   await chatBox(page).fill("もう一度");
   await sendButton(page).click();
-  await expect(page.getByText("Effort を切り替えられませんでした")).toBeVisible();
+  expect(await daemon.waitFor("session.input", (m) => m.text === "もう一度")).toMatchObject({ effort: "max", ultracode: false });
+  await expect(page.getByText("Effort と Ultracode を切り替えられませんでした")).toBeVisible();
   await expect(page.getByRole("button", { name: "Effort：High" })).toBeVisible();
   await expect(dot(effort)).toHaveCount(0);
+  await expect(ultracode).toHaveAttribute("aria-pressed", "true");
+  await expect(ultracode).not.toHaveAttribute("title", /送るときに切り替えます/);
+  await expect(dot(ultracode)).toHaveCount(0);
 });
 
 test("古い gasho-daemon では、モデル・Effort・Ultracode・添付のうち、できないものを出さない", async ({ page, hub }) => {

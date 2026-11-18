@@ -1,5 +1,6 @@
 // The home screen: its heading and tiles, the sessions' cards, the notifications, the latest operations, the number
 // tiles' charts, the tiles' order and the columns of the grid, with fake gasho-daemons.
+import type { HubToClient } from "@gasho/protocol";
 import type { Page } from "@playwright/test";
 import type { FakeDaemon } from "../harness/index.ts";
 import { expect, test } from "./fixtures.ts";
@@ -221,9 +222,16 @@ test.describe("通知", () => {
     const daemon = await hub.fakeDaemon({ name: "mac", sessions: [done, failed, asking, planning, permitting, idle, watched, outside] });
     // What the Gasho server tells the browsers is read: the screen has sent it, and the page can be left.
     let readTold = 0;
+    // The sessions the Gasho server made notifications for: the screen drops those of a session started elsewhere as
+    // well, so what it shows does not tell the Gasho server's check. A hook before the WebSocket connects comes in the
+    // snapshot.
+    const madeFor: string[] = [];
     page.on("websocket", (ws) =>
       ws.on("framereceived", (f) => {
-        if ((JSON.parse(String(f.payload)) as { type?: string }).type === "notification.read") readTold++;
+        const m = JSON.parse(String(f.payload)) as HubToClient;
+        if (m.type === "notification.read") readTold++;
+        if (m.type === "notification") madeFor.push(m.notification.sessionId);
+        if (m.type === "snapshot") madeFor.push(...m.notifications.map((n) => n.sessionId));
       }),
     );
 
@@ -272,6 +280,7 @@ test.describe("通知", () => {
     await page.goto("/");
     await expect(stack).toContainText("通知（6）");
     await expect(stack).not.toContainText("watched");
+    expect(madeFor).not.toContain(outside.sessionId);
   });
 });
 

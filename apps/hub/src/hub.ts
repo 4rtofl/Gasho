@@ -139,7 +139,7 @@ export function agentsOf(u: unknown): MachineAgents | undefined {
     const a = (u as Record<string, Partial<AgentInfo> | null | undefined>)[kind];
     if (!a || !AGENT_STATUSES.has(a.status)) continue;
     const version = typeof a.version === "string" && AGENT_VERSION_RE.test(a.version) ? a.version : undefined;
-    agents[kind] = { status: a.status as AgentStatus, ...(version ? { version } : {}) };
+    agents[kind] = { status: a.status as AgentStatus, ...(version ? { version } : {}), ...(a.canLaunch === true ? { canLaunch: true } : {}) };
   }
   return agents;
 }
@@ -391,6 +391,7 @@ export function validateCommand(cmd: SessionCommand): string | undefined {
       if (typeof cmd.cwd !== "string" || !cmd.cwd.startsWith("/") || cmd.cwd.length > 1024) return "フォルダーを絶対パスで指定してください。";
       if (cmd.name !== undefined && (typeof cmd.name !== "string" || cmd.name.length > 60)) return "名前は60文字までです。";
       if (cmd.trust !== undefined && typeof cmd.trust !== "boolean") return "信頼の指定が正しくありません。";
+      if (cmd.agent !== undefined && !AGENT_KINDS.includes(cmd.agent)) return "エージェントの指定が正しくありません。";
       return undefined;
     case "folder.create":
       return folderError(cmd.parent) ?? folderNameError(cmd.name);
@@ -1067,7 +1068,7 @@ export class Hub {
           .filter(Boolean)
           .join(" ");
       case "session.launch":
-        return cmd.trust ? `${cmd.cwd} [trust]` : cmd.cwd;
+        return [cmd.cwd, cmd.trust && "[trust]", cmd.agent === "codex" && "[codex]"].filter(Boolean).join(" ");
       case "folder.create":
         return path.posix.join(cmd.parent, cmd.name);
       case "repo.clone":
@@ -1143,6 +1144,12 @@ export class Hub {
   private unsupported(machine: string, cmd: SessionCommand): string | undefined {
     const m = this.machines.get(machine);
     if (cmd.type === "daemon.update") return m?.update?.canUpdate ? undefined : (m?.update?.reason ?? UPDATE_TOO_OLD);
+    // A gasho-daemon that does not read `agent` (0.30.0 reports Codex, but cannot start it) would start Claude Code instead.
+    if (cmd.type === "session.launch" && cmd.agent === "codex" && m && !m.agents?.codex?.canLaunch) {
+      return m.agents?.codex
+        ? "この working server の gasho-daemon は古いため、Codex のセッションを起動できません。gasho-daemon を更新してください。"
+        : "この working server では Codex を使えません。Codex を入れて、gasho-daemon を更新してください。";
+    }
     if (cmd.type === "file.write") return !m || versionAtLeast(m.daemonVersion, ...FILES_SINCE) ? undefined : FILES_TOO_OLD;
     if (cmd.type === "repo.register" || cmd.type === "repo.unregister") {
       // A gasho-daemon that registers repositories sends them as soon as it connects.

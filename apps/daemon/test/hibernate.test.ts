@@ -491,6 +491,19 @@ test("what was scheduled is forgotten when the session comes back, for its proce
   }
 });
 
+test("an update waits for the inputs about to be typed, not for those a hibernated session keeps", async () => {
+  const { d, done } = await setup();
+  try {
+    d.managed.get(SID).hibernated = { at: Date.now() };
+    d.managed.enqueue(SID, { id: "r1", text: "預けた発言" });
+    assert.equal(d.inputsToType(), 0);
+    d.codexSessions.waitingInputs = () => 2;
+    assert.equal(d.inputsToType(), 2);
+  } finally {
+    await done();
+  }
+});
+
 test("a session comes back in the permission mode it was in", async () => {
   const { d, term, started, agents, done } = await setup();
   try {

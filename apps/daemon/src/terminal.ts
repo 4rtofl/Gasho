@@ -320,6 +320,15 @@ export class Terminals {
   }
 
   /**
+   * `command` run in a systemd scope of its own where there can be one, so that what it leaves running is not stopped
+   * with gasho-daemon's service.
+   */
+  async inOwnScope(name: string, command: string[]): Promise<string[]> {
+    const extra = await this.scopeFlags();
+    return extra ? ["systemd-run", ...scopeArgs(name, extra), ...command] : command;
+  }
+
+  /**
    * How systemd-run starts a user scope here that runs its command as it is given, "$" included (see NO_EXPANSION):
    * each way is tried on a node that prints "$$", with --expand-environment=no first, then without it (systemd older
    * than 254). Undefined when neither prints it unchanged, or when there is no user manager (macOS): terminals then

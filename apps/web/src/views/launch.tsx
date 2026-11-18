@@ -10,7 +10,7 @@ import { childPath, folderChoices, folderNameProblem, repoFolderName, repoProble
 import { go } from "@/lib/route";
 import { daemonAtLeast } from "@/lib/sessions";
 import { sendCommand, useAppState } from "@/lib/store";
-import { composing } from "@/lib/text-input";
+import { composing, keepOpenWhileComposing } from "@/lib/text-input";
 import { cn } from "@/lib/utils";
 
 const OTHER = "\u0000other";
@@ -556,6 +556,7 @@ export function LaunchDialog({ open, onClose, onLaunched, initial }: { open: boo
         <Dialog.Overlay className={DIALOG_OVERLAY} />
         <Dialog.Content
           className={cn(DIALOG_PANEL, "w-[min(36rem,calc(100vw-2rem))]")}
+          onEscapeKeyDown={keepOpenWhileComposing}
           onOpenAutoFocus={(e) => {
             // The first field rather than the close button; a select does not bring up a phone's keyboard.
             const first = (e.currentTarget as HTMLElement | null)?.querySelector<HTMLElement>("select, input");

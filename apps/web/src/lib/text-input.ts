@@ -9,6 +9,11 @@ export const composing = (e: { nativeEvent: { isComposing: boolean }; keyCode: n
 /** Whether a key closes the panel it is pressed in: Esc, but not the Esc that cancels a conversion (Chrome sends it as Escape). */
 export const closesPanel = (e: { key: string; nativeEvent: { isComposing: boolean }; keyCode: number }) => e.key === "Escape" && !composing(e);
 
+/** A dialog's onEscapeKeyDown: the Esc that cancels a conversion in one of its text boxes leaves the dialog open. */
+export const keepOpenWhileComposing = (e: KeyboardEvent) => {
+  if (composing({ nativeEvent: e, keyCode: e.keyCode })) e.preventDefault();
+};
+
 /**
  * The files a paste attaches. None when files cannot be attached, or when the clipboard also has text: an app such as
  * Excel on a Mac puts a picture of what was copied beside its text. Files copied in the Finder come without text, or

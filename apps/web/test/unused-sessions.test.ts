@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { MachineInfo, SessionInfo } from "@gasho/protocol";
-import { KEEP_FOR_MS, UNUSED_AFTER_MS, keepUnused, keepsUnused, unusedSessions } from "../src/lib/unused-sessions.ts";
+import { KEEP_FOR_MS, UNUSED_AFTER_MS, keepUnused, keepsUnused, lastActive, unusedSessions } from "../src/lib/unused-sessions.ts";
 
 const NOW = 1_800_000_000_000;
 const old = NOW - UNUSED_AFTER_MS;
@@ -31,9 +31,16 @@ test("an idle session started by Gasho is unused from 24 hours after its last ac
   assert.deepEqual(unusedSessions(server([session("s", { lastActivityAt: old + 1 })]), NOW), []);
 });
 
-test("the time it started counts only when it has no activity", () => {
+test("the time it started counts when nothing was active after it", () => {
   assert.deepEqual(ids(unusedSessions(server([session("s", { startedAt: old })]), NOW)), ["s"]);
   assert.deepEqual(unusedSessions(server([session("s", { startedAt: old, lastActivityAt: NOW })]), NOW), []);
+});
+
+test("a conversation opened again counts as active from then, though its last record is old", () => {
+  const record = old - UNUSED_AFTER_MS;
+  assert.deepEqual(unusedSessions(server([session("s", { lastActivityAt: record, startedAt: NOW - 5000 })]), NOW), []);
+  assert.deepEqual(ids(unusedSessions(server([session("s", { lastActivityAt: record, startedAt: old })]), NOW)), ["s"]);
+  assert.equal(lastActive(session("s", { lastActivityAt: record, startedAt: old })), old);
 });
 
 test("a session whose last activity is not known is left alone", () => {

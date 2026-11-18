@@ -10,8 +10,14 @@ export const KEEP_FOR_MS = 60 * 60 * 1000;
 
 const KEPT_KEY = "gasho.unusedSessions.keptUntil";
 
-/** When a session was last active, as far as is known. */
-export const lastActive = (s: SessionInfo): number | undefined => s.lastActivityAt ?? s.startedAt;
+/**
+ * When a session was last active, as far as is known: the later of its last record and the time it started, as a
+ * conversation opened again has only old records until its next message.
+ */
+export const lastActive = (s: SessionInfo): number | undefined =>
+  s.lastActivityAt === undefined || s.startedAt === undefined
+    ? (s.lastActivityAt ?? s.startedAt)
+    : Math.max(s.lastActivityAt, s.startedAt);
 
 /**
  * The sessions of a working server that can be removed without getting in anyone's way, the one unused longest first:

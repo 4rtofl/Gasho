@@ -37,7 +37,17 @@ import { HubClient } from "./hub-client.ts";
 import { type Install, type Layout, layoutOf } from "./install.ts";
 import { type MediaFailed, readMediaPart } from "./media.ts";
 import { readMemory } from "./memory.ts";
-import { answersMessage, dialogCall, OPEN_DIALOG, OPEN_QUESTION, openPermissionRequest, openQuestionRequest, PermissionRequests, questionAnswers } from "./permissions.ts";
+import {
+  answersMessage,
+  dialogCall,
+  OPEN_DIALOG,
+  OPEN_QUESTION,
+  openPermissionRequest,
+  openQuestionRequest,
+  PermissionRequests,
+  questionAnswers,
+  shownCall,
+} from "./permissions.ts";
 import {
   atBottom,
   bannerModel,
@@ -45,7 +55,9 @@ import {
   cleanEnv,
   clearPromptKeys,
   dialogOpen,
+  type DialogText,
   permissionDialog,
+  permissionDialogText,
   EFFORT_LEVELS,
   forkName,
   isAlive,
@@ -209,6 +221,8 @@ interface Tracked {
   tokensAt?: number;
   /** Claude Code's own state of the session, as its registry has it (see RegistryInfo.status), else as its list does. */
   claude?: ClaudeState;
+  /** Sessions started from Gasho: the permission dialog on the screen when it was last read (see openPermission). */
+  dialog?: DialogText;
 }
 
 /** What happened to the switches asked for with an input (`id`: the request of the input that was handled). */
@@ -936,6 +950,7 @@ export class Daemon {
       // What the screen shows now wins over the transcript: the line above the prompt box ("◐ medium · ultracode ·
       // /effort", shown for a while after a change) and the "ultracode" in the rule above the box (while it is on).
       const screen = (await this.terminals.screen(m.terminal).catch(() => undefined))?.plain ?? "";
+      t.dialog = permissionDialogText(screen);
       const state = statusLine(screen);
       if (state) {
         t.info.effort = state.effort;
@@ -2644,7 +2659,7 @@ export class Daemon {
    */
   private openPermission(t: Tracked): PermissionRequestInfo[] | undefined {
     if (t.info.status !== "waiting" || t.info.waitingFor !== "permission prompt" || !this.managed.has(t.info.sessionId)) return undefined;
-    const c = dialogCall(t.meta.openCalls);
+    const c = dialogCall(t.meta.openCalls, t.dialog);
     return c ? [openPermissionRequest(c)] : undefined;
   }
 
@@ -2652,30 +2667,42 @@ export class Daemon {
    * Answers a permission shown from the transcript (see openPermission) with the keys of Claude Code's dialog: "allow"
    * puts the cursor on "Yes" and presses Enter; "deny" presses Esc, as "No" in the terminal: Claude stops, and a
    * message given goes as the next message. Nothing is pressed unless the session still waits and its screen shows
-   * the dialog.
+   * the dialog, about the call on the card (see shownCall): with two calls without a result, the dialog may be about
+   * the other.
    */
   private async answerDialog(m: Extract<HubToDaemon, { type: "permission.answer" }>): Promise<CommandResult> {
     const gone: CommandResult = { ok: false, error: "この確認には、すでに答えられています。" };
     const s = this.managed.get(m.sessionId);
     const t = this.tracked.get(m.sessionId);
     const shown = t && this.openPermission(t)?.[0];
-    if (!s || shown?.id !== m.permissionId) return gone;
+    if (!s || !t || shown?.id !== m.permissionId) return gone;
     if (m.decision === "always") return { ok: false, error: "この確認では、今後も許可することはできません。" };
     if ((await this.currentStatus(s.pid)) !== "waiting") return gone;
-    const read = async () => permissionDialog((await this.terminals.screen(s.terminal).catch(() => undefined))?.plain ?? "");
-    let options = await read();
+    const read = async () => {
+      const screen = (await this.terminals.screen(s.terminal).catch(() => undefined))?.plain ?? "";
+      const text = permissionDialogText(screen);
+      return { options: permissionDialog(screen), call: text && shownCall(t.meta.openCalls, text) };
+    };
+    let dialog = await read();
     const missing: CommandResult = { ok: false, error: "端末に確認の画面が見当たらないため、答えられませんでした。端末か公式アプリで答えてください。" };
-    if (!options) return missing;
+    const other: CommandResult = {
+      ok: false,
+      error: "端末の確認が、このカードの呼び出しについてのものか確かめられないため、答えませんでした。端末か公式アプリで答えてください。",
+    };
+    if (!dialog.options) return missing;
+    if (`${OPEN_DIALOG}${dialog.call?.toolUseId}` !== m.permissionId) return other;
     const message = m.decision === "deny" ? m.message?.trim() : undefined;
     if (m.decision === "deny") {
       await this.terminals.keys(s.terminal, "Esc");
     } else {
-      for (let i = 0; options && !options[0]!.selected && i < options.length; i++) {
+      for (let i = 0; dialog.options && !dialog.options[0]!.selected && i < dialog.options.length; i++) {
         await this.terminals.keys(s.terminal, "Up");
         await sleep(150);
-        options = await read();
+        dialog = await read();
       }
-      if (!options?.[0]?.selected) return missing;
+      if (!dialog.options?.[0]?.selected) return missing;
+      // The dialog may have changed while the cursor moved (answered in the terminal, and the next one opened).
+      if (`${OPEN_DIALOG}${dialog.call?.toolUseId}` !== m.permissionId) return other;
       await this.terminals.keys(s.terminal, "Enter");
     }
     this.settleUntil.set(m.sessionId, Date.now() + INTERRUPT_SETTLE_MS);

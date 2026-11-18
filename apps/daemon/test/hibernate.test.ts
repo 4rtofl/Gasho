@@ -355,6 +355,38 @@ test("an input brings the session back as it was, and is typed once it runs", as
   }
 });
 
+test("the effort level known before /clear is the one a session comes back with", async () => {
+  const NEW = "22222222-2222-3333-4444-777777777777";
+  const { d, make, agents, row, procs, folder, done } = await setup();
+  try {
+    assert.equal(d.managed.get(SID).effort, "low");
+    await d.managed.save();
+    const restarted = make();
+    await restarted.managed.load(async () => true);
+    assert.equal(restarted.managed.get(SID).effort, "low");
+
+    // /clear: the same process goes on under a new id, with a transcript that records no effort level.
+    await fs.writeFile(
+      path.join(d.cfg.claudeDir, "projects", "p", `${NEW}.jsonl`),
+      `${JSON.stringify({ type: "assistant", uuid: "b1", timestamp: new Date(Date.now() - 5 * HOUR).toISOString(), cwd: folder, message: { role: "assistant", model: "claude-haiku-5-5", content: [{ type: "text", text: "はい" }] } })}\n`,
+    );
+    const launchedAt = d.managed.get(SID).launchedAt;
+    d.managed.get(SID).launchedAt = Date.now();
+    agents([{ ...row(procs[0]!.pid!), sessionId: NEW }]);
+    await d.refresh();
+    const m = d.managed.get(NEW);
+    assert.ok(m);
+    m.launchedAt = launchedAt;
+    assert.equal(d.tracked.get(NEW).info.effort, undefined);
+
+    await d.hibernateIdle();
+    assert.equal(m.hibernated?.effort, "low");
+    assert.deepEqual(resumeArgs(NEW, m.hibernated).slice(-2), ["--effort", "low"]);
+  } finally {
+    await done();
+  }
+});
+
 test("a session that used the 1M context window comes back with it", async () => {
   const { d, started, agents, done } = await setup();
   try {

@@ -874,6 +874,15 @@ export class Daemon {
     info.model = meta.model ?? t.bannerModel;
     info.effort = meta.effort;
     info.ultracode = meta.ultracode;
+    if (meta.effort) this.rememberEffort(info.sessionId, meta.effort);
+  }
+
+  /** Keeps a running session's effort level, which it goes on with after /clear without anything saying so. */
+  private rememberEffort(sessionId: string, effort: NonNullable<ManagedSession["effort"]>): void {
+    const m = this.managed.get(sessionId);
+    if (!m || m.hibernated || m.effort === effort) return;
+    m.effort = effort;
+    void this.managed.save().catch((e: unknown) => log(`could not save the effort level of ${m.name}`, e));
   }
 
   private async githubOf(cwd: string): Promise<GitHubRepo | undefined> {
@@ -1081,6 +1090,7 @@ export class Daemon {
       if (state) {
         t.info.effort = state.effort;
         t.info.ultracode = state.ultracode;
+        this.rememberEffort(m.sessionId, state.effort);
       }
       const ultracode = promptRuleUltracode(screen);
       if (ultracode !== undefined) t.info.ultracode = ultracode;
@@ -2240,10 +2250,11 @@ export class Daemon {
     if (!t) return Promise.resolve();
     // From here on inputs wait for it to come back, and nothing is typed into it.
     const model = resumeModel(t.info.model, t.meta.namedModel, t.bannerModel);
+    const effort = t.info.effort ?? m.effort;
     const h: Hibernated = {
       at: Date.now(),
       ...(model ? { model } : {}),
-      ...(t.info.effort ? { effort: t.info.effort } : {}),
+      ...(effort ? { effort } : {}),
       ...(t.info.ultracode ? { ultracode: true } : {}),
     };
     m.hibernated = h;

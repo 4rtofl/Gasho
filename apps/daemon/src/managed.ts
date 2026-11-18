@@ -741,6 +741,8 @@ export interface ManagedSession {
    * but work it started in the background under them can still be writing to their temporary folders.
    */
   releasedIds?: string[];
+  /** The effort level last known of it. After /clear, neither the new transcript nor the screen says it (see Daemon.hibernate). */
+  effort?: EffortLevel;
   /**
    * The session is hibernated: its Claude Code and terminal have ended (`pid` and `terminal` are those it had), and
    * `claude --resume` brings it back when it is used (hibernate.ts).

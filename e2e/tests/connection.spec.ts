@@ -254,7 +254,7 @@ test("working server がオフラインのあいだに「入力欄に戻す」�
   await conn.drop();
   await expect(c.notice).toBeVisible();
   await d.disconnect();
-  await expect(page.getByText("working server がオフラインです。")).toBeVisible();
+  await expect(page.getByText("working server がオフラインです。", { exact: true })).toBeVisible();
 
   await c.putBack.click();
   await expect(c.box).toHaveValue("README を読んで");

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import type { HubToClient, HubToDaemon } from "@gasho/protocol";
 import { Hub, updateInfoFor, updateInfoOf, validateCommand, versionAfter } from "../src/hub.ts";
 import { DAEMON_PACKAGE, HUB_PACKAGE, LatestCheck, npmBin, npmLatest } from "../src/latest.ts";
@@ -206,9 +206,16 @@ test("a gasho-daemon from before the package was renamed is told to be moved by 
   assert.ok(d.sent.every((m) => m.type !== "daemon.update"));
 });
 
+/** The folders made by the helpers below, removed once this file's tests are done. */
+const temps: string[] = [];
+after(() => {
+  for (const dir of temps) fs.rmSync(dir, { recursive: true, force: true });
+});
+
 /** A stand-in for npm that records its arguments and answers as `script` says. */
 function fakeNpm(script: string): { bin: string; args: () => string } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-hub-npm-"));
+  temps.push(dir);
   const bin = path.join(dir, "npm");
   fs.writeFileSync(bin, `#!/bin/sh\necho "$*" > "${dir}/args"\n${script}\n`, { mode: 0o755 });
   return { bin, args: () => fs.readFileSync(path.join(dir, "args"), "utf8").trim() };
@@ -233,8 +240,9 @@ test("when npm view fails, the last lines it wrote say why (npm's E404 for a pac
   await assert.rejects(npmLatest(fakeNpm("exit 3").bin, HUB_PACKAGE), /Command failed/);
 });
 
-test("npm is GASHO_NPM_BIN, or the one beside the Node.js that runs the Gasho server, or the one on PATH", () => {
+test("npm is GASHO_NPM_BIN, or the one beside the Node.js that runs the Gasho server, or the one on PATH", (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-hub-node-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const node = path.join(dir, "node");
   assert.equal(npmBin({ GASHO_NPM_BIN: "/opt/npm" }, node), "/opt/npm");
   assert.equal(npmBin({}, node), "npm");

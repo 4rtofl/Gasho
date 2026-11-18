@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -85,8 +85,15 @@ echo "npm error code E404" >&2
 exit 1
 `;
 
+/** The folders made by the helpers below, removed once this file's tests are done. */
+const temps: string[] = [];
+after(() => {
+  for (const dir of temps) fs.rmSync(dir, { recursive: true, force: true });
+});
+
 function releaseRepo() {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "gasho-release-")));
+  temps.push(dir);
   const bin = path.join(dir, ".bin");
   const repo = path.join(dir, "repo");
   const files: Record<string, string> = {

@@ -4,7 +4,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { saveCredentials } from "../src/credentials.ts";
 import { hookUrl, installHooks } from "../src/hooks.ts";
 import { commandOf, installOf, layoutOf, serviceCommand } from "../src/install.ts";
@@ -152,8 +152,15 @@ test("service install writes the unit where systemd or launchd reads it, and res
 
 // doctor, with stand-ins for claude and gh, a registration pointing at a local server, and a settings file of its own.
 
+/** The folders made by the helpers below, removed once this file's tests are done. */
+const temps: string[] = [];
+after(() => {
+  for (const dir of temps) fs.rmSync(dir, { recursive: true, force: true });
+});
+
 function doctorFolder(o: { ghLoggedIn: boolean }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-doctor-"));
+  temps.push(dir);
   const claude = path.join(dir, "claude");
   fs.writeFileSync(claude, '#!/bin/sh\necho "2.1.326 (Claude Code)"\n', { mode: 0o755 });
   const gh = path.join(dir, "gh");

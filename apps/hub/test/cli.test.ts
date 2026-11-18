@@ -6,7 +6,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { Store } from "../src/store.ts";
 import { HUB_VERSION } from "../src/version.ts";
 
@@ -14,8 +14,15 @@ const CLI = path.resolve(import.meta.dirname, "../src/cli.ts");
 const REPO = path.resolve(import.meta.dirname, "../../..");
 const NODE_FLAGS = ["--disable-warning=ExperimentalWarning"];
 
+/** The folders made by the helpers below, removed once this file's tests are done. */
+const temps: string[] = [];
+after(() => {
+  for (const dir of temps) fs.rmSync(dir, { recursive: true, force: true });
+});
+
 function setup() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-hub-cli-"));
+  temps.push(dir);
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     GASHO_HUB_ENV: "off",
@@ -72,9 +79,9 @@ test("plugin add copies a built plugin in (or links it), list says which, and re
   assert.equal(removed.status, 0, removed.stderr);
   assert.equal(removed.stdout.trim(), "removed hello");
   assert.equal(fs.existsSync(path.join(plugins, "hello")), false);
-  const after = new Store(env.GASHO_DB ?? "");
-  assert.deepEqual(after.pluginSettings("hello"), {});
-  after.close();
+  const reopened = new Store(env.GASHO_DB ?? "");
+  assert.deepEqual(reopened.pluginSettings("hello"), {});
+  reopened.close();
 });
 
 test("plugin add and remove refuse what is not a plugin, a path for an id, and an id not installed", () => {

@@ -14,12 +14,10 @@ import { HubClient } from "../src/hub-client.ts";
 
 const WAIT = { timeout: 20_000 };
 
-function tmp(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "gasho-daemon-creds-"));
-}
-
-test("the registration is saved for this user only and read back; a missing or incomplete file says to register again", async () => {
-  const file = path.join(tmp(), "gasho", "daemon.json");
+test("the registration is saved for this user only and read back; a missing or incomplete file says to register again", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-daemon-creds-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "gasho", "daemon.json");
   await assert.rejects(loadCredentials(file), (e: Error) => e.message.startsWith(`${file} not found. Register this machine first`));
 
   await saveCredentials(file, { server: "http://hub:7740", machineId: "m1", token: "secret", name: "ubuntu" });

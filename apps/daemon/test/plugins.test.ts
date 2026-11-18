@@ -457,6 +457,7 @@ const alive = (pid: number) => {
 
 test("a command that takes too long is stopped with the processes it started, and says so", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-exec-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const pidFile = path.join(dir, "pid");
   // Long enough for sh to write the pid on a busy machine.
   const failed = await exec("/bin/sh", ["-c", `sleep 60 & echo $! > "${pidFile}"; wait`], { timeoutMs: 2000 }).catch((e: unknown) => e);
@@ -484,8 +485,9 @@ test("a command that writes more than it may is stopped; one that fails says its
   assert.equal(failed.stdout, "partial\n");
 });
 
-test("a command runs where it is told, never asked anything by gh or git, and only with arguments as strings", async () => {
+test("a command runs where it is told, never asked anything by gh or git, and only with arguments as strings", async (t) => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "gasho-exec-")));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const { stdout } = await exec("/bin/sh", ["-c", 'pwd; echo "$GH_PROMPT_DISABLED $GIT_TERMINAL_PROMPT $NO_COLOR $EXTRA"'], { cwd: dir, env: { EXTRA: "x" } });
   assert.equal(stdout, `${dir}\n1 0 1 x\n`);
   await assert.rejects(exec("echo", [1 as unknown as string]), /^Error: exec: give the command and its arguments as strings$/);

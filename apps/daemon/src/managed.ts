@@ -929,6 +929,20 @@ export class ManagedSessions {
 
   add(m: ManagedSession): void {
     this.sessions.set(m.sessionId, m);
+    this.claim(m.sessionId);
+  }
+
+  /**
+   * `id` is a session's own now (an earlier conversation opened again): a session that had it before /clear lets it go,
+   * so that the notifications and attachments under it stay with the session that runs it.
+   */
+  private claim(id: string): void {
+    for (const m of this.sessions.values()) {
+      if (m.sessionId === id || !m.previousIds?.includes(id)) continue;
+      const rest = m.previousIds.filter((x) => x !== id);
+      if (rest.length > 0) m.previousIds = rest;
+      else delete m.previousIds;
+    }
   }
 
   /** Whether the name changed. */
@@ -976,6 +990,7 @@ export class ManagedSessions {
     m.previousIds = [...(m.previousIds ?? []).filter((id) => id !== to), from].slice(-MAX_PREVIOUS_IDS);
     m.sessionId = to;
     this.sessions.set(to, m);
+    this.claim(to);
     const q = this.queues.get(from);
     this.queues.delete(from);
     if (q) this.queues.set(to, q);

@@ -114,7 +114,7 @@ import { PluginRunner } from "./plugins.ts";
 import { npmOf, Updater } from "./self-update.ts";
 import { log, str } from "./util.ts";
 
-export const DAEMON_VERSION = "0.27.1";
+export const DAEMON_VERSION = "0.27.2";
 const GITHUB_CACHE_MS = 5 * 60_000;
 /** How long the worktree a folder is in, or the repositories inside it, and their branches are reused. */
 const REPOS_CACHE_MS = 60_000;

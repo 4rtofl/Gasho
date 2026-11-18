@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { BackgroundTaskKind, EffortLevel, ModelOption, SessionModel } from "@gasho/protocol";
+import type { PermissionMode } from "./hibernate.ts";
 import { log } from "./util.ts";
 
 const execFileP = promisify(execFile);
@@ -284,6 +285,30 @@ export function autoModeOfferOpen(screen: string): boolean {
 export function noticeKey(screen: string): "0" | "Esc" | undefined {
   if (surveyOpen(screen)) return "0";
   if (autoModeOfferOpen(screen)) return "Esc";
+  return undefined;
+}
+
+const PERMISSION_MODES: Record<string, PermissionMode> = {
+  "manual mode": "manual",
+  "accept edits": "acceptEdits",
+  "plan mode": "plan",
+  "auto mode": "auto",
+  "don't ask": "dontAsk",
+};
+
+/**
+ * The permission mode Claude Code shows under the prompt box ("⏸ manual mode on · ? for shortcuts", "⏵⏵ accept edits on
+ * (shift+tab to cycle)"). A status line can be drawn there too. Undefined when the screen does not show one of these:
+ * "bypass permissions" is left out on purpose, as starting in it asks for a confirmation that nobody would answer.
+ */
+export function permissionModeShown(screen: string): PermissionMode | undefined {
+  const lines = screenLines(screen);
+  const box = promptBox(lines);
+  if (!box) return undefined;
+  for (const line of lines.slice(box.bottom + 1)) {
+    const mode = /^\s*\S+\s+(manual mode|accept edits|plan mode|auto mode|don't ask) on\b/.exec(line)?.[1];
+    if (mode) return PERMISSION_MODES[mode];
+  }
   return undefined;
 }
 
@@ -762,6 +787,8 @@ export interface Hibernated {
   model?: string;
   effort?: EffortLevel;
   ultracode?: boolean;
+  /** The permission mode it was in: after /clear, `claude --resume` would not go back to it (see resumeArgs). */
+  permissionMode?: PermissionMode;
   /** Renamed while hibernated: Claude Code is told with /rename once it runs again. */
   renamed?: boolean;
   /** Why it could not be brought back the last time. */

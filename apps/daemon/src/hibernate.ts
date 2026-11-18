@@ -22,6 +22,9 @@ export function hibernateAfterMs(env: NodeJS.ProcessEnv): number | undefined {
   return minutes * 60_000;
 }
 
+/** The permission modes a session is brought back in, by the name `--permission-mode` takes. */
+export type PermissionMode = "manual" | "acceptEdits" | "plan" | "auto" | "dontAsk";
+
 /** What is known about a session started from Gasho when deciding whether to hibernate it. */
 export interface HibernateFacts {
   /** It runs in zellij (started by gasho-daemon 0.10 or before). */
@@ -45,6 +48,8 @@ export interface HibernateFacts {
   typed: string | undefined;
   /** Someone has its terminal open (`gasho-daemon attach`). */
   attached: boolean;
+  /** The permission mode under the prompt box: undefined when it cannot be told, or cannot be gone back to. */
+  permissionMode: PermissionMode | undefined;
   /** When it was last used, as far as each source knows: the latest counts. */
   activity: (number | undefined)[];
 }
@@ -55,6 +60,8 @@ export function mayHibernate(f: HibernateFacts, now: number, afterMs: number): b
   if (f.status !== "idle" || (f.claudeStatus !== undefined && f.claudeStatus !== "idle")) return false;
   if (f.background > 0 || f.pendingInputs > 0 || f.permissionRequests > 0) return false;
   if (f.operating || f.scheduled || f.attached || f.typed !== "") return false;
+  // Coming back in another mode could run what this one would have asked about.
+  if (f.permissionMode === undefined) return false;
   const last = Math.max(0, ...f.activity.map((at) => at ?? 0));
   // Never used, as far as anything says: not known to be left alone.
   return last > 0 && now - last >= afterMs;
@@ -65,6 +72,7 @@ export interface ResumeState {
   /** "Opus 5.5", as Gasho shows it. */
   model?: string;
   effort?: EffortLevel;
+  permissionMode?: PermissionMode;
 }
 
 /** A model's name without what is said after it: "Opus 4.6" for "Opus 4.6 (1M context)". */
@@ -94,11 +102,17 @@ export function modelFlag(name: string | undefined): string | undefined {
 }
 
 /**
- * The arguments that bring a hibernated session back as it was. Claude Code keeps the permission mode by itself, but
- * goes back to its default effort, and to the model of the last reply (a switch made after that is lost). Both flags
- * are for this session only: neither is saved to the settings.
+ * The arguments that bring a hibernated session back as it was. Claude Code goes back to its default effort, to the
+ * model of the last reply (a switch made after that is lost), and after /clear to its default permission mode, as the
+ * new transcript does not record the mode. These flags are for this session only: none is saved to the settings.
  */
 export function resumeArgs(sessionId: string, state: ResumeState): string[] {
   const model = modelFlag(state.model);
-  return ["--resume", sessionId, ...(model ? ["--model", model] : []), ...(state.effort ? ["--effort", state.effort] : [])];
+  return [
+    "--resume",
+    sessionId,
+    ...(model ? ["--model", model] : []),
+    ...(state.effort ? ["--effort", state.effort] : []),
+    ...(state.permissionMode ? ["--permission-mode", state.permissionMode] : []),
+  ];
 }

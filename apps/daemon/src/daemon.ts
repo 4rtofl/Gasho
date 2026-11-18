@@ -30,7 +30,7 @@ import { listDir, readFileAt, writeFileAt } from "./files.ts";
 import { cloneRepo, createFolder } from "./folders.ts";
 import { githubRepoOf, nestedRepos, readGitGraph, worktreeOf } from "./git.ts";
 import { GitHubProxy } from "./github.ts";
-import { mayHibernate, resumeArgs, resumeModel } from "./hibernate.ts";
+import { mayHibernate, type PermissionMode, resumeArgs, resumeModel } from "./hibernate.ts";
 import { TokenCounter } from "./tokens.ts";
 import { startHookServer, summarizeHook } from "./hooks.ts";
 import { isInside, statusLineLaunch, statusLineOf, userStatusLine } from "./statusline.ts";
@@ -59,6 +59,7 @@ import {
   type DialogText,
   permissionDialog,
   permissionDialogText,
+  permissionModeShown,
   EFFORT_LEVELS,
   forkName,
   type Hibernated,
@@ -2216,10 +2217,13 @@ export class Daemon {
     return false;
   }
 
-  /** Whether a session started from Gasho has been left alone long enough, and can be stopped without losing anything. */
-  private async readyToHibernate(m: ManagedSession, afterMs: number): Promise<boolean> {
+  /**
+   * Whether a session started from Gasho has been left alone long enough, and can be stopped without losing anything:
+   * the permission mode to bring it back in if so, and undefined if not.
+   */
+  private async readyToHibernate(m: ManagedSession, afterMs: number): Promise<PermissionMode | undefined> {
     const t = this.tracked.get(m.sessionId);
-    if (!t || m.hibernated || this.waking.has(m.sessionId)) return false;
+    if (!t || m.hibernated || this.waking.has(m.sessionId)) return undefined;
     const scheduledAt = Math.max(t.meta.scheduledAt ?? 0, m.scheduledAt ?? 0);
     // Read again after each wait: an input may come in meanwhile.
     const facts = () => ({
@@ -2237,13 +2241,14 @@ export class Daemon {
     });
     const now = Date.now();
     // The terminal is asked only about a session that all the rest allows.
-    if (!mayHibernate({ ...facts(), typed: "", attached: false }, now, afterMs)) return false;
-    if (!(await fsp.stat(m.cwd).then((s) => s.isDirectory(), () => false))) return false;
-    if ((await this.currentStatus(m.pid)) !== "idle") return false;
+    if (!mayHibernate({ ...facts(), typed: "", attached: false, permissionMode: "auto" }, now, afterMs)) return undefined;
+    if (!(await fsp.stat(m.cwd).then((s) => s.isDirectory(), () => false))) return undefined;
+    if ((await this.currentStatus(m.pid)) !== "idle") return undefined;
     const screen = await this.terminals.screen(m.terminal).catch(() => undefined);
     const hello = await this.terminals.builtIn.hello(m.terminal).catch(() => undefined);
-    if (!screen || !hello) return false;
-    return mayHibernate({ ...facts(), typed: typedInBox(screen), attached: (hello.viewers ?? 0) > 0 }, now, afterMs);
+    if (!screen || !hello) return undefined;
+    const permissionMode = permissionModeShown(screen.plain);
+    return mayHibernate({ ...facts(), typed: typedInBox(screen), attached: (hello.viewers ?? 0) > 0, permissionMode }, now, afterMs) ? permissionMode : undefined;
   }
 
   /** Hibernates the sessions that nobody uses, one at a time. */
@@ -2253,7 +2258,8 @@ export class Daemon {
     this.sweepingIdle = true;
     try {
       for (const m of this.managed.all()) {
-        if (await this.readyToHibernate(m, afterMs)) await this.hibernate(m);
+        const permissionMode = await this.readyToHibernate(m, afterMs);
+        if (permissionMode) await this.hibernate(m, permissionMode);
       }
     } catch (e) {
       log("could not hibernate the sessions left alone", e);
@@ -2267,7 +2273,7 @@ export class Daemon {
    * first. Its temporary folder and attachments stay, for when it comes back. If that cannot be saved, it is not
    * hibernated: nothing would remember what it needs to come back, and its Claude Code has not been touched yet.
    */
-  private hibernate(m: ManagedSession): Promise<void> {
+  private hibernate(m: ManagedSession, permissionMode: PermissionMode): Promise<void> {
     const id = m.sessionId;
     const t = this.tracked.get(id);
     if (!t) return Promise.resolve();
@@ -2279,6 +2285,7 @@ export class Daemon {
       ...(model ? { model } : {}),
       ...(effort ? { effort } : {}),
       ...(t.info.ultracode ? { ultracode: true } : {}),
+      permissionMode,
     };
     m.hibernated = h;
     const ended = (async () => {

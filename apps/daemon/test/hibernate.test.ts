@@ -10,7 +10,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { Daemon } from "../src/daemon.ts";
 import { DEFAULT_HIBERNATE_MINUTES, type HibernateFacts, hibernateAfterMs, mayHibernate, modelFlag, resumeArgs, resumeModel } from "../src/hibernate.ts";
-import { ManagedSessions, plainScreen } from "../src/managed.ts";
+import { ManagedSessions, permissionModeShown, plainScreen } from "../src/managed.ts";
 import type { TerminalStart } from "../src/terminal.ts";
 import { emptyMeta, TranscriptTail } from "../src/transcript.ts";
 
@@ -28,6 +28,7 @@ const facts = (extra: Partial<HibernateFacts> = {}): HibernateFacts => ({
   scheduled: false,
   typed: "",
   attached: false,
+  permissionMode: "auto",
   activity: [NOW - 2 * HOUR],
   ...extra,
 });
@@ -65,10 +66,28 @@ const KEPT_AWAKE: [string, Partial<HibernateFacts>][] = [
   ["with text in its prompt box", { typed: "書きかけ" }],
   ["with a dialog open", { typed: undefined }],
   ["with its terminal open", { attached: true }],
+  ["whose permission mode cannot be told", { permissionMode: undefined }],
 ];
 for (const [what, extra] of KEPT_AWAKE) {
   test(`a session ${what} is not hibernated`, () => assert.equal(mayHibernate(facts(extra), NOW, HOUR), false));
 }
+
+test("the permission mode is read from under the prompt box, as Claude Code 2.1.327 draws it at 50 columns", () => {
+  const screen = (...footer: string[]) => [RULE, "❯ ", RULE, ...footer, ""].join("\n");
+  assert.equal(permissionModeShown(screen("  ⏸ manual mode on · ? for shortcuts · ← for ag…")), "manual");
+  assert.equal(permissionModeShown(screen("  ⏵⏵ accept edits on (shift+tab to cycle) · ← f…")), "acceptEdits");
+  assert.equal(permissionModeShown(screen("  ⏸ plan mode on (shift+tab to cycle) · ← for a…")), "plan");
+  assert.equal(permissionModeShown(screen("  ⏵⏵ auto mode on (shift+tab to cycle) · ← for …")), "auto");
+  assert.equal(permissionModeShown(screen("  ⏵⏵ don't ask on (shift+tab to cycle) · ← for …")), "dontAsk");
+  // Under a status line of the user's own.
+  assert.equal(permissionModeShown(screen("  main · 42%", "  ⏸ plan mode on")), "plan");
+  // Starting in this one asks for a confirmation.
+  assert.equal(permissionModeShown(screen("  ⏵⏵ bypass permissions on (shift+tab to cycle)")), undefined);
+  assert.equal(permissionModeShown(screen("  ? for shortcuts")), undefined);
+  // The conversation can quote it; only what is under the box counts.
+  assert.equal(permissionModeShown(["  ⏸ plan mode on", RULE, "❯ ", RULE, ""].join("\n")), undefined);
+  assert.equal(permissionModeShown("  ⏸ plan mode on"), undefined);
+});
 
 test("a resume names the model and effort level the session had, for Claude Code does not keep them", () => {
   assert.equal(modelFlag("Opus 5.5"), "claude-opus-5-5");
@@ -80,6 +99,7 @@ test("a resume names the model and effort level the session had, for Claude Code
   assert.equal(modelFlag(undefined), undefined);
   assert.deepEqual(resumeArgs("id", { model: "Sonnet 5.5", effort: "xhigh" }), ["--resume", "id", "--model", "claude-sonnet-5-5", "--effort", "xhigh"]);
   assert.deepEqual(resumeArgs("id", {}), ["--resume", "id"]);
+  assert.deepEqual(resumeArgs("id", { permissionMode: "plan" }), ["--resume", "id", "--permission-mode", "plan"]);
 });
 
 test("a resume keeps the 1M context window that a reply's record does not mention", () => {
@@ -201,7 +221,7 @@ async function setup() {
   agents([row(procs[0]!.pid!)]);
 
   // The terminal: its prompt box, what was entered into it, and whether ultracode is on.
-  const term = { typed: "", entered: [] as string[], ultracode: false, viewers: 0, live: new Map<string, { pid: number; exited?: object }>() };
+  const term = { typed: "", entered: [] as string[], ultracode: false, viewers: 0, footer: "  ⏵⏵ auto mode on (shift+tab to cycle)", live: new Map<string, { pid: number; exited?: object }>() };
   const killed: string[] = [];
   const started: TerminalStart[] = [];
   const terminals = {
@@ -213,7 +233,7 @@ async function setup() {
       return p.pid;
     },
     screen: async () =>
-      plainScreen([`${RULE.slice(0, 30)}${term.ultracode ? " ultracode ─" : ""}`, `❯ ${term.typed}`, RULE, "  ⏵⏵ auto mode on (shift+tab to cycle)", ""].join("\n")),
+      plainScreen([`${RULE.slice(0, 30)}${term.ultracode ? " ultracode ─" : ""}`, `❯ ${term.typed}`, RULE, term.footer, ""].join("\n")),
     paste: async (_s: string, text: string) => {
       term.typed = text;
     },
@@ -381,7 +401,8 @@ test("the effort level known before /clear is the one a session comes back with"
 
     await d.hibernateIdle();
     assert.equal(m.hibernated?.effort, "low");
-    assert.deepEqual(resumeArgs(NEW, m.hibernated).slice(-2), ["--effort", "low"]);
+    const args = resumeArgs(NEW, m.hibernated);
+    assert.equal(args[args.indexOf("--effort") + 1], "low");
   } finally {
     await done();
   }
@@ -465,6 +486,35 @@ test("what was scheduled is forgotten when the session comes back, for its proce
     t.meta.scheduledAt = at;
     d.applyMeta(t);
     assert.equal(d.managed.get(SID).scheduledAt, undefined);
+  } finally {
+    await done();
+  }
+});
+
+test("a session comes back in the permission mode it was in", async () => {
+  const { d, term, started, agents, done } = await setup();
+  try {
+    term.footer = "  ⏸ plan mode on (shift+tab to cycle) · ← for a…";
+    await d.hibernateIdle();
+    assert.equal(d.managed.get(SID).hibernated.permissionMode, "plan");
+    agents([]);
+    await d.wake(SID);
+    const { args } = started[0]!;
+    assert.equal(args[args.indexOf("--permission-mode") + 1], "plan");
+  } finally {
+    await done();
+  }
+});
+
+test("a session whose permission mode cannot be told or gone back to keeps running", async () => {
+  const { d, term, procs, done } = await setup();
+  try {
+    for (const footer of ["  ⏵⏵ bypass permissions on (shift+tab to cycle)", "  ? for shortcuts"]) {
+      term.footer = footer;
+      await d.hibernateIdle();
+      assert.equal(procs[0]!.signalCode, null);
+      assert.equal(d.managed.get(SID).hibernated, undefined);
+    }
   } finally {
     await done();
   }

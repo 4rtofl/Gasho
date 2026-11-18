@@ -8,9 +8,10 @@ import { Dialog } from "radix-ui";
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { AgentKind } from "@gasho/protocol";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG_PANEL } from "@/components/dialog-styles";
-import { AGENT_NAME, codexOffered, codexProblem, codexUsable, launchAgentField, launchAgentFor } from "@/lib/agents";
+import { AGENT_NAME, codexOffered, codexProblem, codexUsable, launchAgentFor } from "@/lib/agents";
 import { childPath, CLONE_WAIT_MS, folderChoices, folderNameProblem, repoFolderName, repoProblem } from "@/lib/folders";
 import { go } from "@/lib/route";
+import { useSessionLauncher } from "@/lib/session-launch";
 import { daemonAtLeast } from "@/lib/sessions";
 import { sendCommand, useAppState } from "@/lib/store";
 import { composing, keepOpenWhileComposing } from "@/lib/text-input";
@@ -20,7 +21,6 @@ const OTHER = "\u0000other";
 const TITLE = "新しいセッションを起動する";
 const NONE: readonly string[] = [];
 /** How long to wait for each answer, a little longer than the Gasho server does. */
-const LAUNCH_WAIT_MS = 60_000;
 const FOLDER_WAIT_MS = 20_000;
 
 type Tool = "folder" | "clone";
@@ -76,13 +76,15 @@ function LaunchForm({
   onBusyChange?: (busy: boolean) => void;
 }) {
   const { machines, server } = useAppState();
+  const launchSession = useSessionLauncher();
   const candidates = useMemo(() => machines.filter((m) => m.connected && m.canLaunch), [machines]);
   const [machineId, setMachineId] = useState(
     initial && candidates.some((m) => m.id === initial.machine) ? initial.machine : (candidates[0]?.id ?? ""),
   );
   const machine = candidates.find((m) => m.id === machineId) ?? candidates[0];
-  // The agent picked here, while it can be used on the working server; else the default one.
-  const [pickedAgent, setPickedAgent] = useState<AgentKind | undefined>(initial?.agent);
+  // The agent picked here, while it can be used on the working server; else the default one. Only Claude Code asks
+  // whether to trust a folder: the form that opens for that question goes on with it, whatever the default is.
+  const [pickedAgent, setPickedAgent] = useState<AgentKind | undefined>(initial?.agent ?? (initial?.trust ? "claude" : undefined));
   const agent: AgentKind = !machine ? "claude" : pickedAgent === "codex" && !codexUsable(machine) ? "claude" : (pickedAgent ?? launchAgentFor(machine, server?.defaultAgent));
   // gasho-daemon 0.10.0 makes folders, clones, and answers Claude Code's question whether to trust a folder.
   const canMake = machine !== undefined && daemonAtLeast(machine, 0, 10);
@@ -97,10 +99,16 @@ function LaunchForm({
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(initial?.error);
-  // A launch that stopped at Claude Code's question whether to trust the folder, and what Claude Code pointed out.
-  const [trustAsk, setTrustAsk] = useState<{ cwd: string; warnings: string[] } | undefined>(
-    initial?.trust ? { cwd: initial.folder, warnings: initial.trust } : undefined,
+  // A launch that stopped at Claude Code's question whether to trust the folder, and what Claude Code pointed out. The
+  // answer holds for the working server that asked: when the form moves to another (the one asking went offline, say),
+  // the question goes, for good, and "信頼して起動する" cannot reach a working server nobody was asked about.
+  const [trustAsked, setTrustAsk] = useState<{ machine: string; cwd: string; warnings: string[] } | undefined>(
+    initial?.trust ? { machine: initial.machine, cwd: initial.folder, warnings: initial.trust } : undefined,
   );
+  const trustAsk = trustAsked?.machine === machine?.id ? trustAsked : undefined;
+  useEffect(() => {
+    if (trustAsked && trustAsked.machine !== machine?.id) setTrustAsk(undefined);
+  }, [trustAsked, machine?.id]);
   // A session that started with something to tell, shown before it opens.
   const [started, setStarted] = useState<{ machine: string; sessionId: string; warning: string }>();
   const [tool, setTool] = useState<Tool>();
@@ -128,14 +136,11 @@ function LaunchForm({
     setBusy(true);
     setError(undefined);
     setTrustAsk(undefined);
-    const r = await sendCommand(
-      machine.id,
-      { type: "session.launch", cwd: dir, name: name.trim() || undefined, ...(trust ? { trust: true } : {}), ...launchAgentField(agent) },
-      LAUNCH_WAIT_MS,
-    );
+    const r = await launchSession(machine.id, { cwd: dir, name: name.trim() || undefined, trust, agent });
     setBusy(false);
+    if (r.cancelled) return;
     if (!r.ok || !r.sessionId) {
-      if (r.needsTrust) setTrustAsk({ cwd: dir, warnings: r.trustWarnings ?? [] });
+      if (r.needsTrust) setTrustAsk({ machine: machine.id, cwd: dir, warnings: r.trustWarnings ?? [] });
       else setError(r.error ?? "起動できませんでした。");
       return;
     }

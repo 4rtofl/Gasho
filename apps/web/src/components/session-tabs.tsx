@@ -13,26 +13,29 @@ import { OutsideSessions } from "@/components/outside-sessions";
 import { SessionHistory } from "@/components/session-history";
 import { SessionContextMenu, type SessionActionRequest } from "@/components/session-menu";
 import { StatusDot } from "@/components/status-badge";
-import { launchAgentField, launchAgentFor, launchTitle, sessionAgent, showsAgents } from "@/lib/agents";
+import { launchAgentFor, launchTitle, sessionAgent, showsAgents } from "@/lib/agents";
 import { sessionLabel } from "@/lib/format";
 import { go, type WorktreeView } from "@/lib/route";
+import { useSessionLauncher } from "@/lib/session-launch";
 import { hidesSessionTabs } from "@/lib/session-list";
 import { sessionDot, unreadSessions, type WorktreeSessions } from "@/lib/sessions";
-import { sendCommand, useAppState } from "@/lib/store";
+import { useAppState } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { PluginWorktreeTabs } from "@/plugins/parts";
 import { useSessionListMode } from "@/plugins/session-list";
-
-/** How long to wait for a new session, a little longer than the Gasho server does. */
-export const LAUNCH_WAIT_MS = 60_000;
+import type { LaunchInitial } from "@/views/launch";
 
 /**
  * Starting a session in a worktree's top folder and opening it: whether it can be, whether it is under way, and why it
- * could not. The new session opens only while the caller is still shown: one picked meanwhile is not left for it.
+ * could not. The new session opens only while the caller is still shown: one picked meanwhile is not left for it. When
+ * Claude Code asks whether to trust the folder (a repository just cloned, say), `onAskTrust` puts that question to the
+ * person, in the app's dialog: the first session of a worktree replaces the screen that asked, and what the launch has
+ * to tell must still show then. Only "信頼して起動する" there starts the session.
  */
-export function useWorktreeLaunch(worktree: WorktreeSessions) {
+export function useWorktreeLaunch(worktree: WorktreeSessions, onAskTrust: (initial: LaunchInitial) => void) {
   const { machine } = worktree;
   const defaultAgent = useAppState().server?.defaultAgent;
+  const launchSession = useSessionLauncher();
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string>();
   const shown = useRef(true);
@@ -48,11 +51,13 @@ export function useWorktreeLaunch(worktree: WorktreeSessions) {
     if (!canLaunch || launching) return;
     setLaunching(true);
     setError(undefined);
-    const r = await sendCommand(machine.id, { type: "session.launch", cwd: worktree.path, ...launchAgentField(agent) }, LAUNCH_WAIT_MS);
+    const r = await launchSession(machine.id, { cwd: worktree.path, agent });
     if (!shown.current) return;
     setLaunching(false);
+    if (r.cancelled) return;
     if (!r.ok || !r.sessionId) {
-      setError(r.error ?? "起動できませんでした。");
+      if (r.needsTrust) onAskTrust({ machine: machine.id, folder: worktree.path, trust: r.trustWarnings ?? [], agent });
+      else setError(r.error ?? "起動できませんでした。");
       return;
     }
     go({ name: "session", machine: machine.id, sessionId: r.sessionId });
@@ -60,17 +65,22 @@ export function useWorktreeLaunch(worktree: WorktreeSessions) {
   return { canLaunch, launching, error, launch, defaultAgent };
 }
 
-/** `current`: the session open below, if any. `view`: the plugin's screen open below instead, if any. */
+/**
+ * `current`: the session open below, if any. `view`: the plugin's screen open below instead, if any. `onAskTrust`: see
+ * useWorktreeLaunch.
+ */
 export function SessionTabs({
   worktree,
   current,
   view,
   onAction,
+  onAskTrust,
 }: {
   worktree: WorktreeSessions;
   current?: string;
   view?: WorktreeView;
   onAction: (request: SessionActionRequest) => void;
+  onAskTrust: (initial: LaunchInitial) => void;
 }) {
   const { machine, sessions } = worktree;
   const active = useRef<HTMLButtonElement>(null);
@@ -78,7 +88,7 @@ export function SessionTabs({
   useEffect(() => {
     active.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, []);
-  const { canLaunch, launching, error, launch, defaultAgent } = useWorktreeLaunch(worktree);
+  const { canLaunch, launching, error, launch, defaultAgent } = useWorktreeLaunch(worktree, onAskTrust);
   const hidden = hidesSessionTabs(useSessionListMode());
   const { notifications, machines } = useAppState();
   const unread = unreadSessions(notifications);

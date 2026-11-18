@@ -264,6 +264,8 @@ export class CodexSessions {
     this.rpc = rpc;
     this.retryMs = RETRY_MIN_MS;
     await Promise.all([...this.threads.values()].map((t) => this.resume(rpc, t)));
+    // A retry that came while the threads were loading found this connection still opening, and left it at that.
+    if (!rpc.open) this.retryLater();
     this.o.changed();
     return rpc;
   }
@@ -488,7 +490,8 @@ export class CodexSessions {
 
   private readOnce(t: ThreadState): Promise<void> {
     if (t.transcript) return Promise.resolve();
-    t.loading ??= this.read(t.info.sessionId)
+    t.loading ??= this.ensure()
+      .then((rpc) => this.read(rpc, t.info.sessionId))
       .then((entries) => {
         const read = known(entries);
         for (const e of t.buffered) {
@@ -506,8 +509,7 @@ export class CodexSessions {
   }
 
   /** The whole conversation of a thread, page by page. */
-  private async read(threadId: string): Promise<TranscriptEntry[]> {
-    const rpc = await this.ensure();
+  private async read(rpc: CodexRpc, threadId: string): Promise<TranscriptEntry[]> {
     const turns: CodexTurn[] = [];
     let cursor: string | null | undefined;
     try {
@@ -544,7 +546,8 @@ export class CodexSessions {
 
   /** After a reconnection: what the conversation gained while the connection was gone reaches the browsers. */
   private async catchUp(rpc: CodexRpc, t: ThreadState): Promise<void> {
-    const entries = await this.read(t.info.sessionId);
+    // On the connection being opened: asking for a connection here would wait for the opening, which waits for this.
+    const entries = await this.read(rpc, t.info.sessionId);
     if (this.rpc !== rpc) return;
     const before = t.transcript?.ids ?? new Set<string>();
     const added = entries.filter((e) => !before.has(e.uuid));

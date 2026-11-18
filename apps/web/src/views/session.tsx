@@ -32,21 +32,25 @@ import { loadTranscript, sendCommand, transcriptKey, useAppState } from "@/lib/s
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
 import { PluginComposerFooter, PluginConversationEnd, PluginHeaderItems } from "@/plugins/parts";
+import type { LaunchInitial } from "@/views/launch";
 
 /**
  * `panel`: the panel open beside the session (a computer), if any; its link in the header shows as open.
  * `onSessionAction`: an item picked from a tab's menu (rename, fork, remove); the app opens its dialog.
+ * `onAskTrust`: Claude Code asks whether to trust the worktree's folder; the app opens its dialog.
  */
 export function SessionView({
   machine,
   sessionId,
   panel,
   onSessionAction,
+  onAskTrust,
 }: {
   machine: string;
   sessionId: string;
   panel?: SessionPanel;
   onSessionAction: (request: SessionActionRequest) => void;
+  onAskTrust: (initial: LaunchInitial) => void;
 }) {
   const { machines, transcripts } = useAppState();
   const now = useNow();
@@ -100,7 +104,7 @@ export function SessionView({
 
   return (
     <div className="flex h-full flex-col">
-      <SessionTabs worktree={worktreesByLastUse([m]).find((w) => w.id === worktree)!} current={sessionId} onAction={onSessionAction} />
+      <SessionTabs worktree={worktreesByLastUse([m]).find((w) => w.id === worktree)!} current={sessionId} onAction={onSessionAction} onAskTrust={onAskTrust} />
       {headerShown ? (
         <header className="shrink-0 space-y-2 border-b border-border px-4 py-3 md:px-6">
           <BackLink />

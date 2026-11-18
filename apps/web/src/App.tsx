@@ -10,12 +10,12 @@ import { CloneRepoDialog } from "@/components/clone-repo-dialog";
 import { CloneRepoButton, RegisterRepos, RepoFilter } from "@/components/repo-filter";
 import { ReposDialog } from "@/components/repos-dialog";
 import { SessionActionDialog, SessionContextMenu, type SessionActionRequest } from "@/components/session-menu";
+import { UnusedSessionsDialog } from "@/components/unused-sessions-dialog";
 import { RemoveWorktreeDialog, WorktreeContextMenu } from "@/components/worktree-menu";
 import { showNotice, useNotice } from "@/lib/notice";
 import { AgentMark } from "@/components/agent-mark";
 import { LaunchMenu } from "@/components/launch-menu";
-import { LAUNCH_WAIT_MS } from "@/components/session-tabs";
-import { launchAgentField, launchAgentFor, launchTitle, sessionAgent, showsAgents } from "@/lib/agents";
+import { launchAgentFor, launchTitle, sessionAgent, showsAgents } from "@/lib/agents";
 import { StatusDot } from "@/components/status-badge";
 import { Sidebar, SidebarTrigger, useSidebar, type SidebarAction, type SidebarGroup, type SidebarItem, type SidebarMove, type SidebarSection } from "@/components/ui/sidebar";
 import { updateToTell } from "@/lib/daemon-update";
@@ -47,6 +47,7 @@ import {
   type ListedSession,
 } from "@/lib/session-list";
 import { useGroupingPrefs, useSessionListPrefs } from "@/lib/session-list-prefs";
+import { useSessionLauncher } from "@/lib/session-launch";
 import {
   movedSession,
   narrowWorktrees,
@@ -62,7 +63,7 @@ import {
   worktreesByLastUse,
   type WorktreeSessions,
 } from "@/lib/sessions";
-import { reloadToNewBuild, sendCommand, useAppState, useReadWhileOpen } from "@/lib/store";
+import { reloadToNewBuild, useAppState, useReadWhileOpen } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import {
   arrangeWorktreeCategories,
@@ -301,6 +302,7 @@ export function App() {
   }, [desktop]);
   // The category whose "＋" is starting a session, and what the dialog opens with when that did not work.
   const [launchingIn, setLaunchingIn] = useState<string>();
+  const launchSession = useSessionLauncher();
   const [launchInitial, setLaunchInitial] = useState<LaunchInitial>();
   useReadWhileOpen(route.name === "session" ? route.machine : undefined, route.name === "session" ? route.sessionId : undefined);
 
@@ -371,8 +373,9 @@ export function App() {
   const launchIn = async (w: SessionListWorktree, agent = launchAgentFor(w.machine, defaultAgent)) => {
     if (launchingIn) return;
     setLaunchingIn(w.key);
-    const r = await sendCommand(w.machine.id, { type: "session.launch", cwd: w.path, ...launchAgentField(agent) }, LAUNCH_WAIT_MS);
+    const r = await launchSession(w.machine.id, { cwd: w.path, agent });
     setLaunchingIn(undefined);
+    if (r.cancelled) return;
     if (r.ok && r.sessionId) {
       setMobileOpen(false);
       go({ name: "session", machine: w.machine.id, sessionId: r.sessionId });
@@ -730,6 +733,7 @@ export function App() {
                 worktree={worktrees.find((w) => w.id === worktreeKey(route.machine, route.path))}
                 view={route.view}
                 onSessionAction={setSessionAction}
+                onAskTrust={openLaunch}
               />
             )}
             {route.name === "session" && (desktop || !panel) && (
@@ -739,6 +743,7 @@ export function App() {
                 sessionId={movedTo ?? route.sessionId}
                 panel={panel}
                 onSessionAction={setSessionAction}
+                onAskTrust={openLaunch}
               />
             )}
             {route.name === "session" && !desktop && panel && (
@@ -775,6 +780,7 @@ export function App() {
         }
       />
       <RemoveWorktreeDialog worktree={removingWorktree} onClose={() => setRemovingWorktree(null)} />
+      <UnusedSessionsDialog />
       <LaunchDialog
         open={launchOpen}
         initial={launchInitial}

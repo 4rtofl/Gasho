@@ -1,5 +1,5 @@
 // Which agent a new session starts with, the menu of a "＋", and what a session of each agent offers.
-import { fireEvent, render, renderHook, screen, act } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { AgentInfo, MachineInfo } from "@gasho/protocol";
 import { expect, test, vi } from "vitest";
@@ -7,6 +7,8 @@ import { LaunchMenu } from "@/components/launch-menu";
 import { useWorktreeLaunch } from "@/components/session-tabs";
 import { canDo, codexOffered, codexProblem, launchAgentFor, launchTitle, showsAgents } from "@/lib/agents";
 import type { WorktreeSessions } from "@/lib/sessions";
+import type { LaunchInitial } from "@/views/launch";
+import { LaunchDialog } from "@/views/launch";
 import { DefaultAgentSection } from "@/views/settings";
 import { connectHub, machine, session } from "./hub";
 
@@ -89,12 +91,50 @@ test("without Codex, a \"＋\" has no menu", () => {
 test("a \"＋\" sends the default agent, and the one picked from its menu instead", async () => {
   const m = withCodex();
   const hub = await connectHub({ machines: [m], server: server("codex") });
-  const { result } = renderHook(() => useWorktreeLaunch(worktree(m)));
+  const { result } = renderHook(() => useWorktreeLaunch(worktree(m), () => undefined));
   act(() => void result.current.launch());
-  expect(hub.commands().at(-1)).toMatchObject({ type: "session.launch", cwd: "/repo", agent: "codex" });
+  await waitFor(() => expect(hub.commands().at(-1)).toMatchObject({ type: "session.launch", cwd: "/repo", agent: "codex" }));
   await act(() => hub.answer({ ok: false, error: "x" }));
+  await waitFor(() => expect(result.current.launching).toBe(false));
+  const before = hub.commands().length;
   act(() => void result.current.launch("claude"));
+  await waitFor(() => expect(hub.commands().length).toBe(before + 1));
   expect(hub.commands().at(-1)).not.toHaveProperty("agent");
+});
+
+test("with Codex as the default, Claude Code picked from the menu goes on as Claude Code after the question about trust", async () => {
+  const m = { ...withCodex(), folders: ["/repo"] };
+  const hub = await connectHub({ machines: [m], server: server("codex") });
+  const onAskTrust = vi.fn();
+  const { result } = renderHook(() => useWorktreeLaunch(worktree(m), onAskTrust));
+  act(() => void result.current.launch("claude"));
+  await waitFor(() => expect(hub.commands().at(-1)).toMatchObject({ type: "session.launch", cwd: "/repo" }));
+  await act(() => hub.answer({ ok: false, needsTrust: true, trustWarnings: [] }));
+  await waitFor(() => expect(onAskTrust).toHaveBeenCalledTimes(1));
+  const initial = onAskTrust.mock.calls[0]![0] as LaunchInitial;
+  expect(initial.agent).toBe("claude");
+
+  render(<LaunchDialog open onClose={() => undefined} initial={initial} />);
+  await userEvent.setup().click(await screen.findByRole("button", { name: "信頼して起動する" }));
+  await waitFor(() => expect(hub.commands().at(-1)).toMatchObject({ type: "session.launch", cwd: "/repo", trust: true }));
+  expect(hub.commands().at(-1)).not.toHaveProperty("agent");
+});
+
+test("the question about trust is Claude Code's: a form opened for it without an agent does not start the default one", async () => {
+  const m = { ...withCodex(), folders: ["/repo"] };
+  const hub = await connectHub({ machines: [m], server: server("codex") });
+  render(<LaunchDialog open onClose={() => undefined} initial={{ machine: "m", folder: "/repo", trust: [] }} />);
+  await userEvent.setup().click(await screen.findByRole("button", { name: "信頼して起動する" }));
+  await waitFor(() => expect(hub.commands().at(-1)).toMatchObject({ type: "session.launch", trust: true }));
+  expect(hub.commands().at(-1)).not.toHaveProperty("agent");
+});
+
+test("the form starts the agent it shows", async () => {
+  const m = { ...withCodex(), folders: ["/repo"] };
+  const hub = await connectHub({ machines: [m], server: server("codex") });
+  render(<LaunchDialog open onClose={() => undefined} />);
+  await userEvent.setup().click(await screen.findByRole("button", { name: "起動する" }));
+  await waitFor(() => expect(hub.commands().at(-1)).toMatchObject({ type: "session.launch", cwd: "/repo", agent: "codex" }));
 });
 
 test("the default agent is set for every browser, and the choice shows only where Codex is installed", async () => {

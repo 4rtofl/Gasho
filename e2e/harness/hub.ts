@@ -17,6 +17,11 @@ const HUB_CLI = "apps/hub/src/cli.ts";
 const DAEMON_CLI = "apps/daemon/src/cli.ts";
 /** Generous: the machine that runs the tests may be busy. */
 const START_MS = 60_000;
+/**
+ * What the Gasho server prints when another process has its port: when it looks before it starts (portInUse), or when
+ * it listens, if the port was taken in between.
+ */
+const PORT_TAKEN = /is in use|EADDRINUSE/;
 
 export interface HubOptions {
   /** Plugin folders (a built dist/) added with `plugin add --link` before the Gasho server starts. */
@@ -242,7 +247,7 @@ export class GashoHub {
       } catch (e) {
         await this.proc.stop();
         // freePort of another worker had the port for a moment, before it found the port kept.
-        if (attempt < 3 && /is in use/.test(this.proc.log())) continue;
+        if (attempt < 3 && PORT_TAKEN.test(this.proc.log())) continue;
         throw e;
       }
     }
@@ -312,7 +317,7 @@ export async function startHub(o: HubOptions = {}): Promise<GashoHub> {
     } catch (e) {
       await proc.stop();
       // Another process took the port after freePort let it go.
-      if (attempt < 3 && /is in use/.test(proc.log())) continue;
+      if (attempt < 3 && PORT_TAKEN.test(proc.log())) continue;
       await fsp.rm(root, { recursive: true, force: true });
       (service?.forget ?? forget)();
       throw e;

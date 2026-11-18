@@ -104,7 +104,15 @@ async function hubServer() {
     conns.push(conn);
     ws.on("message", (d) => conn.got.push(JSON.parse(String(d)) as DaemonToHub));
   });
-  return { url: `ws://127.0.0.1:${(wss.address() as AddressInfo).port}/ws/daemon`, conns, close: () => wss.close() };
+  return {
+    url: `ws://127.0.0.1:${(wss.address() as AddressInfo).port}/ws/daemon`,
+    conns,
+    // HubClient connects again after any other close, and its timer would keep a failed test running forever.
+    close: () => {
+      for (const { ws } of conns) ws.close(4001);
+      wss.close();
+    },
+  };
 }
 
 function client(url: string) {

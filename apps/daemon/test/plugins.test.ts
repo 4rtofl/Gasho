@@ -57,6 +57,21 @@ export default {
   },
 };
 `;
+const V6 = `
+export default {
+  async start(ctx) {
+    // Long enough for the settings to change while this version is still starting.
+    await new Promise((r) => setTimeout(r, 500));
+    let last;
+    globalThis.watch = setInterval(() => {
+      const now = JSON.stringify(ctx.settings);
+      if (now !== last) { last = now; ctx.emit("settings", ctx.settings); }
+    }, 20);
+  },
+  stop() { clearInterval(globalThis.watch); },
+  methods: { huge: () => "a".repeat(16 * 1024 * 1024), small: () => "ok" },
+};
+`;
 // What it started outlives it unless its stop runs; stop writes "stopped" in its folder, after it logged and emitted
 // (both fail once gasho-daemon is gone).
 const STOPS = `
@@ -90,11 +105,12 @@ const HASH5 = "eeeeeeeeeeeeeeee";
 const HASH6 = "ffffffffffffffff";
 const HASH7 = "1111111111111111";
 const HASH8 = "2222222222222222";
+const HASH9 = "3333333333333333";
 
 function setup(enabled = true, answerCode = true) {
   const sent: DaemonToHub[] = [];
   const logs: string[] = [];
-  const codes: Record<string, string> = { [HASH1]: V1, [HASH2]: V2, [HASH3]: V3, [HASH4]: BROKEN, [HASH5]: STOPS, [HASH6]: STOP_SAYS, [HASH7]: STOP_HANGS, [HASH8]: STOP_THROWS };
+  const codes: Record<string, string> = { [HASH1]: V1, [HASH2]: V2, [HASH3]: V3, [HASH4]: BROKEN, [HASH5]: STOPS, [HASH6]: V6, [HASH7]: STOP_HANGS, [HASH8]: STOP_THROWS, [HASH9]: STOP_SAYS };
   let runner: PluginRunner;
   const local = { folders: ["/work"], dataDir: fs.mkdtempSync(path.join(os.tmpdir(), "gasho-plugin-data-")) };
   // A gh that writes down each time it runs.
@@ -173,13 +189,13 @@ test("onSessionStop says what to notify, only with the permission and only of a 
   const { runner, state, until, logs } = setup();
   try {
     assert.equal(runner.hearsSessionStop(), false);
-    runner.update([{ id: "hello", hash: HASH6, run: true, settings: { body: "本文" }, sessionStop: true }]);
+    runner.update([{ id: "hello", hash: HASH9, run: true, settings: { body: "本文" }, sessionStop: true }]);
     await until(() => state()?.state === "running");
     assert.equal(runner.hearsSessionStop(), true);
     assert.deepEqual(await runner.sessionStop("s1"), { plugin: "hello", title: "レビューが終わりました", body: "本文" });
     assert.equal(await runner.sessionStop("nope"), undefined);
 
-    runner.update([{ id: "hello", hash: HASH6, run: true, settings: {} }]);
+    runner.update([{ id: "hello", hash: HASH9, run: true, settings: {} }]);
     assert.equal(runner.hearsSessionStop(), false);
     assert.equal(await runner.sessionStop("s1"), undefined);
 
@@ -280,6 +296,39 @@ test("a daemon part's events go to the Gasho server, at most once a second for e
     runner.update([{ id: "hello", hash: HASH3, run: false, settings: {} }]);
     await new Promise((r) => setTimeout(r, 1200));
     assert.equal(events("progress").length, before);
+  } finally {
+    await runner.stopAll();
+  }
+});
+
+test("a change of the settings reaches a daemon part without a call, in what start got too", async () => {
+  const { runner, until, sent } = setup();
+  const seen = () => sent.flatMap((m) => (m.type === "plugin.event" && m.topic === "settings" ? [m.data] : []));
+  try {
+    runner.update([{ id: "hello", hash: HASH6, run: true, settings: { refreshSeconds: 60, old: true } }]);
+    // While the version starts (its start waits 500 ms), so that it is given the settings of when it was started.
+    await new Promise((r) => setTimeout(r, 200));
+    runner.update([{ id: "hello", hash: HASH6, run: true, settings: { refreshSeconds: 30 } }]);
+    await until(() => seen().length === 1);
+    assert.deepEqual(seen(), [{ refreshSeconds: 30 }]);
+    // Running, and no call: a key taken away is gone too.
+    runner.update([{ id: "hello", hash: HASH6, run: true, settings: { refreshSeconds: 0 } }]);
+    await until(() => seen().length === 2);
+    assert.deepEqual(seen(), [{ refreshSeconds: 30 }, { refreshSeconds: 0 }]);
+  } finally {
+    await runner.stopAll();
+  }
+});
+
+test("a result too big for one message to the Gasho server fails that call, and the next call is answered", async () => {
+  const { runner, call, state, until } = setup();
+  try {
+    runner.update([{ id: "hello", hash: HASH6, run: true, settings: {} }]);
+    await until(() => state()?.state === "running");
+    const big = await call("huge");
+    assert.equal(big.result, undefined);
+    assert.equal(big.error, "huge の答えが大きすぎます（JSON にして 15MB まで）。");
+    assert.equal((await call("small")).result, "ok");
   } finally {
     await runner.stopAll();
   }

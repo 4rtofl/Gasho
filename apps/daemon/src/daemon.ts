@@ -1445,6 +1445,11 @@ export class Daemon {
     const deadline = Date.now() + LAUNCH_TIMEOUT_MS;
     let resumeAsked = false;
     let mcpDeclined = false;
+    // Claude Code's file has the session id as soon as its list does (the list reads the file). The list, read on the
+    // side, took 20 s and more on a busy machine, and printed nothing when it was stopped then.
+    let listed: AgentRow[] = [];
+    let listing: Promise<void> | undefined;
+    let listFailed = false;
     while (Date.now() < deadline) {
       await sleep(500);
       // The dialogs are drawn at the bottom, in place of the prompt box. A conversation being resumed can quote their
@@ -1483,9 +1488,17 @@ export class Daemon {
         }
         continue;
       }
-      const row = (await listAgents(this.cfg.claudeBin)).find((r) => r.pid === pid && r.sessionId);
+      const reg = await readRegistry(this.cfg.claudeDir, pid);
+      const row: AgentRow | undefined = reg?.sessionId ? { pid, sessionId: reg.sessionId } : listed.find((r) => r.pid === pid && r.sessionId);
       if (row?.sessionId && accept(row)) return { sessionId: row.sessionId, terminal, pid, resumeAsked, mcpDeclined };
       if (!isAlive(pid)) break;
+      listing ??= listAgents(this.cfg.claudeBin)
+        .then((rows) => void (listed = rows))
+        .catch((e: unknown) => {
+          if (!listFailed) log(`"${rcName}": could not read Claude Code's list of sessions, reading its file only`, e);
+          listFailed = true;
+        })
+        .finally(() => (listing = undefined));
     }
     const last = (await this.terminals.screen(terminal).catch(() => undefined))?.plain;
     if (last) log(`"${rcName}" did not start; the end of its screen:\n${bottomLines(last, 8).join("\n")}`);

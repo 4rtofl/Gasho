@@ -370,8 +370,16 @@ export class Daemon {
 
   async start(): Promise<void> {
     await this.updater.load();
-    if (this.updater.onTrial()) this.watchTrial();
-    else setTimeout(() => void this.updater.prune().catch((e: unknown) => log("could not remove the versions no longer used", e)), PRUNE_VERSIONS_MS).unref();
+    if (!this.updater.onTrial()) {
+      setTimeout(() => void this.updater.prune().catch((e: unknown) => log("could not remove the versions no longer used", e)), PRUNE_VERSIONS_MS).unref();
+      return this.serve();
+    }
+    const fail = this.watchTrial();
+    // Not left to the hook server's check at the end of the trial, which would go back without the real reason.
+    await this.serve().catch(fail);
+  }
+
+  private async serve(): Promise<void> {
     log(`machine ${this.cfg.machineId}, Gasho server ${this.cfg.hubUrl}`);
     if (!this.cfg.hookSecret) log("GASHO_HOOK_SECRET is not set; hook requests are accepted without a secret");
     this.canLaunch = await this.terminals.builtIn.available();
@@ -448,10 +456,11 @@ export class Daemon {
 
   /**
    * This version on trial, just started by an update (self-update.ts): it is confirmed once it has been up for a while
-   * and its hook server answers. Until then an exception ends it with why, and its next start goes back to the version
-   * before; a stop (SIGTERM, a restart of the machine) is not a failure (cli.ts), and the next start tries it again.
+   * and its hook server answers. Until then an exception ends it with why (a failure to start too, by what this
+   * returns), and its next start goes back to the version before; a stop (SIGTERM, a restart of the machine) is not a
+   * failure (cli.ts), and the next start tries it again.
    */
-  private watchTrial(): void {
+  private watchTrial(): (e: unknown) => void {
     const fail = (e: unknown) => {
       this.updater.recordFailure(e instanceof Error ? e.message : String(e));
       console.error(new Date().toISOString(), "[gasho-daemon] stopped on trial:", e);
@@ -468,6 +477,7 @@ export class Daemon {
         process.off("uncaughtException", fail);
       })().catch(fail);
     }, ms);
+    return fail;
   }
 
   /** What keeps this version on trial from being confirmed: its hook server does not answer (any answer counts). */

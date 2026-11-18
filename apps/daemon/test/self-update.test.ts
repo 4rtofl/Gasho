@@ -8,7 +8,7 @@ import path from "node:path";
 import { test } from "node:test";
 import type { DaemonUpdateInfo, HubToDaemon } from "@gasho/protocol";
 import { loadConfig } from "../src/config.ts";
-import { Daemon } from "../src/daemon.ts";
+import { DAEMON_VERSION, Daemon } from "../src/daemon.ts";
 import { cliIn, type Install, layoutOf, type Layout } from "../src/install.ts";
 import {
   beginTrial,
@@ -248,6 +248,47 @@ test("a version on trial is confirmed even when the versions no longer used cann
   assert.ok(!r.updater.onTrial());
   assert.ok(!existsSync(layout.trialFile));
   assert.ok(existsSync(path.join(layout.versions, "0.13.0")));
+});
+
+test("a version on trial that fails to start ends at once, and the version before says why", async (t) => {
+  const { dir, layout, npm } = await setup();
+  for (const v of ["0.14.0", DAEMON_VERSION]) await installed(layout, v);
+  await switchTo(layout, "0.14.0");
+  await beginTrial(layout, "0.14.0", DAEMON_VERSION, 5);
+  await startOnTrial(layout, DAEMON_VERSION, () => undefined);
+  // The end of the trial is not reached: the reason must be the start's own, not that the hook server did not answer.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const before = process.listeners("uncaughtException");
+  t.after(() => {
+    for (const l of process.listeners("uncaughtException")) if (!before.includes(l)) process.off("uncaughtException", l);
+  });
+  const d = new Daemon(
+    {
+      hubUrl: "ws://127.0.0.1:1",
+      machineId: "m",
+      token: "t",
+      hookPort: 0,
+      claudeDir: path.join(dir, "claude-dir"),
+      claudeBin: "claude",
+      ghBin: "gh",
+      pollIntervalMs: 60_000,
+      stateDir: dir,
+      attachmentsDir: path.join(dir, "attachments"),
+      trialMs: 60_000,
+    } as ConstructorParameters<typeof Daemon>[0],
+    { update: { install: { kind: "managed", version: DAEMON_VERSION }, layout, service: true } },
+  ) as unknown as Record<string, any>;
+  const exits: number[] = [];
+  d.exit = async (code: number) => void exits.push(code);
+  d.serve = async () => {
+    throw new Error("repos.json を読めませんでした");
+  };
+  await d.start();
+  assert.deepEqual(exits, [1]);
+  assert.equal(await startOnTrial(layout, DAEMON_VERSION, () => undefined), "0.14.0");
+  const back = updater({ layout, npm, version: "0.14.0" });
+  await back.updater.load();
+  assert.equal(back.updater.info().rolledBack?.error, "repos.json を読めませんでした");
 });
 
 test("a version on trial that ended before it was confirmed goes back at its next start, and the version before says why for a week", async () => {

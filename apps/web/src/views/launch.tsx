@@ -10,6 +10,7 @@ import { childPath, folderChoices, folderNameProblem, repoFolderName, repoProble
 import { go } from "@/lib/route";
 import { daemonAtLeast } from "@/lib/sessions";
 import { sendCommand, useAppState } from "@/lib/store";
+import { composing, keepOpenWhileComposing } from "@/lib/text-input";
 import { cn } from "@/lib/utils";
 
 const OTHER = "\u0000other";
@@ -45,7 +46,7 @@ function Description() {
 
 /** Enter in a field of a tool runs the tool, not the form's launch (and not while a Japanese input method converts). */
 const onEnter = (run: () => void) => (e: KeyboardEvent<HTMLInputElement>) => {
-  if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+  if (e.key !== "Enter" || composing(e)) return;
   e.preventDefault();
   run();
 };
@@ -555,6 +556,7 @@ export function LaunchDialog({ open, onClose, onLaunched, initial }: { open: boo
         <Dialog.Overlay className={DIALOG_OVERLAY} />
         <Dialog.Content
           className={cn(DIALOG_PANEL, "w-[min(36rem,calc(100vw-2rem))]")}
+          onEscapeKeyDown={keepOpenWhileComposing}
           onOpenAutoFocus={(e) => {
             // The first field rather than the close button; a select does not bring up a phone's keyboard.
             const first = (e.currentTarget as HTMLElement | null)?.querySelector<HTMLElement>("select, input");

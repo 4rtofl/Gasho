@@ -549,3 +549,37 @@ test("Claude Code's notice that background work ended is a note, not something t
   assert.equal(mixed?.role, "user");
   assert.deepEqual(mixed?.blocks, [{ type: "text", text: "直して" }]);
 });
+
+test("a page of a session not tracked is an error; of a new session without a transcript yet, an empty conversation", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-page-"));
+  const sent: DaemonToHub[] = [];
+  try {
+    const d = new Daemon({
+      hubUrl: "ws://127.0.0.1:1",
+      machineId: "m",
+      token: "t",
+      hookPort: 0,
+      claudeDir: path.join(dir, "claude"),
+      claudeBin: "/bin/false",
+      pollIntervalMs: 60_000,
+      stateDir: dir,
+      attachmentsDir: path.join(dir, "attachments"),
+    } as ConstructorParameters<typeof Daemon>[0]) as unknown as Record<string, any>;
+    d.hub = { send: (m: DaemonToHub) => sent.push(m) };
+    d.tracked.set("new", { info: { sessionId: "new", cwd: dir, status: "idle", rcMode: "none", prLinks: [] }, meta: emptyMeta() });
+    for (const [sessionId, error] of [["new", undefined], ["gone", "session not found"]] as const) {
+      await d.onHubMessage({ type: "transcript.get", requestId: `r-${sessionId}`, sessionId, limit: 50 });
+      assert.deepEqual(sent.at(-1), {
+        type: "transcript.page",
+        requestId: `r-${sessionId}`,
+        sessionId,
+        entries: [],
+        start: 0,
+        total: 0,
+        ...(error ? { error } : {}),
+      });
+    }
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

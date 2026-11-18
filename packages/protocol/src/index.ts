@@ -118,6 +118,11 @@ export interface SessionInfo {
   managed?: boolean;
   /** Inputs waiting until the session is idle. */
   pendingInputs?: number;
+  /**
+   * Sessions started from Gasho: the ids the session had before, oldest first. /clear (and /resume) make Claude Code go
+   * on in the same process under a new id; a page still open on an earlier id goes to this session.
+   */
+  previousSessionIds?: string[];
   /** Repositories inside the folder, when the folder is not in a repository but holds some (a workspace of repos). */
   repos?: SessionRepo[];
   /** Absent when the folder is not in a repository. */
@@ -449,8 +454,12 @@ export interface MachineInfo {
   repos?: RegisteredRepo[];
 }
 
-/** A step of an update of gasho-daemon (daemon.update), in order. */
-export type DaemonUpdateStep = "install" | "check" | "wait" | "restart";
+/**
+ * A step of an update of gasho-daemon (daemon.update), in order: installing the version beside the running one,
+ * checking that it starts, waiting for the inputs still to be typed, restarting, and the trial of the new version (it
+ * goes back to the previous one by itself when it ends before the trial is over).
+ */
+export type DaemonUpdateStep = "install" | "check" | "wait" | "restart" | "trial";
 
 /**
  * Updating gasho-daemon from Gasho (daemon.update). gasho-daemon installs each version in a folder of its own beside
@@ -468,10 +477,20 @@ export interface DaemonUpdateInfo {
   installed?: string[];
   /** The version this one replaced, when it was started by an update: the one to go back to. */
   previous?: string;
-  /** An update under way: the version it goes to, and its step (since `at`, ms since the epoch). */
+  /**
+   * An update under way: the version it goes to, and its step (since `at`, ms since the epoch); or the trial of this
+   * version after one (step "trial").
+   */
   progress?: { version: string; step: DaemonUpdateStep; at: number };
-  /** The last update, when it failed; nothing was changed. */
+  /** The last update, when it failed before the switch; nothing was changed. */
   failed?: { version: string; error: string; at: number };
+  /** The last update that went back by itself: the version that did not start, and why. */
+  rolledBack?: { from: string; to: string; error?: string; at: number };
+  /**
+   * How long (ms) a version started by an update is on trial: one that ends sooner goes back to the version before by
+   * itself. Absent from a gasho-daemon that does not go back.
+   */
+  trialMs?: number;
 }
 
 /**
@@ -1192,7 +1211,7 @@ export type SessionCommand =
   | { type: "session.skills"; sessionId: string }
   /**
    * Opens a conversation of session.history again in its folder, as a session started from Gasho
-   * (`claude --remote-control <name> --resume <id>`). Its name is the conversation's.
+   * (`claude --remote-control=<name> --resume <id>`). Its name is the conversation's.
    */
   | { type: "session.resume"; sessionId: string }
   /**

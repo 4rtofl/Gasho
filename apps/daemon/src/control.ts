@@ -31,6 +31,8 @@ export type ControlRequest =
 /** A session Gasho started, as `session list` shows it. */
 export interface ControlSession {
   sessionId: string;
+  /** The ids it had before /clear: `send` and `remove` find it by them too. */
+  previousSessionIds?: string[];
   /** The name `claude agents` (and so ListAgents) shows; the one to send a message to. */
   name: string;
   /** The name in Gasho, when it differs. */
@@ -349,7 +351,7 @@ async function textOf(
 
 /** The session `target` names: its id, the name Claude Code lists, or its name in Gasho. */
 export function pick(sessions: ControlSession[], target: string): ControlSession {
-  const byId = sessions.find((s) => s.sessionId === target);
+  const byId = sessions.find((s) => s.sessionId === target) ?? sessions.find((s) => s.previousSessionIds?.includes(target));
   if (byId) return byId;
   const named = sessions.filter((s) => s.name === target || s.gashoName === target);
   if (named.length === 1) return named[0]!;

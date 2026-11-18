@@ -110,7 +110,9 @@ npx @4rtofl/gasho-daemon service install
 loginctl enable-linger "$USER"
 ```
 
-Gasho から起動したセッション（端末と Claude Code）は、セッションごとに systemd のスコープ（`gasho-<名前>-xxxx.scope`）を作って、その中で動かす。gasho-daemon のサービスの外なので、gasho-daemon を動かし直したり止めたりしても、セッションは止まらない。動いているセッションは `systemctl --user list-units 'gasho-*.scope'` で見られる。端末を直接見て操作するには `gasho-daemon attach <名前>` を使う（Ctrl+] で抜ける）。
+Gasho から起動したセッション（端末と Claude Code）は、セッションごとに systemd のスコープ（`gasho-<名前>-xxxx.scope`）を作って、その中で動かす。gasho-daemon のサービスの外なので、gasho-daemon を動かし直したり止めたりしても、セッションは止まらない。動いているセッションは `systemctl --user list-units 'gasho-*.scope'` で見られる。
+
+`systemd-run` でスコープを作れないマシンでは、セッションを gasho-daemon のサービスの中で起動し、ログに `terminal <名前> runs inside gasho-daemon's service` と出す。このセッションは、gasho-daemon を動かし直したり更新したりすると、systemd がサービスごと止める。会話は残るので、端末で `claude --resume` を使えば開き直せる。端末を直接見て操作するには `gasho-daemon attach <名前>` を使う（Ctrl+] で抜ける）。
 
 | すること | コマンド |
 |---|---|
@@ -179,6 +181,25 @@ npx @4rtofl/gasho-daemon hooks install   # 追記する
 
 1〜3 で失敗したときは何も変えず、画面に理由を出す。セッションは止まらない。動かし直すあいだ（10秒ほど）は、その working server の様子が届かない。Gasho で答えるのを待っている権限の確認は、動かし直したあとは Gasho から答えられなくなるので、端末か公式アプリで答える。
 
+### 新しい版がうまく起動しなかったとき
+
+切り替えたあとの新しい版は、起動を終えてからの1分を試しの期間として動く。1分動き続け、hooks の待ち受け（7741）が答えたら、うまく起動したとみなす。そのあいだ、画面のその working server の行に「新しいバージョンを確かめています」と出る。
+
+起動は、答えない端末が1つあるごとに5秒ずつ遅くなる。5分のうちに起動を終えれば失敗には数えない。5分たっても起動を終えない版は、固まったとみなして自分で終わる。
+
+試しの期間のうちに止まった版（例外で落ちた、強制終了されたなど）は、systemd か launchd が起動し直したときに、自分で前の版に切り替えて終わる。そのあと systemd か launchd が、前の版で起動し直す。戻したときは、画面のその working server の行に理由が出る。
+
+- 自動で戻すのは、更新する前と後の版の両方にこの仕組みが入っているとき。この仕組みが入る前の版から更新したときと、入る前の版に戻したときは、自動では戻さない
+- 更新の確認のダイアログに「自動で前のバージョンに戻します」と出るのは、新しい版に更新するときだけ。古い版に戻すときは、ダイアログには出ないが、その版にこの仕組みが入っていれば自動で戻す
+- 試しの期間に、サービスを止めたり、マシンを起動し直したりしても、失敗には数えない。次に起動したときに、新しい版をもう一度試す
+- Gasho サーバーに登録を取り消されて止まったときも、失敗には数えない
+- 読み込むこともできない版は、2 の確かめで止まり、切り替えない
+
+次のものは自動では戻せない。画面の「<前の版> に戻す」で戻す。画面からも戻せないときは、working server で `~/.local/share/gasho/daemon/current` を前の版のフォルダーに向け直して、動かし直す（5 の表）。
+
+- 起動を終えたあとに、止まらずに固まる版
+- 試しの期間を過ぎてから落ちる版（systemd か launchd が起動し直し続ける）
+
 前の版のフォルダーは残しておき、画面の「<版> に戻す」で戻せる。使わなくなった版のフォルダーは、gasho-daemon が起動してしばらくしてから消す。今の版、戻す先の版、セッションの端末が使っている版は残す。
 
 公開されている最新の版は、Gasho サーバーが30分ごとに `npm view` で調べる。すぐに調べるときは、画面の「今すぐ調べる」を押す。Gasho サーバーのマシンにも、2 の GitHub Packages の設定が要る。調べなくてよいときは、Gasho サーバーを `GASHO_LATEST_CHECK=off` で起動する。
@@ -230,7 +251,8 @@ npx @4rtofl/gasho-daemon@latest service install
 | Gasho の画面から更新できない | 画面に出る理由。多くは、working server で `npx @4rtofl/gasho-daemon@latest service install` を一度実行すれば直る |
 | 更新に失敗する（npm で入れられない） | working server の npm の設定（2）。`npm view @4rtofl/gasho-daemon version` が版を返すか |
 | 「公開されている最新の版」を調べられない | Gasho サーバーのマシンの npm の設定（2）。Gasho サーバーを動かしている端末で `npm view @4rtofl/gasho-daemon version` |
-| 更新のあと、working server がつながらない | ログ（5 の表）。`~/.local/share/gasho/daemon/current` を前の版のフォルダーに向け直して動かし直すと、前の版に戻る |
+| 更新のあと、working server がつながらない | ログ（5 の表）。試しの期間のうちに止まっていれば、次の起動で前の版に戻る。戻らないときは、`~/.local/share/gasho/daemon/current` を前の版のフォルダーに向け直して動かし直す |
+| 「自動で戻しました」と出る | 画面の理由と、ログ（5 の表）の、新しい版が止まったところ |
 
 ## 設定（環境変数）
 
@@ -249,4 +271,5 @@ gasho-daemon の設定は環境変数で変える。gasho-daemon のコマンド
 | `GASHO_POLL_MS` | セッションの一覧を読み直す間隔（ミリ秒） | `3000` |
 | `GASHO_PLUGINS` | `none` にすると、この working server ではプラグインの daemon の部分を動かさない | なし |
 | `GASHO_DAEMON_HOME` | `service install` と更新が、gasho-daemon を版ごとに入れるフォルダー | `~/.local/share/gasho/daemon` |
+| `GASHO_DAEMON_PROBATION_MS` | 更新したあとの試しの期間（ミリ秒）。1時間（`3600000`）を超える値と、正の数でない値は、既定の値になる | `60000` |
 | `GASHO_NPM_BIN` | 更新で版を入れる npm | Node.js と同じフォルダーの `npm` |

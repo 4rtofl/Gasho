@@ -9,6 +9,7 @@
   "scripts": {
     "typecheck": "tsc -p packages/protocol && tsc -p packages/plugin-sdk && tsc -p apps/daemon && tsc -p apps/hub && tsc -p scripts && tsc -p e2e && npm run typecheck -w @gasho/web && tsc -p apps/web/test/tsconfig.node.json",
     "test": "npm run test -w @gasho/web && node --test --disable-warning=ExperimentalWarning \"apps/*/test/*.test.ts\" \"scripts/*.test.ts\" \"e2e/*.test.ts\"",
+    "test:coverage": "node --test --disable-warning=ExperimentalWarning --experimental-test-coverage --test-coverage-include=\"apps/*/src/**\" --test-coverage-include=\"packages/*/src/**\" --test-coverage-include=\"packages/*/scripts/**\" --test-coverage-include=\"scripts/*.ts\" --test-coverage-include=\"e2e/*.ts\" --test-coverage-exclude=\"**/*.test.ts\" \"apps/*/test/*.test.ts\" \"scripts/*.test.ts\" \"e2e/*.test.ts\"",
     "hub": "npm run start -w @gasho/hub",
     "hub:pair": "npm run pair -w @gasho/hub",
     "hub:devices": "npm run devices -w @gasho/hub",
@@ -21,7 +22,9 @@
   "devDependencies": {
     "@playwright/test": "^1.64.1",
     "@types/node": "^24.0.0",
-    "typescript": "^7.0.2"
+    "@types/ws": "^8.18.2",
+    "typescript": "^7.0.2",
+    "ws": "^8.22.2"
   },
   "engines": {
     "node": ">=24"

@@ -1,7 +1,7 @@
 #!/usr/bin/env -S node --disable-warning=ExperimentalWarning
 // The fake claude (fakes.ts). Besides the table, it answers `claude agents --json` and the control requests of
 // `claude -p --input-format stream-json` (the Agent SDK's initialize and get_usage, which the usage plugin sends). Run in
-// a terminal of gasho-daemon (`claude --remote-control <name> …`), it is a session: it draws a prompt box as Claude
+// a terminal of gasho-daemon (`claude --remote-control=<name> …`), it is a session: it draws a prompt box as Claude
 // Code does (what apps/daemon/src/managed.ts reads), is listed by `claude agents` while it runs, and answers each text
 // sent to it, writing both into its transcript (~/.claude/projects/<folder>/<session>.jsonl).
 import { randomUUID } from "node:crypto";
@@ -87,7 +87,7 @@ function session(args: string[]): Promise<number> {
   const resume = args.indexOf("--resume") >= 0 ? args[args.indexOf("--resume") + 1] : undefined;
   const sessionId = resume && !args.includes("--fork-session") ? resume : randomUUID();
   const cwd = process.cwd();
-  const row: AgentRow = { pid: process.pid, cwd, kind: "interactive", startedAt: Date.now(), sessionId, name: args[1], status: "idle" };
+  const row: AgentRow = { pid: process.pid, cwd, kind: "interactive", startedAt: Date.now(), sessionId, name: args[0]?.slice("--remote-control=".length), status: "idle" };
   const rowFile = path.join(sessionsDir(), `${process.pid}.json`);
   fs.mkdirSync(sessionsDir(), { recursive: true });
   const saveRow = () => {
@@ -188,6 +188,6 @@ await runFake<ClaudeTable>("claude", async (table, args) => {
     return 0;
   }
   if (args.includes("-p") && args.join(" ").includes("--input-format stream-json")) return controlRequests(table);
-  if (args[0] === "--remote-control" && process.stdin.isTTY) return session(args);
+  if (args[0]?.startsWith("--remote-control=") && process.stdin.isTTY) return session(args);
   return undefined;
 });

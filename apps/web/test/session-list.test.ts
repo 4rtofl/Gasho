@@ -8,6 +8,7 @@ import {
   hidesSessionTabs,
   holdOrder,
   MAX_CHANGES,
+  movedKeys,
   normalizeCategories,
   OTHER_CATEGORY,
   rowAfterRemoval,
@@ -143,6 +144,17 @@ test("while held, the list keeps the order it showed; what came meanwhile comes 
   assert.deepEqual(order(arrangeCategories(now, {}, held)), ["x:a,b", "y:n,c"]);
   assert.deepEqual(order(arrangeCategories(now, {})), ["y:n,c", "x:b,a"]);
   assert.deepEqual(order(arrangeCategories(now, withCategoryOrder({}, ["y", "x"]), held)), ["y:n,c", "x:a,b"]);
+});
+
+test("a session that /clear gave a new id keeps its place in the order dragged into, and in the order held", () => {
+  const prefs = withSessionOrder({}, "x", [key("a"), key("b"), key("c")], ["x"]);
+  const held = holdOrder([cat("x", ["b", "c", "a"])]);
+  // c goes on as c2; d runs under an id another session had before.
+  const machines = [machine("mac", [session("c2", { previousSessionIds: ["c", "d"] }), session("a"), session("b"), session("d")])];
+  const now = [cat("x", ["c2", "a", "b"])];
+  assert.deepEqual(order(arrangeCategories(now, prefs, null, movedKeys(machines))), ["x:a,b,c2"]);
+  assert.deepEqual(order(arrangeCategories(now, {}, held, movedKeys(machines))), ["x:b,c2,a"]);
+  assert.deepEqual([...movedKeys(machines)], [[key("c"), key("c2")]]);
 });
 
 test("the saved orders of sessions are kept for at most 100 categories, those of gone categories dropped first", () => {

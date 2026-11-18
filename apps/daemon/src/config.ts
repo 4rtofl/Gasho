@@ -2,6 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { claudeTmpRoot } from "./claude-tmp.ts";
 import { credentialsPath, daemonUrl, type Credentials } from "./credentials.ts";
+import { TRIAL_MAX_MS, TRIAL_MS } from "./self-update.ts";
 
 export interface DaemonConfig {
   hubUrl: string;
@@ -26,6 +27,8 @@ export interface DaemonConfig {
   pluginDataDir: string;
   /** False when GASHO_PLUGINS=none: no plugin's daemon part runs on this working server. */
   runPlugins: boolean;
+  /** How long a version started by an update is on trial (self-update.ts). */
+  trialMs: number;
 }
 
 export function loadConfig(creds: Credentials, env: NodeJS.ProcessEnv = process.env): DaemonConfig {
@@ -46,5 +49,15 @@ export function loadConfig(creds: Credentials, env: NodeJS.ProcessEnv = process.
     pluginCacheDir: path.join(env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "gasho", "daemon-plugins"),
     pluginDataDir: path.join(env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "gasho", "plugin-data"),
     runPlugins: env.GASHO_PLUGINS !== "none",
+    trialMs: msUpTo(env.GASHO_DAEMON_PROBATION_MS, TRIAL_MAX_MS) ?? TRIAL_MS,
   };
+}
+
+/**
+ * A length of time in milliseconds set in the environment, when it is one up to `max`: empty or not a number would be
+ * none at all, and setTimeout takes one over about 24 days for 1 ms.
+ */
+function msUpTo(value: string | undefined, max: number): number | undefined {
+  const n = Number(value);
+  return value && n > 0 && n <= max ? n : undefined;
 }

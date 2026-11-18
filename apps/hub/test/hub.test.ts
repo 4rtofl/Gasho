@@ -157,7 +157,7 @@ test("transcript.get for an offline machine answers with an error", () => {
   hub.onClientMessage(c, { type: "transcript.get", machine: machineId, sessionId: "s1", limit: 50 });
   const page = c.sent.at(-1);
   assert.ok(page?.type === "transcript.page");
-  assert.equal(page.error, "machine is offline");
+  assert.equal(page.error, "working server がオフラインです。");
 });
 
 test("revoking a machine disconnects it, fails the commands under way on it, and removes it from browsers", () => {
@@ -168,6 +168,7 @@ test("revoking a machine disconnects it, fails the commands under way on it, and
   hub.onClientConnect(c);
   hub.onClientMessage(c, { type: "session.input", requestId: "a", machine: machineId, sessionId: "s1", text: "テスト" });
   assert.equal(d.sent.at(-1)?.type, "session.input");
+  hub.onClientMessage(c, { type: "git.graph.get", machine: machineId, sessionId: "s1" });
   assert.equal(hub.revokeDevice(machineId), true);
   assert.equal(d.closed?.[0], CLOSE_INVALID_CREDENTIALS);
   hub.onDaemonClose(d); // as the socket's close follows
@@ -178,6 +179,9 @@ test("revoking a machine disconnects it, fails the commands under way on it, and
     machine: machineId,
     result: { ok: false, error: "working server の登録が外されました。" },
   });
+  const graph = c.sent.find((m) => m.type === "git.graph");
+  assert.ok(graph?.type === "git.graph" && !graph.graph);
+  assert.equal(graph.error, "working server の登録が外されました。");
   assert.deepEqual(c.sent.at(-1), { type: "machine.removed", id: machineId });
   assert.equal(hub.revokeDevice(machineId), false);
 });
@@ -415,7 +419,8 @@ test("git.graph.get fails when the working server is offline or disconnects", ()
   hub.onClientMessage(c, { type: "git.graph.get", machine: machineId, sessionId: "s1" });
   hub.onDaemonClose(d);
   const failed = c.sent.filter((m) => m.type === "git.graph").at(-1);
-  assert.ok(failed?.type === "git.graph" && failed.error && !failed.graph);
+  assert.ok(failed?.type === "git.graph" && !failed.graph);
+  assert.equal(failed.error, "working server との接続が切れました。");
 });
 
 test("git.graph.get passes the chosen repository through and echoes it with the graph", () => {

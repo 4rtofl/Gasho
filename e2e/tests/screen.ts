@@ -37,14 +37,14 @@ export const onPhone = (page: Page): boolean => (page.viewportSize()?.width ?? 1
 
 /** On a phone, opens the drawer that holds the sidebar; on a computer, the sidebar is there already. */
 export async function openSidebar(page: Page): Promise<void> {
-  if (onPhone(page)) await page.getByRole("button", { name: "Open navigation" }).click();
+  if (onPhone(page)) await page.getByRole("button", { name: "サイドバーを開く" }).click();
 }
 
 /** On a phone, closes the drawer (it is a dialog: an open one keeps the page from reloading itself for a new build). */
 export async function closeSidebar(page: Page): Promise<void> {
   if (!onPhone(page)) return;
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("dialog", { name: "Navigation" })).toBeHidden();
+  await expect(page.getByRole("dialog", { name: "サイドバー" })).toBeHidden();
 }
 
 /** The connection as the screen tells it: 接続中 · <this browser's name> in the sidebar's footer, or 再接続中…. */
@@ -61,6 +61,6 @@ export async function expectConnection(page: Page, connected: boolean, deviceNam
   }
   await expect(topBar).toBeHidden({ timeout });
   await openSidebar(page);
-  await expect(page.getByRole("dialog", { name: "Navigation" }).getByText(`接続中 · ${deviceName}`, { exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "サイドバー" }).getByText(`接続中 · ${deviceName}`, { exact: true })).toBeVisible();
   await closeSidebar(page);
 }

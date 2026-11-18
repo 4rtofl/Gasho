@@ -1,0 +1,1 @@
+{ "id": "e2e-groupings", "name": "E2E 分け方", "version": "1.0.0", "api": "1.12", "web": { "js": "web.js" } }

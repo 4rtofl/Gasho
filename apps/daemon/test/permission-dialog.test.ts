@@ -149,20 +149,25 @@ test("the dialog's text tells which of the calls without a result it is about, o
   assert.equal(shownId([edit, call("toolu_11", "Edit", { file_path: "/w/sub/notes.txt", old_string: "a", new_string: "b" })], editing), undefined);
 
   // A fetch shows its URL; other tools their name and the texts of their input.
-  const fetching = [
-    RULE,
-    " Fetch",
-    " Claude wants to fetch content from example.com",
-    DASHES,
-    " url: https://example.com/",
-    " prompt: What is the title of this page? Answer",
-    " with one word only.",
-    DASHES,
-    ...bottom([" Do you want to allow Claude to fetch this", " content?"], [["1. Yes"], ["2. Yes, and don't ask again for example.com"], ["3. No, and tell Claude what to do differently", "   (esc)"]], 0),
-  ].join("\n");
+  const fetching = (...url: string[]) =>
+    [
+      RULE,
+      " Fetch",
+      " Claude wants to fetch content from example.com",
+      DASHES,
+      ...url,
+      " prompt: What is the title of this page? Answer",
+      " with one word only.",
+      DASHES,
+      ...bottom([" Do you want to allow Claude to fetch this", " content?"], [["1. Yes"], ["2. Yes, and don't ask again for example.com"], ["3. No, and tell Claude what to do differently", "   (esc)"]], 0),
+    ].join("\n");
   const fetch = (url: string) => call("toolu_12", "WebFetch", { url, prompt: "What is the title of this page?" });
-  assert.equal(shownId([fetch("https://example.com/")], fetching), "toolu_12");
-  assert.equal(shownId([fetch("https://example.org/")], fetching), undefined);
+  assert.equal(shownId([fetch("https://example.com/")], fetching(" url: https://example.com/")), "toolu_12");
+  assert.equal(shownId([fetch("https://example.org/")], fetching(" url: https://example.com/")), undefined);
+  // The URL on the screen is the whole URL, also when it wraps.
+  assert.equal(shownId([fetch("https://example.com/")], fetching(" url: https://example.com/admin/delete")), undefined);
+  const long = "https://example.com/docs/a-rather-long-path/that-wraps/index.html";
+  assert.equal(shownId([fetch(long)], fetching(` url: ${long.slice(0, 44)}`, ` ${long.slice(44)}`)), "toolu_12");
   const reading = [RULE, " Read file", DASHES, " Read(/etc/hosts)", DASHES, ...bottom([" Do you want to proceed?"], [["1. Yes"], ["2. Yes, allow reading from /etc and", "   /private/etc during this session"], ["3. No"]], 0)].join("\n");
   assert.equal(shownId([call("toolu_13", "Read", { file_path: "/etc/passwd" }), call("toolu_14", "Read", { file_path: "/etc/hosts" })], reading), "toolu_14");
 });

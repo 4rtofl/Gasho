@@ -185,7 +185,7 @@ function flat(s: string): string {
 /**
  * Whether Claude Code's permission dialog shows this call. A command must be all that is drawn between the dashes
  * above the question, or its end when the dialog's top is above the screen; a file's name must end the question; a
- * fetch must show its URL; another tool, its name and every text of its input.
+ * fetch's URL must be all that its "url:" shows; another tool must show its name and every text of its input.
  */
 function dialogShows(c: { name: string; input: Record<string, unknown> }, d: DialogText): boolean {
   if (c.name === "Bash") {
@@ -203,8 +203,11 @@ function dialogShows(c: { name: string; input: Record<string, unknown> }, d: Dia
     return !!file && text.endsWith(`${flat(path.basename(file))}?`);
   }
   if (c.name === "WebFetch") {
+    // A long URL wraps: it goes on until the line of the prompt.
     const url = str(c.input.url);
-    return !!url && text.includes(flat(`url: ${url}`));
+    const at = d.lines.findIndex((l) => /^\s*url: /.test(l));
+    const end = d.lines.findIndex((l, i) => i > at && /^\s*prompt: /.test(l));
+    return !!url && at >= 0 && end > at && flat(d.lines.slice(at, end).join("\n")) === flat(`url: ${url}`);
   }
   const texts = Object.values(c.input).filter((v): v is string => typeof v === "string" && v.trim() !== "");
   return text.includes(flat(c.name.split("__").at(-1) ?? "")) && texts.every((v) => text.includes(flat(v)));

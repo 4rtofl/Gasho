@@ -147,6 +147,9 @@ test("the dialog's text tells which of the calls without a result it is about, o
   assert.equal(shownId([edit, write], creating), "toolu_10");
   // Another notes.txt: the question cannot tell them apart.
   assert.equal(shownId([edit, call("toolu_11", "Edit", { file_path: "/w/sub/notes.txt", old_string: "a", new_string: "b" })], editing), undefined);
+  // The question tells the file's whole name and what the tool does to it.
+  assert.equal(shownId([edit], editing.replace("edit to notes.txt?", "edit to mynotes.txt?")), undefined);
+  assert.equal(shownId([call("toolu_11", "Write", { file_path: "/w/notes.txt", content: "a" })], editing), undefined);
 
   // A fetch shows its URL; other tools their name and the texts of their input.
   const fetching = (...url: string[]) =>
@@ -170,6 +173,20 @@ test("the dialog's text tells which of the calls without a result it is about, o
   assert.equal(shownId([fetch(long)], fetching(` url: ${long.slice(0, 44)}`, ` ${long.slice(44)}`)), "toolu_12");
   const reading = [RULE, " Read file", DASHES, " Read(/etc/hosts)", DASHES, ...bottom([" Do you want to proceed?"], [["1. Yes"], ["2. Yes, allow reading from /etc and", "   /private/etc during this session"], ["3. No"]], 0)].join("\n");
   assert.equal(shownId([call("toolu_13", "Read", { file_path: "/etc/passwd" }), call("toolu_14", "Read", { file_path: "/etc/hosts" })], reading), "toolu_14");
+  // The heading tells the kind of dialog: a command's description may hold another tool's name and input.
+  const hosts = [
+    RULE,
+    " Bash command",
+    " Tip: auto mode handles these prompts for you —",
+    ' choose "switch to auto mode" below',
+    " Read the hosts file",
+    DASHES,
+    " cat /etc/hosts",
+    DASHES,
+    ...bottom([" Do you want to proceed?"], COMMAND_CHOICES, 0),
+  ].join("\n");
+  assert.equal(shownId([call("toolu_14", "Read", { file_path: "/etc/hosts" })], hosts), undefined);
+  assert.equal(shownId([call("toolu_15", "Bash", { command: "cat /etc/hosts", description: "Read the hosts file" })], hosts), "toolu_15");
 });
 
 test("the transcript keeps the calls without a result until the person writes", () => {

@@ -171,8 +171,33 @@ export const OPEN_DIALOG = "dialog:";
 /** Tools whose dialog is not a permission to use them, or that do not ask for one. */
 const NOT_ASKING = new Set(["AskUserQuestion", "ExitPlanMode", "Agent", "Task"]);
 
-/** Tools whose dialog asks about a file, whose name ends the question ("Do you want to make this edit to a.ts?"). */
-const FILE_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
+/**
+ * Tools whose dialog asks about a file, and the verbs before its name that end the question ("Do you want to make this
+ * edit to a.ts?").
+ */
+const FILE_VERBS = new Map([
+  ["Edit", ["make this edit to"]],
+  ["MultiEdit", ["make this edit to"]],
+  ["Write", ["create", "overwrite", "write to"]],
+  ["NotebookEdit", ["make this edit to", "insert this cell into", "delete this cell from"]],
+]);
+
+/** Claude Code's kinds of permission dialog: a command's, a file's, a fetch's, and any other tool's. */
+type DialogKind = "command" | "file" | "fetch" | "other";
+
+function callKind(name: string): DialogKind {
+  if (name === "Bash") return "command";
+  if (FILE_VERBS.has(name)) return "file";
+  return name === "WebFetch" ? "fetch" : "other";
+}
+
+/** The kind that a dialog's heading (its first line, below the rule) tells: "Bash command", "Edit file", "Fetch"… */
+function headingKind(heading: string): DialogKind {
+  const h = heading.trim();
+  if (/^(Bash|Run) command\b/.test(h)) return "command";
+  if (/^((Edit|Create|Overwrite|Write) file|Edit notebook)$/.test(h)) return "file";
+  return h === "Fetch" ? "fetch" : "other";
+}
 
 /** The dashes that Claude Code draws above and below the command in its dialog. */
 const DASHES_RE = /^╌{8,}$/;
@@ -183,12 +208,17 @@ function flat(s: string): string {
 }
 
 /**
- * Whether Claude Code's permission dialog shows this call. A command must be all that is drawn between the dashes
- * above the question, or its end when the dialog's top is above the screen; a file's name must end the question; a
- * fetch's URL must be all that its "url:" shows; another tool must show its name and every text of its input.
+ * Whether Claude Code's permission dialog shows this call. Its heading must be of the call's kind; a dialog whose top
+ * is above the screen can only be a command's or a file's (only they grow so tall). A command must be all that is
+ * drawn between the dashes above the question, or its end when the top is cut off; a file's question must end with
+ * its tool's verb and the file's name; a fetch's URL must be all that its "url:" shows; another tool must show its
+ * name before "(" and every text of its input. An MCP tool never fits: Claude Code shows it by a name made for people
+ * ("demo — Save Note Tool:"), not by its own.
  */
 function dialogShows(c: { name: string; input: Record<string, unknown> }, d: DialogText): boolean {
-  if (c.name === "Bash") {
+  const kind = callKind(c.name);
+  if (d.top ? headingKind(d.lines[0] ?? "") !== kind : kind !== "command" && kind !== "file") return false;
+  if (kind === "command") {
     const command = str(c.input.command);
     const dashes = d.lines.flatMap((l, i) => (DASHES_RE.test(l) ? [i] : []));
     const end = dashes.at(-1);
@@ -198,11 +228,11 @@ function dialogShows(c: { name: string; input: Record<string, unknown> }, d: Dia
     return start === undefined ? shown !== "" && flat(command).endsWith(shown) : shown === flat(command);
   }
   const text = flat(d.lines.join("\n"));
-  if (FILE_TOOLS.has(c.name)) {
+  if (kind === "file") {
     const file = str(c.input.file_path) ?? str(c.input.notebook_path);
-    return !!file && text.endsWith(`${flat(path.basename(file))}?`);
+    return !!file && (FILE_VERBS.get(c.name) ?? []).some((verb) => text.endsWith(flat(`${verb} ${path.basename(file)}?`)));
   }
-  if (c.name === "WebFetch") {
+  if (kind === "fetch") {
     // A long URL wraps: it goes on until the line of the prompt.
     const url = str(c.input.url);
     const at = d.lines.findIndex((l) => /^\s*url: /.test(l));
@@ -210,7 +240,7 @@ function dialogShows(c: { name: string; input: Record<string, unknown> }, d: Dia
     return !!url && at >= 0 && end > at && flat(d.lines.slice(at, end).join("\n")) === flat(`url: ${url}`);
   }
   const texts = Object.values(c.input).filter((v): v is string => typeof v === "string" && v.trim() !== "");
-  return text.includes(flat(c.name.split("__").at(-1) ?? "")) && texts.every((v) => text.includes(flat(v)));
+  return text.includes(flat(`${c.name}(`)) && texts.every((v) => text.includes(flat(v)));
 }
 
 /** The calls without a result that may have a permission dialog (a subagent's call is in its own transcript). */

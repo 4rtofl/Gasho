@@ -275,7 +275,6 @@ test("読み込み中・コミット 0 件・detached・件数を切ったとき
 });
 
 test("読み込みの途中で working server が切れても、英語のエラーは出ない", async ({ page, hub }) => {
-  test.fail(true, "#177: hub が答えを待っている要求に machine disconnected と返し、画面がそのまま出す");
   const d = await sessionDaemon(hub);
   // Never answered: the Gasho server is still waiting when the working server goes.
   serveGraph(d, () => undefined);
@@ -285,5 +284,6 @@ test("読み込みの途中で working server が切れても、英語のエラ�
   await d.disconnect();
   await expect(panel.getByText("mac はオフラインです。")).toBeVisible();
   await expect(panel.getByText("読み込み中…")).toHaveCount(0);
+  await expect(panel.getByText("working server との接続が切れました。")).toBeVisible();
   await expect(panel.getByText("machine disconnected")).toHaveCount(0);
 });

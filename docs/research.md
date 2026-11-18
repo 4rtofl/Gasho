@@ -185,6 +185,35 @@ zellij を操作するときは、`--session` で対象を必ず指定する。r
 - どちらのコマンドも 100ms 以内に終わった
 - 空の `CODEX_HOME` で `codex login status` を実行すると、その中に `tmp` フォルダーができた
 
+## 検証11：Codex の app-server との接続
+
+2026年11月18日に、Ubuntu の codex-cli 0.170.0 と ChatGPT のログイン（Free プラン）で、ワークツリーの gasho-daemon とテスト用の Gasho サーバーを使って確かめた。
+
+確かめられたこと：
+
+- Node の組み込みの WebSocket は `ws:` と `wss:` の URL しか受け付けず、Unix ソケットにつなげない。そのため gasho-daemon の依存に `ws` を足した
+- `codex app-server daemon start` は、stdout に1行の JSON を出す。起動したときは `status` が `started`、動いていたときは `alreadyRunning` で、どちらにも `socketPath` がある
+- ソケットは `~/.codex/app-server-control/app-server-control.sock` にあり、実体は `/tmp/codex-daemon-<uid>/` の下にある
+- 常駐の app-server は `--listen unix:// --analytics-default-enabled --managed-daemon` の引数で動いていた
+- `systemd-run --user --scope` で起動すると、app-server はそのスコープの cgroup に入り、gasho-daemon を止めても動き続けた
+- この環境で承認のポリシーを指定せずに `thread/start` すると、応答の `approvalPolicy` は `on-request`、サンドボックスは `readOnly` だった
+- 発言がまだないスレッドの `thread/turns/list` は「not materialized」のエラーを返す。`thread/items/list` は発言があるスレッドでだけ使える
+- 無いスレッドの `thread/resume` は `no rollout found` のエラーを返す
+- 実行中でないスレッドの `turn/interrupt` は `no active turn to interrupt` のエラーを返す
+- 拒否したコマンドの項目は、`thread/items/list` の履歴には残らなかった。そのターンの応答の文だけが残る
+- `codex app-server daemon restart` のあとも、`stop` のあとも、gasho-daemon はつなぎ直してスレッドを読み込み直した。`stop` のあとは gasho-daemon が app-server を起動し直す
+- CLI からの起動、発言、通知、権限の確認の許可と拒否、gasho-daemon の起動し直し、割り込み、名前の変更、削除を、実際の Codex で確かめた
+
+確かめられなかったこと：
+
+- `config.toml` に書いた承認のポリシーとサンドボックスの値が使われること
+- 権限の確認を長く保留したときの動き
+- ファイルの変更の承認、Codex からの質問、権限の追加の要求の実際の中身（型の定義と偽のサーバーでだけ確かめた）
+- `--analytics-default-enabled` の意味と、止める設定
+- tmpfs の容量がいっぱいのときの動き
+- Codex を更新したときのつなぎ直し
+- Mac での動き
+
 ## 未確認の事項
 
 - 名前の変更が、公式アプリのセッション名に反映されるか

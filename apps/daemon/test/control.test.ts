@@ -132,7 +132,7 @@ function fakeDaemon(o: { listedAs: string; renameShows?: boolean }) {
     calls.push(req);
     switch (req.op) {
       case "session.launch":
-        session = { sessionId: SID, name: o.listedAs, ...(req.name ? { gashoName: req.name } : {}), cwd: req.cwd, terminal: "gasho-x-1234", status: "idle" };
+        session = { sessionId: SID, name: o.listedAs, ...(req.name ? { gashoName: req.name } : {}), cwd: req.cwd, terminal: "gasho-x-1234", agent: "claude", status: "idle" };
         return { ok: true, sessionId: SID };
       case "session.rename":
         if (session && o.renameShows !== false) session = { ...session, name: req.name, gashoName: undefined };
@@ -199,8 +199,8 @@ test("a launch that fails says why, and nothing is typed", async () => {
 
 test("send finds the session by the name Claude Code lists, its Gasho name or its id", async () => {
   const sessions: ControlSession[] = [
-    { sessionId: "id-1", name: "impl-79", cwd: "/a", terminal: "t1", status: "idle" },
-    { sessionId: "id-2", name: "wt-ab", gashoName: "review", cwd: "/b", terminal: "t2", status: "busy" },
+    { sessionId: "id-1", name: "impl-79", cwd: "/a", terminal: "t1", agent: "claude", status: "idle" },
+    { sessionId: "id-2", name: "wt-ab", gashoName: "review", cwd: "/b", terminal: "t2", agent: "claude", status: "busy" },
   ];
   const sent: ControlRequest[] = [];
   const { io: cli, out } = io(async (req) => {
@@ -225,11 +225,11 @@ test("send finds the session by the name Claude Code lists, its Gasho name or it
 });
 
 test("list prints one line per session, or JSON", async () => {
-  const sessions: ControlSession[] = [{ sessionId: "id-1", name: "impl-79", cwd: "/a", terminal: "t1", status: "idle" }];
+  const sessions: ControlSession[] = [{ sessionId: "id-1", name: "impl-79", cwd: "/a", terminal: "t1", agent: "claude", status: "idle" }];
   const { io: cli, out } = io(async () => ({ ok: true, sessions }));
   await sessionCommand(["list"], cli);
   await sessionCommand(["list", "--json"], cli);
-  assert.equal(out[0], "impl-79\tidle\t/a\tid-1");
+  assert.equal(out[0], "impl-79\tidle\t/a\tid-1\tclaude");
   assert.deepEqual(JSON.parse(out[1]!), sessions);
   const empty = io(async () => ({ ok: true, sessions: [] }));
   await sessionCommand(["list"], empty.io);
@@ -239,14 +239,36 @@ test("list prints one line per session, or JSON", async () => {
   const missing = io(async () => ({ ok: true, sessions: gone }));
   await sessionCommand(["list"], missing.io);
   await sessionCommand(["list", "--json"], missing.io);
-  assert.equal(missing.out[0], "impl-79\tidle\t/a\tid-1\t(folder missing)");
+  assert.equal(missing.out[0], "impl-79\tidle\t/a\tid-1\tclaude\t(folder missing)");
   assert.equal(JSON.parse(missing.out[1]!)[0].cwdMissing, true);
+});
+
+test("--agent codex starts Codex: it has no terminal, and the list says which agent runs each session", async () => {
+  const codex: ControlSession = { sessionId: "thread-1", name: "調査", cwd: "/a", agent: "codex", status: "idle" };
+  const calls: ControlRequest[] = [];
+  const { io: cli, out } = io(async (req) => {
+    calls.push(req);
+    return req.op === "session.launch" ? { ok: true, sessionId: "thread-1" } : { ok: true, sessions: [codex] };
+  });
+  await sessionCommand(["launch", "--cwd", "/a", "--name", "調査", "--agent", "codex", "--prompt", "はじめて"], cli);
+  assert.deepEqual(calls[0], { op: "session.launch", cwd: "/a", name: "調査", agent: "codex" });
+  assert.deepEqual(calls.at(-1), { op: "session.input", sessionId: "thread-1", text: "はじめて" });
+  assert.deepEqual(JSON.parse(out[0]!), { sessionId: "thread-1", name: "調査", cwd: "/a", agent: "codex" });
+  await sessionCommand(["list"], cli);
+  assert.equal(out[1], "調査\tidle\t/a\tthread-1\tcodex");
+  await assert.rejects(sessionCommand(["launch", "--cwd", "/a", "--agent", "gemini"], cli), /unknown agent: gemini/);
+});
+
+test("the control socket takes an agent it knows, and no other", () => {
+  assert.deepEqual(parseRequest({ op: "session.launch", cwd: "/a", agent: "codex" }), { op: "session.launch", cwd: "/a", agent: "codex" });
+  assert.deepEqual(parseRequest({ op: "session.launch", cwd: "/a" }), { op: "session.launch", cwd: "/a" });
+  assert.throws(() => parseRequest({ op: "session.launch", cwd: "/a", agent: "gemini" }), /unknown agent/);
 });
 
 test("session remove finds the session as send does, removes it by its id, and says why when the daemon refuses", async () => {
   const sessions: ControlSession[] = [
-    { sessionId: "id-1", name: "impl-79", cwd: "/gone", terminal: "t1", status: "idle", cwdMissing: true },
-    { sessionId: "id-2", name: "wt-ab", gashoName: "review", cwd: "/b", terminal: "t2", status: "busy" },
+    { sessionId: "id-1", name: "impl-79", cwd: "/gone", terminal: "t1", agent: "claude", status: "idle", cwdMissing: true },
+    { sessionId: "id-2", name: "wt-ab", gashoName: "review", cwd: "/b", terminal: "t2", agent: "claude", status: "busy" },
   ];
   const sent: ControlRequest[] = [];
   const { io: cli, out } = io(async (req) => {
@@ -376,7 +398,7 @@ test("through the socket, a launch is Daemon.launch, and the rename and the prom
     const listed = io((req) => controlRequest(file, req));
     await sessionCommand(["list", "--json"], listed.io);
     assert.deepEqual(JSON.parse(listed.out[0]!), [
-      { sessionId: SID, name: "wt-3c", gashoName: "impl-79", cwd: folder, terminal: r.terminal, status: "idle", pendingInputs: 2 },
+      { sessionId: SID, name: "wt-3c", gashoName: "impl-79", cwd: folder, agent: "claude", terminal: r.terminal, status: "idle", pendingInputs: 2 },
     ]);
     // Only sessions Gasho started take input, as from the Gasho server.
     const refused = await controlRequest(file, { op: "session.input", sessionId: "other", text: "x" });

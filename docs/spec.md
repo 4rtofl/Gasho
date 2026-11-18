@@ -169,6 +169,21 @@ working server は、ホスト名ではなく登録時に発行した ID で区�
 
 常駐は、systemd のユーザーサービス（Ubuntu）か launchd のエージェント（Mac）で行う（`service install`、docs/daemon-setup.md）。
 
+### Codex のセッション
+
+Codex のセッションは、Codex の常駐の app-server のスレッドである。gasho-daemon は Claude Code の経路（`claude agents`、トランスクリプト、hooks、端末）を通さず、app-server に JSON-RPC でつなぐ。
+
+- つなぐ前に `codex app-server daemon start` を実行し、返ってきた Unix ソケットに WebSocket でつなぐ。このコマンドは systemd のスコープの中で実行し、gasho-daemon のサービスを起動し直しても app-server が止まらないようにする
+- 起動は `thread/start` にフォルダーだけを渡す。承認のポリシーとサンドボックスは、利用者の Codex の設定に従う
+- Gasho が起動したスレッドは、`managed.json` と同じ場所の `codex-threads.json` に残す。接続が切れたら間隔を広げながら（1秒から30秒まで）つなぎ直し、スレッドを `thread/resume` で読み込み直す。切れているあいだに増えた会話は画面に送り、作業中だったターンが終わっていれば `Stop` を送る。Codex にスレッドが無くなっていたら、一覧から外す
+- 発言は、スレッドが idle なら `turn/start` で送り、作業中は gasho-daemon で待たせて、idle になったら1つずつ送る。待たせた発言は、gasho-daemon を起動し直すと消える（Claude Code と同じ）
+- 権限の確認の許可は `accept`、拒否は `decline`、今後も許可は Codex が提案した実行ポリシーの追加である。提案がないときは、今後も許可を出さない。別のクライアントが答えたら（`serverRequest/resolved`）、画面から消す
+- Gasho の画面で答えられない要求（MCP サーバーからの問い合わせなど）は、エラーで返す
+- 通知は、Claude Code の hook と同じ名前のイベント（`UserPromptSubmit`、`Stop`、`StopFailure`、`Notification`、`SessionEnd`）を gasho-daemon が作って送る
+- セッションの削除は、進行中のターンを止めてスレッドから離れ、記録から外す。会話は Codex に残り、`codex resume` で開ける
+- Codex が使えない working server への起動は、Gasho サーバーが断る。Codex を知らない古い gasho-daemon に届くと、Claude Code が起動してしまうためである
+- モデル、Effort、Ultracode の切り替えは適用しない（`unapplied` で返す）。ファイルの添付、フォーク、バックグラウンドの作業の停止は断る
+
 ### セッションの端末
 
 Gasho が起動するセッションは、gasho-daemon がセッションごとに起動する小さなプロセス（端末）の中で動く。端末は、node-pty で疑似端末を作って Claude Code を動かし、画面を xterm.js（VS Code の端末と同じもの）で保つ。gasho-daemon は、Unix ソケット（`~/.config/gasho/terminals/<名前>.sock`）で、画面の取得、キーと貼り付けの入力、終了を頼む。

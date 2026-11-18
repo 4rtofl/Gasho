@@ -18,7 +18,7 @@ import { sendCommand, useAppState } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { PluginWorktreeTabs } from "@/plugins/parts";
 import { useSessionListMode } from "@/plugins/session-list";
-import { LaunchDialog, type LaunchInitial } from "@/views/launch";
+import type { LaunchInitial } from "@/views/launch";
 
 /** How long to wait for a new session, a little longer than the Gasho server does. */
 export const LAUNCH_WAIT_MS = 60_000;
@@ -26,14 +26,14 @@ export const LAUNCH_WAIT_MS = 60_000;
 /**
  * Starting a session in a worktree's top folder and opening it: whether it can be, whether it is under way, and why it
  * could not. The new session opens only while the caller is still shown: one picked meanwhile is not left for it. When
- * Claude Code asks whether to trust the folder (a repository just cloned, say), `trustDialog` puts that question to the
- * person: the caller shows it, and only "信頼して起動する" there starts the session.
+ * Claude Code asks whether to trust the folder (a repository just cloned, say), `onAskTrust` puts that question to the
+ * person, in the app's dialog: the first session of a worktree replaces the screen that asked, and what the launch has
+ * to tell must still show then. Only "信頼して起動する" there starts the session.
  */
-export function useWorktreeLaunch(worktree: WorktreeSessions) {
+export function useWorktreeLaunch(worktree: WorktreeSessions, onAskTrust: (initial: LaunchInitial) => void) {
   const { machine } = worktree;
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string>();
-  const [trustAsk, setTrustAsk] = useState<LaunchInitial>();
   const shown = useRef(true);
   useEffect(() => {
     shown.current = true;
@@ -50,27 +50,31 @@ export function useWorktreeLaunch(worktree: WorktreeSessions) {
     if (!shown.current) return;
     setLaunching(false);
     if (!r.ok || !r.sessionId) {
-      if (r.needsTrust) setTrustAsk({ machine: machine.id, folder: worktree.path, trust: r.trustWarnings ?? [] });
+      if (r.needsTrust) onAskTrust({ machine: machine.id, folder: worktree.path, trust: r.trustWarnings ?? [] });
       else setError(r.error ?? "起動できませんでした。");
       return;
     }
     go({ name: "session", machine: machine.id, sessionId: r.sessionId });
   };
-  const trustDialog = trustAsk && <LaunchDialog open initial={trustAsk} onClose={() => setTrustAsk(undefined)} />;
-  return { canLaunch, launching, error, launch, trustDialog };
+  return { canLaunch, launching, error, launch };
 }
 
-/** `current`: the session open below, if any. `view`: the plugin's screen open below instead, if any. */
+/**
+ * `current`: the session open below, if any. `view`: the plugin's screen open below instead, if any. `onAskTrust`: see
+ * useWorktreeLaunch.
+ */
 export function SessionTabs({
   worktree,
   current,
   view,
   onAction,
+  onAskTrust,
 }: {
   worktree: WorktreeSessions;
   current?: string;
   view?: WorktreeView;
   onAction: (request: SessionActionRequest) => void;
+  onAskTrust: (initial: LaunchInitial) => void;
 }) {
   const { machine, sessions } = worktree;
   const active = useRef<HTMLButtonElement>(null);
@@ -78,7 +82,7 @@ export function SessionTabs({
   useEffect(() => {
     active.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, []);
-  const { canLaunch, launching, error, launch, trustDialog } = useWorktreeLaunch(worktree);
+  const { canLaunch, launching, error, launch } = useWorktreeLaunch(worktree, onAskTrust);
   const hidden = hidesSessionTabs(useSessionListMode());
   const unread = unreadSessions(useAppState().notifications);
 
@@ -144,7 +148,6 @@ export function SessionTabs({
           </p>
         )}
       </nav>
-      {trustDialog}
     </>
   );
 }

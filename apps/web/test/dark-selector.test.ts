@@ -22,6 +22,9 @@ test("the other selectors stay as they are", () => {
     ".dark + .a",
     ".dark ~ .a",
     ".dark::before",
+    // Selectors with & match as they did before.
+    ".dark & .foo",
+    ".dark :is(&) .foo",
   ]) {
     assert.equal(darkSelector(s), undefined, s);
   }

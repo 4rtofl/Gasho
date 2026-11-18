@@ -3,8 +3,11 @@ const DARK = /^\.dark(?![\w\\-]|[^\x00-\x7f])/;
 /** A pseudo-element at the start of the text: a selector cannot go on after one. */
 const PSEUDO_ELEMENT = /^:(:|before\b|after\b|first-line\b|first-letter\b)/i;
 
-/** The index of the first character from `from` outside (), [] and strings that `at` accepts, or the length of `text`. */
-function find(text: string, from: number, at: (i: number) => boolean): number {
+/**
+ * The index of the first character from `from` outside strings (and, unless `nested`, outside () and []) that `at`
+ * accepts, or the length of `text`.
+ */
+function find(text: string, from: number, at: (i: number) => boolean, nested = false): number {
   let depth = 0;
   let quote = "";
   for (let i = from; i < text.length; i++) {
@@ -15,13 +18,15 @@ function find(text: string, from: number, at: (i: number) => boolean): number {
     } else if (c === '"' || c === "'") quote = c;
     else if (c === "(" || c === "[") depth++;
     else if (c === ")" || c === "]") depth--;
-    else if (depth === 0 && at(i)) return i;
+    else if ((nested || depth === 0) && at(i)) return i;
   }
   return text.length;
 }
 
 /** `.dark .foo` as `.dark & .foo, & .dark .foo`; another selector as it is. */
 function dark(selector: string): string {
+  // CSS nesting puts `& ` before a selector only when it has no `&` (even in `:is()`): one with `&` places the part itself.
+  if (find(selector, 0, (i) => selector[i] === "&", true) < selector.length) return selector;
   const end = find(selector, 0, (i) => /[\s>+~]/.test(selector[i]!));
   const first = selector.slice(0, end);
   const rest = selector.slice(end);

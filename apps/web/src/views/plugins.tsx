@@ -242,10 +242,7 @@ function PluginCard({
             <button
               type="button"
               className={BUTTON}
-              onClick={() => {
-                go({ name: "settings" });
-                requestAnimationFrame(() => document.getElementById(`plugin-settings-${info.id}`)?.scrollIntoView({ block: "start" }));
-              }}
+              onClick={() => go({ name: "settings", plugin: info.id })}
             >
               <Settings2 className="size-3.5" />
               設定

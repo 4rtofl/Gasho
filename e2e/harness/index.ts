@@ -16,3 +16,4 @@ export {
   npmLatestAnswer,
 } from "./fakes.ts";
 export { GASHO_DIR } from "./process.ts";
+export { HUB_PACKAGE, hubInstallAnswer, type HubService, type HubServiceOptions } from "./hub-service.ts";

@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { PluginInfo } from "@gasho/protocol";
-import { beforeEach, expect, test } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
 import { PluginConversationEnd, PluginHeaderItems, PluginPageView, PluginPanelView, PluginSettingsSections } from "@/plugins/parts";
 import { connectHub, machine, session } from "./hub";
 
@@ -44,6 +44,14 @@ test("a plugin's page is drawn once its web part has loaded, in an element of it
   const page = await screen.findByText("ページ todo");
   expect(page.closest("[data-gasho-plugin]")?.getAttribute("data-gasho-plugin")).toBe("notes");
   expect(screen.getByRole("heading", { name: "メモの一覧" })).toBeTruthy();
+});
+
+test("a page opened before the Gasho server's first snapshot is loading, not missing", async () => {
+  render(<PluginPageView plugin="notes" page="list" params={{}} />);
+  expect(screen.getByText("読み込み中…")).toBeTruthy();
+  expect(screen.queryByText("このプラグインは、Gasho サーバーに入っていません。")).toBeNull();
+  await connectHub({ machines: [m1], plugins: [] });
+  expect(screen.getByText("このプラグインは、Gasho サーバーに入っていません。")).toBeTruthy();
 });
 
 test.each([
@@ -168,6 +176,19 @@ test("a part that throws shows an error in its place, and the session's other pa
   expect(await screen.findByText(/メモ の表示でエラーが起きました。/)).toBeTruthy();
   expect(screen.getByRole("button", { name: "もう一度" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "メモ" })).toBeTruthy();
+});
+
+test("the settings screen opened for a plugin scrolls to its section once it is drawn, also when opened before the snapshot", async () => {
+  const scrolled: Element[] = [];
+  vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (this: Element) {
+    scrolled.push(this);
+  });
+  location.hash = "#/settings/p/notes";
+  render(<PluginSettingsSections />);
+  expect(scrolled).toEqual([]);
+  await connectHub({ machines: [m1], plugins: [info({ id: "aaa", manifest: { ...info().manifest, id: "aaa", name: "前のプラグイン" } }), info()] });
+  expect(scrolled).toEqual([screen.getByRole("region", { name: "メモ" })]);
+  vi.restoreAllMocks();
 });
 
 test("the settings of a plugin are kept on the Gasho server or in this browser, as each says", async () => {

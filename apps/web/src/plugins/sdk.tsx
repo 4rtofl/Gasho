@@ -416,11 +416,15 @@ export const sdk: GashoSdk = {
   },
   useLaunchSession: () => {
     const info = usePluginInfo();
-    return async ({ machine, cwd, name, trust }): Promise<LaunchResult> => {
+    return async ({ machine, cwd, name, trust, agent }): Promise<LaunchResult> => {
       if (!info.manifest.permissions?.includes("session.launch")) {
         return { ok: false, error: `${info.manifest.name} には、セッションを起動する権限がありません（gasho-plugin.json の permissions）。` };
       }
-      const r = await sendCommand(machine, { type: "session.launch", cwd, name: name?.trim() || undefined, ...(trust ? { trust: true } : {}) }, 60_000);
+      const r = await sendCommand(
+        machine,
+        { type: "session.launch", cwd, name: name?.trim() || undefined, ...(trust ? { trust: true } : {}), ...(agent === "codex" ? { agent } : {}) },
+        60_000,
+      );
       if (r.ok && r.sessionId) return { ok: true, sessionId: r.sessionId };
       if (r.needsTrust) {
         return { ok: false, error: "Claude Code がこのフォルダーを信頼するかを聞いています。", needsTrust: true, ...(r.trustWarnings ? { trustWarnings: r.trustWarnings } : {}) };

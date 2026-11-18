@@ -4,6 +4,7 @@ import path from "node:path";
 import type {
   AgentInfo,
   AgentKind,
+  AgentOperation,
   AgentStatus,
   ClientToHub,
   CommandResult,
@@ -128,6 +129,9 @@ const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 const FEATURES = new Set<InputFeature>(["model", "effort", "ultracode", "files"]);
 const AGENT_KINDS: readonly AgentKind[] = ["claude", "codex"];
 const AGENT_STATUSES = new Set<unknown>(["available", "loginRequired", "unknown"] satisfies AgentStatus[]);
+const AGENT_OPERATIONS = new Set<unknown>(["model", "effort", "ultracode", "files", "fork", "background", "skills", "shell"] satisfies AgentOperation[]);
+/** Where the agent a new session starts with is kept (meta). */
+const DEFAULT_AGENT_KEY = "default_agent";
 /** An agent's version: x.y.z, with a pre-release after it. */
 const AGENT_VERSION_RE = /^\d{1,9}\.\d{1,9}\.\d{1,9}(?:[-+][0-9A-Za-z.+-]{1,40})?$/;
 
@@ -139,7 +143,13 @@ export function agentsOf(u: unknown): MachineAgents | undefined {
     const a = (u as Record<string, Partial<AgentInfo> | null | undefined>)[kind];
     if (!a || !AGENT_STATUSES.has(a.status)) continue;
     const version = typeof a.version === "string" && AGENT_VERSION_RE.test(a.version) ? a.version : undefined;
-    agents[kind] = { status: a.status as AgentStatus, ...(version ? { version } : {}), ...(a.canLaunch === true ? { canLaunch: true } : {}) };
+    const operations = Array.isArray(a.operations) ? [...new Set(a.operations.filter((o) => AGENT_OPERATIONS.has(o)))] : undefined;
+    agents[kind] = {
+      status: a.status as AgentStatus,
+      ...(version ? { version } : {}),
+      ...(a.canLaunch === true ? { canLaunch: true } : {}),
+      ...(operations ? { operations } : {}),
+    };
   }
   return agents;
 }
@@ -557,7 +567,7 @@ export class Hub {
     this.server = opts.server;
     opts.latest?.subscribe((latest) => this.broadcast({ type: "latest", latest }));
     opts.server?.subscribe(() => {
-      if (this.server) this.broadcast({ type: "server", server: this.server.info() });
+      this.broadcastServer();
     });
     for (const m of store.loadMachines()) this.machines.set(m.id, m);
     if (opts.plugins) {
@@ -805,7 +815,7 @@ export class Hub {
       ...(this.plugins ? { plugins: this.plugins.infos(), pluginEvents: this.plugins.retainedEvents() } : {}),
       ...(this.plugins?.catalog() ? { catalog: this.plugins.catalog() } : {}),
       ...(this.latest ? { latest: this.latest.latest() } : {}),
-      ...(this.server ? { server: this.server.info() } : {}),
+      ...(this.server ? { server: this.serverInfo(this.server) } : {}),
       ...(this.push ? { push: this.push.info(peer.deviceId) } : {}),
       heartbeat: true,
       memory: Object.fromEntries(this.memory),
@@ -842,6 +852,15 @@ export class Hub {
   /** The commands under way that an update waits for: relayed ones awaiting their answer, and the plugins'. */
   inFlight(): number {
     return this.commands.size + (this.plugins?.inFlight() ?? 0);
+  }
+
+  /** The Gasho server as browsers see it: its own information, and the settings it keeps for all of them. */
+  private serverInfo(server: ServerSource): ServerInfo {
+    return { ...server.info(), defaultAgent: this.store.getMeta(DEFAULT_AGENT_KEY) === "codex" ? "codex" : "claude" };
+  }
+
+  private broadcastServer(): void {
+    if (this.server) this.broadcast({ type: "server", server: this.serverInfo(this.server) });
   }
 
   onClientMessage(peer: ClientPeer, msg: ClientToHub): void {
@@ -946,6 +965,17 @@ export class Hub {
           this.broadcast({ type: "event", event });
         }
         peer.send({ type: "server.result", requestId: msg.requestId, result });
+        break;
+      }
+      case "defaultAgent.set": {
+        if (typeof msg.requestId !== "string" || !msg.requestId || msg.requestId.length > 100) return;
+        if (!AGENT_KINDS.includes(msg.agent)) {
+          peer.send({ type: "server.result", requestId: msg.requestId, result: { ok: false, error: "エージェントの指定が正しくありません。" } });
+          break;
+        }
+        this.store.setMeta(DEFAULT_AGENT_KEY, msg.agent);
+        this.broadcastServer();
+        peer.send({ type: "server.result", requestId: msg.requestId, result: { ok: true } });
         break;
       }
       case "plugin.catalog.get":

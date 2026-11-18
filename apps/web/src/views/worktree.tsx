@@ -5,6 +5,7 @@
 import { ArrowLeft, LoaderCircle, Plus } from "lucide-react";
 import { useEffect } from "react";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY } from "@/components/dialog-styles";
+import { LaunchMenu } from "@/components/launch-menu";
 import type { SessionActionRequest } from "@/components/session-menu";
 import { SessionTabs, useWorktreeLaunch } from "@/components/session-tabs";
 import { forgetWorktree } from "@/lib/remembered-worktrees";
@@ -87,16 +88,18 @@ function NoSession({ worktree }: { worktree: WorktreeSessions }) {
     <>
       <p>この worktree にセッションはありません。新しいセッションを起動するか、上の行の左の履歴から過去の会話を開き直せます。</p>
       <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={() => void launch()}
-          disabled={!canLaunch || launching}
-          title={canLaunch ? undefined : "接続していて、セッションの端末を作れる working server でだけ起動できます"}
-          className={BUTTON_PRIMARY}
-        >
-          {launching ? <LoaderCircle className="mr-1.5 size-4 animate-spin" /> : <Plus className="mr-1.5 size-4" />}
-          この worktree で新しいセッションを起動
-        </button>
+        <LaunchMenu machine={worktree.machine} onPick={(agent) => void launch(agent)}>
+          <button
+            type="button"
+            onClick={() => void launch()}
+            disabled={!canLaunch || launching}
+            title={canLaunch ? undefined : "接続していて、セッションの端末を作れる working server でだけ起動できます"}
+            className={BUTTON_PRIMARY}
+          >
+            {launching ? <LoaderCircle className="mr-1.5 size-4 animate-spin" /> : <Plus className="mr-1.5 size-4" />}
+            この worktree で新しいセッションを起動
+          </button>
+        </LaunchMenu>
         {error && (
           <p role="alert" className="text-red-400">
             {error}

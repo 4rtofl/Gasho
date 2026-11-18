@@ -7,6 +7,7 @@ import { AlertDialog, ContextMenu, Dialog } from "radix-ui";
 import { useRef, useState, type FormEvent, type ReactElement, type ReactNode } from "react";
 import type { MachineInfo, SessionInfo } from "@gasho/protocol";
 import { BUTTON_DANGER, BUTTON_PRIMARY, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG_PANEL, MENU, MENU_ITEM } from "@/components/dialog-styles";
+import { canDo, sessionAgent } from "@/lib/agents";
 import { sessionLabel } from "@/lib/format";
 import { go, parseHash, useRoute } from "@/lib/route";
 import { forkName, MAX_SESSION_NAME, nameProblem } from "@/lib/session-names";
@@ -97,14 +98,16 @@ export function SessionContextMenu({
             <Pencil />
             名前を変更…
           </ContextMenu.Item>
-          <ContextMenu.Item
-            disabled={unavailable !== undefined || !machine.canLaunch}
-            onSelect={() => pick("fork")}
-            className={cn(MENU_ITEM, "[&>svg]:text-muted-foreground")}
-          >
-            <GitFork />
-            フォーク…
-          </ContextMenu.Item>
+          {canDo(machine, session, "fork") && (
+            <ContextMenu.Item
+              disabled={unavailable !== undefined || !machine.canLaunch}
+              onSelect={() => pick("fork")}
+              className={cn(MENU_ITEM, "[&>svg]:text-muted-foreground")}
+            >
+              <GitFork />
+              フォーク…
+            </ContextMenu.Item>
+          )}
           <ContextMenu.Separator className="mx-1 my-1 h-px bg-border" />
           <ContextMenu.Item
             disabled={unavailable !== undefined}
@@ -225,7 +228,11 @@ function NameDialog({ request: { action, machine, session }, onClose }: DialogPr
                       </p>
                     </>
                   ) : (
-                    <p>Gasho と公式アプリでの名前を変えます。Claude Code には /rename で伝えます（作業中なら、作業が終わってから）。</p>
+                    <p>
+                      {sessionAgent(session) === "codex"
+                        ? "Gasho と Codex での名前を変えます。"
+                        : "Gasho と公式アプリでの名前を変えます。Claude Code には /rename で伝えます（作業中なら、作業が終わってから）。"}
+                    </p>
                   )}
                 </div>
               </Dialog.Description>
@@ -304,11 +311,13 @@ function RemoveDialog({ request: { machine, session }, onClose, rowAfter }: Dial
 
   const lines: ReactNode[] = [
     <>
-      「{sessionLabel(session)}」の Claude Code を終了し、Gasho の一覧から外します。
+      {sessionAgent(session) === "codex" ? `「${sessionLabel(session)}」を Gasho の一覧から外します。` : `「${sessionLabel(session)}」の Claude Code を終了し、Gasho の一覧から外します。`}
       {working && "作業の途中で止まります。"}
       {live.pendingInputs ? `送信待ちの ${live.pendingInputs} 件は送りません。` : ""}
     </>,
-    machine.canResume ? (
+    sessionAgent(session) === "codex" ? (
+      <>会話は Codex に残り、{machine.name} の codex resume で開けます。</>
+    ) : machine.canResume ? (
       <>会話の記録は {machine.name} に残ります。{tabsHidden ? "セッションの画面の上の行の、左の" : "タブの左の"}過去の会話から開き直せます。</>
     ) : (
       <>

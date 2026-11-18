@@ -1,11 +1,14 @@
-// Starts a new session on a working server: `claude --remote-control` in a terminal of its own. The same form shows on
+// Starts a new session on a working server: `claude --remote-control` in a terminal of its own, or a thread of Codex
+// where it can be used. The same form shows on
 // the home screen (LaunchPanel) and in a dialog opened from the sidebar's "＋" (LaunchDialog). Before starting, a new
 // folder can be made inside the chosen folder, or a GitHub repository cloned into it (`gh repo clone`). Claude Code is
 // told to trust a folder only once the person has read why it asks and said so.
 import { Check, FolderGit2, FolderPlus, LoaderCircle, Plus, TriangleAlert, X } from "lucide-react";
 import { Dialog } from "radix-ui";
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
+import type { AgentKind } from "@gasho/protocol";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG_PANEL } from "@/components/dialog-styles";
+import { AGENT_NAME, codexOffered, codexProblem, codexUsable, launchAgentField, launchAgentFor } from "@/lib/agents";
 import { childPath, CLONE_WAIT_MS, folderChoices, folderNameProblem, repoFolderName, repoProblem } from "@/lib/folders";
 import { go } from "@/lib/route";
 import { daemonAtLeast } from "@/lib/sessions";
@@ -33,9 +36,13 @@ export interface LaunchInitial {
   error?: string;
   /** Claude Code asked whether to trust the folder; what it pointed out. */
   trust?: string[];
+  /** The agent it tried to start. */
+  agent?: AgentKind;
 }
 
 function Description() {
+  const { machines } = useAppState();
+  if (machines.some(codexOffered)) return <>working server でセッションを起動します。Gasho から入力できます。</>;
   return (
     <>
       working server で <code className="font-mono">claude --remote-control</code> を起動します。Gasho から入力でき、公式アプリからも操作できます。
@@ -68,12 +75,15 @@ function LaunchForm({
   onLaunched: () => void;
   onBusyChange?: (busy: boolean) => void;
 }) {
-  const { machines } = useAppState();
+  const { machines, server } = useAppState();
   const candidates = useMemo(() => machines.filter((m) => m.connected && m.canLaunch), [machines]);
   const [machineId, setMachineId] = useState(
     initial && candidates.some((m) => m.id === initial.machine) ? initial.machine : (candidates[0]?.id ?? ""),
   );
   const machine = candidates.find((m) => m.id === machineId) ?? candidates[0];
+  // The agent picked here, while it can be used on the working server; else the default one.
+  const [pickedAgent, setPickedAgent] = useState<AgentKind | undefined>(initial?.agent);
+  const agent: AgentKind = !machine ? "claude" : pickedAgent === "codex" && !codexUsable(machine) ? "claude" : (pickedAgent ?? launchAgentFor(machine, server?.defaultAgent));
   // gasho-daemon 0.10.0 makes folders, clones, and answers Claude Code's question whether to trust a folder.
   const canMake = machine !== undefined && daemonAtLeast(machine, 0, 10);
   // Folders made here, per working server: offered until the working server lists them itself (once they are trusted).
@@ -120,7 +130,7 @@ function LaunchForm({
     setTrustAsk(undefined);
     const r = await sendCommand(
       machine.id,
-      { type: "session.launch", cwd: dir, name: name.trim() || undefined, ...(trust ? { trust: true } : {}) },
+      { type: "session.launch", cwd: dir, name: name.trim() || undefined, ...(trust ? { trust: true } : {}), ...launchAgentField(agent) },
       LAUNCH_WAIT_MS,
     );
     setBusy(false);
@@ -242,6 +252,7 @@ function LaunchForm({
                 disabled={pending}
                 onChange={(e) => {
                   setMachineId(e.target.value);
+                  setPickedAgent(undefined);
                   const next = candidates.find((m) => m.id === e.target.value);
                   setFolder(next?.folders?.[0] ?? OTHER);
                   setTrustAsk(undefined);
@@ -259,17 +270,39 @@ function LaunchForm({
               </select>
             </label>
             <label className="space-y-1.5">
-              <span className="text-xs text-muted-foreground">名前（任意。公式アプリにこの名前で出ます）</span>
+              <span className="text-xs text-muted-foreground">{agent === "codex" ? "名前（任意）" : "名前（任意。公式アプリにこの名前で出ます）"}</span>
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 maxLength={60}
                 // gasho-daemon 0.10.0 and later name a session started without one after its first message.
-                placeholder={machine && daemonAtLeast(machine, 0, 10) ? "空なら、最初のメッセージから付けます" : "例：Bobert の調査"}
+                placeholder={agent === "codex" ? "空なら、Codex が付けます" : machine && daemonAtLeast(machine, 0, 10) ? "空なら、最初のメッセージから付けます" : "例：Bobert の調査"}
                 className={field}
               />
             </label>
           </div>
+
+          {machine && codexOffered(machine) && (
+            <label className="block space-y-1.5">
+              <span className="text-xs text-muted-foreground">エージェント</span>
+              <select
+                value={agent}
+                disabled={pending}
+                onChange={(e) => {
+                  setPickedAgent(e.target.value as AgentKind);
+                  setTrustAsk(undefined);
+                  setError(undefined);
+                }}
+                className={field}
+              >
+                <option value="claude">{AGENT_NAME.claude}</option>
+                <option value="codex" disabled={!codexUsable(machine)}>
+                  {AGENT_NAME.codex}
+                </option>
+              </select>
+              {codexProblem(machine) && <span className="block text-xs text-muted-foreground">{codexProblem(machine)}</span>}
+            </label>
+          )}
 
           <div className="space-y-2">
             <label className="block space-y-1.5">
@@ -442,11 +475,13 @@ function LaunchForm({
             )}
           </div>
 
-          <p className="text-xs text-muted-foreground">
-            {canMake
-              ? "一覧には、Claude Code が信頼しているフォルダーと、その親フォルダーが出ます。Claude Code がまだ信頼していないフォルダーで起動するときは、信頼するかを先に確かめます。"
-              : "一覧に出るのは、Claude Code がすでに信頼しているフォルダーです。ほかのフォルダーは、端末で一度 claude を起動して信頼してから使ってください。"}
-          </p>
+          {agent === "claude" && (
+            <p className="text-xs text-muted-foreground">
+              {canMake
+                ? "一覧には、Claude Code が信頼しているフォルダーと、その親フォルダーが出ます。Claude Code がまだ信頼していないフォルダーで起動するときは、信頼するかを先に確かめます。"
+                : "一覧に出るのは、Claude Code がすでに信頼しているフォルダーです。ほかのフォルダーは、端末で一度 claude を起動して信頼してから使ってください。"}
+            </p>
+          )}
           {error && <p className="text-sm text-red-400">{error}</p>}
           {trustAsk ? (
             <TrustQuestion

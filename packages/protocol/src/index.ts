@@ -436,6 +436,12 @@ export type AgentKind = "claude" | "codex";
  */
 export type AgentStatus = "available" | "loginRequired" | "unknown";
 
+/**
+ * What a session of an agent can do besides talking: switch the model, the effort level and ultracode, carry files, be
+ * forked, list its work in the background, offer skills after "/", and run shell commands after "!".
+ */
+export type AgentOperation = "model" | "effort" | "ultracode" | "files" | "fork" | "background" | "skills" | "shell";
+
 /** An agent installed on a working server. */
 export interface AgentInfo {
   status: AgentStatus;
@@ -443,6 +449,8 @@ export interface AgentInfo {
   version?: string;
   /** gasho-daemon starts sessions of this agent (session.launch's `agent`). Absent from one that only reports the agent. */
   canLaunch?: boolean;
+  /** What its sessions can do. Absent from a gasho-daemon that does not tell: there, only Claude Code runs, and it can do all of it. */
+  operations?: AgentOperation[];
 }
 
 /** The agents gasho-daemon looked for and found on its working server: one that is not installed is not listed. */
@@ -486,7 +494,7 @@ export interface MachineInfo {
   canRemoveWorktree?: boolean;
   /** Whether gasho-daemon lists the skills and custom commands a session's Claude Code reads (session.skills). */
   canListSkills?: boolean;
-  /** The agents found on this working server besides Claude Code (absent from a gasho-daemon that does not look for them). */
+  /** The agents found on this working server (absent from a gasho-daemon that does not look for them). */
   agents?: MachineAgents;
   /** Whether Gasho can update this gasho-daemon, and how an update goes (absent from one older than updates from Gasho). */
   update?: DaemonUpdateInfo;
@@ -580,6 +588,8 @@ export interface ServerInfo {
    */
   web?: string;
   update: HubUpdateInfo;
+  /** The agent a new session starts with, the same for every browser (absent from an older Gasho server: Claude Code). */
+  defaultAgent?: AgentKind;
 }
 
 /** The latest published versions, as the Gasho server last looked them up on the package registry. */
@@ -989,7 +999,7 @@ export type DaemonToHub =
       canRemoveWorktree?: boolean;
       /** Answers session.skills. */
       canListSkills?: boolean;
-      /** The agents found on the working server besides Claude Code (sent again when they change). */
+      /** The agents found on the working server (sent again when they change). */
       agents?: MachineAgents;
       /** Whether Gasho can update it, and the update under way (sent again at each step). */
       update?: DaemonUpdateInfo;
@@ -1121,6 +1131,8 @@ export type ClientToHub =
   | { type: "latest.check" }
   /** Updates the Gasho server to `version`, or goes back to it (answered with server.result). */
   | { type: "hub.update"; requestId: string; version: string }
+  /** Changes the agent a new session starts with (answered with server.result; every browser gets the new server). */
+  | { type: "defaultAgent.set"; requestId: string; agent: AgentKind }
   | ({ requestId: string; machine: string } & SessionCommand)
   /**
    * Calls a method of a plugin's daemon part on a working server (answered with plugin.response). `summary`: what the

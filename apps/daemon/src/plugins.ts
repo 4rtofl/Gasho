@@ -23,7 +23,7 @@ import type { FromHost, GitHubAnswer, LocalWire, MachineWire, SessionWire, ToHos
  * gasho-daemon names them so that a plugin of 1.14 with a daemon part runs. 1.15: the daemon part's onSessionStop is
  * asked from this gasho-daemon on.
  */
-export const PLUGIN_API = "1.15";
+export const PLUGIN_API = "1.16";
 /** The process of a daemon part: next to this file (.ts when run from the repository, .js in the npm package). */
 const HOST_FILE = fileURLToPath(new URL(`./plugin-host${path.extname(fileURLToPath(import.meta.url))}`, import.meta.url));
 /** How long a new process may take to import the plugin and run its `start`. */

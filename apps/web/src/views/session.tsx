@@ -1,6 +1,7 @@
 import { ArrowLeft, ExternalLink, FolderOpen, GitBranch, GitPullRequest } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CommandResult, InputFeature, MachineInfo, SessionInfo, SessionModel } from "@gasho/protocol";
+import { AgentMark } from "@/components/agent-mark";
 import { BackgroundTasks } from "@/components/background-tasks";
 import { RepoPicker } from "@/components/repo-picker";
 import { EffortPicker, UltracodeToggle } from "@/components/session-controls";
@@ -11,6 +12,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { PermissionRequests } from "@/components/permission-card";
 import { Transcript } from "@/components/transcript";
 import { PromptInput, type PromptModel } from "@/components/ui/prompt-input";
+import { canDo, sessionAgent, showsAgents } from "@/lib/agents";
 import {
   branchLabel,
   formatCost,
@@ -106,8 +108,11 @@ export function SessionView({
             <div className="min-w-0">
               {/* A phone has the name and the state in its top bar (see App). */}
               <h1 className="hidden truncate text-lg font-semibold tracking-tight md:block">{sessionLabel(s)}</h1>
-              <p className="truncate text-xs text-muted-foreground">
-                {m.name} · {s.cwd}
+              <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                {showsAgents(machines) && <AgentMark agent={sessionAgent(s)} />}
+                <span className="truncate">
+                  {m.name} · {s.cwd}
+                </span>
               </p>
             </div>
             <div className="hidden items-center gap-2 md:flex">
@@ -207,6 +212,7 @@ export function SessionView({
         // Header hidden: one line keeps the session's name and state on screen. A phone has them in its top bar (see
         // App), with the toggle, so it leaves this line out and the conversation gets the room.
         <header className="hidden shrink-0 items-center gap-2 border-b border-border px-4 py-1.5 md:flex md:px-6">
+          {showsAgents(machines) && <AgentMark agent={sessionAgent(s)} />}
           <h1 className="min-w-0 truncate text-sm font-medium">{sessionLabel(s)}</h1>
           {status}
           <SessionHeaderToggle className="ml-auto" />
@@ -349,7 +355,8 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
   const { model: picked, effort: pickedEffort, ultracode: pickedUltracode } = picks;
   const current = currentModel(machine, s.model);
   const ultracode = Boolean(s.ultracode);
-  const features = machine.features ?? legacyFeatures(machine.daemonVersion);
+  const features = (machine.features ?? legacyFeatures(machine.daemonVersion)).filter((f) => canDo(machine, s, f));
+  const offersSkills = canDo(machine, s, "skills");
   const skills = useSkills(machine.id, s.sessionId);
   // Once the session runs with what was picked, follow the session again.
   useEffect(() => {
@@ -411,7 +418,7 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
   return (
     <div ref={box} className="flex min-h-0 flex-col">
       <PermissionRequests machine={machine} session={s} />
-      <BackgroundTasks machine={machine} session={s} />
+      {canDo(machine, s, "background") && <BackgroundTasks machine={machine} session={s} />}
       <PromptInput
         onSend={async ({ text, files }) => {
           setError(undefined);
@@ -491,9 +498,11 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
           </>
         }
         draft={promptDraft(key)}
-        commands={machine.canListSkills ? (skills.list ?? []) : []}
+        commands={offersSkills && machine.canListSkills ? (skills.list ?? []) : []}
         commandsNote={
-          !machine.canListSkills
+          !offersSkills
+            ? undefined
+            : !machine.canListSkills
             ? "この working server の gasho-daemon は古いため、スキルの候補を出せません。gasho-daemon を更新してください。"
             : skills.list?.length
               ? undefined
@@ -503,14 +512,14 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
                   ? "スキルを読み込んでいます…"
                   : undefined
         }
-        onCommandsOpen={machine.canListSkills ? () => loadSkills(machine.id, s.sessionId) : undefined}
+        onCommandsOpen={offersSkills && machine.canListSkills ? () => loadSkills(machine.id, s.sessionId) : undefined}
         allowAttachments={features.includes("files")}
         maxFiles={5}
         maxFileSizeMB={10}
         maxLength={20_000}
         placeholder="Agent への指示を入力…"
         showCount
-        shell
+        shell={canDo(machine, s, "shell")}
         footer={<PluginComposerFooter machine={machine} session={s} />}
       />
       {(status || error || warning) && (

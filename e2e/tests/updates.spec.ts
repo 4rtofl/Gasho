@@ -425,13 +425,16 @@ test.describe("Gasho から更新できる Gasho サーバー", () => {
       await openDevices(page, item);
     });
 
-    await test.step("「0.90.0 に戻す」で、入っている前のバージョンへ戻し始める", async () => {
+    await test.step("「0.90.0 に戻す」で、入っている前のバージョンへ切り替えて起動し直し、0.90.0 で確定して、また 0.90.1 に更新できる", async () => {
       await row.getByRole("button", { name: "0.90.0 に戻す" }).click();
       await expect(dialog.getByRole("heading")).toHaveText("Gasho サーバーを 0.90.0 に戻しますか？");
       await expect(dialog).toContainText("入っている 0.90.0 に切り替えて、Gasho サーバーを起動し直します。");
       await expect(dialog.getByRole("link")).toHaveCount(0);
       await dialog.getByRole("button", { name: "戻す", exact: true }).click();
       await expect(row).toContainText(/0\.90\.0 に更新しています：/);
+      await expect(row).toContainText("gasho-hub 0.90.0", AFTER_RESTART);
+      await expect.poll(() => hub.proc.log(), AFTER_RESTART).toContain("0.90.0 started well; it is no longer on trial");
+      await expect(row.getByRole("button", { name: "0.90.1 に更新" })).toBeVisible();
     });
   });
 });

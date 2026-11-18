@@ -14,7 +14,7 @@ import { showNotice, useNotice } from "@/lib/notice";
 import { LAUNCH_WAIT_MS } from "@/components/session-tabs";
 import { StatusDot } from "@/components/status-badge";
 import { Sidebar, SidebarTrigger, useSidebar, type SidebarGroup, type SidebarItem, type SidebarMove, type SidebarSection } from "@/components/ui/sidebar";
-import { updateTo } from "@/lib/daemon-update";
+import { updateToTell } from "@/lib/daemon-update";
 import { hubUpdateToTell } from "@/lib/server-update";
 import { useChoices } from "@/lib/flag";
 import { sessionLabel } from "@/lib/format";
@@ -23,12 +23,13 @@ import { TAPS, countTap, type GasshoFrom, type Taps } from "@/lib/gassho";
 import { DESKTOP, useMediaQuery, useWindowWidth } from "@/lib/media";
 import { arrangeSessions, rememberSessions, reorderShown, useSavedOrder } from "@/lib/order";
 import { updateCount } from "@/lib/plugin-catalog";
-import { go, isOldGitHubLink, useRoute, type SessionPanel } from "@/lib/route";
+import { go, isOldGitHubLink, pageOf, useRoute, type SessionPanel } from "@/lib/route";
 import { rememberWorktrees, useRememberedWorktrees } from "@/lib/remembered-worktrees";
 import {
   arrangeCategories,
   hasOrder,
   holdOrder,
+  movedKeys,
   OTHER_CATEGORY,
   rowAfterRemoval,
   sessionKey,
@@ -43,6 +44,7 @@ import {
 } from "@/lib/session-list";
 import { useGroupingPrefs, useSessionListPrefs } from "@/lib/session-list-prefs";
 import {
+  movedSession,
   narrowWorktrees,
   notificationShown,
   rememberedOf,
@@ -214,7 +216,20 @@ export function App() {
   useEffect(() => {
     if (isOldGitHubLink(location.hash)) go(route, { replace: true });
   }, [route]);
+  // The pages scroll in `main`, which stays as they change: another page starts at its top. A layout effect, so that it
+  // runs before the pages' own effects, which scroll to a section of theirs (#/devices/updates).
+  const main = useRef<HTMLElement>(null);
+  const page = pageOf(route);
+  useLayoutEffect(() => {
+    if (main.current) main.current.scrollTop = 0;
+  }, [page]);
   const { auth, me, machines, notifications, connected, plugins, catalog, latest, server, outdated } = useAppState();
+  // After /clear, the session goes on under a new id: its page (and the panel open beside it) goes there too, and shows
+  // it already while the address changes.
+  const movedTo = route.name === "session" ? movedSession(machines.find((m) => m.id === route.machine), route.sessionId)?.sessionId : undefined;
+  useEffect(() => {
+    if (movedTo && route.name === "session") go({ ...route, sessionId: movedTo }, { replace: true });
+  }, [route, movedTo]);
   const [mobileOpen, setMobileOpen] = useState(false);
   // The logo's easter egg while it is out (where the logo's 🙏 was when it started), drawn over everything.
   const [gassho, setGassho] = useState<GasshoFrom | null>(null);
@@ -321,7 +336,7 @@ export function App() {
   };
 
   // The plugin's categories, in the order dragged into (or held), each with its sessions as rows.
-  const categories = listMode.kind === "plugin" ? arrangeCategories(listMode.categories, listPrefs, heldOrder) : [];
+  const categories = listMode.kind === "plugin" ? arrangeCategories(listMode.categories, listPrefs, heldOrder, movedKeys(machines)) : [];
   // The grouping's categories of the worktrees, in the order dragged into, or as held.
   const worktreeCategories =
     groupings.mode.kind === "grouped"
@@ -564,7 +579,7 @@ export function App() {
           label: "端末",
           icon: <KeyRound />,
           // gasho-daemon on a working server, or the Gasho server itself, can be updated.
-          badge: machines.some((m) => updateTo(m, latest)) || hubUpdateToTell(server, latest) ? "更新" : undefined,
+          badge: machines.some((m) => updateToTell(m, latest)) || hubUpdateToTell(server, latest) ? "更新" : undefined,
         },
         // The plugins that the catalog has a newer version of.
         { id: "plugins", label: "プラグイン", icon: <Puzzle />, badge: updateCount(plugins, catalog) || undefined },
@@ -674,7 +689,7 @@ export function App() {
           {/* layoutScroll: the home screen's tiles slide to new places inside it, also while it scrolls. relative: an
               absolutely placed element with no placed parent of its own (an sr-only status line) is placed in here and
               scrolls with the screen. Otherwise it is placed on the page and makes the page longer than the window. */}
-          <motion.main layoutScroll className="relative min-h-0 min-w-0 flex-1 overflow-y-auto">
+          <motion.main ref={main} layoutScroll className="relative min-h-0 min-w-0 flex-1 overflow-y-auto">
             {route.name === "home" && <HomeView />}
             {route.name === "devices" && <DevicesView />}
             {route.name === "settings" && <SettingsView />}
@@ -696,16 +711,16 @@ export function App() {
             )}
             {route.name === "session" && (desktop || !panel) && (
               <SessionView
-                key={`${route.machine}/${route.sessionId}`}
+                key={`${route.machine}/${movedTo ?? route.sessionId}`}
                 machine={route.machine}
-                sessionId={route.sessionId}
+                sessionId={movedTo ?? route.sessionId}
                 panel={panel}
                 onSessionAction={setSessionAction}
               />
             )}
             {route.name === "session" && !desktop && panel && (
               <PanelBarContext.Provider value={panelBar}>
-                <PanelView machine={route.machine} sessionId={route.sessionId} panel={panel} docked={false} />
+                <PanelView machine={route.machine} sessionId={movedTo ?? route.sessionId} panel={panel} docked={false} />
               </PanelBarContext.Provider>
             )}
           </motion.main>
@@ -716,7 +731,7 @@ export function App() {
           )}
           {route.name === "session" && desktop && panel && (
             <DockedPanel>
-              <PanelView machine={route.machine} sessionId={route.sessionId} panel={panel} docked />
+              <PanelView machine={route.machine} sessionId={movedTo ?? route.sessionId} panel={panel} docked />
             </DockedPanel>
           )}
         </div>

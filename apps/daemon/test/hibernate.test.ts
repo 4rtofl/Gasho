@@ -286,7 +286,7 @@ test("an input brings the session back as it was, and is typed once it runs", as
     await until(() => term.entered.includes("続きをお願いします"), "the input was typed");
 
     assert.equal(started.length, 1);
-    assert.deepEqual(started[0]!.args.slice(0, 8), ["--remote-control", "眠るセッション", "--resume", SID, "--model", "claude-haiku-5-5", "--effort", "low"]);
+    assert.deepEqual(started[0]!.args.slice(0, 7), ["--remote-control=眠るセッション", "--resume", SID, "--model", "claude-haiku-5-5", "--effort", "low"]);
     // Ultracode first: the input goes out with the session as it was.
     assert.deepEqual(term.entered, ["/effort ultracode on", "続きをお願いします"]);
     const m = d.managed.get(SID);
@@ -358,7 +358,7 @@ test("renaming a hibernated session does not wake it; Claude Code is told once i
     assert.equal(d.managed.get(SID).name, "新しい名前");
     await d.wake(SID);
     await until(() => term.entered.includes("/rename 新しい名前"), "/rename was typed");
-    assert.equal(started[0]!.args[1], "新しい名前");
+    assert.equal(started[0]!.args[0], "--remote-control=新しい名前");
   } finally {
     await done();
   }
@@ -535,6 +535,40 @@ test("a restart after the terminal it was coming back in has gone starts it once
     again.wakeInterrupted();
     await again.waking.get(SID);
     await until(() => term.entered.includes("やり直す発言"), "the input was typed");
+    assert.equal(started.length, 1);
+  } finally {
+    await done();
+  }
+});
+
+test("a session that something is typing into is not hibernated", async () => {
+  const { d, procs, done } = await setup();
+  try {
+    d.flushing.add("t1");
+    await d.hibernateIdle();
+    assert.equal(procs[0]!.signalCode, null);
+    assert.equal(d.managed.get(SID).hibernated, undefined);
+  } finally {
+    await done();
+  }
+});
+
+test("an id the session had before /clear reaches it while it is hibernated", async () => {
+  const OLD = "00000000-2222-3333-4444-777777777777";
+  const { d, term, started, agents, done } = await setup();
+  try {
+    d.managed.get(SID).previousIds = [OLD];
+    await d.hibernateIdle();
+    agents([]);
+
+    assert.equal((await d.rename(OLD, "新しい名前", "r1")).ok, true);
+    assert.equal(d.managed.get(SID).name, "新しい名前");
+    assert.equal(d.managed.get(SID).hibernated.renamed, true);
+    assert.equal(started.length, 0);
+
+    assert.deepEqual(await d.input({ type: "session.input", requestId: "r2", sessionId: OLD, text: "前の ID への発言" }), { ok: true, queued: true });
+    await d.waking.get(SID);
+    await until(() => term.entered.includes("前の ID への発言"), "the input was typed");
     assert.equal(started.length, 1);
   } finally {
     await done();

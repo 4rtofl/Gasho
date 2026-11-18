@@ -6,6 +6,7 @@
 import { useReducedMotion, motion } from "framer-motion";
 import { LoaderCircle, Search } from "lucide-react";
 import { type KeyboardEvent, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { composing } from "@/lib/text-input";
 import { cn } from "@/lib/utils";
 
 export interface ComboboxListOption {
@@ -80,7 +81,7 @@ export function ComboboxList({
   };
   const onKeyDown = (e: KeyboardEvent) => {
     const n = items.length;
-    if (n === 0) return;
+    if (n === 0 || composing(e)) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       moveTo((active + (e.key === "ArrowDown" ? 1 : -1) + n) % n);

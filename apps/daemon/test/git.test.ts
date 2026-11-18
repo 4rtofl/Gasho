@@ -4,6 +4,8 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { DaemonToHub } from "@gasho/protocol";
+import { Daemon } from "../src/daemon.ts";
 import {
   findRepos,
   listWorktrees,
@@ -17,6 +19,7 @@ import {
   worktreeOf,
 } from "../src/git.ts";
 import { foldersRepos, RegisteredRepos } from "../src/repos.ts";
+import { emptyMeta } from "../src/transcript.ts";
 
 test("parseGitHubUrl handles https, ssh and credentials, and rejects other hosts", () => {
   assert.deepEqual(parseGitHubUrl("https://github.com/4rtofl/Gasho.git\n"), {
@@ -234,6 +237,50 @@ test("findRepos stops after the folder limit", async () => {
     for (let i = 0; i < 30; i++) fs.mkdirSync(path.join(dir, `d${String(i).padStart(2, "0")}`, ".git"), { recursive: true });
     assert.equal((await findRepos(dir, { maxDirs: 11 })).length, 10);
     assert.equal((await findRepos(dir, { maxRepos: 5 })).length, 5);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("gasho-daemon sends the graph of a repository a session's folder holds, and never of a folder it did not find", async () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "gasho-git-graph-")));
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
+  const run = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, env, stdio: "pipe" }).toString();
+  const sent: DaemonToHub[] = [];
+  try {
+    const work = path.join(dir, "work");
+    const app = path.join(work, "app");
+    fs.mkdirSync(app, { recursive: true });
+    run(app, "init", "-b", "main");
+    run(app, "-c", "user.name=Ama", "-c", "user.email=a@example.com", "commit", "--allow-empty", "-m", "first");
+    fs.mkdirSync(path.join(dir, "other"));
+    const d = new Daemon({
+      hubUrl: "ws://127.0.0.1:1",
+      machineId: "m",
+      token: "t",
+      hookPort: 0,
+      claudeDir: path.join(dir, "claude"),
+      claudeBin: "/bin/false",
+      pollIntervalMs: 60_000,
+      stateDir: dir,
+      attachmentsDir: path.join(dir, "attachments"),
+    } as ConstructorParameters<typeof Daemon>[0]) as unknown as Record<string, any>;
+    d.hub = { send: (m: DaemonToHub) => sent.push(m) };
+    d.tracked.set("s1", { info: { sessionId: "s1", cwd: work, status: "idle", rcMode: "none", prLinks: [] }, meta: emptyMeta() });
+    const graph = async (sessionId: string, repo?: string) => {
+      await d.onHubMessage({ type: "git.graph.get", requestId: "r1", sessionId, ...(repo === undefined ? {} : { repo }) });
+      const m = sent.at(-1);
+      assert.ok(m?.type === "git.graph" && m.requestId === "r1" && m.repo === repo);
+      return m;
+    };
+
+    const found = await graph("s1", "app");
+    assert.equal(found.error, undefined);
+    assert.equal(found.graph?.root, app);
+    assert.equal(found.graph?.head, "main");
+    assert.equal((await graph("s1", "../other")).error, "このリポジトリは見つかりません。");
+    assert.equal((await graph("s1")).error, "このフォルダーは Git のリポジトリではありません。");
+    assert.equal((await graph("s2")).error, "このセッションは見つかりません。");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

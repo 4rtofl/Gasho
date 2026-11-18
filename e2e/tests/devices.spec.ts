@@ -127,7 +127,8 @@ test("「名前を変更」は window.prompt で名前を聞き、「取り消�
     void dialog.accept("  mac-mini  ");
   });
   await rowOf(page, "mac").getByRole("button", { name: "名前を変更" }).click();
-  await expect(rowOf(page, "mac-mini")).toHaveCount(1);
+  // A regular expression: a string would be compared with the spaces around the name taken away.
+  await expect(rowOf(page, "mac-mini").getByText("mac-mini", { exact: true })).toHaveText(/^mac-mini$/);
 
   // Dismissed: nothing changes.
   page.once("dialog", (dialog) => void dialog.dismiss());
@@ -178,7 +179,7 @@ test("取り消した working server が、サイドバーと実行中の指示�
   );
   await page.goto(`/#/s/${encodeURIComponent(mac.machineId)}/${sessionId}`);
   await expect(page.getByRole("heading", { name: "e2e-session" })).toBeVisible();
-  const sidebar = page.getByRole("navigation", { name: "Main" });
+  const sidebar = page.getByRole("navigation", { name: "メニュー" });
   await openSidebar(page);
   await expect(sidebar.getByRole("button", { name: /^gasho/ })).toBeVisible();
   await expect(sidebar.getByRole("button", { name: /^other/ })).toContainText("オフライン");

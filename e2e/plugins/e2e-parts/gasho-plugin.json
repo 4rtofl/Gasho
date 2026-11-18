@@ -1,0 +1,24 @@
+{
+  "id": "e2e-parts",
+  "name": "E2E 部品",
+  "version": "1.0.0",
+  "description": "E2E テストで、拡張点ごとに部品を足す",
+  "genre": "devtools",
+  "api": "1.12",
+  "web": { "js": "web.js" },
+  "settings": {
+    "shown": { "type": "boolean", "scope": "browser", "default": false, "label": "E2E 出す" },
+    "color": {
+      "type": "select",
+      "scope": "server",
+      "default": "red",
+      "label": "E2E 色",
+      "options": [
+        { "value": "red", "label": "赤" },
+        { "value": "blue", "label": "青" }
+      ]
+    },
+    "count": { "type": "number", "scope": "server", "default": 3, "min": 0, "max": 10, "step": 1, "label": "E2E 数" },
+    "title": { "type": "string", "scope": "browser", "default": "", "maxLength": 20, "label": "E2E 見出し", "description": "ページの見出しの後ろに出す" }
+  }
+}

@@ -360,7 +360,7 @@ async function startedWithoutName(d: Record<string, any>) {
 
 /** Waits for a flush the daemon started on its own. */
 async function settled(d: Record<string, any>): Promise<void> {
-  while (d.flushing.has(SID)) await sleep(20);
+  while (d.flushing.has(d.managed.get(SID).terminal)) await sleep(20);
 }
 
 test("a session started without a name is named after its first message: in Gasho at once, in Claude Code once idle", async () => {

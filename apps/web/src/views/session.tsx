@@ -1,5 +1,5 @@
 import { ArrowLeft, ExternalLink, FolderOpen, GitBranch, GitPullRequest } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CommandResult, InputFeature, MachineInfo, SessionInfo, SessionModel } from "@gasho/protocol";
 import { BackgroundTasks } from "@/components/background-tasks";
 import { HibernationNotice } from "@/components/hibernation-notice";
@@ -21,10 +21,10 @@ import {
   sessionLabel,
   waitingLabel,
 } from "@/lib/format";
-import { promptDraft, usePicks } from "@/lib/drafts";
+import { promptDraft, useDraftBox, usePicks } from "@/lib/drafts";
 import { addPending, noneWaiting, pendingShown, removePending, sessionWorking, settlePending, usePending } from "@/lib/pending";
 import { go, type SessionPanel } from "@/lib/route";
-import { closeSessionHeaderOnPhone, useSessionHeaderShown } from "@/lib/session-header";
+import { closeSmallSessionHeader, useSessionHeaderShown } from "@/lib/session-header";
 import { daemonAtLeast, rememberOpened, worktreeId, worktreesByLastUse } from "@/lib/sessions";
 import { loadSkills, useSkills } from "@/lib/skills";
 import { loadTranscript, sendCommand, transcriptKey, useAppState } from "@/lib/store";
@@ -61,7 +61,7 @@ export function SessionView({
   useEffect(() => {
     if (m?.connected && shown) loadTranscript(machine, sessionId);
   }, [machine, sessionId, m?.connected, shown]);
-  useEffect(() => closeSessionHeaderOnPhone(), [machine, sessionId]);
+  useEffect(() => closeSmallSessionHeader(), [machine, sessionId]);
   const worktree = s && worktreeId(machine, s);
   useEffect(() => {
     if (worktree && shown) rememberOpened(worktree, sessionId);
@@ -342,6 +342,8 @@ function toBase64(file: File): Promise<string> {
  */
 function Composer({ machine, session: s, entries }: { machine: MachineInfo; session: SessionInfo; entries: number }) {
   const key = transcriptKey(machine.id, s.sessionId);
+  const box = useRef<HTMLDivElement>(null);
+  useDraftBox(key, box);
   const [error, setError] = useState<string>();
   const [warning, setWarning] = useState<string>();
   const [picks, setPicks] = usePicks(key);
@@ -410,7 +412,7 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
   };
 
   return (
-    <div className="flex min-h-0 flex-col">
+    <div ref={box} className="flex min-h-0 flex-col">
       <PermissionRequests machine={machine} session={s} />
       <BackgroundTasks machine={machine} session={s} />
       <HibernationNotice machine={machine} session={s} />

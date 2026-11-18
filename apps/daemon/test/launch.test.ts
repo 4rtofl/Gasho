@@ -120,9 +120,9 @@ class FakeStart {
   /** 0: "No, exit", 1: "Yes, I trust this folder". */
   cursor = 0;
   keys: string[] = [];
-  private readonly o: { mcp?: boolean; warnings?: string[]; agentsFile: string; sessionId: string };
+  private readonly o: { mcp?: boolean; warnings?: string[]; agentsFile: string; registryFile?: string; sessionId: string };
 
-  constructor(o: { mcp?: boolean; warnings?: string[]; agentsFile: string; sessionId: string }) {
+  constructor(o: { mcp?: boolean; warnings?: string[]; agentsFile: string; registryFile?: string; sessionId: string }) {
     this.o = o;
   }
 
@@ -138,8 +138,10 @@ class FakeStart {
 
   private to(state: FakeStart["state"]): void {
     this.state = state;
-    // Once its prompt is up, `claude agents` lists the session.
-    if (state === "repl") writeFileSync(this.o.agentsFile, JSON.stringify([{ pid: process.pid, sessionId: this.o.sessionId, status: "idle" }]));
+    // Once its prompt is up, `claude agents` lists the session, and Claude Code's file has its id.
+    if (state !== "repl") return;
+    writeFileSync(this.o.agentsFile, JSON.stringify([{ pid: process.pid, sessionId: this.o.sessionId, status: "idle" }]));
+    if (this.o.registryFile) writeFileSync(this.o.registryFile, JSON.stringify({ pid: process.pid, sessionId: this.o.sessionId, status: "idle" }));
   }
 
   screen(): string {
@@ -151,16 +153,23 @@ class FakeStart {
 
 const SID = "11111111-2222-3333-4444-666666666666";
 
-/** A daemon whose terminal is the fake one and whose `claude agents` reads a file the fake writes. */
-async function setup(o: { mcp?: boolean; warnings?: string[] } = {}) {
+/**
+ * A daemon whose terminal is the fake one and whose `claude agents` reads a file the fake writes. With `emptyList`,
+ * `claude agents` prints nothing, as it did when stopped at its time limit on a busy machine, and Claude Code's file
+ * (~/.claude/sessions/<pid>.json) has the session id.
+ */
+async function setup(o: { mcp?: boolean; warnings?: string[]; emptyList?: boolean } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-launch-"));
   const agentsFile = path.join(dir, "agents.json");
   await fs.writeFile(agentsFile, "[]");
   const claude = path.join(dir, "claude");
-  await fs.writeFile(claude, `#!/bin/sh\ncat '${agentsFile}'\n`, { mode: 0o755 });
+  await fs.writeFile(claude, o.emptyList ? "#!/bin/sh\n" : `#!/bin/sh\ncat '${agentsFile}'\n`, { mode: 0o755 });
   const folder = path.join(dir, "cloned");
   await fs.mkdir(folder);
-  const fake = new FakeStart({ ...o, agentsFile, sessionId: SID });
+  const sessions = path.join(dir, "claude-dir", "sessions");
+  await fs.mkdir(sessions, { recursive: true });
+  const registryFile = o.emptyList ? path.join(sessions, `${process.pid}.json`) : undefined;
+  const fake = new FakeStart({ ...o, agentsFile, ...(registryFile ? { registryFile } : {}), sessionId: SID });
   const killed: string[] = [];
   const d = new Daemon({
     hubUrl: "ws://127.0.0.1:1",
@@ -223,8 +232,8 @@ test("with trust, the cursor is moved to yes before the one Enter, and the sessi
     // Claude Code runs with Remote Control in the folder, in a terminal named after the session, and its status line
     // is the relay that reports the context window and the plan's limits (statusline.ts).
     assert.equal(started.length, 1);
-    assert.deepEqual(started[0]?.args.slice(0, 3), ["--remote-control", "clone-test", "--settings"]);
-    assert.deepEqual(JSON.parse(started[0]?.args[3] ?? ""), {
+    assert.deepEqual(started[0]?.args.slice(0, 2), ["--remote-control=clone-test", "--settings"]);
+    assert.deepEqual(JSON.parse(started[0]?.args[2] ?? ""), {
       statusLine: { type: "command", command: `${shellQuote(process.execPath)} ${shellQuote(RELAY_FILE)}` },
     });
     assert.equal(started[0]?.env.GASHO_STATUSLINE_URL, "http://127.0.0.1:0/statusline");
@@ -237,13 +246,40 @@ test("with trust, the cursor is moved to yes before the one Enter, and the sessi
   }
 });
 
+test("with `claude agents` printing nothing, the session starts with the id in Claude Code's file", async () => {
+  const { d, folder, killed, done } = await setup({ emptyList: true });
+  try {
+    assert.deepEqual(await d.launch(folder, "clone-test", true), { ok: true, sessionId: SID });
+    assert.deepEqual(killed, []);
+    assert.equal(d.managed.get(SID)?.cwd, folder);
+  } finally {
+    await done();
+  }
+});
+
+test("with `claude agents` printing nothing, a Claude Code that ends before it has a session id fails the launch, and its terminal is closed", async () => {
+  const { d, folder, killed, done } = await setup({ emptyList: true });
+  const p = spawn(process.execPath, ["-e", "setTimeout(() => {}, 1500)"], { stdio: "ignore" });
+  try {
+    d.terminals.start = async () => p.pid;
+    const r = await d.launch(folder, "clone-test", true);
+    assert.equal(r.ok, false);
+    assert.match(r.error, /時間内にセッションを確認できませんでした/);
+    assert.equal(killed.length, 1);
+    assert.equal(d.managed.has(SID), false);
+  } finally {
+    p.kill("SIGKILL");
+    await done();
+  }
+});
+
 test("the status line the user set up for the folder keeps running, through the relay", async () => {
   const { d, folder, started, done } = await setup();
   try {
     await fs.mkdir(path.join(folder, ".claude"));
     await fs.writeFile(path.join(folder, ".claude", "settings.json"), JSON.stringify({ statusLine: { type: "command", command: "./line.sh", padding: 0 } }));
     assert.equal((await d.launch(folder, "clone-test", true)).ok, true);
-    assert.deepEqual(JSON.parse(started[0]?.args[3] ?? "").statusLine.padding, 0);
+    assert.deepEqual(JSON.parse(started[0]?.args[2] ?? "").statusLine.padding, 0);
     assert.equal(started[0]?.env.GASHO_STATUSLINE_COMMAND, "./line.sh");
   } finally {
     await done();
@@ -373,6 +409,168 @@ test("a Claude Code that Gasho is starting or removing is neither sent nor ended
   } finally {
     copy.kill("SIGKILL");
     mine.kill("SIGKILL");
+    await done();
+  }
+});
+
+test("after /clear, a session started from Gasho goes on under its new id, with its waiting inputs and attachments", async () => {
+  const { d, agentsFile, folder, done } = await setup();
+  const claude = await child('process.on("SIGTERM", () => process.exit(0))');
+  const OLD = "aaaaaaaa-0000-4000-8000-000000000001";
+  const NEW = "aaaaaaaa-0000-4000-8000-000000000002";
+  const OTHER = "aaaaaaaa-0000-4000-8000-000000000003";
+  const agents = (sessionId: string, startedAt: number) =>
+    writeFileSync(agentsFile, JSON.stringify([{ pid: claude.pid, sessionId, cwd: folder, status: "idle", startedAt }]));
+  const sent: { sessionId: string; managed?: boolean; name?: string; previousSessionIds?: string[] }[][] = [];
+  try {
+    d.cfg.pluginDataDir = path.join(folder, "plugin-data");
+    d.refresh = Object.getPrototypeOf(d).refresh;
+    d.readManagedScreens = async () => undefined;
+    d.countTokens = async () => undefined;
+    d.flushInput = async () => undefined;
+    d.hub = { connected: true, send: (m: { type: string; sessions?: [] }) => m.type === "sessions" && sent.push(m.sessions!) };
+    const launchedAt = Date.now();
+    d.managed.add({ sessionId: OLD, terminal: "t-old", pid: claude.pid, cwd: folder, name: "-wip", launchedAt });
+    d.managed.enqueue(OLD, { text: "次の指示" });
+    for (const id of [OLD, NEW, OTHER]) await fs.mkdir(path.join(d.cfg.attachmentsDir, id), { recursive: true });
+
+    // A Claude Code that got the same PID after the session was recorded is another one.
+    agents(NEW, launchedAt + 1000);
+    await d.refresh();
+    assert.ok(d.managed.has(OLD));
+
+    // /clear: the same Claude Code, listed under a new id.
+    agents(NEW, launchedAt - 1000);
+    await d.refresh();
+    assert.equal(d.managed.has(OLD), false);
+    assert.deepEqual(d.managed.waiting(NEW).map((i: { text: string }) => i.text), ["次の指示"]);
+    const s = sent.at(-1)?.find((x) => x.sessionId === NEW);
+    assert.equal(s?.managed, true);
+    assert.equal(s?.name, "-wip");
+    assert.deepEqual(s?.previousSessionIds, [OLD]);
+    const saved = JSON.parse(await fs.readFile(path.join(d.cfg.stateDir, "managed.json"), "utf8"));
+    assert.deepEqual(saved.map((x: { sessionId: string; previousIds?: string[] }) => [x.sessionId, x.previousIds]), [[NEW, [OLD]]]);
+    // gasho-daemon session send|remove <the id from before> finds it (see pick).
+    assert.deepEqual(d.controlSessions().map((x: { sessionId: string; previousSessionIds?: string[] }) => [x.sessionId, x.previousSessionIds]), [[NEW, [OLD]]]);
+
+    // The files attached before /clear stay while the session runs, and go with it.
+    await d.pruneAttachments();
+    assert.deepEqual((await fs.readdir(d.cfg.attachmentsDir)).sort(), [OLD, NEW]);
+    assert.equal((await d.remove(NEW)).ok, true);
+    assert.deepEqual(await fs.readdir(d.cfg.attachmentsDir), []);
+  } finally {
+    claude.kill("SIGKILL");
+    await done();
+  }
+});
+
+test("while /clear gives a session started from Gasho its new id, every list of sessions sent has it", async () => {
+  const { d, agentsFile, folder, done } = await setup();
+  const claude = await child('process.on("SIGTERM", () => process.exit(0))');
+  const OLD = "aaaaaaaa-0000-4000-8000-000000000011";
+  const NEW = "aaaaaaaa-0000-4000-8000-000000000012";
+  const launchedAt = Date.now();
+  const agents = (sessionId: string) =>
+    writeFileSync(agentsFile, JSON.stringify([{ pid: claude.pid, sessionId, cwd: folder, status: "idle", startedAt: launchedAt - 1000 }]));
+  const sent: { sessionId: string; managed?: boolean }[][] = [];
+  try {
+    d.cfg.pluginDataDir = path.join(folder, "plugin-data");
+    d.refresh = Object.getPrototypeOf(d).refresh;
+    d.readManagedScreens = async () => undefined;
+    d.countTokens = async () => undefined;
+    d.flushInput = async () => undefined;
+    d.hub = { connected: true, send: (m: { type: string; sessions?: [] }) => m.type === "sessions" && sent.push(m.sessions!) };
+    d.managed.add({ sessionId: OLD, terminal: "t-old", pid: claude.pid, cwd: folder, name: "-wip", launchedAt });
+    agents(OLD);
+    await d.refresh();
+    // The sessions are sent for something else (a hook, a permission request) while the new id is saved.
+    const save = d.managed.save.bind(d.managed);
+    d.managed.save = async () => {
+      d.emitSessions();
+      await save();
+    };
+    agents(NEW);
+    await d.refresh();
+    assert.deepEqual(
+      sent.map((list) => list.map((s) => [s.sessionId, s.managed])),
+      [[[OLD, true]], [[NEW, true]]],
+    );
+  } finally {
+    claude.kill("SIGKILL");
+    await done();
+  }
+});
+
+test("an input or a rename that waits while /clear gives the session a new id waits under the new id", async () => {
+  const { d, folder, done } = await setup();
+  try {
+    d.flushInput = async () => undefined;
+    d.hub = { connected: true, send: () => undefined };
+    d.managed.add({ sessionId: "s1", terminal: "t", pid: 1, cwd: folder, name: "x", launchedAt: 1 });
+    // /clear while the files sent with the input are written ...
+    const saveAttachments = d.saveAttachments.bind(d);
+    d.saveAttachments = async (id: string, files: unknown) => {
+      const paths = await saveAttachments(id, files);
+      d.managed.rekey("s1", "s2");
+      return paths;
+    };
+    const files = [{ name: "a.txt", data: Buffer.from("a").toString("base64") }];
+    assert.deepEqual(await d.input({ type: "session.input", requestId: "r1", sessionId: "s1", text: "見て", files }), { ok: true, queued: true });
+    // ... and while the new name is saved.
+    const save = d.managed.save.bind(d.managed);
+    d.managed.save = async () => {
+      await save();
+      d.managed.rekey("s2", "s3");
+    };
+    assert.deepEqual(await d.rename("s2", "y", "r2"), { ok: true, queued: true });
+    d.managed.save = save;
+    assert.deepEqual(
+      d.managed.waiting("s3").map((i: { text: string }) => i.text.split("\n")[0]),
+      ["見て", "/rename y"],
+    );
+    // A page that has not yet heard of the new id sends the one it shows (the name asked for last takes the place of
+    // the one still waiting).
+    assert.deepEqual(await d.input({ type: "session.input", requestId: "r3", sessionId: "s1", text: "前の ID で" }), { ok: true, queued: true });
+    assert.deepEqual(await d.rename("s2", "z", "r4"), { ok: true, queued: true });
+    assert.deepEqual(
+      d.managed.waiting("s3").map((i: { text: string }) => i.text.split("\n")[0]),
+      ["見て", "前の ID で", "/rename z"],
+    );
+    assert.equal(d.managed.pending("s1") + d.managed.pending("s2"), 0);
+  } finally {
+    await done();
+  }
+});
+
+test("the conversation from before /clear, opened again while a refresh runs, is no longer sent among the session's earlier ids", async () => {
+  const { d, agentsFile, folder, done } = await setup();
+  const claude = await child('process.on("SIGTERM", () => process.exit(0))');
+  const OLD = "aaaaaaaa-0000-4000-8000-000000000021";
+  const NEW = "aaaaaaaa-0000-4000-8000-000000000022";
+  const launchedAt = Date.now();
+  writeFileSync(agentsFile, JSON.stringify([{ pid: claude.pid, sessionId: NEW, cwd: folder, status: "idle", startedAt: launchedAt - 1000 }]));
+  const sent: { sessionId: string; previousSessionIds?: string[] }[][] = [];
+  try {
+    d.cfg.pluginDataDir = path.join(folder, "plugin-data");
+    d.refresh = Object.getPrototypeOf(d).refresh;
+    d.readManagedScreens = async () => undefined;
+    d.countTokens = async () => undefined;
+    d.flushInput = async () => undefined;
+    d.hub = { connected: true, send: (m: { type: string; sessions?: [] }) => m.type === "sessions" && sent.push(m.sessions!) };
+    d.managed.add({ sessionId: OLD, terminal: "t-old", pid: claude.pid, cwd: folder, name: "-wip", launchedAt });
+    await d.refresh();
+    assert.deepEqual(sent.at(-1)?.map((s) => [s.sessionId, s.previousSessionIds]), [[NEW, [OLD]]]);
+
+    const project = path.join(d.cfg.claudeDir, "projects", "p");
+    await fs.mkdir(project, { recursive: true });
+    await fs.writeFile(path.join(project, `${OLD}.jsonl`), `${JSON.stringify({ type: "user", cwd: folder, message: { role: "user", content: "前の会話" } })}\n`);
+    d.startClaude = async () => ({ sessionId: OLD, terminal: "t-resumed", pid: process.pid });
+    // `claude agents` is slow, and the refresh resume asks for only has the one running go again.
+    d.refreshing = true;
+    assert.equal((await d.resume(OLD)).ok, true);
+    assert.deepEqual(sent.at(-1)?.map((s) => [s.sessionId, s.previousSessionIds]), [[NEW, undefined]]);
+  } finally {
+    claude.kill("SIGKILL");
     await done();
   }
 });

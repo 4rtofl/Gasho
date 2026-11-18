@@ -149,6 +149,8 @@ export interface OpenCall {
   name: string;
   input: Record<string, unknown>;
   at?: number;
+  /** The folder Claude was in when it made the call: its permission dialog shows paths from there. */
+  cwd?: string;
 }
 
 /** How many open calls are kept: a turn that leaves more open is not waiting on a dialog for the oldest. */
@@ -498,7 +500,8 @@ export function parseRecord(rec: Record<string, unknown>, meta: TranscriptMeta):
         if (role === "assistant" && !isSidechain && id) {
           const input = b.input && typeof b.input === "object" && !Array.isArray(b.input) ? (b.input as Record<string, unknown>) : {};
           const calls = (meta.openCalls ??= []);
-          calls.push({ toolUseId: id, name: str(b.name) ?? "", input, ...(at === undefined ? {} : { at }) });
+          const cwd = str(rec.cwd);
+          calls.push({ toolUseId: id, name: str(b.name) ?? "", input, ...(at === undefined ? {} : { at }), ...(cwd ? { cwd } : {}) });
           if (calls.length > MAX_OPEN_CALLS) calls.shift();
         }
         blocks.push({

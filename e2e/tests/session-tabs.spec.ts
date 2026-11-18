@@ -35,18 +35,28 @@ const openTab = (page: Page) => tabsOf(page).locator('[aria-current="page"]');
 
 /** Opens a tab's menu as one would: a right-click on a computer, a long press on a touch screen. */
 async function openMenu(page: Page, target: Locator, testInfo: TestInfo): Promise<Locator> {
-  if (testInfo.project.use.hasTouch) await longPress(target);
-  else await target.click({ button: "right" });
   const menu = page.getByRole("menu");
+  if (testInfo.project.use.hasTouch) await longPress(target, menu);
+  else await target.click({ button: "right" });
   await expect(menu).toBeVisible();
   return menu;
 }
 
-/** A finger held on the element: Playwright has no long press, and Radix's menu opens on a touch held for 700 ms. */
-async function longPress(target: Locator): Promise<void> {
+/**
+ * A finger held on the element until `menu` opens, then lifted: Playwright has no long press, and Radix's menu opens on
+ * a touch held for 700 ms. Only the pointer events are sent, not the click a browser may send once the finger lifts:
+ * whether that click opens the session is seen on a real device.
+ */
+async function longPress(target: Locator, menu: Locator): Promise<void> {
   const box = await target.boundingBox();
   if (!box) throw new Error("the element to press is not shown");
-  await target.dispatchEvent("pointerdown", { pointerType: "touch", isPrimary: true, bubbles: true, clientX: box.x + box.width / 2, clientY: box.y + box.height / 2 });
+  // Taken before the menu opens, which hides the rest of the page from the accessibility tree (and from getByRole).
+  const el = await target.elementHandle();
+  const at = { pointerType: "touch", isPrimary: true, bubbles: true, clientX: box.x + box.width / 2, clientY: box.y + box.height / 2 };
+  await el.dispatchEvent("pointerdown", at);
+  await expect(menu).toBeVisible();
+  await el.dispatchEvent("pointerup", at);
+  await el.dispose();
 }
 
 /** Adds a session to the fake daemon's, as gasho-daemon does before it answers that it started one. */
@@ -94,8 +104,8 @@ test("タブのメニューが、Chromium では右クリックとコンテキ�
   await expect(menu.getByRole("menuitem")).toHaveText(["名前を変更…", "フォーク…", "削除…"]);
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
-  // Not the open tab: the menu opened without opening its session. (While the menu is open, the rest of the page is
-  // hidden from the accessibility tree.)
+  // Not the open tab: the menu opened (on a touch screen, the finger lifted) without opening its session. (While the
+  // menu is open, the rest of the page is hidden from the accessibility tree.)
   await expect(openTab(page)).toHaveText("二つ目");
 
   if (!testInfo.project.use.hasTouch) {
@@ -216,6 +226,7 @@ test("オフラインと gasho-daemon 0.9 未満では、メニューの項目�
   await page.goto(`/#/s/${old.machineId}/${id(7)}`);
   let menu = await openMenu(page, tab(page, "古いセッション"), testInfo);
   await expect(menu.getByText("old の gasho-daemon を 0.9.0 以上に更新すると使えます。")).toBeVisible();
+  await expect(menu.getByRole("menuitem")).toHaveCount(3);
   for (const item of await menu.getByRole("menuitem").all()) await expect(item).toBeDisabled();
   await page.keyboard.press("Escape");
 
@@ -232,6 +243,7 @@ test("オフラインと gasho-daemon 0.9 未満では、メニューの項目�
   await expect(page.getByText("working server がオフラインです。")).toBeVisible();
   menu = await openMenu(page, tab(page, "二つ目"), testInfo);
   await expect(menu.getByText("mac はオフラインです。")).toBeVisible();
+  await expect(menu.getByRole("menuitem")).toHaveCount(3);
   for (const item of await menu.getByRole("menuitem").all()) await expect(item).toBeDisabled();
 });
 

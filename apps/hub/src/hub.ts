@@ -139,7 +139,9 @@ export function versionAtLeast(version: string | undefined, major: number, minor
 
 /** A version of gasho-daemon (daemon.update). */
 const VERSION_RE = /^\d{1,9}\.\d{1,9}\.\d{1,9}$/;
-const UPDATE_STEPS = new Set(["install", "check", "wait", "restart"]);
+const UPDATE_STEPS = new Set(["install", "check", "wait", "restart", "trial"]);
+/** The longest trial a gasho-daemon may say it has (an hour). */
+const TRIAL_MAX_MS = 3600_000;
 /** The command that installs the latest gasho-daemon as a service that Gasho can update. */
 const DAEMON_INSTALL_COMMAND = "npx @4rtofl/gasho-daemon@latest service install";
 /** Said when a gasho-daemon does not say whether Gasho can update it (one from before updates from Gasho). */
@@ -186,11 +188,16 @@ export function updateInfoOf(u: unknown): DaemonUpdateInfo | undefined {
   const at = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
   const p = (x.progress ?? {}) as Record<string, unknown>;
   const f = (x.failed ?? {}) as Record<string, unknown>;
+  const b = (x.rolledBack ?? {}) as Record<string, unknown>;
   const pv = version(p.version);
   const pat = at(p.at);
   const fv = version(f.version);
   const fe = text(f.error, 2000);
   const fat = at(f.at);
+  const bfrom = version(b.from);
+  const bto = version(b.to);
+  const bat = at(b.at);
+  const be = text(b.error, 2000);
   const installed = Array.isArray(x.installed) ? (x.installed.filter((v) => version(v) !== undefined).slice(0, 50) as string[]) : [];
   const step = typeof p.step === "string" && UPDATE_STEPS.has(p.step) ? (p.step as NonNullable<DaemonUpdateInfo["progress"]>["step"]) : undefined;
   return {
@@ -201,6 +208,8 @@ export function updateInfoOf(u: unknown): DaemonUpdateInfo | undefined {
     previous: version(x.previous),
     progress: pv && step && pat !== undefined ? { version: pv, step, at: pat } : undefined,
     failed: fv && fe && fat !== undefined ? { version: fv, error: fe, at: fat } : undefined,
+    rolledBack: bfrom && bto && bat !== undefined ? { from: bfrom, to: bto, ...(be ? { error: be } : {}), at: bat } : undefined,
+    trialMs: typeof x.trialMs === "number" && x.trialMs > 0 && x.trialMs <= TRIAL_MAX_MS ? x.trialMs : undefined,
   };
 }
 
@@ -721,9 +730,10 @@ export class Hub {
       this.broadcast({ type: "machine", machine: m });
     }
     this.forgetMemory(id);
-    this.failPending((req) => req.machine === id, "machine disconnected");
-    this.failCommands((c) => c.machine === id, "working server との接続が切れました。");
-    this.failMedia(id, "working server との接続が切れました。");
+    const error = "working server との接続が切れました。";
+    this.failPending((req) => req.machine === id, error);
+    this.failCommands((c) => c.machine === id, error);
+    this.failMedia(id, error);
     this.plugins?.onDaemonClose(id);
   }
 
@@ -836,12 +846,12 @@ export class Hub {
         const daemon = this.daemons.get(msg.machine);
         const reply = { type: "transcript.page" as const, machine: msg.machine, sessionId: msg.sessionId, entries: [], start: 0, total: 0 };
         if (!daemon) {
-          peer.send({ ...reply, error: "machine is offline" });
+          peer.send({ ...reply, error: "working server がオフラインです。" });
           return;
         }
         const requestId = randomUUID();
         const timer = setTimeout(() => {
-          if (this.pending.delete(requestId)) peer.send({ ...reply, error: "timed out" });
+          if (this.pending.delete(requestId)) peer.send({ ...reply, error: "working server から応答がありません。" });
         }, REQUEST_TIMEOUT_MS).unref();
         this.pending.set(requestId, { kind: "transcript", client: peer, machine: msg.machine, sessionId: msg.sessionId, timer });
         const limit = Math.min(Math.max(1, msg.limit), 500);
@@ -1228,9 +1238,10 @@ export class Hub {
       // The daemon was taken out of `daemons` before it was closed, so onDaemonClose leaves this to be done here.
       this.memory.delete(id);
       if (this.machines.delete(id)) {
-        this.failPending((req) => req.machine === id, "machine was removed");
-        this.failCommands((c) => c.machine === id, "working server の登録が外されました。");
-        this.failMedia(id, "working server の登録が外されました。");
+        const error = "working server の登録が外されました。";
+        this.failPending((req) => req.machine === id, error);
+        this.failCommands((c) => c.machine === id, error);
+        this.failMedia(id, error);
         this.broadcast({ type: "machine.removed", id });
         this.plugins?.onDaemonClose(id);
       }

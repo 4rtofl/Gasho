@@ -310,20 +310,50 @@ const DIALOG_OPTION_RE = /^\s*(❯)?\s*(\d+)\.\s+(\S.*)$/;
  * screen shows no such choices, or the prompt box is there.
  */
 export function permissionDialog(screen: string): DialogOption[] | undefined {
+  return dialogChoices(screen)?.options;
+}
+
+/** permissionDialog's choices, and where the first is among the screen's non-empty lines. */
+function dialogChoices(screen: string): { options: DialogOption[]; first: number } | undefined {
   const lines = screenLines(screen);
   if (promptBoxAtBottom(lines)) return undefined;
+  const all = lines.filter(Boolean);
   let options: DialogOption[] = [];
-  for (const line of bottomLines(screen, 15)) {
-    const m = DIALOG_OPTION_RE.exec(line);
+  let first = -1;
+  for (let i = Math.max(0, all.length - 15); i < all.length; i++) {
+    const m = DIALOG_OPTION_RE.exec(all[i]!);
     if (!m) continue;
     const n = Number(m[2]);
     const option = { n, label: m[3]!.trim(), selected: m[1] !== undefined };
     // A choice that wraps goes on without a number; numbers that start again from 1 are another list.
-    if (n === 1) options = [option];
-    else if (n === options.length + 1) options.push(option);
+    if (n === 1) {
+      options = [option];
+      first = i;
+    } else if (n === options.length + 1) options.push(option);
   }
   if (options[0]?.label !== "Yes" || !options.slice(1).some((o) => /^No\b/.test(o.label))) return undefined;
-  return options.filter((o) => o.selected).length === 1 ? options : undefined;
+  return options.filter((o) => o.selected).length === 1 ? { options, first } : undefined;
+}
+
+/** What a permission dialog shows above its choices (see permissionDialogText). */
+export interface DialogText {
+  /** Its non-empty lines, from below the rule drawn above it down to the question. */
+  lines: string[];
+  /** Whether that rule is on the screen: a dialog taller than the screen has its top cut off. */
+  top: boolean;
+}
+
+/**
+ * What Claude Code's permission dialog shows above its choices (the tool, the command or the file, the question), to
+ * tell which call it is about. Undefined when no permission dialog is open.
+ */
+export function permissionDialogText(screen: string): DialogText | undefined {
+  const choices = dialogChoices(screen);
+  if (!choices) return undefined;
+  const above = screenLines(screen).filter(Boolean).slice(0, choices.first);
+  // The rule between the conversation and the dialog.
+  const rule = above.findLastIndex((l) => /^─{8,}$/.test(l));
+  return { lines: above.slice(rule + 1), top: rule >= 0 };
 }
 
 /**
@@ -701,6 +731,11 @@ export interface ManagedSession {
    */
   autoName?: boolean;
   /**
+   * The ids the session had before, oldest first: /clear (and /resume) make Claude Code go on in the same process under
+   * a new id. The files attached to inputs are kept under those ids too (see Daemon.attachmentsOf).
+   */
+  previousIds?: string[];
+  /**
    * The session is hibernated: its Claude Code and terminal have ended (`pid` and `terminal` are those it had), and
    * `claude --resume` brings it back when it is used (hibernate.ts).
    */
@@ -726,6 +761,9 @@ export interface Hibernated {
   /** Saved only: the inputs waiting for it, kept over a restart of gasho-daemon. */
   inputs?: QueuedInput[];
 }
+
+/** At most this many earlier ids are kept for a session (see ManagedSession.previousIds). */
+export const MAX_PREVIOUS_IDS = 20;
 
 /** Names of sessions started from Gasho: at most this many characters. */
 export const MAX_SESSION_NAME = 60;
@@ -946,12 +984,34 @@ export class ManagedSessions {
     return this.sessions.get(sessionId);
   }
 
+  /**
+   * The session that runs under `sessionId`, or that had it before /clear: a page that has not yet heard of the new id
+   * still sends the one it shows.
+   */
+  find(sessionId: string): ManagedSession | undefined {
+    return this.sessions.get(sessionId) ?? this.all().find((m) => m.previousIds?.includes(sessionId));
+  }
+
   all(): ManagedSession[] {
     return [...this.sessions.values()];
   }
 
   add(m: ManagedSession): void {
     this.sessions.set(m.sessionId, m);
+    this.claim(m.sessionId);
+  }
+
+  /**
+   * `id` is a session's own now (an earlier conversation opened again): a session that had it before /clear lets it go,
+   * so that the notifications and attachments under it stay with the session that runs it.
+   */
+  private claim(id: string): void {
+    for (const m of this.sessions.values()) {
+      if (m.sessionId === id || !m.previousIds?.includes(id)) continue;
+      const rest = m.previousIds.filter((x) => x !== id);
+      if (rest.length > 0) m.previousIds = rest;
+      else delete m.previousIds;
+    }
   }
 
   /** Whether the name changed. */
@@ -985,6 +1045,25 @@ export class ManagedSessions {
   remove(sessionId: string): void {
     this.sessions.delete(sessionId);
     this.queues.delete(sessionId);
+  }
+
+  /**
+   * The session goes on under the id `to` (see ManagedSession.previousIds), with its waiting inputs. The record stays the
+   * same object, so code that holds it across an await sees the new id.
+   */
+  rekey(from: string, to: string): ManagedSession | undefined {
+    const m = this.sessions.get(from);
+    if (!m || this.sessions.has(to)) return undefined;
+    this.sessions.delete(from);
+    // Back to an earlier conversation (/resume): that id is the session's again, not an earlier one.
+    m.previousIds = [...(m.previousIds ?? []).filter((id) => id !== to), from].slice(-MAX_PREVIOUS_IDS);
+    m.sessionId = to;
+    this.sessions.set(to, m);
+    this.claim(to);
+    const q = this.queues.get(from);
+    this.queues.delete(from);
+    if (q) this.queues.set(to, q);
+    return m;
   }
 
   enqueue(sessionId: string, input: QueuedInput): number {

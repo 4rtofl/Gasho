@@ -25,7 +25,7 @@ claude --print --sdk-url https://api.anthropic.com/v1/code/sessions/cse_… \
 |---|---|---|
 | `claude agents --json` の出力 | pid、作業ディレクトリ、sessionId、名前、状態（busy・waiting・idle）、待っているもの（`waitingFor`） | 公式。CLI のヘルプにスクリプト用と書かれている |
 | `~/.claude/projects/<作業ディレクトリ>/<sessionId>.jsonl` | 会話の記録（トランスクリプト） | 形式は非公開。Agent SDK の `getSessionMessages()` で読める |
-| `~/.claude/sessions/<pid>.json` | 動いているセッションの情報。`bridgeSessionId` を含む | 内部用 |
+| `~/.claude/sessions/<pid>.json` | 動いているセッションの情報。`sessionId`（`claude agents --json` に出るものと同じ）と `bridgeSessionId` を含む | 内部用 |
 
 トランスクリプトには、Gasho で使える記録が入っている。
 

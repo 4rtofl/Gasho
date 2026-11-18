@@ -20,10 +20,10 @@ import type { FromHost, GitHubAnswer, LocalWire, MachineWire, SessionWire, ToHos
  * `api`: 1.10, as worktree.remove (useRemoveWorktree) is answered only from this gasho-daemon on. 1.11 (the panels of
  * a plugin's page) and 1.12 (useSendInput's model, effort and ultracode, which this gasho-daemon switches since 0.6.0)
  * are the screen's alone, as is 1.14 (useRemoveSession, session.remove having been answered long before): this
- * gasho-daemon names them so that a plugin of 1.14 with a daemon part runs. 1.13: the daemon part's onSessionStop is
+ * gasho-daemon names them so that a plugin of 1.14 with a daemon part runs. 1.15: the daemon part's onSessionStop is
  * asked from this gasho-daemon on.
  */
-export const PLUGIN_API = "1.14";
+export const PLUGIN_API = "1.15";
 /** The process of a daemon part: next to this file (.ts when run from the repository, .js in the npm package). */
 const HOST_FILE = fileURLToPath(new URL(`./plugin-host${path.extname(fileURLToPath(import.meta.url))}`, import.meta.url));
 /** How long a new process may take to import the plugin and run its `start`. */
@@ -378,7 +378,7 @@ export class PluginRunner {
   }
 
   /**
-   * What the daemon parts say of a session that ended a turn (onSessionStop, plugin API 1.13): the first answer, in the
+   * What the daemon parts say of a session that ended a turn (onSessionStop, plugin API 1.15): the first answer, in the
    * order of the plugins, of those asked at the same time. Nothing for a session not started from Gasho, and when none
    * answers within SESSION_STOP_MS: Gasho's own notification is sent then.
    */

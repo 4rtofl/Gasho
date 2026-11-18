@@ -342,13 +342,13 @@ export interface HookEvent {
    */
   automatic?: boolean;
   /**
-   * On a Stop: what a plugin's daemon part says of the end of this turn (onSessionStop, plugin API 1.13), in place of
+   * On a Stop: what a plugin's daemon part says of the end of this turn (onSessionStop, plugin API 1.15), in place of
    * Gasho's own "の応答が終わりました". Older gasho-daemon versions do not set it.
    */
   notification?: PluginStopNotification;
 }
 
-/** What a plugin's daemon part says when a session stops (onSessionStop, plugin API 1.13). */
+/** What a plugin's daemon part says when a session stops (onSessionStop, plugin API 1.15). */
 export interface PluginStopNotification {
   /** The plugin's id. */
   plugin: string;
@@ -374,7 +374,7 @@ export interface GashoNotification {
   body?: string;
   read: boolean;
   /**
-   * The plugin that wrote the title (onSessionStop, plugin API 1.13): the lock screen then shows the title. Only on the
+   * The plugin that wrote the title (onSessionStop, plugin API 1.15): the lock screen then shows the title. Only on the
    * notification as it is made; the Gasho server does not keep it.
    */
   plugin?: string;
@@ -898,7 +898,7 @@ export interface DaemonPluginEntry {
   run: boolean;
   /** The values of its settings with scope "server". */
   settings: Record<string, unknown>;
-  /** It has the permission "session.notification": its onSessionStop is asked when a session stops (plugin API 1.13). */
+  /** It has the permission "session.notification": its onSessionStop is asked when a session stops (plugin API 1.15). */
   sessionStop?: boolean;
 }
 

@@ -7,7 +7,7 @@ export function sessionLabel(s: SessionInfo | undefined, sessionId: string): str
   return sessionId.slice(0, 8);
 }
 
-/** What a plugin says of a Stop (plugin API 1.13), when gasho-daemon sent something that can be shown. */
+/** What a plugin says of a Stop (plugin API 1.15), when gasho-daemon sent something that can be shown. */
 function pluginNotification(ev: HookEvent): HookEvent["notification"] {
   const n = ev.notification;
   if (typeof n?.plugin !== "string" || typeof n.title !== "string" || !n.title.trim()) return undefined;

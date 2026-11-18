@@ -152,7 +152,7 @@ export type DaemonMethod = (params: unknown, ctx: DaemonContext) => unknown;
 /** What onSessionStop gets: the context of a call, always with the session that stopped. */
 export type SessionStopContext = DaemonContext & { session: DaemonSession };
 
-/** The notification to send in place of Gasho's own "の応答が終わりました" (plugin API 1.13). */
+/** The notification to send in place of Gasho's own "の応答が終わりました" (plugin API 1.15). */
 export interface SessionStopNotification {
   /** Up to 120 characters; also what the lock screen shows, so keep what the conversation says out of it. */
   title: string;
@@ -170,7 +170,7 @@ export interface DaemonPluginDefinition {
   stop?(): void | Promise<void>;
   /**
    * Called when a session started from Gasho ends a turn (needs the permission "session.notification", plugin API
-   * 1.13). Return a notification to send it in place of Gasho's own, or nothing to leave Gasho's. Gasho's notification
+   * 1.15). Return a notification to send it in place of Gasho's own, or nothing to leave Gasho's. Gasho's notification
    * waits for the answer, for at most 5 seconds (ctx.signal is then aborted): return at once for a session that is none
    * of the plugin's. A failure or a late answer leaves Gasho's own.
    */

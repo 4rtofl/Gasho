@@ -276,7 +276,7 @@ test("notificationFor covers permission, idle and errors, and ignores other even
   assert.equal(notificationFor("m", { ...ev, event: "Stop" }, undefined, "5")?.title, "s1 の応答が終わりました");
 });
 
-test("what a plugin says of a Stop replaces Gasho's notification, and is not dropped in a turn of its own (API 1.13)", () => {
+test("what a plugin says of a Stop replaces Gasho's notification, and is not dropped in a turn of its own (API 1.15)", () => {
   const ev = { sessionId: "s1", event: "Stop", at: 1, summary: "会話の中身" };
   const said = notificationFor("m", { ...ev, notification: { plugin: "github-review", title: " #5 のレビューが終わりました ", body: "o/r" } }, undefined, "1");
   assert.deepEqual(

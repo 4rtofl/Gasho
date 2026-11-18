@@ -1,5 +1,5 @@
 // Passes Claude Code's hooks on to the Gasho server. A Stop first asks the plugins' daemon parts what to say of it
-// (onSessionStop, plugin API 1.13); the hooks of that session that come meanwhile wait behind it, so that the Gasho
+// (onSessionStop, plugin API 1.15); the hooks of that session that come meanwhile wait behind it, so that the Gasho
 // server hears them in the order they happened: a prompt overtaking the Stop before it would look like a turn that ended.
 import type { HookEvent, PluginStopNotification } from "@gasho/protocol";
 

@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { PluginInfo } from "@gasho/protocol";
 import { beforeEach, expect, test, vi } from "vitest";
+import { UnusedSessionsDialog } from "@/components/unused-sessions-dialog";
 import { PluginConversationEnd, PluginHeaderItems, PluginPageView, PluginPanelView, PluginSettingsSections } from "@/plugins/parts";
 import { connectHub, machine, session } from "./hub";
 
@@ -147,6 +148,33 @@ test("a plugin removes a session with the permission, naming itself, and the scr
   await hub.answer({ ok: true });
   expect(await screen.findByText("削除しました")).toBeTruthy();
   expect(location.hash).not.toBe("#/s/m1/s1");
+});
+
+test("a plugin hears that the person cancelled its launch, so that it can put away what it made for it (API 1.15)", async () => {
+  const user = userEvent.setup();
+  const withLaunch = info({ manifest: { ...info().manifest, permissions: ["session.launch"] } });
+  const unused = session("old", { lastActivityAt: Date.now() - 7 * 24 * 60 * 60 * 1000 });
+  const hub = await connectHub({ machines: [machine("m-cancel", [s1, unused], { daemonVersion: "0.24.0" })], plugins: [withLaunch] });
+  render(
+    <>
+      <PluginPanelView machine="m-cancel" sessionId="s1" panel={{ kind: "plugin", plugin: "notes", id: "notes", params: {} }} docked onClose={() => {}} />
+      <UnusedSessionsDialog />
+    </>,
+  );
+  await user.click(await screen.findByRole("button", { name: "ここで起動" }));
+  await user.click(await screen.findByRole("button", { name: "キャンセル" }));
+  expect(await screen.findByText("片付けます：セッションの起動をキャンセルしました。")).toBeTruthy();
+  expect(hub.commands().filter((c) => c.type === "session.launch")).toHaveLength(0);
+});
+
+test("a launch that failed is not told as cancelled", async () => {
+  const user = userEvent.setup();
+  const withLaunch = info({ manifest: { ...info().manifest, permissions: ["session.launch"] } });
+  const hub = await connectHub({ machines: [machine("m-failed", [s1], { daemonVersion: "0.24.0" })], plugins: [withLaunch] });
+  render(<PluginPanelView machine="m-failed" sessionId="s1" panel={{ kind: "plugin", plugin: "notes", id: "notes", params: {} }} docked onClose={() => {}} />);
+  await user.click(await screen.findByRole("button", { name: "ここで起動" }));
+  await hub.answer({ ok: false, error: "フォルダーがありません" });
+  expect(await screen.findByText("フォルダーがありません")).toBeTruthy();
 });
 
 test("a plugin without the permission cannot remove a session, and one that fails hears why", async () => {

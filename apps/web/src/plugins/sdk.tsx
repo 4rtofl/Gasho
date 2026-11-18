@@ -426,7 +426,7 @@ export const sdk: GashoSdk = {
       if (r.needsTrust) {
         return { ok: false, error: "Claude Code がこのフォルダーを信頼するかを聞いています。", needsTrust: true, ...(r.trustWarnings ? { trustWarnings: r.trustWarnings } : {}) };
       }
-      return { ok: false, error: r.error ?? "起動できませんでした。" };
+      return { ok: false, error: r.error ?? "起動できませんでした。", ...(r.cancelled ? { cancelled: true } : {}) };
     };
   },
   useRemoveSession: () => {

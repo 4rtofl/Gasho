@@ -13,6 +13,7 @@ function Notes() {
   const [count, setCount] = sdk.useSharedState("count", 0);
   const send = sdk.useSendInput();
   const removeSession = sdk.useRemoveSession();
+  const launch = sdk.useLaunchSession();
   const [said, setSaid] = React.useState("");
   const ctx = sdk.useSessionContext();
   return h(
@@ -52,6 +53,17 @@ function Notes() {
         },
       },
       "このセッションを削除",
+    ),
+    h(
+      "button",
+      {
+        type: "button",
+        onClick: async () => {
+          const r = await launch({ machine: ctx!.machine.id, cwd: ctx!.session.cwd });
+          setSaid(r.ok ? "起動しました" : r.cancelled ? `片付けます：${r.error}` : r.error);
+        },
+      },
+      "ここで起動",
     ),
     said && h("p", null, said),
   );

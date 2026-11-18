@@ -73,7 +73,8 @@ export type Route =
   | { name: "home" }
   /** `section`: the section to scroll to once it is shown (#/devices/updates). */
   | { name: "devices"; section?: "updates" }
-  | { name: "settings" }
+  /** `plugin`: the plugin whose section to scroll to once it is shown (#/settings/p/<plugin>). */
+  | { name: "settings"; plugin?: string }
   /** The plugins screen (docs/plugins.md). */
   | { name: "plugins" }
   /**
@@ -92,6 +93,8 @@ export function parseHash(hash: string): Route {
   if (hash === "#/devices") return { name: "devices" };
   if (hash === "#/devices/updates") return { name: "devices", section: "updates" };
   if (hash === "#/settings") return { name: "settings" };
+  const settings = hash.match(/^#\/settings\/p\/([^/?]+)$/);
+  if (settings?.[1]) return PLUGIN_ID.test(settings[1]) ? { name: "settings", plugin: settings[1] } : { name: "home" };
   if (hash === "#/plugins") return { name: "plugins" };
   // A plugin's page, a plugin's panel of a session and a plugin's screen of a worktree: …/p/<plugin>/<id>, with the
   // params as the query.
@@ -169,7 +172,7 @@ export const isOldGitHubLink = (hash: string): boolean => /^#\/s\/[^/]+\/[^/]+\/
 export function hrefOf(r: Route): string {
   if (r.name === "home") return "#/";
   if (r.name === "devices") return r.section ? `#/devices/${r.section}` : "#/devices";
-  if (r.name === "settings") return "#/settings";
+  if (r.name === "settings") return r.plugin ? `#/settings/p/${encodeURIComponent(r.plugin)}` : "#/settings";
   if (r.name === "plugins") return "#/plugins";
   if (r.name === "plugin") {
     const page = `#/p/${encodeURIComponent(r.plugin)}/${encodeURIComponent(r.page)}`;

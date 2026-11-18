@@ -68,7 +68,7 @@ import {
   type HeldWorktreeList,
   type PendingMove,
 } from "@/lib/worktree-groupings";
-import { PANEL_WIDTH_MAX, PANEL_WIDTH_MIN, clampPanelWidth, defaultPanelWidth, usePanelWidth } from "@/lib/widths";
+import { PANEL_WIDTH_MAX, PANEL_WIDTH_MIN, clampPanelWidth, defaultPanelWidth, panelOverlays, usePanelWidth } from "@/lib/widths";
 import { PluginBadgeProbes, PluginPagePanelView, PluginPageView, PluginPanelView, usePluginBadges } from "@/plugins/parts";
 import { usePluginRegistry } from "@/plugins/registry";
 import { PluginSessionListProbe, useSessionListMode } from "@/plugins/session-list";
@@ -128,7 +128,10 @@ function Brand({ away, onGassho }: { away: boolean; onGassho: (from: GasshoFrom)
   );
 }
 
-/** A panel of a session beside it on a computer, its left edge dragged to change its width (lib/widths). */
+/**
+ * A panel of a session beside it on a computer, its left edge dragged to change its width (lib/widths). Where the
+ * conversation would be too narrow to be read beside it, it goes over the conversation, at the right.
+ */
 function DockedPanel({ children }: { children: ReactNode }) {
   const ref = useRef<HTMLElement>(null);
   const [savedWidth, setSavedWidth] = usePanelWidth();
@@ -147,7 +150,11 @@ function DockedPanel({ children }: { children: ReactNode }) {
   const clampWidth = (w: number) => clampPanelWidth(w, room);
   const width = clampWidth(dragWidth ?? savedWidth ?? defaultPanelWidth(windowWidth));
   return (
-    <aside ref={ref} style={{ width }} className="relative shrink-0 border-l border-border bg-background">
+    <aside
+      ref={ref}
+      style={{ width }}
+      className={cn("shrink-0 border-l border-border bg-background", panelOverlays(room) ? "absolute inset-y-0 right-0 z-30 shadow-2xl shadow-black/50" : "relative")}
+    >
       {children}
       <ResizeHandle
         edge="left"
@@ -663,7 +670,7 @@ export function App() {
           {!connected && <span className="ml-auto shrink-0 text-xs text-red-400">再接続中…</span>}
           {onScreen && <SessionHeaderToggle className={cn("-mr-1", connected && "ml-auto")} />}
         </header>
-        <div className="flex min-h-0 flex-1">
+        <div className="relative flex min-h-0 flex-1">
           {/* layoutScroll: the home screen's tiles slide to new places inside it, also while it scrolls. relative: an
               absolutely placed element with no placed parent of its own (an sr-only status line) is placed in here and
               scrolls with the screen. Otherwise it is placed on the page and makes the page longer than the window. */}

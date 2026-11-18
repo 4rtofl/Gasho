@@ -129,7 +129,7 @@ test("新しいファイル: 名前を検査し、Esc で閉じ（変換中は�
   await test.step("同じ名前のファイルがあれば、gasho-daemon が断ったことが出る", async () => {
     await name.fill("README.md");
     await create.click();
-    await expect(panel.getByText("同じ名前のファイルがあります。")).toBeVisible();
+    await expect(panel.getByText("同じ名前のファイルかフォルダーが、すでにあります：README.md")).toBeVisible();
     expect(f.writes).toMatchObject([{ path: "README.md", content: "", create: true }]);
   });
 

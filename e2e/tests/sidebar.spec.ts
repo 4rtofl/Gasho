@@ -1,4 +1,3 @@
-/// <reference lib="dom" />
 // The sidebar: its items' badges, the worktrees' rows and what pressing one opens, their order (dragged, moved with
 // the keyboard, held while the pointer is over them), the narrowing to repositories, the worktrees this browser keeps,
 // and on a computer its width and folding, on a phone its drawer. With fake gasho-daemons.
@@ -372,7 +371,7 @@ test.describe("ドロワー（スマホ）", () => {
     await page.goto("/");
     const drawer = page.getByRole("dialog", { name: "Navigation" });
     const open = () => page.getByRole("button", { name: "Open navigation" }).click();
-    const overflow = () => page.evaluate(() => document.body.style.overflow);
+    const overflow = () => page.evaluate<string>("document.body.style.overflow");
 
     await open();
     await expect(drawer).toBeVisible();

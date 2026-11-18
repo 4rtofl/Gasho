@@ -1,4 +1,3 @@
-/// <reference lib="dom" />
 // What the scenarios of the home screen and the sidebar share: sessions in worktrees of repositories, the hooks a
 // gasho-daemon relays, and drags with a mouse or a finger. Playwright drags only with the mouse: a finger's drag is
 // made of pointer events of pointerType "touch", which the screen's drags (lib/sortable.ts, framer-motion) read.
@@ -28,9 +27,20 @@ export function sendHook(d: FakeDaemon, sessionId: string, event: string, more: 
   d.send({ type: "hook", event: { sessionId, event, at: Date.now(), ...more } });
 }
 
+/** What the functions run in the page use of its window (e2e/ is type-checked without the DOM's types). */
+type PageWindow = {
+  requestAnimationFrame(f: () => void): void;
+  document: { body: PageElement; elementFromPoint(x: number, y: number): PageElement | null };
+  PointerEvent: new (type: string, init: object) => object;
+};
+type PageElement = { dispatchEvent(e: object): boolean };
+
 /** Until the screen has drawn twice: what a drag moved is then shown, and read by the drag's next step. */
 export async function frames(page: Page): Promise<void> {
-  await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+  await page.evaluate(() => {
+    const w = globalThis as unknown as PageWindow;
+    return new Promise<void>((r) => w.requestAnimationFrame(() => w.requestAnimationFrame(() => r())));
+  });
 }
 
 /**
@@ -75,7 +85,8 @@ function finger(page: Page, from: Point): Drag {
   const send = (type: string, p: Point, buttons: number) =>
     page.evaluate(
       ({ type, p, buttons }) => {
-        const init: PointerEventInit = {
+        const w = globalThis as unknown as PageWindow;
+        const init = {
           pointerId: 41,
           pointerType: "touch",
           isPrimary: true,
@@ -87,7 +98,7 @@ function finger(page: Page, from: Point): Drag {
           cancelable: true,
           composed: true,
         };
-        (document.elementFromPoint(p.x, p.y) ?? document.body).dispatchEvent(new PointerEvent(type, init));
+        (w.document.elementFromPoint(p.x, p.y) ?? w.document.body).dispatchEvent(new w.PointerEvent(type, init));
       },
       { type, p, buttons },
     );
@@ -112,13 +123,12 @@ export async function startDrag(page: Page, isMobile: boolean, from: Locator): P
   const start = await middleOf(from);
   if (isMobile) {
     const f = finger(page, start);
-    await page.evaluate(
-      (p) =>
-        (document.elementFromPoint(p.x, p.y) ?? document.body).dispatchEvent(
-          new PointerEvent("pointerdown", { pointerId: 41, pointerType: "touch", isPrimary: true, button: 0, buttons: 1, clientX: p.x, clientY: p.y, bubbles: true, cancelable: true, composed: true }),
-        ),
-      start,
-    );
+    await page.evaluate((p) => {
+      const w = globalThis as unknown as PageWindow;
+      (w.document.elementFromPoint(p.x, p.y) ?? w.document.body).dispatchEvent(
+        new w.PointerEvent("pointerdown", { pointerId: 41, pointerType: "touch", isPrimary: true, button: 0, buttons: 1, clientX: p.x, clientY: p.y, bubbles: true, cancelable: true, composed: true }),
+      );
+    }, start);
     return f;
   }
   await page.mouse.move(start.x, start.y);

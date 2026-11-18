@@ -1,4 +1,3 @@
-/// <reference lib="dom" />
 // The home screen: its heading and tiles, the sessions' cards, the notifications, the latest operations, the number
 // tiles' charts, the tiles' order and the columns of the grid, with fake gasho-daemons.
 import type { Page } from "@playwright/test";
@@ -26,7 +25,10 @@ const numberTile = (page: Page, label: string, value?: number | string) =>
 
 /** How many columns the tiles' grid has now. */
 const columns = (page: Page) =>
-  page.getByRole("button", { name: "「作業中」を移動" }).evaluate((el) => getComputedStyle(el.parentElement!.parentElement!).gridTemplateColumns.split(" ").length);
+  page.getByRole("button", { name: "「作業中」を移動" }).evaluate((el) => {
+    const w = globalThis as unknown as { getComputedStyle(e: unknown): { gridTemplateColumns: string } };
+    return w.getComputedStyle(el.parentElement.parentElement).gridTemplateColumns.split(" ").length;
+  });
 
 test.describe("見出しとタイル", () => {
   test("見出しに working server の台数と Gasho から起動したセッションの数が出て、タイルが 11 枚並ぶ", async ({ page, hub }) => {

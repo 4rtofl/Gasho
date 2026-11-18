@@ -13,6 +13,7 @@ import type {
   MachineHookEvent,
   MachineInfo,
   MachineMemory,
+  TokenDay,
   PluginCatalog,
   PluginCommand,
   PluginInfo,
@@ -28,6 +29,7 @@ import { usePageVisible } from "./media";
 import { movePending } from "./pending";
 import { type AutoReload, onOutOfDate, outOfDate } from "./server-update";
 import { movedSession, unreadOfSession } from "./sessions";
+import { mergeTokenDays } from "./token-days.ts";
 
 /** Close code the Gasho server uses when this browser is not (or no longer) registered. */
 const CLOSE_UNAUTHORIZED = 4401;
@@ -75,6 +77,10 @@ export interface State {
   machines: MachineInfo[];
   /** The latest memory of the working servers that tell it, by machine id. */
   memory: Record<string, MachineMemory>;
+  /** The last year's tokens per day, by machine id: absent until the home screen has asked for them. */
+  tokenDays?: Record<string, TokenDay[]>;
+  /** Whether a working server has told its tokens per day (an older gasho-daemon does not). */
+  tokenDaysReported: boolean;
   notifications: GashoNotification[];
   events: MachineHookEvent[];
   /**
@@ -125,6 +131,8 @@ const EMPTY: Omit<State, "auth"> = {
   connected: false,
   machines: [],
   memory: {},
+  tokenDays: undefined,
+  tokenDaysReported: false,
   notifications: [],
   events: [],
   operations: [],
@@ -377,6 +385,11 @@ export function sendToHub(m: ClientToHub): boolean {
 
 const pluginResults = new Map<string, (r: CommandResult) => void>();
 
+/** Asks the Gasho server for the last year's tokens per day. */
+export function requestTokenDays(): void {
+  sendToHub({ type: "token.days.get" });
+}
+
 /** Asks the Gasho server to read the catalog of plugins again: if it is older than 10 minutes, or now (`refresh`). */
 export function requestCatalog(refresh = false): void {
   sendToHub({ type: "plugin.catalog.get", ...(refresh ? { refresh: true } : {}) });
@@ -582,14 +595,32 @@ function handle(m: HubToClient): void {
       update({ memory: m.memory ? { ...memory, [m.machine]: m.memory } : memory });
       break;
     }
+    case "token.days":
+      update({ tokenDays: m.days, tokenDaysReported: m.reported });
+      break;
+    case "token.days.update":
+      // Before the home screen has asked, there is nothing to add them to: it gets them with the rest.
+      if (state.tokenDays) {
+        update({ tokenDays: { ...state.tokenDays, [m.machine]: mergeTokenDays(state.tokenDays[m.machine] ?? [], m.days) }, tokenDaysReported: true });
+      }
+      break;
     case "machine.removed": {
       const { [m.id]: _gone, ...memory } = state.memory;
+      const { [m.id]: _days, ...tokenDays } = state.tokenDays ?? {};
       const prefix = transcriptKey(m.id, "");
       const transcripts = Object.fromEntries(Object.entries(state.transcripts).filter(([k]) => !k.startsWith(prefix)));
       const graphs = Object.fromEntries(Object.entries(state.graphs).filter(([k]) => !k.startsWith(prefix)));
       const dirs = Object.fromEntries(Object.entries(state.dirs).filter(([k]) => !k.startsWith(prefix)));
       const files = Object.fromEntries(Object.entries(state.files).filter(([k]) => !k.startsWith(prefix)));
-      update({ machines: state.machines.filter((x) => x.id !== m.id), memory, transcripts, graphs, dirs, files });
+      update({
+        machines: state.machines.filter((x) => x.id !== m.id),
+        memory,
+        ...(state.tokenDays ? { tokenDays } : {}),
+        transcripts,
+        graphs,
+        dirs,
+        files,
+      });
       break;
     }
     case "transcript.page": {

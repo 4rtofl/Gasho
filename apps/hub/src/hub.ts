@@ -14,6 +14,7 @@ import type {
   MachineHookEvent,
   MachineInfo,
   MachineMemory,
+  TokenDay,
   MediaPart,
   PermissionRequestInfo,
   ServerInfo,
@@ -321,6 +322,14 @@ function mediaAnswerOf(msg: Extract<DaemonToHub, { type: "media" }>, offset: num
   return { part: { mime: p.mime.toLowerCase(), size: p.size, mtime: p.mtime, offset }, bytes };
 }
 
+/** The days a working server told, without what cannot be one: no more than a year and a bit of them. */
+function tokenDaysOf(v: unknown): TokenDay[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((d): d is TokenDay => Array.isArray(d) && typeof d[0] === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d[0]) && Number.isSafeInteger(d[1]) && d[1] >= 0)
+    .slice(-400);
+}
+
 function isMemory(v: unknown): v is MachineMemory {
   const m = v as MachineMemory | undefined;
   return typeof m?.total === "number" && typeof m.used === "number" && Number.isFinite(m.total) && m.total > 0 && m.used >= 0 && m.used <= m.total;
@@ -505,6 +514,8 @@ export class Hub {
   private machines = new Map<string, MachineInfo>();
   /** The connected working servers' latest memory: never written to the database, it changes at every reading. */
   private memory = new Map<string, MachineMemory>();
+  /** The working servers that told their tokens per day since the Gasho server started. */
+  private tellTokenDays = new Set<string>();
   private daemons = new Map<string, DaemonPeer>();
   private clients = new Set<ClientPeer>();
   private pending = new Map<string, PendingRequest>();
@@ -608,6 +619,13 @@ export class Hub {
           this.broadcast({ type: "machine.memory", machine: id, memory: msg.memory });
         } else this.forgetMemory(id);
         break;
+      case "token.days": {
+        const days = tokenDaysOf(msg.days);
+        this.tellTokenDays.add(id);
+        this.store.saveTokenDays(id, days);
+        this.broadcast({ type: "token.days.update", machine: id, days });
+        break;
+      }
       case "transcript.append":
         this.broadcast({ type: "transcript.append", machine: id, sessionId: msg.sessionId, entries: msg.entries });
         break;
@@ -905,6 +923,11 @@ export class Hub {
       case "latest.check":
         if (this.latest) void this.latest.check(true);
         break;
+      case "token.days.get": {
+        const days = this.store.tokenDays();
+        peer.send({ type: "token.days", days, reported: this.tellTokenDays.size > 0 || Object.keys(days).length > 0 });
+        break;
+      }
       case "hub.update": {
         if (typeof msg.requestId !== "string" || !msg.requestId || msg.requestId.length > 100) return;
         const result: CommandResult = this.server
@@ -1232,6 +1255,7 @@ export class Hub {
       }
       // The daemon was taken out of `daemons` before it was closed, so onDaemonClose leaves this to be done here.
       this.memory.delete(id);
+      this.tellTokenDays.delete(id);
       if (this.machines.delete(id)) {
         const error = "working server の登録が外されました。";
         this.failPending((req) => req.machine === id, error);

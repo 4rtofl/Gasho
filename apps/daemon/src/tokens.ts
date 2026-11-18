@@ -4,6 +4,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { TokenUsage } from "@gasho/protocol";
+import { tokenDayOf } from "./token-days.ts";
 
 const HOUR = 3600_000;
 /** Hours of use kept per session: the home screen compares the last 24 hours with the 24 before. */
@@ -21,6 +22,8 @@ function add(to: TokenUsage, u: TokenUsage, sign = 1): void {
   to.cacheWrite += sign * u.cacheWrite;
   to.cacheRead += sign * u.cacheRead;
 }
+
+const sum = (u: TokenUsage) => u.input + u.output + u.cacheWrite + u.cacheRead;
 
 /** The usage a transcript line records (a reply of Claude), or undefined. */
 export function usageOfLine(line: string): { id: string; at: number; usage: TokenUsage } | undefined {
@@ -67,10 +70,12 @@ async function transcriptsIn(dir: string): Promise<string[]> {
 export class TokenCounter {
   private transcript: string;
   private since: number;
-  private replies = new Map<string, { hour: number; usage: TokenUsage }>();
+  private replies = new Map<string, { hour: number; day: string; usage: TokenUsage }>();
   private total = emptyUsage();
   private byHour = new Map<number, TokenUsage>();
+  private byDay = new Map<string, number>();
   private files = new Map<string, { offset: number; rest: Buffer }>();
+  private unread = false;
 
   constructor(transcript: string, { since = 0 }: { since?: number } = {}) {
     this.transcript = transcript;
@@ -81,6 +86,7 @@ export class TokenCounter {
   async update(): Promise<boolean> {
     const subagents = path.join(path.dirname(this.transcript), path.basename(this.transcript, ".jsonl"), "subagents");
     let changed = false;
+    this.unread = false;
     for (const file of [this.transcript, ...(await transcriptsIn(subagents))]) {
       if (await this.read(file)) changed = true;
     }
@@ -107,6 +113,7 @@ export class TokenCounter {
       const chunk = Buffer.alloc(Math.min(size - known.offset, READ_MAX));
       await fh.read(chunk, 0, chunk.length, known.offset);
       known.offset += chunk.length;
+      if (known.offset < size) this.unread = true;
       // Only whole lines: the rest (with a character split between reads) waits for the next read.
       const data = Buffer.concat([known.rest, chunk]);
       const lastNl = data.lastIndexOf(10);
@@ -125,6 +132,7 @@ export class TokenCounter {
   /** Counts a reply, replacing what an earlier record of the same reply counted. */
   private count({ id, at, usage }: { id: string; at: number; usage: TokenUsage }): boolean {
     const hour = Math.floor(at / HOUR) * HOUR;
+    const day = tokenDayOf(at);
     const before = this.replies.get(id);
     if (before) {
       const u = before.usage;
@@ -134,9 +142,11 @@ export class TokenCounter {
       add(this.total, u, -1);
       const h = this.byHour.get(before.hour);
       if (h) add(h, u, -1);
+      this.byDay.set(before.day, (this.byDay.get(before.day) ?? 0) - sum(u));
     }
-    this.replies.set(id, { hour, usage });
+    this.replies.set(id, { hour, day, usage });
     add(this.total, usage);
+    this.byDay.set(day, (this.byDay.get(day) ?? 0) + sum(usage));
     const h = this.byHour.get(hour) ?? emptyUsage();
     add(h, usage);
     this.byHour.set(hour, h);
@@ -145,6 +155,16 @@ export class TokenCounter {
 
   totals(): TokenUsage {
     return { ...this.total };
+  }
+
+  /** Whether the last update reached the end of every file: until then, the days add up to less than they will. */
+  get complete(): boolean {
+    return !this.unread;
+  }
+
+  /** The tokens used per day (Japan Standard Time); days without use are left out. */
+  days(): Map<string, number> {
+    return new Map([...this.byDay].filter(([, tokens]) => tokens > 0));
   }
 
   /** The use per hour over the last TOKEN_HOURS hours, oldest first; hours without use are left out. */

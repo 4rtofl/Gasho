@@ -11,6 +11,7 @@ import {
   dialogOpen,
   launchableFolders,
   ManagedSessions,
+  MAX_PREVIOUS_IDS,
   EFFORT_LEVELS,
   forkName,
   isRename,
@@ -113,6 +114,35 @@ test("managed sessions keep their input queue in order and survive a reload", as
   } finally {
     await fs.rm(dir, { recursive: true });
   }
+});
+
+test("a session goes on under its new id; an id it had is let go once a session runs under it again", () => {
+  const a = new ManagedSessions(path.join(os.tmpdir(), "gasho-unsaved", "managed.json"));
+  const ids = () => a.all().map((m) => [m.sessionId, m.previousIds]);
+  const add = (sessionId: string, pid: number) => a.add({ sessionId, terminal: sessionId, pid, cwd: "/x", name: sessionId, launchedAt: 1 });
+  add("A", 1);
+  a.rekey("A", "B");
+  a.rekey("B", "C");
+  assert.deepEqual(ids(), [["C", ["A", "B"]]]);
+  // /resume back to an earlier conversation: that id is the session's own again.
+  a.rekey("C", "A");
+  assert.deepEqual(ids(), [["A", ["B", "C"]]]);
+  // Another session that opens a conversation from before /clear runs under its id, and so do its notifications and
+  // attachments: started for it (resume), or gone on to it (/resume).
+  add("B", 2);
+  assert.deepEqual(ids(), [["A", ["C"]], ["B", undefined]]);
+  add("D", 3);
+  a.rekey("D", "C");
+  assert.deepEqual(ids(), [["A", undefined], ["B", undefined], ["C", ["D"]]]);
+  // The latest MAX_PREVIOUS_IDS ids are kept.
+  const had: string[] = [];
+  let id = "B";
+  for (let i = 0; i < MAX_PREVIOUS_IDS + 5; i++) {
+    had.push(id);
+    a.rekey(id, `b${i}`);
+    id = `b${i}`;
+  }
+  assert.deepEqual(a.get(id)?.previousIds, had.slice(-MAX_PREVIOUS_IDS));
 });
 
 test("saves close together are written one at a time and the last state is kept; an unreadable file is logged", async (t) => {

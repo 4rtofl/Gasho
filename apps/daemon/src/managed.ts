@@ -730,7 +730,15 @@ export interface ManagedSession {
    * a /rename lost with a restart of gasho-daemon (waiting inputs are not saved) is sent again.
    */
   autoName?: boolean;
+  /**
+   * The ids the session had before, oldest first: /clear (and /resume) make Claude Code go on in the same process under
+   * a new id. The files attached to inputs are kept under those ids too (see Daemon.attachmentsOf).
+   */
+  previousIds?: string[];
 }
+
+/** At most this many earlier ids are kept for a session (see ManagedSession.previousIds). */
+export const MAX_PREVIOUS_IDS = 20;
 
 /** Names of sessions started from Gasho: at most this many characters. */
 export const MAX_SESSION_NAME = 60;
@@ -945,12 +953,34 @@ export class ManagedSessions {
     return this.sessions.get(sessionId);
   }
 
+  /**
+   * The session that runs under `sessionId`, or that had it before /clear: a page that has not yet heard of the new id
+   * still sends the one it shows.
+   */
+  find(sessionId: string): ManagedSession | undefined {
+    return this.sessions.get(sessionId) ?? this.all().find((m) => m.previousIds?.includes(sessionId));
+  }
+
   all(): ManagedSession[] {
     return [...this.sessions.values()];
   }
 
   add(m: ManagedSession): void {
     this.sessions.set(m.sessionId, m);
+    this.claim(m.sessionId);
+  }
+
+  /**
+   * `id` is a session's own now (an earlier conversation opened again): a session that had it before /clear lets it go,
+   * so that the notifications and attachments under it stay with the session that runs it.
+   */
+  private claim(id: string): void {
+    for (const m of this.sessions.values()) {
+      if (m.sessionId === id || !m.previousIds?.includes(id)) continue;
+      const rest = m.previousIds.filter((x) => x !== id);
+      if (rest.length > 0) m.previousIds = rest;
+      else delete m.previousIds;
+    }
   }
 
   /** Whether the name changed. */
@@ -984,6 +1014,25 @@ export class ManagedSessions {
   remove(sessionId: string): void {
     this.sessions.delete(sessionId);
     this.queues.delete(sessionId);
+  }
+
+  /**
+   * The session goes on under the id `to` (see ManagedSession.previousIds), with its waiting inputs. The record stays the
+   * same object, so code that holds it across an await sees the new id.
+   */
+  rekey(from: string, to: string): ManagedSession | undefined {
+    const m = this.sessions.get(from);
+    if (!m || this.sessions.has(to)) return undefined;
+    this.sessions.delete(from);
+    // Back to an earlier conversation (/resume): that id is the session's again, not an earlier one.
+    m.previousIds = [...(m.previousIds ?? []).filter((id) => id !== to), from].slice(-MAX_PREVIOUS_IDS);
+    m.sessionId = to;
+    this.sessions.set(to, m);
+    this.claim(to);
+    const q = this.queues.get(from);
+    this.queues.delete(from);
+    if (q) this.queues.set(to, q);
+    return m;
   }
 
   enqueue(sessionId: string, input: QueuedInput): number {

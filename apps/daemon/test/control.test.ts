@@ -220,6 +220,8 @@ test("send finds the session by the name Claude Code lists, its Gasho name or it
   await assert.rejects(sessionCommand(["send", "nobody", "--text", "x"], cli), /no session started by Gasho is named "nobody"/);
   await assert.rejects(sessionCommand(["send", "impl-79"], cli), /needs --text/);
   assert.throws(() => pick([...sessions, { ...sessions[0]!, sessionId: "id-3" }], "impl-79"), /2 sessions are named/);
+  // After /clear, the id from before still finds it.
+  assert.equal(pick([sessions[0]!, { ...sessions[1]!, sessionId: "id-3", previousSessionIds: ["id-2"] }], "id-2").sessionId, "id-3");
 });
 
 test("list prints one line per session, or JSON", async () => {
@@ -358,7 +360,7 @@ test("through the socket, a launch is Daemon.launch, and the rename and the prom
   try {
     const { io: cli, out } = io((req) => controlRequest(file, req));
     await sessionCommand(["launch", "--cwd", folder, "--name", "impl-79", "--prompt", "Issue #79 を実装して"], cli);
-    assert.deepEqual(started[0]!.args.slice(0, 2), ["--remote-control", "impl-79"]);
+    assert.equal(started[0]!.args[0], "--remote-control=impl-79");
     const r = JSON.parse(out.join("\n"));
     assert.equal(r.sessionId, SID);
     assert.equal(r.name, "impl-79");

@@ -118,6 +118,11 @@ export interface SessionInfo {
   managed?: boolean;
   /** Inputs waiting until the session is idle. */
   pendingInputs?: number;
+  /**
+   * Sessions started from Gasho: the ids the session had before, oldest first. /clear (and /resume) make Claude Code go
+   * on in the same process under a new id; a page still open on an earlier id goes to this session.
+   */
+  previousSessionIds?: string[];
   /** Repositories inside the folder, when the folder is not in a repository but holds some (a workspace of repos). */
   repos?: SessionRepo[];
   /** Absent when the folder is not in a repository. */
@@ -1206,7 +1211,7 @@ export type SessionCommand =
   | { type: "session.skills"; sessionId: string }
   /**
    * Opens a conversation of session.history again in its folder, as a session started from Gasho
-   * (`claude --remote-control <name> --resume <id>`). Its name is the conversation's.
+   * (`claude --remote-control=<name> --resume <id>`). Its name is the conversation's.
    */
   | { type: "session.resume"; sessionId: string }
   /**

@@ -1,6 +1,6 @@
 // The chat box of the session screen: what it sends to gasho-daemon and how, what it says about the session, and what
 // it keeps.
-import type { Locator, Page } from "@playwright/test";
+import { devices, type Locator, type Page } from "@playwright/test";
 import { commandResult, fakeSession, textEntry } from "../harness/index.ts";
 import { expect, test } from "./fixtures.ts";
 import {
@@ -483,17 +483,35 @@ test("添付できないセッションと、文字も載っている貼り付�
   }
 });
 
-test("チャット欄で Ctrl+B を押しても、サイドバーを開閉しない（#108）", async ({ page, hub, isMobile }) => {
+test("Mac 以外の PC では、チャット欄で Ctrl+B を押すとサイドバーを開閉する", async ({ page, hub, isMobile }) => {
   test.skip(isMobile, "サイドバーは 768px 以上の幅で開閉する");
-  test.fail(true, "#108: サイドバーが、フォーカスの場所を見ずに Ctrl+B で開閉する");
+  // Desktop Chrome's User-Agent is that of Windows, where Ctrl+B does nothing in a text box.
   await openSession(page, hub);
   await expect(page.getByRole("button", { name: "サイドバーを畳む" })).toBeVisible();
   const box = chatBox(page);
   await box.fill("ab");
   await box.press("Control+B");
-  // Typed after it: by then the screen has done what Ctrl+B does.
-  await box.press("x");
-  await expect(box).toHaveValue(/x/);
+  await expect(page.getByRole("button", { name: "サイドバーを開く" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "サイドバーを畳む" })).toHaveCount(0);
+  await box.press("Control+B");
   await expect(page.getByRole("button", { name: "サイドバーを畳む" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "サイドバーを開く" })).toHaveCount(0);
+});
+
+test.describe("Mac の Chrome", () => {
+  test.use({ userAgent: devices["Desktop Chrome"].userAgent.replace(/\([^)]*\)/, "(Macintosh; Intel Mac OS X 10_15_7)") });
+
+  test("Mac では、チャット欄で Ctrl+B を押してもサイドバーを開閉しない（#108）", async ({ page, hub, isMobile }) => {
+    test.skip(isMobile, "サイドバーは 768px 以上の幅で開閉する");
+    test.fail(true, "#108: #116 がマージされるまで、Mac でもサイドバーが、フォーカスの場所を見ずに Ctrl+B で開閉する（Mac の Ctrl+B は、入力欄ではカーソルを 1 文字戻す）");
+    await openSession(page, hub);
+    await expect(page.getByRole("button", { name: "サイドバーを畳む" })).toBeVisible();
+    const box = chatBox(page);
+    await box.fill("ab");
+    await box.press("Control+B");
+    // Typed after it: by then the screen has done what Ctrl+B does.
+    await box.press("x");
+    await expect(box).toHaveValue(/x/);
+    await expect(page.getByRole("button", { name: "サイドバーを畳む" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "サイドバーを開く" })).toHaveCount(0);
+  });
 });

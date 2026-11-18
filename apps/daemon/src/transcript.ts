@@ -43,10 +43,11 @@ const ULTRACODE_RE = /^Ultracode (on|off)\b/i;
 /**
  * /rename (alias /name) and what it printed. gasho-daemon sends it to pass a session's name to Claude Code (the name
  * from the first message, or one given from Gasho's menu); the name shows in the session's header, so neither is
- * shown in the chat.
+ * shown in the chat. A system record says which command printed it (`commandRun`), whatever its words; a user message
+ * is told by its words.
  */
 const RENAME_COMMANDS = new Set(["rename", "name"]);
-const RENAMED_RE = /^Session renamed to:/;
+const RENAMED_RE = /^Session (?:renamed to|is named):/;
 const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 
 /** "claude-opus-5-5" → "Opus 5.5". Other names are returned as they are. */
@@ -430,6 +431,8 @@ export function parseRecord(rec: Record<string, unknown>, meta: TranscriptMeta):
       const text = str(rec.content) || "Conversation compacted";
       return { uuid, ts, role, blocks: [{ type: "text", text }], isSidechain, compaction: "mark" };
     }
+    const run = rec.commandRun as { command?: unknown } | undefined;
+    if (RENAME_COMMANDS.has(str(run?.command) ?? "")) return null;
     const raw = str(rec.content);
     const text = raw === undefined ? undefined : (commandNote(raw, meta) ?? raw);
     return text ? { uuid, ts, role, blocks: [{ type: "text", text: clip(text, MAX_TEXT) }], isSidechain } : null;

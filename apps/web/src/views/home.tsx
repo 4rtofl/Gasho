@@ -58,7 +58,7 @@ import { updateTo } from "@/lib/daemon-update";
 import { branchLabel, formatCost, relativeTime, repoLabel, sessionLabel, waitingText } from "@/lib/format";
 import { arrangeTiles, sameOrder, useSavedOrder } from "@/lib/order";
 import { go } from "@/lib/route";
-import { notificationShown, shownSessions } from "@/lib/sessions";
+import { notificationShown, shownSessions, shownStatus } from "@/lib/sessions";
 import { useSortable, type Sortable } from "@/lib/sortable";
 import { MAX_OPERATIONS, markRead, onConnected, requestTokenDays, useAppState } from "@/lib/store";
 import { sumTokenDays, tokenDayOf } from "@/lib/token-days";
@@ -168,16 +168,16 @@ export function HomeView() {
         .flatMap((machine) => shownSessions(machine).map((s) => ({ machine, s })))
         .sort(
           (a, b) =>
-            STATUS_ORDER[a.machine.connected ? a.s.status : "unknown"] - STATUS_ORDER[b.machine.connected ? b.s.status : "unknown"] ||
+            STATUS_ORDER[a.machine.connected ? shownStatus(a.s) : "unknown"] - STATUS_ORDER[b.machine.connected ? shownStatus(b.s) : "unknown"] ||
             (b.s.lastActivityAt ?? 0) - (a.s.lastActivityAt ?? 0),
         ),
     [machines],
   );
   const online = rows.filter((r) => r.machine.connected);
-  const count = (status: SessionStatus) => online.filter((r) => r.s.status === status).length;
+  const count = (status: SessionStatus) => online.filter((r) => shownStatus(r.s) === status).length;
   // Under each count, the sessions it counts.
   const names = (status: SessionStatus) => {
-    const list = online.filter((r) => r.s.status === status).map((r) => sessionLabel(r.s));
+    const list = online.filter((r) => shownStatus(r.s) === status).map((r) => sessionLabel(r.s));
     if (list.length === 0) return "なし";
     return list.length <= 2 ? list.join("、") : `${list.slice(0, 2).join("、")} ほか ${list.length - 2} 件`;
   };
@@ -710,7 +710,7 @@ function SessionCard({ row: { machine, s }, now }: { row: Row; now: number }) {
       )}
     >
       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-        {machine.connected ? <StatusBadge status={s.status} /> : <span>オフライン</span>}
+        {machine.connected ? <StatusBadge status={shownStatus(s)} /> : <span>オフライン</span>}
         <span className="shrink-0">{relativeTime(s.lastActivityAt, now)}</span>
       </div>
       <div className="min-w-0">

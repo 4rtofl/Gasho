@@ -267,6 +267,7 @@ gasho-daemon の設定は環境変数で変える。gasho-daemon のコマンド
 | `GASHO_CLAUDE_DIR` | Claude Code の設定と会話の記録のフォルダー | `~/.claude` |
 | `GASHO_CLAUDE_BIN` | Claude Code のコマンド | `claude` |
 | `GASHO_CLAUDE_TMPDIR` | Gasho が起動する Claude Code の一時フォルダー（スクラッチパッドとバックグラウンドの作業の出力）を置く場所。絶対パスで書く。tmpfs ではないディスクを選ぶ。実際のフォルダーは、この下に daemon の state フォルダーごとに分かれる。書き込めない場所のときは、ログに残して Claude Code の既定の場所（`/tmp` など）で起動する | `$XDG_CACHE_HOME/gasho/claude-tmp`（`XDG_CACHE_HOME` が無ければ `~/.cache/gasho/claude-tmp`） |
+| `GASHO_CODEX_BIN` | Codex のコマンド | `codex` |
 | `GASHO_GH_BIN` | GitHub CLI のコマンド | `gh` |
 | `GASHO_POLL_MS` | セッションの一覧を読み直す間隔（ミリ秒） | `3000` |
 | `GASHO_PLUGINS` | `none` にすると、この working server ではプラグインの daemon の部分を動かさない | なし |

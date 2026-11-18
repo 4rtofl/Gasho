@@ -346,6 +346,19 @@ export interface HookEvent {
    * Stop like any other. Older gasho-daemon versions do not set it.
    */
   automatic?: boolean;
+  /**
+   * On a Stop: what a plugin's daemon part says of the end of this turn (onSessionStop, plugin API 1.15), in place of
+   * Gasho's own "の応答が終わりました". Older gasho-daemon versions do not set it.
+   */
+  notification?: PluginStopNotification;
+}
+
+/** What a plugin's daemon part says when a session stops (onSessionStop, plugin API 1.15). */
+export interface PluginStopNotification {
+  /** The plugin's id. */
+  plugin: string;
+  title: string;
+  body?: string;
 }
 
 // In the messages below, `machine` is always a machine id (the id of its registered device), never its name.
@@ -365,6 +378,11 @@ export interface GashoNotification {
   title: string;
   body?: string;
   read: boolean;
+  /**
+   * The plugin that wrote the title (onSessionStop, plugin API 1.15): the lock screen then shows the title. Only on the
+   * notification as it is made; the Gasho server does not keep it.
+   */
+  plugin?: string;
 }
 
 /** A browser's Web Push subscription, as PushSubscription.toJSON() gives it. */
@@ -410,6 +428,25 @@ export interface MachineMemory {
   used: number;
 }
 
+/** The coding agents Gasho knows. */
+export type AgentKind = "claude" | "codex";
+
+/**
+ * Whether an agent can be used on a working server. available: it is logged in. loginRequired: it is installed but not
+ * logged in. unknown: it is installed, but it could not tell (its settings cannot be read, or it did not answer).
+ */
+export type AgentStatus = "available" | "loginRequired" | "unknown";
+
+/** An agent installed on a working server. */
+export interface AgentInfo {
+  status: AgentStatus;
+  /** Its version (x.y.z), when it told it. */
+  version?: string;
+}
+
+/** The agents gasho-daemon looked for and found on its working server: one that is not installed is not listed. */
+export type MachineAgents = Partial<Record<AgentKind, AgentInfo>>;
+
 /** A working server: a machine that runs Claude Code and gasho-daemon. */
 export interface MachineInfo {
   /** Id issued when the machine was registered. */
@@ -448,6 +485,8 @@ export interface MachineInfo {
   canRemoveWorktree?: boolean;
   /** Whether gasho-daemon lists the skills and custom commands a session's Claude Code reads (session.skills). */
   canListSkills?: boolean;
+  /** The agents found on this working server besides Claude Code (absent from a gasho-daemon that does not look for them). */
+  agents?: MachineAgents;
   /** Whether Gasho can update this gasho-daemon, and how an update goes (absent from one older than updates from Gasho). */
   update?: DaemonUpdateInfo;
   /**
@@ -704,7 +743,7 @@ export interface TranscriptPage {
  * What a plugin's web part may do besides reading and showing: send messages to sessions, start them, remove worktrees
  * with their sessions.
  */
-export type PluginPermission = "session.input" | "session.launch" | "session.remove" | "worktree.remove";
+export type PluginPermission = "session.input" | "session.launch" | "session.remove" | "worktree.remove" | "session.notification";
 
 /** A method of a plugin's daemon part, which its web part can call. */
 export interface PluginMethodSpec {
@@ -902,6 +941,8 @@ export interface DaemonPluginEntry {
   run: boolean;
   /** The values of its settings with scope "server". */
   settings: Record<string, unknown>;
+  /** It has the permission "session.notification": its onSessionStop is asked when a session stops (plugin API 1.15). */
+  sessionStop?: boolean;
 }
 
 /**
@@ -947,6 +988,8 @@ export type DaemonToHub =
       canRemoveWorktree?: boolean;
       /** Answers session.skills. */
       canListSkills?: boolean;
+      /** The agents found on the working server besides Claude Code (sent again when they change). */
+      agents?: MachineAgents;
       /** Whether Gasho can update it, and the update under way (sent again at each step). */
       update?: DaemonUpdateInfo;
     }

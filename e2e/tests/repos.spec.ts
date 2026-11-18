@@ -165,12 +165,16 @@ test("working server ごとに、候補が無い理由と、オフラインで�
   await expect(offline.getByText("登録するリポジトリ")).toHaveCount(0);
 });
 
-test("スマホで、リポジトリの登録のダイアログを Esc で閉じても、ドロワーは開いたまま", async ({ page, hub, isMobile }) => {
+test("スマホで、リポジトリの登録のダイアログで変換を取り消す Esc を押しても、ダイアログを Esc で閉じても、ドロワーは開いたまま", async ({ page, hub, isMobile }) => {
   test.skip(!isMobile, "ドロワーはスマホの幅だけ");
-  test.fail(true, "#183: ドロワーが Esc を window の keydown で受けるので、ダイアログを閉じた Esc でドロワーも閉じる");
-  await hub.fakeDaemon({ name: "mac" });
+  await hub.fakeDaemon({ name: "mac", capabilities: { folderRepos: [{ path: "/work/app", worktreeCount: 1 }] } });
   await openHome(page, 1);
   const dialog = await openRepos(page);
+  // A test cannot drive an input method: the Esc is dispatched as Chromium sends the one that cancels a conversion.
+  await dialog
+    .getByRole("combobox", { name: "mac に登録するリポジトリ" })
+    .dispatchEvent("keydown", { key: "Escape", isComposing: true, bubbles: true, cancelable: true });
+  await expect(dialog).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   // A closing drawer still shows while it slides out; what is pressed in it then leaves the page.

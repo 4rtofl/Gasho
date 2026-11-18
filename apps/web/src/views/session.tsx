@@ -24,7 +24,7 @@ import { promptDraft, useDraftBox, usePicks } from "@/lib/drafts";
 import { addPending, noneWaiting, pendingShown, removePending, sessionWorking, settlePending, usePending } from "@/lib/pending";
 import { go, type SessionPanel } from "@/lib/route";
 import { closeSmallSessionHeader, useSessionHeaderShown } from "@/lib/session-header";
-import { daemonAtLeast, rememberOpened, worktreeId, worktreesByLastUse } from "@/lib/sessions";
+import { daemonAtLeast, rememberOpened, shownStatus, worktreeId, worktreesByLastUse } from "@/lib/sessions";
 import { loadSkills, useSkills } from "@/lib/skills";
 import { loadTranscript, sendCommand, transcriptKey, useAppState } from "@/lib/store";
 import { useNow } from "@/lib/use-now";
@@ -230,7 +230,7 @@ export function SessionView({
 /** The session's state, or "オフライン" while its working server is not connected. Also in a phone's top bar (see App). */
 export function SessionState({ machine, session }: { machine: MachineInfo; session: SessionInfo }) {
   return machine.connected ? (
-    <StatusBadge status={session.status} />
+    <StatusBadge status={shownStatus(session)} />
   ) : (
     <span className="shrink-0 text-xs text-muted-foreground">オフライン</span>
   );

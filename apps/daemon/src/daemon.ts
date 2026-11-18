@@ -4,6 +4,7 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type {
+  AgentInfo,
   BackgroundTask,
   BackgroundTaskKind,
   CommandResult,
@@ -24,6 +25,7 @@ import type {
   SwitchField,
   TranscriptEntry,
 } from "@gasho/protocol";
+import { codexRunner, detectCodex } from "./codex.ts";
 import type { DaemonConfig } from "./config.ts";
 import { type ControlReply, type ControlRequest, type ControlSession, controlSocketOf, startControlServer } from "./control.ts";
 import { listDir, readFileAt, writeFileAt } from "./files.ts";
@@ -123,16 +125,19 @@ import { changesProblem, removableWorktree, removeWorktree, worktreeChanges } fr
 import { listSkills } from "./skills.ts";
 import { appendBatches, conversationFacts, emptyMeta, followTranscript, pastConversations, TranscriptTail, type TranscriptMeta } from "./transcript.ts";
 import type { SessionWire } from "./plugin-ipc.ts";
+import { HookRelay } from "./hook-relay.ts";
 import { PluginRunner } from "./plugins.ts";
 import { npmOf, Updater } from "./self-update.ts";
 import { log, str } from "./util.ts";
 import { CLAUDE_TMP_SWEEP_MS, prepareClaudeTmp, removeSessionTmp, sessionOfTmpFile, sweepClaudeTmp } from "./claude-tmp.ts";
 
-export const DAEMON_VERSION = "0.29.0";
+export const DAEMON_VERSION = "0.31.0";
 const GITHUB_CACHE_MS = 5 * 60_000;
 /** How long the worktree a folder is in, or the repositories inside it, and their branches are reused. */
 const REPOS_CACHE_MS = 60_000;
 const FOLDERS_REFRESH_MS = 5 * 60_000;
+/** How often Codex is looked for again: it may be installed, updated or logged in to at any time. */
+const CODEX_REFRESH_MS = 5 * 60_000;
 /** How often the server's memory is read and told to the Gasho server. */
 const MEMORY_REFRESH_MS = 15_000;
 /** How often the registered repositories' worktrees are read again: one may be made or removed elsewhere (Orca, git). */
@@ -293,6 +298,10 @@ export class Daemon {
   /** Permission requests held until they are answered (in Gasho, or elsewhere). */
   private permissions = new PermissionRequests(() => this.emitSessions());
   private canLaunch = false;
+  /** Codex on this working server, as last looked for; undefined when it is not installed. */
+  private codex: AgentInfo | undefined;
+  /** Counts the looks for Codex: a look that a later one overtook is not sent. */
+  private codexRead = 0;
   /** The conversations being opened again, and until when that may take (see openingClaudeTmp). */
   private readonly claudeTmpOpening = new Map<string, number>();
   private sweepingClaudeTmp = false;
@@ -328,6 +337,8 @@ export class Daemon {
   private prompts = new Map<string, { at: number; text: string }[]>();
   /** The daemon parts of plugins (docs/plugins.md). */
   private plugins: PluginRunner;
+  /** Passes the hooks on to the Gasho server, a Stop with what the plugins say of it. */
+  private hookRelay: HookRelay;
   /** Updates of gasho-daemon from Gasho. */
   private updater: Updater;
   /** gasho-daemon has begun to end (exit). */
@@ -362,6 +373,12 @@ export class Daemon {
     this.managed = new ManagedSessions(path.join(cfg.stateDir, "managed.json"));
     this.registered = new RegisteredRepos(path.join(cfg.stateDir, "repos.json"));
     this.tokenDays = new TokenDays(path.join(cfg.stateDir, "token-days.json"));
+    this.hookRelay = new HookRelay({
+      send: (event) => this.hub.send({ type: "hook", event }),
+      asks: () => this.plugins.hearsSessionStop(),
+      ask: (sessionId) => this.plugins.sessionStop(sessionId),
+      log,
+    });
     this.plugins = new PluginRunner({
       cacheDir: cfg.pluginCacheDir,
       send: (m) => this.hub.send(m),
@@ -464,6 +481,9 @@ export class Daemon {
     await this.registered.load();
     await this.refreshRepos();
     setInterval(() => void this.refreshRepos(), REGISTERED_REFRESH_MS).unref();
+    // Not waited for: the capabilities are sent again once it is known.
+    void this.refreshCodex();
+    setInterval(() => void this.refreshCodex(), CODEX_REFRESH_MS).unref();
 
     this.hub.connect();
     setInterval(() => void this.emitMemory(), MEMORY_REFRESH_MS).unref();
@@ -485,7 +505,7 @@ export class Daemon {
         this.permissions.observe(payload);
         const ev = summarizeHook(payload);
         if (!ev) return;
-        this.hub.send({ type: "hook", event: ev });
+        this.hookRelay.pass(ev);
         // Hooks often mean the status changed; refresh soon instead of waiting for the next poll.
         this.scheduleStatuses();
         this.scheduleRefresh(250);
@@ -957,6 +977,16 @@ export class Daemon {
     return { ok: true };
   }
 
+  /** Looks for Codex, and tells the Gasho server when what it found changed. */
+  private async refreshCodex(): Promise<void> {
+    const read = ++this.codexRead;
+    const codex = await detectCodex(codexRunner(this.cfg.codexBin));
+    if (read !== this.codexRead || JSON.stringify(codex) === JSON.stringify(this.codex)) return;
+    this.codex = codex;
+    log(codex ? `Codex ${codex.version ?? "(version unknown)"}: ${codex.status}` : "Codex is not installed");
+    this.emitCapabilities();
+  }
+
   private emitCapabilities(): void {
     if (!this.hub.connected) return;
     this.hub.send({
@@ -971,6 +1001,7 @@ export class Daemon {
       canEnd: true,
       canRemoveWorktree: true,
       canListSkills: true,
+      agents: this.codex ? { codex: this.codex } : {},
       update: this.updater.info(),
     });
   }

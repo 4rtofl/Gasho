@@ -672,6 +672,10 @@ test("renaming, forking and removing go to a gasho-daemon 0.9.0 or later; older 
     ["Gasho:session.fork", ""],
     ["Gasho:session.remove", "Bobert-gasho"],
   ]);
+
+  // A plugin that removes a session is named in the operations log.
+  hub.onClientMessage(c, { type: "session.remove", requestId: "x2", machine: machineId, sessionId: "s1", via: "github-review" });
+  assert.equal(c.sent.flatMap((m) => (m.type === "event" ? [m.event.summary?.replace(/ \(by .*\)$/, "")] : [])).at(-1), "Bobert-gasho [via: github-review]");
 });
 
 test("a session's name must be one line of 1 to 60 characters; a fork may leave it out", () => {
@@ -686,6 +690,8 @@ test("a session's name must be one line of 1 to 60 characters; a fork may leave 
   assert.match(validateCommand({ type: "session.fork", sessionId: "s1", name: "\u0007" }) ?? "", /制御文字/);
   assert.match(validateCommand({ type: "session.remove", sessionId: "" }) ?? "", /セッションの指定/);
   assert.match(validateCommand({ type: "session.remove", sessionId: 7 } as never) ?? "", /セッションの指定/);
+  assert.equal(validateCommand({ type: "session.remove", sessionId: "s1", via: "github-review" }), undefined);
+  assert.match(validateCommand({ type: "session.remove", sessionId: "s1", via: "Not A Plugin" }) ?? "", /プラグインの指定/);
 });
 
 test("a folder to make and a repository to clone are checked before they reach the working server", () => {

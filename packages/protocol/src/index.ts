@@ -682,7 +682,7 @@ export interface TranscriptPage {
  * What a plugin's web part may do besides reading and showing: send messages to sessions, start them, remove worktrees
  * with their sessions.
  */
-export type PluginPermission = "session.input" | "session.launch" | "worktree.remove";
+export type PluginPermission = "session.input" | "session.launch" | "session.remove" | "worktree.remove";
 
 /** A method of a plugin's daemon part, which its web part can call. */
 export interface PluginMethodSpec {
@@ -1175,9 +1175,10 @@ export type SessionCommand =
   | { type: "session.fork"; sessionId: string; name?: string }
   /**
    * Ends a session started from Gasho (its Claude Code, then its terminal) and removes it from Gasho. Its
-   * conversation stays on the working server: `claude --resume` lists it.
+   * conversation stays on the working server: `claude --resume` lists it. `via`: sent by a plugin (its id), for the
+   * operations log.
    */
-  | { type: "session.remove"; sessionId: string }
+  | { type: "session.remove"; sessionId: string; via?: string }
   /**
    * The conversations Claude Code keeps for the folder `cwd` (with `subfolders`, also for the folders inside it) that
    * no Claude Code has open now, the latest first (`history`). Only reads; the operations log does not record it.

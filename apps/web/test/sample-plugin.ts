@@ -12,6 +12,7 @@ function Notes() {
   const [shown] = sdk.useSetting<boolean>("shown");
   const [count, setCount] = sdk.useSharedState("count", 0);
   const send = sdk.useSendInput();
+  const removeSession = sdk.useRemoveSession();
   const [said, setSaid] = React.useState("");
   const ctx = sdk.useSessionContext();
   return h(
@@ -40,6 +41,17 @@ function Notes() {
         },
       },
       "Max で見直してと送る",
+    ),
+    h(
+      "button",
+      {
+        type: "button",
+        onClick: async () => {
+          const r = await removeSession({ machine: ctx!.machine.id, sessionId: ctx!.session.sessionId });
+          setSaid(r.ok ? "削除しました" : r.error);
+        },
+      },
+      "このセッションを削除",
     ),
     said && h("p", null, said),
   );

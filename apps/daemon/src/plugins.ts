@@ -19,9 +19,10 @@ import type { FromHost, GitHubAnswer, LocalWire, MachineWire, SessionWire, ToHos
  * The plugin API this gasho-daemon runs plugins of. A daemon part runs only where this is at least its manifest's
  * `api`: 1.10, as worktree.remove (useRemoveWorktree) is answered only from this gasho-daemon on. 1.11 (the panels of
  * a plugin's page) and 1.12 (useSendInput's model, effort and ultracode, which this gasho-daemon switches since 0.6.0)
- * are the screen's alone: this gasho-daemon names them so that a plugin of 1.12 with a daemon part runs.
+ * are the screen's alone, as is 1.14 (useRemoveSession, session.remove having been answered long before): this
+ * gasho-daemon names them so that a plugin of 1.14 with a daemon part runs.
  */
-export const PLUGIN_API = "1.12";
+export const PLUGIN_API = "1.14";
 /** The process of a daemon part: next to this file (.ts when run from the repository, .js in the npm package). */
 const HOST_FILE = fileURLToPath(new URL(`./plugin-host${path.extname(fileURLToPath(import.meta.url))}`, import.meta.url));
 /** How long a new process may take to import the plugin and run its `start`. */

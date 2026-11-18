@@ -401,8 +401,10 @@ export function validateCommand(cmd: SessionCommand): string | undefined {
       if (total > MAX_FILES_BYTES) return `添付できるのは、合わせて ${MAX_FILES_BYTES / 1024 / 1024}MB までです。`;
       return undefined;
     }
-    case "session.interrupt":
     case "session.remove":
+      if (cmd.via !== undefined && (typeof cmd.via !== "string" || !/^[a-z][a-z0-9-]{1,31}$/.test(cmd.via))) return "送ったプラグインの指定が正しくありません。";
+      return undefined;
+    case "session.interrupt":
     case "session.resume":
     case "session.skills":
       return undefined;
@@ -1044,7 +1046,7 @@ export class Hub {
       case "session.remove": {
         // Once removed, the session is gone from the list: the record keeps its name.
         const s = this.machines.get(machine)?.sessions.find((x) => x.sessionId === cmd.sessionId);
-        return s?.name ?? s?.title ?? "";
+        return [s?.name ?? s?.title ?? "", cmd.via && `[via: ${cmd.via}]`].filter(Boolean).join(" ");
       }
       case "permission.answer":
         // What was asked, as the request said: it is gone once answered.

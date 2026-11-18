@@ -159,11 +159,13 @@ test("新しいファイル: 名前を検査し、Esc で閉じ（変換中は�
   });
 });
 
-test("表示: テキスト・5000 行を超えるテキスト・Markdown・SVG・画像・バイナリ・UTF-8 以外・大きすぎる・空・CRLF・読み取り専用", async ({ page, hub }) => {
+test("表示: テキスト・5000 行までと 5000 行を超えるテキスト・Markdown・SVG・画像・バイナリ・UTF-8 以外・大きすぎる・空・CRLF・読み取り専用", async ({ page, hub }) => {
   const d = await sessionDaemon(hub);
   const f = folderOf(d);
   f.text("src/main.ts", "const a = 1;\nconst b = 2;\nconsole.log(a + b);\n");
-  f.text("long.txt", Array.from({ length: 5001 }, (_, i) => `line ${i + 1}\n`).join(""));
+  const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}\n`).join("");
+  f.text("limit.txt", lines(5000));
+  f.text("long.txt", lines(5001));
   f.text("README.md", "# 見出し\n\n本文の段落。\n");
   f.text("logo.svg", '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>\n');
   f.other("photo.png", { size: 68, image: { mime: "image/png", data: PNG } });
@@ -190,8 +192,11 @@ test("表示: テキスト・5000 行を超えるテキスト・Markdown・SVG�
     await expect(panel.getByText("3", { exact: true })).toBeVisible();
   });
 
-  await test.step("5000 行を超えるテキストは、行番号なしで出る", async () => {
-    const panel = await open("long.txt");
+  await test.step("5000 行までのテキストは行番号つきで、5000 行を超えると行番号なしで出る", async () => {
+    let panel = await open("limit.txt");
+    await expect(panel.getByText("5000 行")).toBeVisible();
+    await expect(panel.getByText("5000", { exact: true })).toHaveCount(1);
+    panel = await open("long.txt");
     await expect(panel.getByText("5001 行")).toBeVisible();
     await expect(panel.getByText("line 5001")).toBeAttached();
     await expect(panel.getByText("5001", { exact: true })).toHaveCount(0);

@@ -166,6 +166,8 @@ function start(env: NodeJS.ProcessEnv) {
   const listening = new Promise<void>((resolve, reject) => {
     child.stdout.on("data", () => /listening on /.test(out) && resolve());
     void exited.then((code) => reject(new Error(`gasho-hub ended (${code}):\n${out}`)));
+    // A server that runs on without saying so would leave the test waiting, and the server running, for good.
+    setTimeout(() => reject(new Error(`gasho-hub did not start:\n${out}`)), 60_000).unref();
   });
   // Not awaited by a test that expects it to end.
   listening.catch(() => undefined);

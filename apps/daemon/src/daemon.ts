@@ -125,7 +125,7 @@ import type { SessionWire } from "./plugin-ipc.ts";
 import { PluginRunner } from "./plugins.ts";
 import { npmOf, Updater } from "./self-update.ts";
 import { log, str } from "./util.ts";
-import { CLAUDE_TMP_SWEEP_MS, removeSessionTmp, sweepClaudeTmp } from "./claude-tmp.ts";
+import { CLAUDE_TMP_SWEEP_MS, prepareClaudeTmp, removeSessionTmp, sweepClaudeTmp } from "./claude-tmp.ts";
 
 export const DAEMON_VERSION = "0.28.2";
 const GITHUB_CACHE_MS = 5 * 60_000;
@@ -1566,7 +1566,14 @@ export class Daemon {
     // Until `claude agents` lists it, nothing says that the folder of a conversation being opened again is in use.
     const resumed = claudeArgs.indexOf("--resume");
     if (resumed >= 0) this.claudeTmpOpening.set(claudeArgs[resumed + 1]!, Date.now() + LAUNCH_TIMEOUT_MS);
-    await fsp.mkdir(this.cfg.claudeTmpDir, { recursive: true, mode: 0o700 }).catch((e: unknown) => log("could not make the folder for Claude Code's temporary files", e));
+    // Claude Code does not start with a folder it cannot use: it then uses its default one.
+    const claudeTmp = await prepareClaudeTmp(this.cfg.claudeTmpDir).then(
+      () => ({ CLAUDE_CODE_TMPDIR: this.cfg.claudeTmpDir }),
+      (e: unknown) => {
+        log(`cannot use ${this.cfg.claudeTmpDir} for Claude Code's temporary files; starting it with its default folder`, e);
+        return {};
+      },
+    );
     // Its status line reports the context window and the plan's usage limits to gasho-daemon (statusline.ts).
     const statusLine = statusLineLaunch({
       port: this.cfg.hookPort,
@@ -1581,7 +1588,7 @@ export class Daemon {
         file: this.cfg.claudeBin,
         // One argument: a name starting with "-" (say "-wip") given on its own would be read as Claude Code's options.
         args: [`--remote-control=${rcName}`, ...claudeArgs, ...statusLine.args],
-        env: { ...cleanEnv(), CLAUDE_CODE_TMPDIR: this.cfg.claudeTmpDir, ...statusLine.env },
+        env: { ...cleanEnv(), ...claudeTmp, ...statusLine.env },
       });
     } catch (e) {
       log(`could not start a terminal for "${rcName}"`, e);

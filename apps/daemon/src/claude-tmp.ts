@@ -28,6 +28,16 @@ export function claudeTmpRoot(stateDir: string, env: NodeJS.ProcessEnv = process
   return path.join(base, createHash("sha256").update(path.resolve(stateDir)).digest("hex").slice(0, 12));
 }
 
+/**
+ * Makes the folder Claude Code puts its own in, and tries making one there, as it will. It ends right after it starts
+ * when it cannot, and a folder that is already there can be read-only. Fails when the folder cannot be used.
+ */
+export async function prepareClaudeTmp(root: string, uid = process.getuid?.() ?? 0): Promise<void> {
+  const own = path.join(root, `claude-${uid}`);
+  await fsp.mkdir(own, { recursive: true, mode: 0o700 });
+  await fsp.rmdir(await fsp.mkdtemp(path.join(own, ".gasho-try-")));
+}
+
 /** A real folder: not a symbolic link, and not a file. */
 async function isRealDir(dir: string): Promise<boolean> {
   const stat = await fsp.lstat(dir).catch(() => undefined);

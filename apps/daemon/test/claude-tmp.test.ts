@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { CLAUDE_TMP_MAX_AGE_MS, claudeTmpRoot, removeSessionTmp, sessionTmpDirs, sweepClaudeTmp } from "../src/claude-tmp.ts";
+import { CLAUDE_TMP_MAX_AGE_MS, claudeTmpRoot, prepareClaudeTmp, removeSessionTmp, sessionTmpDirs, sweepClaudeTmp } from "../src/claude-tmp.ts";
 import { loadConfig } from "../src/config.ts";
 
 const UID = 1000;
@@ -71,6 +71,31 @@ test("a daemon with another state folder has another folder, and its clean-up le
       assert.deepEqual(removed, [left]);
       assert.equal(await fs.lstat(running).then(() => true, () => false), true);
     }
+  } finally {
+    await done();
+  }
+});
+
+test("a folder is ready when Claude Code can make its own in it, and leaves nothing of the try behind", async () => {
+  const { dir, done } = await tmp();
+  const own = (root: string) => path.join(root, `claude-${UID}`);
+  try {
+    const fresh = path.join(dir, "a", "fresh");
+    await prepareClaudeTmp(fresh, UID);
+    assert.deepEqual(await fs.readdir(own(fresh)), []);
+
+    const file = path.join(dir, "file");
+    await fs.writeFile(file, "x");
+    await assert.rejects(prepareClaudeTmp(path.join(file, "below"), UID));
+
+    // Already there, so that making it succeeds: read-only itself, and with a read-only claude-<uid> in it.
+    const readOnly = path.join(dir, "read-only");
+    await fs.mkdir(readOnly, { mode: 0o555 });
+    await assert.rejects(prepareClaudeTmp(readOnly, UID));
+    const inner = path.join(dir, "inner");
+    await fs.mkdir(inner);
+    await fs.mkdir(own(inner), { mode: 0o555 });
+    await assert.rejects(prepareClaudeTmp(inner, UID));
   } finally {
     await done();
   }

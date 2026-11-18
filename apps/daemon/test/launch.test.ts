@@ -603,6 +603,27 @@ test("a new session, one opened again and a fork are all given the same temporar
   }
 });
 
+test("with a temporary folder that cannot be used, Claude Code starts with its default one", async () => {
+  const { d, fake, folder, started, agentsFile, done } = await setup();
+  const readOnly = path.join(folder, "read-only");
+  try {
+    fake.state = "repl";
+    await fs.writeFile(agentsFile, JSON.stringify([{ pid: process.pid, sessionId: SID, status: "idle" }]));
+    await fs.mkdir(readOnly, { mode: 0o555 });
+    for (const dir of [readOnly, path.join(readOnly, "below")]) {
+      d.cfg.claudeTmpDir = dir;
+      for (const claudeArgs of [[], ["--resume", SID], ["--resume", SID, "--fork-session"]]) {
+        assert.equal((await d.startClaude(folder, "s", { claudeArgs })).sessionId, SID);
+      }
+    }
+    assert.equal(started.length, 6);
+    for (const s of started) assert.equal("CLAUDE_CODE_TMPDIR" in (s.env ?? {}), false);
+  } finally {
+    await fs.chmod(readOnly, 0o755);
+    await done();
+  }
+});
+
 test("removing a session removes its temporary folder once its Claude Code has ended, and only then", async () => {
   const { d, folder, agentsFile, done } = await setup();
   const other = "11111111-2222-3333-4444-777777777777";

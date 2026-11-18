@@ -13,7 +13,9 @@ test.describe("時間切れ", () => {
   test.use({ hubOptions: { plugins: [plugin("e2e-hang")] } });
 
   test("読み込みが 15 秒で終わらなければ諦めて、理由を出す", async ({ page }) => {
+    // Paused: the clock would go on with real time, and a slow machine would pass 15 seconds before the test looks.
     await page.clock.install();
+    await page.clock.pauseAt(Date.now() + 1_000);
     await page.goto("/#/p/e2e-hang/notes");
     const main = page.getByRole("main");
 

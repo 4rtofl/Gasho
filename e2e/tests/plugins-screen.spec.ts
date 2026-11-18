@@ -273,7 +273,9 @@ test.describe("GashoPlugins にあるもの", () => {
   test.use({ hubOptions: { gh: [{ args: READ_CATALOG, stderr: "HTTP 502: Bad Gateway\n", exitCode: 1 }] } });
 
   test("ジャンルごとに並べ、使えない API の理由を出し、追加のダイアログで入れる", async ({ page, hub }) => {
+    // Paused: the clock would go on with real time, and a slow machine would pass 150 seconds before the test looks.
     await page.clock.install();
+    await page.clock.pauseAt(Date.now() + 1_000);
     await page.goto("/#/plugins");
     const main = page.getByRole("main");
     const available = page.getByRole("region", { name: "GashoPlugins にあるもの" });

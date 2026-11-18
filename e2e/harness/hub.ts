@@ -101,11 +101,14 @@ export class GashoHub {
   readonly gh: FakeCommand;
   readonly npm: FakeCommand;
   readonly claude: FakeCommand<ClaudeTable>;
-  readonly proc: Proc;
+  /** The Gasho server's process (another one once startServer has started it again). */
+  proc: Proc;
   readonly fakeDaemons: FakeDaemon[] = [];
   readonly daemons: RealDaemon[] = [];
   private env: Record<string, string>;
   private forget: () => void;
+  /** The Gasho server's processes before startServer, for logs(). */
+  private earlier: Proc[] = [];
   /** The first browser registered, which asks for the codes after it. */
   private cookie: BrowserCookie | undefined;
 
@@ -209,9 +212,22 @@ export class GashoHub {
     await fsp.writeFile(file, JSON.stringify(data, null, 2));
   }
 
+  /** Stops the Gasho server, as one that ended; its folder and its port are kept for startServer. */
+  async stopServer(): Promise<void> {
+    await this.proc.stop();
+  }
+
+  /** Starts the Gasho server again after stopServer, on the same port, with the same database and plugins. */
+  async startServer(): Promise<void> {
+    if (this.proc.alive) throw new Error("the Gasho server is running");
+    this.earlier.push(this.proc);
+    this.proc = new Proc("gasho-hub", HUB_CLI, ["start"], this.env);
+    await this.proc.waitForLog(/listening on /, START_MS);
+  }
+
   /** What the Gasho server and the real gasho-daemons printed, for a test that failed. */
   logs(): string {
-    return [this.proc, ...this.daemons.map((d) => d.proc)].map((p) => `===== ${p.name}\n${p.log()}`).join("\n\n");
+    return [...this.earlier, this.proc, ...this.daemons.map((d) => d.proc)].map((p) => `===== ${p.name}\n${p.log()}`).join("\n\n");
   }
 
   async stop(): Promise<void> {

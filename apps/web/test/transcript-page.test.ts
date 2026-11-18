@@ -58,3 +58,11 @@ test("the latest page that starts with an entry without a uuid shows no entry tw
   const t = takePage(cur, { entries: [plain, ...range(191, 270)], start: 190, total: 270 });
   assert.deepEqual(uuids(t.entries), uuids([...range(100, 150), ...range(152, 190), plain, ...range(191, 270)]));
 });
+
+test("live entries that came before the latest page do not make it join what is loaded", () => {
+  // 100–189 loaded, 190–268 missed while the connection was down, 269–271 came live before the page (192–271).
+  const cur = { entries: [...range(100, 190), ...range(269, 272)], start: 100, total: 193, loading: true };
+  const t = takePage(cur, { entries: range(192, 272), start: 192, total: 272 });
+  assert.deepEqual(uuids(t.entries), uuids(range(192, 272)));
+  assert.equal(t.start, 192);
+});

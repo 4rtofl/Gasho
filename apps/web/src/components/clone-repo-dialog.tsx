@@ -125,10 +125,13 @@ function CloneForm({
   const machine = machines.find((m) => m.id === machineId);
   const available = machine !== undefined && canClone(machine);
   const folders = useMemo(() => folderChoices(machine?.folders ?? []), [machine?.folders]);
-  // The folder picked, while the working server still offers it; at first the first one offered.
-  const [picked, setPicked] = useState<string>();
-  const folder = picked === OTHER || (picked !== undefined && folders.includes(picked)) ? picked : (folders[0] ?? OTHER);
   const [custom, setCustom] = useState("");
+  // The folder chosen stays chosen, whatever the working server offers later, until another is picked. At first it is
+  // the first one offered, as soon as there is one and no folder has been typed in.
+  const [picked, setPicked] = useState<string | undefined>(folders[0]);
+  if (picked === undefined && folders[0] && !custom.trim()) setPicked(folders[0]);
+  const folder = picked ?? OTHER;
+  const offered = useMemo(() => (picked === undefined || picked === OTHER || folders.includes(picked) ? folders : [...folders, picked].sort()), [folders, picked]);
   const [repo, setRepo] = useState("");
   const [name, setName] = useState("");
   const [error, setError] = useState<string>();
@@ -291,7 +294,7 @@ function CloneForm({
             }}
             className={FIELD}
           >
-            {folders.map((f) => (
+            {offered.map((f) => (
               <option key={f} value={f}>
                 {f}
               </option>

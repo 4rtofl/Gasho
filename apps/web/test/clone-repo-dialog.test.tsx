@@ -261,6 +261,51 @@ test("the working server lost during the registration: the clone is there and th
   expect(screen.getByRole("alert").textContent).toContain("clone できましたが、登録できたか分かりません");
 });
 
+test("a folder newly offered does not take the place of the one chosen at first", async () => {
+  const user = userEvent.setup();
+  const hub = await connectHub({ machines: [server("linux")] });
+  render(<CloneRepoDialog open onClose={() => {}} />);
+  const folder = screen.getByRole<HTMLSelectElement>("combobox", { name: "clone 先のフォルダー" });
+  expect(folder.value).toBe("/home/me/repos");
+
+  await hub.say({ type: "machine", machine: server("linux", { folders: ["/home/aaa/work/site", "/home/me/repos/app"] }) });
+  expect(folder.value).toBe("/home/me/repos");
+  await user.type(repoField(), "cli/cli");
+  await user.click(cloneButton());
+  expect(hub.commands().at(-1)).toMatchObject({ type: "repo.clone", parent: "/home/me/repos" });
+});
+
+test("the folder picked stays chosen and offered when the working server no longer offers it", async () => {
+  const user = userEvent.setup();
+  const hub = await connectHub({ machines: [server("linux", { folders: ["/home/me/repos/app", "/home/me/work/site"] })] });
+  render(<CloneRepoDialog open onClose={() => {}} />);
+  const folder = screen.getByRole<HTMLSelectElement>("combobox", { name: "clone 先のフォルダー" });
+  await user.selectOptions(folder, "/home/me/work/site");
+
+  await hub.say({ type: "machine", machine: server("linux") });
+  expect(folder.value).toBe("/home/me/work/site");
+  expect([...folder.options].map((o) => o.value)).toContain("/home/me/work/site");
+  await user.type(repoField(), "cli/cli");
+  expect(screen.getByText("/home/me/work/site/cli")).toBeTruthy();
+  await user.click(cloneButton());
+  expect(hub.commands().at(-1)).toMatchObject({ type: "repo.clone", parent: "/home/me/work/site" });
+});
+
+test("folders that come after the dialog opened are taken up only while none has been typed in", async () => {
+  const user = userEvent.setup();
+  const hub = await connectHub({ machines: [server("linux", { folders: [] })] });
+  const { unmount } = render(<CloneRepoDialog open onClose={() => {}} />);
+  await user.type(screen.getByRole("textbox", { name: "clone 先のフォルダーの絶対パス" }), "/srv/code");
+  await hub.say({ type: "machine", machine: server("linux") });
+  expect(screen.getByRole<HTMLInputElement>("textbox", { name: "clone 先のフォルダーの絶対パス" }).value).toBe("/srv/code");
+  unmount();
+
+  await hub.say({ type: "machine", machine: server("linux", { folders: [] }) });
+  render(<CloneRepoDialog open onClose={() => {}} />);
+  await hub.say({ type: "machine", machine: server("linux") });
+  expect(screen.getByRole<HTMLSelectElement>("combobox", { name: "clone 先のフォルダー" }).value).toBe("/home/me/repos");
+});
+
 test("the Enter that confirms a conversion does not start a clone", async () => {
   const user = userEvent.setup();
   const hub = await connectHub({ machines: [server("linux")] });

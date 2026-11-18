@@ -219,6 +219,32 @@ test("clone の途中で working server の接続が切れると、失敗とせ�
   await expect(dialog).toBeHidden();
 });
 
+test("フォルダーの候補が変わっても、選んでいる clone 先は変わらない", async ({ page, hub }) => {
+  const daemon = await hub.fakeDaemon({ name: "mac", capabilities: { folders: ["/home/me/repos/app", "/home/me/work/site"] } });
+  daemon.handle("repo.clone", (msg) => commandResult(msg, { ok: false, error: "e2e: ここで止める" }));
+  await openHome(page, 1);
+  const dialog = await openClone(page);
+  const folder = dialog.getByRole("combobox", { name: "clone 先のフォルダー" });
+  const clones = () => daemon.received.filter((m) => m.type === "repo.clone");
+  await expect(folder).toHaveValue("/home/me/repos");
+
+  // A folder that sorts first comes to be offered, while nothing has been picked.
+  daemon.setCapabilities({ folders: ["/home/aaa/work/site", "/home/me/repos/app", "/home/me/work/site"] });
+  await expect(folder.locator("option", { hasText: "/home/aaa/work/site" })).toHaveCount(1);
+  await expect(folder).toHaveValue("/home/me/repos");
+
+  // The folder picked is no longer offered.
+  await folder.selectOption("/home/me/work/site");
+  daemon.setCapabilities({ folders: ["/home/me/repos/app"] });
+  await expect(folder.locator("option", { hasText: "/home/aaa/work/site" })).toHaveCount(0);
+  await expect(folder).toHaveValue("/home/me/work/site");
+  await fill(dialog, { repo: "owner/lib" });
+  await expect(dialog.getByText("/home/me/work/site/lib", { exact: true })).toBeVisible();
+  await press(dialog);
+  await expect(dialog.getByRole("alert")).toContainText("e2e: ここで止める");
+  expect(clones()).toEqual([expect.objectContaining({ parent: "/home/me/work/site" })]);
+});
+
 test("ほかのリポジトリに絞り込んでいても、clone したリポジトリが一覧に出る", async ({ page, hub, isMobile }) => {
   test.skip(isMobile, "絞り込みのメニューを閉じる Esc は、スマホではドロワーも閉じる（#183）");
   const app: RegisteredRepo = { path: "/work/app", worktrees: [{ path: "/work/app", branch: "main" }] };

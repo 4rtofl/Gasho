@@ -2,7 +2,7 @@
 // back, what sending does meanwhile, when it connects again without waiting, and a browser revoked elsewhere.
 import type { Page } from "@playwright/test";
 import type { HubToDaemon } from "@gasho/protocol";
-import { type FakeDaemon, fakeSession, textEntry } from "../harness/index.ts";
+import { commandResult, type FakeDaemon, fakeSession, textEntry } from "../harness/index.ts";
 import { expect, test } from "./fixtures.ts";
 import { expectConnection, onPhone, routeConnection } from "./screen.ts";
 
@@ -149,6 +149,39 @@ test("結果が分からない指示が会話に出ると、「入力欄に戻�
   await expect(page.getByText("README を読んで", { exact: true })).toBeVisible();
   await expect(c.putBack).toHaveCount(0);
   await expect(c.notice).toHaveCount(0);
+});
+
+test("結果が分からない指示は、似た指示が会話に出ても残り、「閉じる」で消える（#106）", async ({ page, hub }) => {
+  const d = await hub.fakeDaemon({ name: "mac", sessions: [fakeSession({ sessionId: SESSION, cwd: "/work/gasho", name: "e2e-session" })] });
+  // The first message is lost with the connection; the next one is typed into the session.
+  let lose = true;
+  d.handle("session.input", (m) => {
+    if (lose) return undefined;
+    d.append(SESSION, [textEntry("user", m.text), textEntry("assistant", "レビューします")]);
+    return commandResult(m);
+  });
+  const conn = await routeConnection(page);
+  await openSession(page, d);
+  const c = composer(page);
+
+  await send(page, "https://github.com/4rtofl/Gasho/pull/118 をレビューしてください。", "notes.txt");
+  await d.waitFor("session.input");
+  const before = countOf(d, "transcript.get");
+  lose = false;
+  await conn.drop();
+  await expect(c.notice).toBeVisible();
+  // Connected again: the conversation is read again.
+  await expect.poll(() => countOf(d, "transcript.get")).toBeGreaterThan(before);
+
+  // It starts as the first one does.
+  await send(page, "https://github.com/4rtofl/Gasho/pull/119 をレビューしてください。");
+  await expect(page.getByText("レビューします")).toBeVisible();
+  await page.waitForTimeout(500);
+  await expect(c.putBack).toHaveText("入力欄に戻す");
+
+  await page.getByRole("button", { name: "閉じる" }).click();
+  await expect(c.notice).toHaveCount(0);
+  await expect(c.box).toHaveValue("");
 });
 
 test("結果を待つあいだに別の会話へ移っても、戻ると「入力欄に戻す」で指示を戻せる（#106）", async ({ page, hub }) => {

@@ -587,6 +587,46 @@ test("the agents a gasho-daemon found reach the browsers, kept to what is expect
   assert.equal(agents(), undefined);
 });
 
+test("Codex is started only where gasho-daemon found it: another gasho-daemon would start Claude Code instead", () => {
+  const { hub, machineId, machineToken, browserId } = setup();
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.30.0" });
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const launch = (requestId: string, agent?: "claude" | "codex") =>
+    hub.onClientMessage(c, { type: "session.launch", requestId, machine: machineId, cwd: "/w", ...(agent ? { agent } : {}) });
+
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: [] });
+  const before = d.sent.length;
+  launch("old", "codex");
+  assert.equal(d.sent.length, before);
+  const refused = c.sent.at(-1);
+  assert.ok(refused?.type === "command.result" && !refused.result.ok);
+  assert.match(refused.result.error ?? "", /Codex を使えません/);
+
+  launch("plain");
+  assert.equal(d.sent.length, before + 1);
+
+  // Reports Codex, but does not read `agent` (gasho-daemon 0.30.0).
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: [], agents: { codex: { status: "available", version: "0.170.0" } } });
+  const reporting = d.sent.length;
+  launch("reports only", "codex");
+  assert.equal(d.sent.length, reporting);
+  const old = c.sent.at(-1);
+  assert.ok(old?.type === "command.result" && !old.result.ok);
+  assert.match(old.result.error ?? "", /gasho-daemon は古いため/);
+
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: [], agents: { codex: { status: "available", version: "0.170.0", canLaunch: true } } });
+  launch("new", "codex");
+  const relayed = d.sent.at(-1);
+  assert.ok(relayed?.type === "session.launch" && relayed.agent === "codex");
+});
+
+test("an agent Gasho does not know is refused", () => {
+  assert.match(validateCommand({ type: "session.launch", cwd: "/w", agent: "gemini" as never }) ?? "", /エージェント/);
+  assert.equal(validateCommand({ type: "session.launch", cwd: "/w", agent: "codex" }), undefined);
+});
+
 test("what a gasho-daemon says about its agents is dropped when it is not what is expected", () => {
   assert.equal(agentsOf(undefined), undefined);
   assert.equal(agentsOf("codex"), undefined);
@@ -594,6 +634,8 @@ test("what a gasho-daemon says about its agents is dropped when it is not what i
   assert.deepEqual(agentsOf({ codex: null, other: { status: "available" } }), {});
   assert.deepEqual(agentsOf({ codex: { status: "available", version: "<b>1</b>", extra: "x" } }), { codex: { status: "available" } });
   assert.deepEqual(agentsOf({ codex: { status: "unknown", version: "0.171.0-alpha.2" } }), { codex: { status: "unknown", version: "0.171.0-alpha.2" } });
+  assert.deepEqual(agentsOf({ codex: { status: "available", canLaunch: true } }), { codex: { status: "available", canLaunch: true } });
+  assert.deepEqual(agentsOf({ codex: { status: "available", canLaunch: "yes" } }), { codex: { status: "available" } });
 });
 
 test("a gasho-daemon that does not list its features gets no effort or ultracode switch, with a clear error", () => {

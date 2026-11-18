@@ -95,8 +95,10 @@ export interface FolderRepo {
 }
 
 export interface SessionInfo {
-  /** Local session id (UUID). */
+  /** Local session id (UUID); for Codex, the id of its thread. */
   sessionId: string;
+  /** The agent that runs the session. Absent means Claude Code. */
+  agent?: AgentKind;
   pid?: number;
   cwd: string;
   name?: string;
@@ -439,6 +441,8 @@ export interface AgentInfo {
   status: AgentStatus;
   /** Its version (x.y.z), when it told it. */
   version?: string;
+  /** gasho-daemon starts sessions of this agent (session.launch's `agent`). Absent from one that only reports the agent. */
+  canLaunch?: boolean;
 }
 
 /** The agents gasho-daemon looked for and found on its working server: one that is not installed is not listed. */
@@ -1183,7 +1187,8 @@ export type SessionCommand =
    * folder" (gasho-daemon 0.10.0 and later). Without it, the launch stops at the question and its result says so
    * (`needsTrust`), so that the person decides.
    */
-  | { type: "session.launch"; cwd: string; name?: string; trust?: boolean }
+  /** `agent`: the agent to start; Claude Code when absent. `trust` is about Claude Code's question only. */
+  | { type: "session.launch"; cwd: string; name?: string; trust?: boolean; agent?: AgentKind }
   /** Makes the folder `name` inside the folder `parent` (gasho-daemon 0.10.0 and later). */
   | { type: "folder.create"; parent: string; name: string }
   /**

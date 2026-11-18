@@ -5,11 +5,24 @@ import fs from "node:fs/promises";
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import type { DaemonUpdateInfo, HubToDaemon } from "@gasho/protocol";
-import { Daemon } from "../src/daemon.ts";
+import { loadConfig } from "../src/config.ts";
+import { DAEMON_VERSION, Daemon, TRIAL_START_LIMIT_MS } from "../src/daemon.ts";
 import { cliIn, type Install, layoutOf, type Layout } from "../src/install.ts";
-import { currentVersion, installedVersions, switchTo, UPDATE_EXIT_CODE, Updater, versionsInUse } from "../src/self-update.ts";
+import {
+  beginTrial,
+  currentVersion,
+  installedVersions,
+  readTrial,
+  startOnTrial,
+  stoppedOnTrial,
+  switchTo,
+  TRIAL_MS,
+  UPDATE_EXIT_CODE,
+  Updater,
+  versionsInUse,
+} from "../src/self-update.ts";
 
 /**
  * A stand-in for npm: `install <name>@<version>` makes node_modules/<name>/lib/cli.js in the folder it runs in, which
@@ -55,7 +68,17 @@ interface Run {
 }
 
 function updater(
-  o: { layout: Layout; npm: string; version?: string; install?: Install; service?: boolean; env?: NodeJS.ProcessEnv; waiting?: () => number; waitMs?: number },
+  o: {
+    layout: Layout;
+    npm: string;
+    version?: string;
+    install?: Install;
+    service?: boolean;
+    env?: NodeJS.ProcessEnv;
+    waiting?: () => number;
+    waitMs?: number;
+    now?: () => number;
+  },
 ): Run {
   const states: DaemonUpdateInfo[] = [];
   let exit: (code: number) => void = () => undefined;
@@ -75,6 +98,7 @@ function updater(
     log: () => undefined,
     waitMs: o.waitMs,
     pollMs: 10,
+    now: o.now,
   });
   return { updater: u, states, exited };
 }
@@ -109,7 +133,15 @@ test("only a gasho-daemon installed by service install and run as its service ca
   assert.equal(foreground.command, "npx @4rtofl/gasho-daemon@latest service install");
 
   const r = updater({ layout, npm });
-  assert.deepEqual(r.updater.info(), { canUpdate: true, installed: undefined, previous: undefined, progress: undefined, failed: undefined });
+  assert.deepEqual(r.updater.info(), {
+    canUpdate: true,
+    installed: undefined,
+    previous: undefined,
+    progress: undefined,
+    failed: undefined,
+    rolledBack: undefined,
+    trialMs: 60_000,
+  });
   assert.deepEqual(r.updater.start("latest"), { ok: false, error: "版の指定が正しくありません。" });
   assert.deepEqual(r.updater.start("0.14.0"), { ok: false, error: "すでに 0.14.0 で動いています。" });
   assert.equal(updater({ layout, npm, install: { kind: "npx" } }).updater.start("0.15.0").ok, false);
@@ -134,14 +166,238 @@ test("an update installs the version beside the running one, checks it, switches
   // Nothing half-done is left in versions.
   assert.deepEqual((await fs.readdir(layout.versions)).sort(), ["0.14.0", "0.15.0"]);
 
-  // The new version knows the one it replaced, to go back to; going back installs nothing.
+  // The new version is on trial: its starts are counted.
+  const trial = readTrial(layout.trialFile);
+  assert.deepEqual([trial?.from, trial?.to, trial?.starts], ["0.14.0", "0.15.0", 0]);
+
+  // The new version knows the one it replaced, to go back to; going back installs nothing, also while on trial.
   const next = updater({ layout, npm, version: "0.15.0", env: { FAKE_NPM_FAIL: "1" } });
   await next.updater.load();
+  assert.equal(next.updater.info().progress?.step, "trial");
   assert.equal(next.updater.info().previous, "0.14.0");
   assert.deepEqual(next.updater.info().installed, ["0.14.0"]);
   assert.deepEqual(next.updater.start("0.14.0"), { ok: true });
   assert.equal(await settled(next), "exited");
   assert.equal(await currentVersion(layout), "0.14.0");
+  // The version on trial was replaced as if it had been confirmed: going back is on trial in turn.
+  const back = readTrial(layout.trialFile);
+  assert.deepEqual([back?.from, back?.to], ["0.15.0", "0.14.0"]);
+});
+
+test("a version on trial counts its first start, is tried again after a stop, and is confirmed after its check", async () => {
+  const { layout, npm } = await setup();
+  for (const v of ["0.13.0", "0.14.0", "0.15.0"]) await installed(layout, v);
+  await switchTo(layout, "0.14.0");
+  await beginTrial(layout, "0.14.0", "0.15.0", 5);
+  await fs.writeFile(layout.updateFile, JSON.stringify({ from: "0.14.0", to: "0.15.0", at: 5 }));
+  assert.equal(await currentVersion(layout), "0.15.0");
+
+  assert.equal(await startOnTrial(layout, "0.15.0", () => undefined), undefined);
+  assert.equal(readTrial(layout.trialFile)?.starts, 1);
+  // Stopped before gasho-daemon got going (cli.ts): tried again, too.
+  stoppedOnTrial(layout, "0.15.0");
+  assert.equal(readTrial(layout.trialFile)?.starts, 0);
+  assert.equal(await startOnTrial(layout, "0.15.0", () => undefined), undefined);
+  assert.equal(readTrial(layout.trialFile)?.starts, 1);
+  const r = updater({ layout, npm, version: "0.15.0" });
+  await r.updater.load();
+  assert.ok(r.updater.onTrial());
+  assert.deepEqual(r.updater.info().progress, { version: "0.15.0", step: "trial", at: 5 });
+  assert.equal(r.updater.info().previous, "0.14.0");
+  // Started by hand rather than by the service: not on trial.
+  const byHand = updater({ layout, npm, version: "0.15.0", service: false });
+  await byHand.updater.load();
+  assert.ok(!byHand.updater.onTrial());
+
+  // A stop is not a failure: the next start tries it again rather than going back.
+  r.updater.stoppedOnTrial();
+  assert.equal(readTrial(layout.trialFile)?.starts, 0);
+  assert.equal(await startOnTrial(layout, "0.15.0", () => undefined), undefined);
+  assert.equal(await currentVersion(layout), "0.15.0");
+
+  await r.updater.confirm(async () => "");
+  assert.ok(!r.updater.onTrial());
+  assert.ok(!existsSync(layout.trialFile));
+  assert.equal(r.updater.info().progress, undefined);
+  assert.equal(r.updater.info().previous, "0.14.0");
+  assert.deepEqual((await fs.readdir(layout.versions)).sort(), ["0.14.0", "0.15.0"]);
+  // Confirmed, its starts are no longer counted.
+  assert.equal(await startOnTrial(layout, "0.15.0", () => undefined), undefined);
+  assert.ok(!existsSync(layout.trialFile));
+});
+
+test("a GASHO_DAEMON_PROBATION_MS that is no length of time, or over an hour, leaves the trial at its default", () => {
+  const creds = { server: "http://127.0.0.1:1", machineId: "m", token: "t", name: "n" };
+  // Empty or not a number would confirm a version at once, without the screen saying it would go back.
+  // Over an hour, the Gasho server does not take it; over about 24 days, setTimeout would end the trial at once.
+  for (const v of ["", "soon", "0", "-5", "Infinity", "3600001", "3000000000"]) {
+    assert.equal(loadConfig(creds, { GASHO_DAEMON_PROBATION_MS: v }).trialMs, TRIAL_MS, v);
+  }
+  assert.equal(loadConfig(creds, { GASHO_DAEMON_PROBATION_MS: "20000" }).trialMs, 20_000);
+  assert.equal(loadConfig(creds, { GASHO_DAEMON_PROBATION_MS: "3600000" }).trialMs, 3600_000);
+});
+
+test("a version on trial is confirmed even when the versions no longer used cannot be removed", async (t) => {
+  const { layout, npm } = await setup();
+  for (const v of ["0.13.0", "0.14.0", "0.15.0"]) await installed(layout, v);
+  await switchTo(layout, "0.14.0");
+  await beginTrial(layout, "0.14.0", "0.15.0", 5);
+  await startOnTrial(layout, "0.15.0", () => undefined);
+  const r = updater({ layout, npm, version: "0.15.0" });
+  await r.updater.load();
+  // 0.13.0 cannot be removed (EACCES): the process must not end for it, as its trial is over.
+  await fs.chmod(layout.versions, 0o555);
+  t.after(() => fs.chmod(layout.versions, 0o755));
+  await r.updater.confirm(async () => "");
+  assert.ok(!r.updater.onTrial());
+  assert.ok(!existsSync(layout.trialFile));
+  assert.ok(existsSync(path.join(layout.versions, "0.13.0")));
+});
+
+/**
+ * This version of gasho-daemon, just started by an update from 0.14.0 and on trial, with its timers moved by the test.
+ * How it would end is recorded in `exits`; what it serves is the test's to set.
+ */
+async function daemonOnTrial(t: TestContext): Promise<{ d: Record<string, any>; exits: number[]; layout: Layout; npm: string }> {
+  const { dir, layout, npm } = await setup();
+  for (const v of ["0.14.0", DAEMON_VERSION]) await installed(layout, v);
+  await switchTo(layout, "0.14.0");
+  await beginTrial(layout, "0.14.0", DAEMON_VERSION, 5);
+  await startOnTrial(layout, DAEMON_VERSION, () => undefined);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const before = process.listeners("uncaughtException");
+  t.after(() => {
+    for (const l of process.listeners("uncaughtException")) if (!before.includes(l)) process.off("uncaughtException", l);
+  });
+  const d = new Daemon(
+    {
+      hubUrl: "ws://127.0.0.1:1",
+      machineId: "m",
+      token: "t",
+      hookPort: 0,
+      claudeDir: path.join(dir, "claude-dir"),
+      claudeBin: "claude",
+      ghBin: "gh",
+      pollIntervalMs: 60_000,
+      stateDir: dir,
+      attachmentsDir: path.join(dir, "attachments"),
+      trialMs: 60_000,
+    } as ConstructorParameters<typeof Daemon>[0],
+    { update: { install: { kind: "managed", version: DAEMON_VERSION }, layout, service: true } },
+  ) as unknown as Record<string, any>;
+  const exits: number[] = [];
+  d.exit = async (code: number) => void exits.push(code);
+  return { d, exits, layout, npm };
+}
+
+/** Why 0.14.0, gone back to at the next start, says the version on trial did not start well. */
+async function wentBackFor(layout: Layout, npm: string): Promise<string | undefined> {
+  assert.equal(await startOnTrial(layout, DAEMON_VERSION, () => undefined), "0.14.0");
+  const back = updater({ layout, npm, version: "0.14.0" });
+  await back.updater.load();
+  return back.updater.info().rolledBack?.error;
+}
+
+/** Lets what is under way run until `done`, as timers do not move by themselves. */
+async function until(done: () => boolean): Promise<void> {
+  while (!done()) await new Promise((resolve) => setImmediate(resolve));
+}
+
+test("a version on trial that fails to start ends at once, and the version before says why", async (t) => {
+  const { d, exits, layout, npm } = await daemonOnTrial(t);
+  // The end of the trial is not reached: the reason must be the start's own, not that the hook server did not answer.
+  d.serve = async () => {
+    throw new Error("repos.json を読めませんでした");
+  };
+  await d.start();
+  assert.deepEqual(exits, [1]);
+  assert.equal(await wentBackFor(layout, npm), "repos.json を読めませんでした");
+});
+
+test("a version on trial whose start takes longer than the trial is confirmed once it has been up for the trial", async (t) => {
+  const { d, exits, layout } = await daemonOnTrial(t);
+  // As a start that waits for terminals that do not answer: the hook server answers only once it is over.
+  let up = false;
+  let finish: (() => void) | undefined;
+  d.serve = () => new Promise<void>((resolve) => (finish = resolve));
+  d.trialProblem = async () => (up ? undefined : "hooks の待ち受けが答えませんでした");
+  const confirm = d.updater.confirm.bind(d.updater);
+  let confirmed = false;
+  d.updater.confirm = async () => {
+    await confirm(async () => "");
+    confirmed = true;
+  };
+  const starting = d.start();
+  await until(() => finish !== undefined);
+  // Past the trial, still starting: a check of the hook server now would end it.
+  t.mock.timers.tick(2 * 60_000);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(exits, []);
+  up = true;
+  finish?.();
+  await starting;
+  t.mock.timers.tick(60_000);
+  await until(() => confirmed || exits.length > 0);
+  assert.deepEqual(exits, []);
+  assert.ok(!existsSync(layout.trialFile));
+});
+
+test("a version on trial whose start does not end in the limit ends, and the version before says why", async (t) => {
+  const { d, exits, layout, npm } = await daemonOnTrial(t);
+  let called = false;
+  d.serve = () => {
+    called = true;
+    return new Promise<void>(() => undefined);
+  };
+  void d.start();
+  await until(() => called);
+  t.mock.timers.tick(TRIAL_START_LIMIT_MS);
+  assert.deepEqual(exits, [1]);
+  assert.equal(await wentBackFor(layout, npm), "起動が5分のうちに終わりませんでした。");
+});
+
+test("a version on trial that ended before it was confirmed goes back at its next start, and the version before says why for a week", async () => {
+  const { layout, npm } = await setup();
+  for (const v of ["0.14.0", "0.15.0"]) await installed(layout, v);
+  await switchTo(layout, "0.14.0");
+  await beginTrial(layout, "0.14.0", "0.15.0", 5);
+  assert.equal(await startOnTrial(layout, "0.15.0", () => undefined), undefined);
+  const r = updater({ layout, npm, version: "0.15.0" });
+  await r.updater.load();
+  r.updater.recordFailure("Cannot read properties of undefined");
+
+  const logged: string[] = [];
+  assert.equal(await startOnTrial(layout, "0.15.0", (s) => logged.push(s), 1000), "0.14.0");
+  assert.equal(await currentVersion(layout), "0.14.0");
+  assert.ok(!existsSync(layout.trialFile));
+  assert.ok(!existsSync(layout.lastErrorFile));
+  assert.match(logged.join("\n"), /0\.15\.0 did not start well; went back to 0\.14\.0/);
+  const at = (now: number) => {
+    const back = updater({ layout, npm, version: "0.14.0", now: () => now });
+    return back.updater.load().then(() => back.updater.info().rolledBack);
+  };
+  assert.deepEqual(await at(1000 + 3600_000), { from: "0.15.0", to: "0.14.0", error: "Cannot read properties of undefined", at: 1000 });
+  assert.equal(await at(1000 + 8 * 24 * 3600_000), undefined);
+
+  // One that ended without saying why (killed) goes back all the same.
+  await beginTrial(layout, "0.14.0", "0.15.0", 2000);
+  await startOnTrial(layout, "0.15.0", () => undefined);
+  assert.equal(await startOnTrial(layout, "0.15.0", () => undefined, 3000), "0.14.0");
+  assert.equal((await at(3000))?.error, "起動したあと、確かめが済む前に止まりました。");
+
+  // A trial of another version than current (a switch that did not finish) is forgotten.
+  await fs.writeFile(layout.trialFile, JSON.stringify({ from: "0.14.0", to: "0.16.0", at: 1, starts: 1 }));
+  assert.equal(await startOnTrial(layout, "0.14.0", () => undefined), undefined);
+  assert.ok(!existsSync(layout.trialFile));
+  assert.equal(await currentVersion(layout), "0.14.0");
+
+  // With the version before gone, there is nothing to go back to.
+  await beginTrial(layout, "0.14.0", "0.15.0", 4000);
+  await startOnTrial(layout, "0.15.0", () => undefined);
+  await fs.rm(path.join(layout.versions, "0.14.0"), { recursive: true });
+  assert.equal(await startOnTrial(layout, "0.15.0", () => undefined), undefined);
+  assert.equal(await currentVersion(layout), "0.15.0");
+  assert.ok(!existsSync(layout.trialFile));
 });
 
 test("a failed install or a version that does not start changes nothing, and says why", async () => {

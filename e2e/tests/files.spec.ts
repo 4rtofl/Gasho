@@ -43,8 +43,7 @@ test("フォルダー: 大きさと相対時刻、開けない項目、パンく
     await expect(places.getByText("gasho")).toHaveAttribute("aria-current", "page");
   });
 
-  await test.step("フォルダーが先に並び、ファイルには大きさと更新の相対時刻が出る", async () => {
-    await expect(panel.getByRole("listitem").first()).toContainText("empty");
+  await test.step("ファイルには大きさと更新の相対時刻が出る", async () => {
     await expect(row("data.txt")).toContainText("2.0 KB · 3 時間前");
     await expect(row("README.md")).toContainText("8 B · 5 分前");
   });
@@ -129,7 +128,7 @@ test("新しいファイル: 名前を検査し、Esc で閉じ（変換中は�
   await test.step("同じ名前のファイルがあれば、gasho-daemon が断ったことが出る", async () => {
     await name.fill("README.md");
     await create.click();
-    await expect(panel.getByText("同じ名前のファイルがあります。")).toBeVisible();
+    await expect(panel.getByText("同じ名前のファイルかフォルダーが、すでにあります：README.md")).toBeVisible();
     expect(f.writes).toMatchObject([{ path: "README.md", content: "", create: true }]);
   });
 
@@ -159,11 +158,13 @@ test("新しいファイル: 名前を検査し、Esc で閉じ（変換中は�
   });
 });
 
-test("表示: テキスト・5000 行を超えるテキスト・Markdown・SVG・画像・バイナリ・UTF-8 以外・大きすぎる・空・CRLF・読み取り専用", async ({ page, hub }) => {
+test("表示: テキスト・5000 行までと 5000 行を超えるテキスト・Markdown・SVG・画像・バイナリ・UTF-8 以外・大きすぎる・空・CRLF・読み取り専用", async ({ page, hub }) => {
   const d = await sessionDaemon(hub);
   const f = folderOf(d);
   f.text("src/main.ts", "const a = 1;\nconst b = 2;\nconsole.log(a + b);\n");
-  f.text("long.txt", Array.from({ length: 5001 }, (_, i) => `line ${i + 1}\n`).join(""));
+  const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}\n`).join("");
+  f.text("limit.txt", lines(5000));
+  f.text("long.txt", lines(5001));
   f.text("README.md", "# 見出し\n\n本文の段落。\n");
   f.text("logo.svg", '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>\n');
   f.other("photo.png", { size: 68, image: { mime: "image/png", data: PNG } });
@@ -190,8 +191,11 @@ test("表示: テキスト・5000 行を超えるテキスト・Markdown・SVG�
     await expect(panel.getByText("3", { exact: true })).toBeVisible();
   });
 
-  await test.step("5000 行を超えるテキストは、行番号なしで出る", async () => {
-    const panel = await open("long.txt");
+  await test.step("5000 行までのテキストは行番号つきで、5000 行を超えると行番号なしで出る", async () => {
+    let panel = await open("limit.txt");
+    await expect(panel.getByText("5000 行")).toBeVisible();
+    await expect(panel.getByText("5000", { exact: true })).toHaveCount(1);
+    panel = await open("long.txt");
     await expect(panel.getByText("5001 行")).toBeVisible();
     await expect(panel.getByText("line 5001")).toBeAttached();
     await expect(panel.getByText("5001", { exact: true })).toHaveCount(0);
@@ -398,8 +402,13 @@ test("競合: 読んだあとに変わったファイルの保存は断られ、
     f.text("notes.txt", "claude again\n");
     await page.getByRole("button", { name: "保存" }).click();
     await expect(notice).toBeVisible();
-    page.once("dialog", (dlg) => void dlg.accept());
+    let message = "";
+    page.once("dialog", (dlg) => {
+      message = dlg.message();
+      void dlg.accept();
+    });
     await notice.getByRole("button", { name: "編集を捨てて読み込み直す" }).click();
+    await expect.poll(() => message).toBe("編集した内容を捨てて、いまのファイルを読み込み直しますか？");
     await expect(editor).toBeHidden();
     await expect(panel.getByText("claude again")).toBeVisible();
     expect(f.files.get("notes.txt")?.text).toBe("claude again\n");

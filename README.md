@@ -70,7 +70,7 @@ npm config set //npm.pkg.github.com/:_authToken "$(gh auth token)"
 
 npx @4rtofl/gasho-daemon register --server http://<Gasho サーバーの IP アドレス>:7740 --code <コード>
 npx @4rtofl/gasho-daemon doctor          # 要るものが揃っているかを確かめる
-npx @4rtofl/gasho-daemon service install # 常駐させる（Ubuntu は systemd、Mac は launchd）。これからは Gasho の画面から更新できる
+npx @4rtofl/gasho-daemon service install # 常駐させる（Ubuntu は systemd、Mac は launchd）。これからは Gasho の画面から更新でき、新しい版がうまく起動しなかったときは前の版に戻す
 ```
 
 gasho-daemon は GitHub Packages の npm パッケージ `@4rtofl/gasho-daemon` として配っているので、リポジトリの clone も `npm install` も要らない。`doctor` は、Node.js、登録、Claude Code、セッションの端末、git、GitHub CLI、通知の hooks が揃っているかを確かめ、足りないものがあれば、使えなくなる機能と直し方を示す。
@@ -276,6 +276,7 @@ Gasho サーバーは LAN の中だけで使う前提にしている。外から
 ```bash
 npm run web:dev    # Vite。/ws、/api、/plugins は Gasho サーバー（127.0.0.1:7740）に中継する
 npm test
+npm run test:coverage   # npm test のうち node --test で流すテスト（apps/*/test・scripts・e2e の .test.ts）について、ソースのファイルごとに、テストが通った行・分岐・関数の割合を出す。画面を描く Vitest のテストは含まない（CI では流さない）
 npm run typecheck
 ```
 
@@ -343,6 +344,7 @@ gasho-daemon（`@4rtofl/gasho-daemon`）、Gasho サーバー（`@4rtofl/gasho-h
 | `GASHO_POLL_MS` | daemon | `3000` |
 | `GASHO_PLUGINS` | daemon | なし。`none` にすると、この working server ではプラグインの daemon の部分を動かさない |
 | `GASHO_DAEMON_HOME` | daemon | `~/.local/share/gasho/daemon`（`service install` と更新が、版ごとに gasho-daemon を入れるフォルダー） |
+| `GASHO_DAEMON_PROBATION_MS` | daemon | `60000`（更新したあとの試しの期間。そのうちに止まった版は、前の版に戻す。1時間を超える値は 60000 になる） |
 
 gasho-daemon の変数は `~/.config/gasho/daemon.env` に、hub の変数は `~/.config/gasho/hub.env` に、`名前=値` の形で書いておくこともできる。どちらも、コマンドが起動するときにこのファイルを読む。端末で設定した値のほうが優先される。
 

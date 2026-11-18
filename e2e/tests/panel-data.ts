@@ -3,7 +3,8 @@
 // and file.write as gasho-daemon does (apps/daemon/src/files.ts), so that a test can change a file as Claude would.
 import { createHash } from "node:crypto";
 import type { Page } from "@playwright/test";
-import type { DirEntry, DirListing, FileContent, GitCommit, GitGraph, GitRef, HubToDaemon, SessionInfo } from "@gasho/protocol";
+import type { CommandResult, DirEntry, DirListing, FileContent, GitCommit, GitGraph, GitRef, HubToDaemon, SessionInfo } from "@gasho/protocol";
+import { fileNameProblem, MAX_TEXT_BYTES, relPathProblem } from "../../apps/daemon/src/files.ts";
 import { commandResult, type FakeDaemon, type FakeDaemonOptions, fakeSession, type GashoHub } from "../harness/index.ts";
 
 export const SESSION_ID = "5d1e7c2a-3b4f-4e6a-9c8d-2f1a0b9e8d71";
@@ -62,6 +63,12 @@ export function serveGraph(d: FakeDaemon, answer: (repo: string | undefined) => 
 
 type FileWrite = Extract<HubToDaemon, { type: "file.write" }>;
 
+/** The folder that holds `path` ("" for the session's folder), and its name. */
+function splitPath(path: string): [string, string] {
+  const i = path.lastIndexOf("/");
+  return [path.slice(0, Math.max(i, 0)), path.slice(i + 1)];
+}
+
 /**
  * A session's folder: its files by path ("src/main.ts"), and the folders that hold them. `extra` adds to a folder what
  * is no file of `files` (an empty folder, a link, a socket).
@@ -88,13 +95,52 @@ export class FakeFolder {
     });
     d.handle("file.write", (msg) => {
       this.writes.push(msg);
-      const was = this.files.get(msg.path);
-      if (msg.create && was) return commandResult(msg, { ok: false, error: "同じ名前のファイルがあります。" });
-      if (was && !was.writable) return commandResult(msg, { ok: false, error: "このファイルには書き込めません。" });
-      if (msg.baseHash !== undefined && was?.hash !== msg.baseHash) return commandResult(msg, { ok: false, conflict: true });
-      const file = this.text(msg.path, msg.content);
-      return commandResult(msg, { ok: true, written: { hash: file.hash!, size: file.size, mtime: file.mtime } });
+      return commandResult(msg, this.write(msg));
     });
+  }
+
+  /**
+   * As writeFileAt (apps/daemon/src/files.ts) answers, in the same order. Links are not followed, so writing through a
+   * link that points inside the session's folder (to its file, or into its folder) is not answered as gasho-daemon
+   * answers, and a link that loops is answered as a broken one.
+   */
+  private write(msg: FileWrite): CommandResult {
+    const { path, create } = msg;
+    if (path === "") return { ok: false, error: "ファイルを指定してください。" };
+    const pathWrong = relPathProblem(path);
+    if (pathWrong) return { ok: false, error: pathWrong };
+    if (Buffer.byteLength(msg.content) > MAX_TEXT_BYTES) return { ok: false, error: `${MAX_TEXT_BYTES / 1024 / 1024}MB より大きいファイルは保存できません。` };
+    const at = this.entryAt(path);
+    if (create) {
+      const [parent, name] = splitPath(path);
+      const nameWrong = fileNameProblem(name);
+      if (nameWrong) return { ok: false, error: nameWrong };
+      const folder: DirEntry | undefined = parent === "" ? { name: "", kind: "dir" } : this.entryAt(parent);
+      if (!folder || (folder.link && folder.kind === "other")) return { ok: false, error: `見つかりません：${parent}` };
+      if (folder.outside) return { ok: false, error: "セッションのフォルダーの外を指すリンクは開けません。" };
+      if (folder.kind !== "dir") return { ok: false, error: `フォルダーではありません：${parent}` };
+      // Anything already there, a broken link included (O_EXCL).
+      if (at) return { ok: false, error: `同じ名前のファイルかフォルダーが、すでにあります：${path}` };
+    } else {
+      // A broken link (listed with the kind "other").
+      if (!at || (at.link && at.kind === "other")) return { ok: false, error: `見つかりません：${path}` };
+      if (at.outside) return { ok: false, error: "セッションのフォルダーの外を指すリンクは開けません。" };
+      if (at.kind === "dir") return { ok: false, error: `フォルダーです：${path}` };
+      if (at.kind !== "file") return { ok: false, error: `ふつうのファイルではないので、保存できません：${path}` };
+      const was = this.files.get(path);
+      if (msg.baseHash !== undefined && was?.hash !== msg.baseHash) {
+        return { ok: false, error: "このファイルは、開いたあとで変更されています。", conflict: true };
+      }
+      if (was && !was.writable) return { ok: false, error: `書き込む権限がありません：${path}` };
+    }
+    const file = this.text(path, msg.content);
+    return { ok: true, written: { hash: file.hash!, size: file.size, mtime: file.mtime } };
+  }
+
+  /** What is at `path` (a file, a folder, a link…), as its folder lists it. Undefined when nothing is there. */
+  private entryAt(path: string): DirEntry | undefined {
+    const [parent, name] = splitPath(path);
+    return this.listing(parent)?.entries.find((e) => e.name === name);
   }
 
   /** Writes a text file, as Claude would. */

@@ -30,9 +30,18 @@ function idsOf(s: SessionInfo): string[] {
 
 const hasUnread = (machine: string, s: SessionInfo, unread: ReadonlySet<string>) => idsOf(s).some((id) => unread.has(unreadKey(machine, id)));
 
+/**
+ * The state to show for a session. Its turn has ended (idle) while work it started runs on in the background: it is
+ * shown as working, since Claude usually goes on once that work ends. `status` stays idle, which is what decides that
+ * input goes in at once.
+ */
+export function shownStatus(s: Pick<SessionInfo, "status" | "background">): SessionStatus {
+  return s.status === "idle" && (s.background?.length ?? 0) > 0 ? "busy" : s.status;
+}
+
 /** A session's dot. The bell shows also while its working server is offline: what was not read stays so. */
 export function sessionDot(m: MachineInfo, s: SessionInfo, unread: ReadonlySet<string>): Dot {
-  return { status: m.connected ? s.status : "unknown", unread: hasUnread(m.id, s, unread) };
+  return { status: m.connected ? shownStatus(s) : "unknown", unread: hasUnread(m.id, s, unread) };
 }
 
 /** A worktree's dot in the sidebar: that of its most pressing session, and a bell if any of them has one. */
@@ -187,7 +196,7 @@ export function worktreesByLastUse(machines: MachineInfo[], remembered: Remember
  */
 export function worktreeStatus(w: Pick<WorktreeSessions, "machine" | "sessions">): SessionStatus {
   if (!w.machine.connected) return "unknown";
-  return (["waiting", "busy", "idle"] as const).find((st) => w.sessions.some((s) => s.status === st)) ?? "unknown";
+  return (["waiting", "busy", "idle"] as const).find((st) => w.sessions.some((s) => shownStatus(s) === st)) ?? "unknown";
 }
 
 /** When a worktree was last used: when its session used last was. Undefined without sessions. */

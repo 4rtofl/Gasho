@@ -25,6 +25,7 @@ import { fetchMe } from "./api";
 import { hasDrafts, moveDraft } from "./drafts";
 import { hasUnsavedFiles, moveFileDrafts } from "./file-drafts";
 import { usePageVisible } from "./media";
+import { movePending } from "./pending";
 import { type AutoReload, onOutOfDate, outOfDate } from "./server-update";
 import { movedSession, unreadOfSession } from "./sessions";
 
@@ -506,8 +507,9 @@ function sameEntry(a: TranscriptEntry, b: TranscriptEntry): boolean {
 }
 
 /**
- * After /clear a session goes on under a new id (see movedSession): what its chat box holds and the files being written
- * in its panel go with it, also for a session not on screen, before a page goes to the new id.
+ * After /clear a session goes on under a new id (see movedSession): what its chat box holds, the messages sent from it
+ * that are not typed yet, and the files being written in its panel go with it, also for a session not on screen, before
+ * a page goes to the new id.
  */
 function moveDrafts(machines: MachineInfo[]): void {
   for (const m of machines) {
@@ -515,6 +517,7 @@ function moveDrafts(machines: MachineInfo[]): void {
       const to = movedSession(m, id);
       if (!to) continue;
       moveDraft(transcriptKey(m.id, id), transcriptKey(m.id, to.sessionId));
+      movePending(transcriptKey(m.id, id), transcriptKey(m.id, to.sessionId));
       moveFileDrafts(fileKey(m.id, id, ""), fileKey(m.id, to.sessionId, ""));
     }
   }

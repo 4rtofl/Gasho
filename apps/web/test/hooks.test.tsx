@@ -7,6 +7,7 @@ import { hasDrafts, promptDraft, useDraftBox, usePicks } from "@/lib/drafts";
 import { getFileDraft, hasUnsavedFiles, setFileDraft } from "@/lib/file-drafts";
 import { useChoices, useFlag } from "@/lib/flag";
 import { useSavedOrder } from "@/lib/order";
+import { addPending, pendingOf, removePending, settlePending } from "@/lib/pending";
 import { fileKey, transcriptKey } from "@/lib/store";
 import { PANEL_WIDTH_MAX, usePanelWidth, useSidebarWidth } from "@/lib/widths";
 import { connectHub, machine, session } from "./hub";
@@ -132,7 +133,7 @@ function chatBox(text: string): { current: HTMLDivElement; text: HTMLTextAreaEle
   return { current: box, text: area };
 }
 
-test("after /clear, a session's chat box and the files being written in it go on under its new id, with the cursor where it was, also while the session is not on screen", async () => {
+test("after /clear, a session's chat box, the messages sent from it not typed yet and the files being written in it go on under its new id, with the cursor where it was, also while the session is not on screen", async () => {
   const key = (id: string) => transcriptKey("m2", id);
   const hub = await connectHub({ machines: [machine("m2", [session("a"), session("other")])] });
   promptDraft(key("a")).set({ text: "書きかけ", attachments: [], history: ["前の発言"] });
@@ -141,6 +142,11 @@ test("after /clear, a session's chat box and the files being written in it go on
   promptDraft(key("other")).set({ text: "別のセッション", attachments: [], history: [] });
   const edited = { value: "編集中", original: "元", eol: "\n" as const, bom: false };
   setFileDraft(fileKey("m2", "a", "src/x.ts"), edited);
+  // Messages sent from it: one the working server has not answered yet, one waiting there, one typed already.
+  const sending = addPending(key("a"), { text: "送っている", files: [], after: 5 });
+  const queued = addPending(key("a"), { text: "待っている", files: [], after: 5 });
+  settlePending(key("a"), queued, "queued");
+  settlePending(key("a"), addPending(key("a"), { text: "打った", files: [], after: 5 }), "sent");
   // The page of "a" is open, with its box being typed in.
   const before = chatBox("書きかけ");
   const open = renderHook(() => useDraftBox(key("a"), before));
@@ -157,6 +163,17 @@ test("after /clear, a session's chat box and the files being written in it go on
   expect(renderHook(() => usePicks(key("b"))).result.current[0]).toEqual({ model: "opus" });
   expect(promptDraft(key("other")).get().text).toBe("別のセッション");
   expect(getFileDraft(fileKey("m2", "b", "src/x.ts"))).toBe(edited);
+  // Not typed yet, they are typed into the new conversation, and are looked for from its first entry.
+  expect(pendingOf(key("b")).map((p) => [p.text, p.state, p.after])).toEqual([
+    ["送っている", "sending", 0],
+    ["待っている", "queued", 0],
+  ]);
+  expect(pendingOf(key("a"))).toEqual([]);
+  // What the working server answers later about a message sent under the id from before reaches it.
+  settlePending(key("a"), sending, "queued");
+  expect(pendingOf(key("b")).map((p) => p.state)).toEqual(["queued", "queued"]);
+  for (const id of [sending, queued]) removePending(key("a"), id);
+  expect(pendingOf(key("b"))).toEqual([]);
   // Nothing is left under the id from before: once the boxes are sent and the file saved, no page reload waits for them.
   for (const id of ["b", "other"]) promptDraft(key(id)).set({ text: "", attachments: [], history: [] });
   setFileDraft(fileKey("m2", "b", "src/x.ts"), undefined);

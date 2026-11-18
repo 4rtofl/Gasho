@@ -14,6 +14,8 @@ import {
   pendingWork,
   RESTART_SLOW_MS,
   STEP_LABEL,
+  trialLabel,
+  trialLength,
   updateTo,
 } from "@/lib/daemon-update";
 import { relativeTime } from "@/lib/format";
@@ -142,7 +144,7 @@ function MachineRow({ machine: m, now, updated, onUpdate }: { machine: MachineIn
     status = (
       <p className="flex items-center gap-1.5 text-xs text-foreground/80">
         <LoaderCircle className="size-3.5 shrink-0 animate-spin" />
-        {STEP_LABEL.trial}
+        {trialLabel(u.trialMs)}
       </p>
     );
   } else if (u?.progress && (m.connected || u.progress.step === "restart")) {
@@ -242,7 +244,7 @@ function ConfirmUpdate({ machine, version, onClose, onStarted }: { machine: Mach
     // A version older than the running one may not go back by itself.
     trialMs !== undefined &&
       !back &&
-      `新しいバージョンがうまく起動しなかったとき（${trialMs % 60_000 === 0 ? `${trialMs / 60_000}分` : `${Math.round(trialMs / 1000)}秒`}のうちに止まったとき）は、自動で前のバージョンに戻します。`,
+      `新しいバージョンがうまく起動しなかったとき（${trialLength(trialMs)}のうちに止まったとき）は、自動で前のバージョンに戻します。`,
     inputs > 0 && `送るのを待っている入力が ${inputs} 件あります。送り終えてから切り替えます。5分たっても残っているときは、更新をやめます。`,
     requests > 0 &&
       `権限の確認を待っているものが ${requests} 件あります。動かし直したあとは Gasho から答えられなくなるので、端末か公式アプリで答えてください。`,

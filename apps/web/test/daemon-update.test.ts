@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { MachineInfo } from "@gasho/protocol";
-import { changesUrl, compareVersions, newerPublished, pendingWork, updateTo, updateToTell } from "../src/lib/daemon-update.ts";
+import { changesUrl, compareVersions, newerPublished, pendingWork, trialLabel, updateTo, updateToTell } from "../src/lib/daemon-update.ts";
 
 const machine = (o: Partial<MachineInfo>): MachineInfo => ({ id: "m", name: "ubuntu", connected: true, lastSeen: 0, sessions: [], ...o });
 
@@ -33,6 +33,13 @@ test("an update is offered only for a newer version, to a connected gasho-daemon
   // Published, but not updatable from Gasho: the row still says so.
   assert.ok(newerPublished(machine({ daemonVersion: "0.14.0" }), latest));
   assert.ok(!newerPublished(machine({ daemonVersion: "0.16.0" }), latest));
+});
+
+test("a working server's row says how long its trial takes, as gasho-daemon set it (GASHO_DAEMON_PROBATION_MS)", () => {
+  assert.match(trialLabel(60_000), /（1分ほど。/);
+  assert.match(trialLabel(20_000), /（20秒ほど。/);
+  // A length the Gasho server does not pass on (over an hour): no length rather than a wrong one.
+  assert.doesNotMatch(trialLabel(undefined), /ほど/);
 });
 
 test("the inputs to send and the permission requests an update would affect are counted; questions read from the screen are not", () => {

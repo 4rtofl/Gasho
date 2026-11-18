@@ -122,7 +122,7 @@ export class GashoHub {
   private forget: () => void;
   /** The Gasho server's processes before startServer, for logs(). */
   private earlier: Proc[] = [];
-  /** Lets freePort give the port again, which stopServer kept. */
+  /** Lets freePort give the port again, which stopServer kept (HubOptions.service: kept from the start to stop). */
   private releasePort: (() => void) | undefined;
   /** The first browser registered, which asks for the codes after it. */
   private cookie: BrowserCookie | undefined;
@@ -135,9 +135,11 @@ export class GashoHub {
     fakes: [FakeCommand, FakeCommand, FakeCommand<ClaudeTable>];
     forget: () => void;
     service?: HubService;
+    releasePort?: () => void;
   }) {
     this.root = o.root;
     this.service = o.service;
+    this.releasePort = o.releasePort;
     this.forget = o.forget;
     this.home = path.join(o.root, "home");
     this.port = o.port;
@@ -308,14 +310,17 @@ export async function startHub(o: HubOptions = {}): Promise<GashoHub> {
   const service = o.service && (await serviceOf(root, o.service, base, forget));
   for (let attempt = 1; ; attempt++) {
     const port = await freePort();
+    // Started again by the service after an update or a crash, while nothing listens on the port.
+    const releasePort = service ? keepPort(port) : undefined;
     const env = { ...(service?.env ?? base), GASHO_HUB_PORT: String(port) };
     const proc = service ? new Proc("gasho-hub (service)", SERVICE_BIN, [service.launcher, service.control], env) : new Proc("gasho-hub", HUB_CLI, ["start"], env);
     try {
       await proc.waitForLog(/listening on /, START_MS);
       const hubService = service && new HubService({ root: service.layout, control: service.control, proc });
-      return new GashoHub({ root, port, env, proc, fakes: [gh, npm, claude], forget: service?.forget ?? forget, service: hubService });
+      return new GashoHub({ root, port, env, proc, fakes: [gh, npm, claude], forget: service?.forget ?? forget, service: hubService, releasePort });
     } catch (e) {
       await proc.stop();
+      releasePort?.();
       // Another process took the port after freePort let it go.
       if (attempt < 3 && PORT_TAKEN.test(proc.log())) continue;
       await fsp.rm(root, { recursive: true, force: true });

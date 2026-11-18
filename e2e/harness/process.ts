@@ -51,8 +51,9 @@ export function isolatedEnv(home: string, more: Record<string, string> = {}): Re
 }
 
 /**
- * The ports of the Gasho servers stopped to be started again (GashoHub.stopServer), one file each, which freePort
- * gives to no test of any worker: such a server starts on its port again, which the screen and gasho-daemon go to.
+ * The ports of the Gasho servers stopped to be started again (GashoHub.stopServer, and those of HubOptions.service), one
+ * file each, which freePort gives to no test of any worker: such a server starts on its port again, which the screen
+ * and gasho-daemon go to.
  */
 const KEPT_PORTS = "/tmp/ge2e-ports";
 

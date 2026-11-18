@@ -8,7 +8,7 @@ import { drag, pointOn, sendHook, startDrag, worktreeSession } from "./home-side
 
 test.describe.configure({ mode: "parallel" });
 
-const TILES = ["作業中", "確認待ち", "待機中", "送った指示", "セッション", "通知", "トークン", "トークンの内訳", "最近の操作", "working server"];
+const TILES = ["作業中", "確認待ち", "待機中", "送った指示", "セッション", "通知", "トークン", "トークンの内訳", "最近の操作", "working server", "メモリ"];
 
 /** The tiles' names, in the order shown (their handles are named after them). */
 const tileOrder = (page: Page) =>
@@ -29,7 +29,7 @@ const columns = (page: Page) =>
   page.getByRole("button", { name: "「作業中」を移動" }).evaluate((el) => getComputedStyle(el.parentElement!.parentElement!).gridTemplateColumns.split(" ").length);
 
 test.describe("見出しとタイル", () => {
-  test("見出しに working server の台数と Gasho から起動したセッションの数が出て、タイルが 10 枚並ぶ", async ({ page, hub }) => {
+  test("見出しに working server の台数と Gasho から起動したセッションの数が出て、タイルが 11 枚並ぶ", async ({ page, hub }) => {
     const busy = worktreeSession("busy-one", { status: "busy" });
     const waiting = worktreeSession("waiting-one", { status: "waiting" });
     const idle = worktreeSession("idle-one", { status: "idle" });
@@ -58,7 +58,7 @@ test.describe("見出しとタイル", () => {
     await expect(main.getByText("0 台の working server・0 セッション")).toBeVisible();
     await expect(main.getByText("Gasho から起動したセッションはまだありません。")).toBeVisible();
     await expect(main.getByText("まだ操作はありません。")).toBeVisible();
-    await expect(main.getByText("登録された working server はありません。")).toBeVisible();
+    for (const title of ["working server", "メモリ"]) await expect(tile(page, title).getByText("登録された working server はありません。")).toBeVisible();
     await expect(main.getByText("新しい通知はありません")).toBeVisible();
     await expect(main.getByText("過去24時間に使ったトークンはありません。")).toBeVisible();
     for (const label of ["作業中", "確認待ち", "待機中", "送った指示"]) await expect(numberTile(page, label, 0)).toBeVisible();
@@ -363,7 +363,7 @@ test.describe("タイルの並べ替え", () => {
     await handle("作業中").focus();
     await page.keyboard.press("ArrowRight");
     expect(await tileOrder(page)).toEqual(["確認待ち", "作業中", ...TILES.slice(2)]);
-    await expect(said).toHaveText("「作業中」を 2 番目に移動しました（全 10 件）");
+    await expect(said).toHaveText(`「作業中」を 2 番目に移動しました（全 ${TILES.length} 件）`);
     await expect(handle("作業中")).toBeFocused();
     await page.keyboard.press("End");
     expect(await tileOrder(page)).toEqual([...TILES.filter((t) => t !== "作業中"), "作業中"]);

@@ -13,7 +13,7 @@ import {
   UPDATING,
   validateCommand,
 } from "../src/hub.ts";
-import { notificationFor } from "../src/notify.ts";
+import { NotificationGate, notificationFor } from "../src/notify.ts";
 import { Store } from "../src/store.ts";
 
 function fakePeer<T>(deviceId = "") {
@@ -279,6 +279,50 @@ test("notificationFor covers permission, idle and errors, and ignores other even
   assert.equal(notificationFor("m", { ...ev, event: "StopFailure" }, session, "3")?.kind, "error");
   assert.equal(notificationFor("m", { ...ev, event: "PreToolUse" }, session, "4"), null);
   assert.equal(notificationFor("m", { ...ev, event: "Stop" }, undefined, "5")?.title, "s1 の応答が終わりました");
+});
+
+test("what a plugin says of a Stop replaces Gasho's notification, and is not dropped in a turn of its own (API 1.15)", () => {
+  const ev = { sessionId: "s1", event: "Stop", at: 1, summary: "会話の中身" };
+  const said = notificationFor("m", { ...ev, notification: { plugin: "github-review", title: " #5 のレビューが終わりました ", body: "o/r" } }, undefined, "1");
+  assert.deepEqual(
+    { kind: said?.kind, title: said?.title, body: said?.body, plugin: said?.plugin },
+    { kind: "done", title: "#5 のレビューが終わりました", body: "o/r", plugin: "github-review" },
+  );
+  const empty = notificationFor("m", { ...ev, notification: { plugin: "p", title: "  " } }, undefined, "2");
+  assert.equal(empty?.title, "s1 の応答が終わりました");
+  assert.equal(empty?.plugin, undefined);
+
+  const gate = new NotificationGate();
+  gate.pass("m", { sessionId: "s1", event: "UserPromptSubmit", at: 1, automatic: true }, null, () => true);
+  const stop = { sessionId: "s1", event: "Stop", at: 2 };
+  assert.equal(gate.pass("m", stop, notificationFor("m", stop, undefined, "3"), () => false), true);
+  gate.pass("m", { sessionId: "s1", event: "UserPromptSubmit", at: 3, automatic: true }, null, () => true);
+  assert.equal(gate.pass("m", stop, notificationFor("m", stop, undefined, "4"), () => true), false);
+  gate.pass("m", { sessionId: "s1", event: "UserPromptSubmit", at: 4, automatic: true }, null, () => true);
+  assert.equal(gate.pass("m", stop, said, () => true), true);
+});
+
+test("what a plugin says of a Stop is kept and shown only as long as a notification holds it", () => {
+  const { hub, store, machineId, machineToken, browserId } = setup();
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.1.0" });
+  hub.onDaemonMessage(d, { type: "sessions", sessions: [session] });
+
+  const long = { plugin: "p".repeat(100), title: "長".repeat(1000), body: "本".repeat(1000) };
+  hub.onDaemonMessage(d, { type: "hook", event: { sessionId: "s1", event: "Stop", at: 1, notification: long } });
+  const cut = { plugin: "p".repeat(32), title: "長".repeat(120), body: "本".repeat(300) };
+  assert.deepEqual(store.recentEvents().at(-1)?.notification, cut);
+  const shown = c.sent.filter((m) => m.type === "event").at(-1);
+  assert.ok(shown?.type === "event");
+  assert.deepEqual(shown.event.notification, cut);
+
+  // What cannot be shown is not kept.
+  hub.onDaemonMessage(d, { type: "hook", event: { sessionId: "s1", event: "Stop", at: 2, notification: { plugin: "p", title: " ".repeat(1000), body: "本".repeat(1000) } } });
+  assert.equal(store.recentEvents().at(-1)?.notification, undefined);
+  hub.onDaemonMessage(d, { type: "hook", event: { sessionId: "s1", event: "PreToolUse", at: 3, notification: "長".repeat(1000) } } as never);
+  assert.equal(store.recentEvents().at(-1)?.notification, undefined);
 });
 
 test("a permission prompt for Claude's question or plan is notified as such", () => {

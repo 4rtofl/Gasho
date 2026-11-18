@@ -346,6 +346,19 @@ export interface HookEvent {
    * Stop like any other. Older gasho-daemon versions do not set it.
    */
   automatic?: boolean;
+  /**
+   * On a Stop: what a plugin's daemon part says of the end of this turn (onSessionStop, plugin API 1.15), in place of
+   * Gasho's own "の応答が終わりました". Older gasho-daemon versions do not set it.
+   */
+  notification?: PluginStopNotification;
+}
+
+/** What a plugin's daemon part says when a session stops (onSessionStop, plugin API 1.15). */
+export interface PluginStopNotification {
+  /** The plugin's id. */
+  plugin: string;
+  title: string;
+  body?: string;
 }
 
 // In the messages below, `machine` is always a machine id (the id of its registered device), never its name.
@@ -365,6 +378,11 @@ export interface GashoNotification {
   title: string;
   body?: string;
   read: boolean;
+  /**
+   * The plugin that wrote the title (onSessionStop, plugin API 1.15): the lock screen then shows the title. Only on the
+   * notification as it is made; the Gasho server does not keep it.
+   */
+  plugin?: string;
 }
 
 /** A browser's Web Push subscription, as PushSubscription.toJSON() gives it. */
@@ -722,7 +740,7 @@ export interface TranscriptPage {
  * What a plugin's web part may do besides reading and showing: send messages to sessions, start them, remove worktrees
  * with their sessions.
  */
-export type PluginPermission = "session.input" | "session.launch" | "session.remove" | "worktree.remove";
+export type PluginPermission = "session.input" | "session.launch" | "session.remove" | "worktree.remove" | "session.notification";
 
 /** A method of a plugin's daemon part, which its web part can call. */
 export interface PluginMethodSpec {
@@ -920,6 +938,8 @@ export interface DaemonPluginEntry {
   run: boolean;
   /** The values of its settings with scope "server". */
   settings: Record<string, unknown>;
+  /** It has the permission "session.notification": its onSessionStop is asked when a session stops (plugin API 1.15). */
+  sessionStop?: boolean;
 }
 
 /**

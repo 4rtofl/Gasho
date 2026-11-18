@@ -25,7 +25,7 @@ import type {
   SessionInfo,
 } from "@gasho/protocol";
 import type { LatestCheck } from "./latest.ts";
-import { NotificationGate, notificationFor, sessionLabel } from "./notify.ts";
+import { boundedHook, NotificationGate, notificationFor, sessionLabel } from "./notify.ts";
 import type { PluginCatalogSource } from "./catalog.ts";
 import { PluginHub } from "./plugin-hub.ts";
 import type { PluginRegistry } from "./plugins.ts";
@@ -717,7 +717,7 @@ export class Hub {
         break;
       case "hook": {
         if (!isHookEvent(msg.event)) break;
-        const event: MachineHookEvent = { ...msg.event, machine: id };
+        const event: MachineHookEvent = { ...boundedHook(msg.event), machine: id };
         this.store.addEvent(event);
         this.broadcast({ type: "event", event });
         const session = m.sessions.find((s) => s.sessionId === event.sessionId);

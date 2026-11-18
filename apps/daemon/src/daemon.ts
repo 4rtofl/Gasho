@@ -124,6 +124,7 @@ import { changesProblem, removableWorktree, removeWorktree, worktreeChanges } fr
 import { listSkills } from "./skills.ts";
 import { appendBatches, conversationFacts, emptyMeta, followTranscript, pastConversations, TranscriptTail, type TranscriptMeta } from "./transcript.ts";
 import type { SessionWire } from "./plugin-ipc.ts";
+import { HookRelay } from "./hook-relay.ts";
 import { PluginRunner } from "./plugins.ts";
 import { npmOf, Updater } from "./self-update.ts";
 import { log, str } from "./util.ts";
@@ -331,6 +332,8 @@ export class Daemon {
   private prompts = new Map<string, { at: number; text: string }[]>();
   /** The daemon parts of plugins (docs/plugins.md). */
   private plugins: PluginRunner;
+  /** Passes the hooks on to the Gasho server, a Stop with what the plugins say of it. */
+  private hookRelay: HookRelay;
   /** Updates of gasho-daemon from Gasho. */
   private updater: Updater;
   /** gasho-daemon has begun to end (exit). */
@@ -364,6 +367,12 @@ export class Daemon {
     );
     this.managed = new ManagedSessions(path.join(cfg.stateDir, "managed.json"));
     this.registered = new RegisteredRepos(path.join(cfg.stateDir, "repos.json"));
+    this.hookRelay = new HookRelay({
+      send: (event) => this.hub.send({ type: "hook", event }),
+      asks: () => this.plugins.hearsSessionStop(),
+      ask: (sessionId) => this.plugins.sessionStop(sessionId),
+      log,
+    });
     this.plugins = new PluginRunner({
       cacheDir: cfg.pluginCacheDir,
       send: (m) => this.hub.send(m),
@@ -487,7 +496,7 @@ export class Daemon {
         this.permissions.observe(payload);
         const ev = summarizeHook(payload);
         if (!ev) return;
-        this.hub.send({ type: "hook", event: ev });
+        this.hookRelay.pass(ev);
         // Hooks often mean the status changed; refresh soon instead of waiting for the next poll.
         this.scheduleStatuses();
         this.scheduleRefresh(250);

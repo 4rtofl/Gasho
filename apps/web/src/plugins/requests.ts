@@ -1,21 +1,15 @@
 // The calls of plugins' web parts to their daemon parts (docs/plugins.md, P7). useRequest keeps each result while the
 // page is open, shared by every part that asks the same (a home tile and a panel read one list), keeps the last result
-// when a call fails, and calls again when the connection to the Gasho server comes back. A plugin's hot reload does not
-// touch any of it. callPlugin calls once (useCall, for `write` methods).
+// when a call fails (when a part shown calls again: request-entry.ts), and calls again when the connection to the Gasho
+// server comes back. A plugin's hot reload does not touch any of it. callPlugin calls once (useCall, for `write` methods).
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import type { RequestOptions, RequestState, RequestTarget } from "@gasho/plugin-sdk";
 import type { ClientToHub } from "@gasho/protocol";
 import { onConnected, onHubMessage, sendToHub } from "@/lib/store";
+import { type Entry, settle, wantsRead } from "./request-entry";
 
 /** A little longer than the Gasho server waits for the longest method (120 s). */
 const CALL_MS = 130_000;
-
-interface Entry {
-  loading: boolean;
-  data?: unknown;
-  error?: string;
-  at?: number;
-}
 
 type PluginRequest = Extract<ClientToHub, { type: "plugin.request" }>;
 
@@ -97,9 +91,7 @@ function load(plugin: string, t: RequestTarget, key: string): void {
   entries.set(key, { ...cur, loading: true, error: undefined });
   emit();
   void callPlugin(plugin, t, true).then((r) => {
-    const was = entries.get(key);
-    // On an error, what was read before stays, with the error.
-    entries.set(key, r.error !== undefined ? { ...was, loading: false, error: r.error } : { loading: false, data: r.result, at: Date.now() });
+    entries.set(key, settle(entries.get(key), r, Date.now()));
     emit();
   });
 }
@@ -115,9 +107,7 @@ export function useRequestFor<T>(plugin: string, target: RequestTarget | undefin
   useEffect(() => {
     const t = targetRef.current;
     if (!key || !t) return;
-    const e = entries.get(key);
-    const stale = staleSeconds !== undefined && e?.at !== undefined && Date.now() - e.at >= staleSeconds * 1000;
-    if (!e || (e.at === undefined && e.error === undefined) || stale) load(plugin, t, key);
+    if (wantsRead(entries.get(key), staleSeconds, Date.now())) load(plugin, t, key);
   }, [plugin, key, staleSeconds]);
 
   useEffect(() => {

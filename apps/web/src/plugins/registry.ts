@@ -120,7 +120,7 @@ export function checkDefinition(d: unknown): PluginDefinition {
       if (!isRecord(item) || typeof item.id !== "string" || !item.id) throw new Error(`${k} の項目に id がありません。`);
     }
   }
-  for (const k of ["pages", "sessionPanels", "worktreeViews"] as const) {
+  for (const k of ["pages", "sessionPanels", "pagePanels", "worktreeViews"] as const) {
     if (d[k] !== undefined && !isRecord(d[k])) throw new Error(`${k} はオブジェクトにしてください。`);
   }
   if (d.settings !== undefined && typeof d.settings !== "function") throw new Error("settings は部品にしてください。");
@@ -221,9 +221,12 @@ export interface PluginPart {
   version: string;
 }
 
-/** The installed plugins, the loaded web parts of the enabled ones (in the plugins' order), and their troubles. */
-export function usePluginRegistry(): { infos: PluginInfo[]; parts: PluginPart[]; errors: Record<string, string>; loading: Record<string, boolean> } {
-  const { plugins } = useAppState();
+/**
+ * The installed plugins, the loaded web parts of the enabled ones (in the plugins' order), their troubles, and whether
+ * the Gasho server's first snapshot came (before it, `infos` is empty for not being known yet).
+ */
+export function usePluginRegistry(): { infos: PluginInfo[]; parts: PluginPart[]; errors: Record<string, string>; loading: Record<string, boolean>; synced: boolean } {
+  const { plugins, synced } = useAppState();
   const s = useSyncExternalStore(subscribe, () => state);
   const parts = [...plugins]
     .sort((a, b) => a.manifest.name.localeCompare(b.manifest.name, "ja"))
@@ -231,5 +234,5 @@ export function usePluginRegistry(): { infos: PluginInfo[]; parts: PluginPart[];
       const l = info.enabled ? s.loaded[info.id] : undefined;
       return l ? [{ info, def: l.def, version: l.hash }] : [];
     });
-  return { infos: plugins, parts, errors: s.errors, loading: s.loading };
+  return { infos: plugins, parts, errors: s.errors, loading: s.loading, synced };
 }

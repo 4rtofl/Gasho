@@ -370,7 +370,7 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
 
   if (!s.managed) {
     return (
-      <div>
+      <div className="flex min-h-0 flex-col">
         <PermissionRequests machine={machine} session={s} />
         <PromptInput
           onSend={() => undefined}
@@ -407,7 +407,7 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
   };
 
   return (
-    <div>
+    <div className="flex min-h-0 flex-col">
       <PermissionRequests machine={machine} session={s} />
       <BackgroundTasks machine={machine} session={s} />
       <PromptInput

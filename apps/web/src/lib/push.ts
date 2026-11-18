@@ -44,9 +44,21 @@ export function startPush(): void {
     } catch {
       // not a page of Gasho
     }
+    // So that it is not opened again when the page asks what waits.
+    (ev.source as ServiceWorker | null)?.postMessage({ type: "gasho.opened" });
+  });
+  // The session a tapped notification asks for, when the message did not reach this page (it was closed or stopped).
+  askPending();
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") askPending();
   });
   // A subscription the Gasho server forgot (another key, or the push service said it was gone) is made again only
   // from the settings: subscribing needs a tap on iOS.
+}
+
+/** Asks the Service Worker for a session a tapped notification left to open; it answers with gasho.open. */
+function askPending(): void {
+  navigator.serviceWorker.ready.then((reg) => reg.active?.postMessage({ type: "gasho.pending" })).catch(() => {});
 }
 
 /** Sessions waiting for a confirmation, as the home screen counts them. */

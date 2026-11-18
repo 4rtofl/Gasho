@@ -20,7 +20,7 @@ import type {
 } from "@gasho/plugin-sdk";
 import type { MachineInfo, PluginInfo, PluginSettingSpec, SessionInfo } from "@gasho/protocol";
 import { SidePanel } from "@/components/side-panel";
-import { go, hrefOf, type Route, type SessionPanel, type WorktreeView } from "@/lib/route";
+import { go, hrefOf, useRoute, type PagePanel, type Route, type SessionPanel, type WorktreeView } from "@/lib/route";
 import type { WorktreeSessions } from "@/lib/sessions";
 import { useAppState } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -112,8 +112,8 @@ const toPlugins = (
 );
 
 /** Why a plugin's part cannot be drawn (undefined when it can). */
-function unavailable(info: PluginInfo | undefined, part: PluginPart | undefined, errors: Record<string, string>, loading: Record<string, boolean>): string | undefined {
-  if (!info) return "このプラグインは、Gasho サーバーに入っていません。";
+function unavailable(info: PluginInfo | undefined, part: PluginPart | undefined, errors: Record<string, string>, loading: Record<string, boolean>, synced: boolean): string | undefined {
+  if (!info) return synced ? "このプラグインは、Gasho サーバーに入っていません。" : "読み込み中…";
   if (!info.enabled) return `${info.manifest.name} は無効になっています。`;
   if (part) return undefined;
   if (errors[info.id]) return errors[info.id];
@@ -122,10 +122,10 @@ function unavailable(info: PluginInfo | undefined, part: PluginPart | undefined,
 }
 
 export function PluginPageView({ plugin, page, params }: { plugin: string; page: string; params: Params }) {
-  const { infos, parts, errors, loading } = usePluginRegistry();
+  const { infos, parts, errors, loading, synced } = usePluginRegistry();
   const info = infos.find((p) => p.id === plugin);
   const part = parts.find((p) => p.info.id === plugin);
-  const why = unavailable(info, part, errors, loading);
+  const why = unavailable(info, part, errors, loading, synced);
   if (why || !part) {
     return (
       <Notice title={info?.manifest.name ?? plugin}>
@@ -143,17 +143,51 @@ export function PluginPageView({ plugin, page, params }: { plugin: string; page:
   );
 }
 
+// ---- the panels of a page (P19) ----
+
+/** A panel of a plugin's page (route `panel`): beside the page on a computer (`docked`), in its place on a phone. */
+export function PluginPagePanelView({ plugin, panel, docked, onClose }: { plugin: string; panel: PagePanel; docked: boolean; onClose: () => void }) {
+  const { infos, parts, errors, loading, synced } = usePluginRegistry();
+  const info = infos.find((p) => p.id === plugin);
+  const part = parts.find((p) => p.info.id === plugin);
+  const why = unavailable(info, part, errors, loading, synced);
+  const Panel = part && Object.hasOwn(part.def.pagePanels ?? {}, panel.id) ? part.def.pagePanels?.[panel.id] : undefined;
+  const problem = why ?? (!Panel ? "このパネルはありません。" : undefined);
+  const scope = { docked, onClose, backLabel: "戻る" };
+  if (problem || !part || !Panel) {
+    return (
+      <SidePanel title={info?.manifest.name ?? plugin} docked={docked} onClose={onClose} backLabel={scope.backLabel}>
+        <p className="text-sm text-muted-foreground">{problem}</p>
+      </SidePanel>
+    );
+  }
+  return (
+    <PanelScopeContext.Provider value={scope}>
+      <Part
+        part={part}
+        fallback={
+          <SidePanel title={part.info.manifest.name} docked={docked} onClose={onClose} backLabel={scope.backLabel}>
+            <p className="text-sm text-red-400">{part.info.manifest.name} の表示でエラーが起きました。プラグインの画面で理由を見られます。</p>
+          </SidePanel>
+        }
+      >
+        <Panel params={panel.params} docked={docked} />
+      </Part>
+    </PanelScopeContext.Provider>
+  );
+}
+
 // ---- session panels (P4) ----
 
 export function PluginPanelView({ machine, sessionId, panel, docked, onClose }: { machine: string; sessionId: string; panel: SessionPanel; docked: boolean; onClose: () => void }) {
-  const { infos, parts, errors, loading } = usePluginRegistry();
+  const { infos, parts, errors, loading, synced } = usePluginRegistry();
   const { machines } = useAppState();
   const plugin = panel.plugin ?? "";
   const info = infos.find((p) => p.id === plugin);
   const part = parts.find((p) => p.info.id === plugin);
   const m = machines.find((x) => x.id === machine);
   const s = m?.sessions.find((x) => x.sessionId === sessionId);
-  const why = unavailable(info, part, errors, loading);
+  const why = unavailable(info, part, errors, loading, synced);
   const Panel = part && Object.hasOwn(part.def.sessionPanels ?? {}, panel.id ?? "") ? part.def.sessionPanels?.[panel.id ?? ""] : undefined;
   const problem = why ?? (!m || !s ? `このセッションは見つかりません。終了したか、${m?.name ?? "この working server"} の gasho-daemon が接続していません。` : !Panel ? "このパネルはありません。" : undefined);
   if (problem || !part || !m || !s || !Panel) {
@@ -424,10 +458,10 @@ function WorktreeTabButton({ plugin, tab, worktree, open }: { plugin: string; ta
 
 /** The plugin's screen a worktree's tab opened, below the tabs. */
 export function PluginWorktreeView({ worktree, view }: { worktree: WorktreeSessions; view: WorktreeView }) {
-  const { infos, parts, errors, loading } = usePluginRegistry();
+  const { infos, parts, errors, loading, synced } = usePluginRegistry();
   const info = infos.find((p) => p.id === view.plugin);
   const part = parts.find((p) => p.info.id === view.plugin);
-  const why = unavailable(info, part, errors, loading);
+  const why = unavailable(info, part, errors, loading, synced);
   const View = part && Object.hasOwn(part.def.worktreeViews ?? {}, view.id) ? part.def.worktreeViews?.[view.id] : undefined;
   if (why || !part || !View) {
     return (
@@ -446,19 +480,13 @@ export function PluginWorktreeView({ worktree, view }: { worktree: WorktreeSessi
 
 // ---- home tiles (P6) ----
 
-const TILE_CLASSES: Record<TileSize, string> = {
-  stat: "",
-  small: "col-span-2 lg:col-span-1",
-  medium: "col-span-2",
-  large: "col-span-2 lg:col-span-3",
-};
-
 export interface PluginTile {
   /** `<plugin>.<tile>` */
   id: string;
   name: string;
   after?: string;
-  className: string;
+  size: TileSize;
+  tall: boolean;
   content: ReactNode;
 }
 
@@ -472,7 +500,8 @@ export function usePluginTiles(): PluginTile[] {
         id: `${part.info.id}.${t.id}`,
         name: t.title,
         ...(t.after ? { after: t.after } : {}),
-        className: cn(TILE_CLASSES[t.size ?? "small"] ?? TILE_CLASSES.small, t.tall && "lg:row-span-2"),
+        size: t.size ?? "small",
+        tall: t.tall === true,
         content: (
           <Part part={part}>
             <Tile />
@@ -543,6 +572,14 @@ export function PluginSettingsSections() {
   const shown = infos
     .filter((info) => info.enabled && (Object.keys(info.manifest.settings ?? {}).length > 0 || parts.find((p) => p.info.id === info.id)?.def.settings))
     .sort((a, b) => a.manifest.name.localeCompare(b.manifest.name, "ja"));
+  // Opened for one of them (its "設定" on the plugins screen): scrolled to once it is drawn, also after the Gasho
+  // server's first snapshot when the page was reloaded there.
+  const route = useRoute();
+  const opened = route.name === "settings" ? route.plugin : undefined;
+  const drawn = shown.some((info) => info.id === opened);
+  useEffect(() => {
+    if (opened && drawn) document.getElementById(`plugin-settings-${opened}`)?.scrollIntoView({ block: "start" });
+  }, [opened, drawn]);
   return (
     <>
       {shown.map((info) => {
@@ -553,7 +590,7 @@ export function PluginSettingsSections() {
             key={info.id}
             id={`plugin-settings-${info.id}`}
             aria-labelledby={`plugin-settings-title-${info.id}`}
-            className="space-y-4 rounded-2xl border border-border bg-surface/40 p-4"
+            className="scroll-mt-4 space-y-4 rounded-2xl border border-border bg-surface/40 p-4"
           >
             <div>
               <h2 id={`plugin-settings-title-${info.id}`} className="text-sm font-medium">

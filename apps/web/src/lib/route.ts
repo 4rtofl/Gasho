@@ -24,6 +24,15 @@ export interface WorktreeView {
   params: Record<string, string>;
 }
 
+/**
+ * A panel of a plugin's page (docs/plugins.md, P19): the panel and its params. On a computer it opens beside the page,
+ * on a phone in its place.
+ */
+export interface PagePanel {
+  id: string;
+  params: Record<string, string>;
+}
+
 /** The params of a plugin's page or panel, from the query of the URL. */
 function paramsOf(query: string | undefined): Record<string, string> {
   const out: Record<string, string> = {};
@@ -64,11 +73,15 @@ export type Route =
   | { name: "home" }
   /** `section`: the section to scroll to once it is shown (#/devices/updates). */
   | { name: "devices"; section?: "updates" }
-  | { name: "settings" }
+  /** `plugin`: the plugin whose section to scroll to once it is shown (#/settings/p/<plugin>). */
+  | { name: "settings"; plugin?: string }
   /** The plugins screen (docs/plugins.md). */
   | { name: "plugins" }
-  /** A page of a plugin: #/p/<plugin>/<page>?<params>. */
-  | { name: "plugin"; plugin: string; page: string; params: Record<string, string> }
+  /**
+   * A page of a plugin: #/p/<plugin>/<page>?<params>. With `panel`, a panel of it beside the page (P19):
+   * …/<page>/p/<panel>/<the panel's params, as a query>?<the page's params>.
+   */
+  | { name: "plugin"; plugin: string; page: string; params: Record<string, string>; panel?: PagePanel }
   | { name: "session"; machine: string; sessionId: string; panel?: SessionPanel }
   /**
    * A worktree with no session open: #/w/<machine>/<its top folder>. With `view`, a screen of a plugin's tab of it:
@@ -80,6 +93,8 @@ export function parseHash(hash: string): Route {
   if (hash === "#/devices") return { name: "devices" };
   if (hash === "#/devices/updates") return { name: "devices", section: "updates" };
   if (hash === "#/settings") return { name: "settings" };
+  const settings = hash.match(/^#\/settings\/p\/([^/?]+)$/);
+  if (settings?.[1]) return PLUGIN_ID.test(settings[1]) ? { name: "settings", plugin: settings[1] } : { name: "home" };
   if (hash === "#/plugins") return { name: "plugins" };
   // A plugin's page, a plugin's panel of a session and a plugin's screen of a worktree: …/p/<plugin>/<id>, with the
   // params as the query.
@@ -96,11 +111,14 @@ export function parseHash(hash: string): Route {
       return { name: "home" };
     }
   }
-  const page = where.match(/^#\/p\/([^/]+)\/([^/]+)$/);
+  const page = where.match(/^#\/p\/([^/]+)\/([^/]+)(?:\/p\/([^/]+)(?:\/([^/]+))?)?$/);
   if (page?.[1] && page[2]) {
     try {
       const plugin = decodeURIComponent(page[1]);
-      if (PLUGIN_ID.test(plugin)) return { name: "plugin", plugin, page: decodeURIComponent(page[2]), params: paramsOf(query) };
+      if (PLUGIN_ID.test(plugin)) {
+        const at = { name: "plugin" as const, plugin, page: decodeURIComponent(page[2]), params: paramsOf(query) };
+        return page[3] ? { ...at, panel: { id: decodeURIComponent(page[3]), params: paramsOf(page[4]) } } : at;
+      }
     } catch {
       // not one
     }
@@ -154,9 +172,15 @@ export const isOldGitHubLink = (hash: string): boolean => /^#\/s\/[^/]+\/[^/]+\/
 export function hrefOf(r: Route): string {
   if (r.name === "home") return "#/";
   if (r.name === "devices") return r.section ? `#/devices/${r.section}` : "#/devices";
-  if (r.name === "settings") return "#/settings";
+  if (r.name === "settings") return r.plugin ? `#/settings/p/${encodeURIComponent(r.plugin)}` : "#/settings";
   if (r.name === "plugins") return "#/plugins";
-  if (r.name === "plugin") return `#/p/${encodeURIComponent(r.plugin)}/${encodeURIComponent(r.page)}${queryOf(r.params)}`;
+  if (r.name === "plugin") {
+    const page = `#/p/${encodeURIComponent(r.plugin)}/${encodeURIComponent(r.page)}`;
+    // The panel's params are one segment: a query never holds a "/" (URLSearchParams encodes it).
+    const query = r.panel ? queryOf(r.panel.params).slice(1) : "";
+    const panel = r.panel ? `/p/${encodeURIComponent(r.panel.id)}${query ? `/${query}` : ""}` : "";
+    return `${page}${panel}${queryOf(r.params)}`;
+  }
   if (r.name === "worktree") {
     // The folder is one segment, its slashes encoded.
     const base = `#/w/${encodeURIComponent(r.machine)}/${encodeURIComponent(r.path)}`;

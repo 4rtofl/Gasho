@@ -160,6 +160,18 @@ test("what the working server cannot give is answered with why", async () => {
   }
 });
 
+test("an SVG is sent with a sandbox, whatever the case of the type the working server gives (#99)", async () => {
+  answer = (m) => ({ type: "media", requestId: m.requestId, media: { mime: "image/SVG+xml", size: 4, mtime: 1, offset: m.offset, data: m.length ? "PHN2Zw==" : "" } });
+  try {
+    const res = await get({}, "/tmp/a.svg");
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "image/svg+xml");
+    assert.equal(res.headers.get("content-security-policy"), "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+  } finally {
+    answer = undefined;
+  }
+});
+
 test("a file that changes while it is sent is cut off, not sent in parts of two versions", async () => {
   const bytes = Buffer.alloc(MAX_MEDIA_PART + 10, 1);
   files.set(FILE, bytes);

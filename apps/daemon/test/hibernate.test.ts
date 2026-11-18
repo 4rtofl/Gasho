@@ -540,15 +540,20 @@ test("an input kept for a session stays saved while it is typed, and no longer",
     const a = new ManagedSessions(file);
     a.add({ sessionId: "s", terminal: "t", pid: 1, cwd: "/a", name: "a", launchedAt: 1, wokenFrom: { at: 2, effort: "low" } });
     a.enqueue("s", { id: "r1", text: "預けた発言" });
+    a.enqueue("s", { id: "r2", text: "次の発言" });
     assert.equal(a.keepWaiting("s"), true);
-    assert.equal(a.next("s")?.text, "預けた発言");
+    a.next("s")!.typingAt = Date.now();
     await a.save();
 
     const b = new ManagedSessions(file);
     await b.load(async () => true);
     assert.equal(b.waiting("s")[0]?.text, "預けた発言");
     assert.equal(b.waiting("s")[0]?.recheck, true);
+    assert.equal(b.waiting("s")[1]?.text, "次の発言");
+    assert.equal(b.waiting("s")[1]?.recheck, undefined);
 
+    assert.equal(a.typed("s"), true);
+    assert.equal(a.next("s")?.text, "次の発言");
     assert.equal(a.typed("s"), true);
     await a.save();
     const c = new ManagedSessions(file);
@@ -561,16 +566,16 @@ test("an input kept for a session stays saved while it is typed, and no longer",
 });
 
 /** A session has come back with an input kept for it, and gasho-daemon stops before typing it. */
-async function backButNotTyped(s: Awaited<ReturnType<typeof setup>>) {
+async function backButNotTyped(s: Awaited<ReturnType<typeof setup>>, texts = ["預けた発言"]) {
   const { d, term, started, agents, procs } = s;
   await d.hibernateIdle();
   agents([]);
-  d.managed.enqueue(SID, { id: "r1", text: "預けた発言" });
+  texts.forEach((text, i) => d.managed.enqueue(SID, { id: `r${i}`, text }));
   await d.managed.save();
   d.refresh = async () => undefined;
   d.flushWaitingInputs = () => undefined;
   await d.wake(SID);
-  assert.equal(d.managed.pending(SID), 1);
+  assert.equal(d.managed.pending(SID), texts.length);
   term.live.set(started[0]!.name, { pid: procs.at(-1)!.pid! });
   return path.join(d.cfg.claudeDir, "projects", "p", `${SID}.jsonl`);
 }
@@ -608,6 +613,8 @@ test("a restart after the kept input was typed does not type it again", async ()
   const { make, term, done } = s;
   try {
     const transcript = await backButNotTyped(s);
+    s.d.managed.next(SID).typingAt = Date.now();
+    await s.d.managed.save();
     await new Promise((r) => setTimeout(r, 5));
     await fs.appendFile(transcript, said("預けた発言", Date.now()));
 
@@ -616,6 +623,164 @@ test("a restart after the kept input was typed does not type it again", async ()
     await again.refresh();
     await until(() => again.managed.pending(SID) === 0 && again.flushing.size === 0, "the input was dealt with");
     assert.deepEqual(term.entered, []);
+  } finally {
+    await done();
+  }
+});
+
+const SECOND_INPUTS = [
+  ["続けて", "続けて"],
+  ["はい、この方針で進めてください", "はい"],
+  ["@/home/u/.local/share/gasho/attachments/s/a.png", "@/home/u/.local/share/gasho/attachments/s/b.png"],
+];
+for (const [first, second] of SECOND_INPUTS) {
+  test(`a second kept input is typed after a restart: ${first} / ${second}`, async () => {
+    const s = await setup();
+    const { d, make, term, done } = s;
+    try {
+      const transcript = await backButNotTyped(s, [first!, second!]);
+      d.managed.next(SID);
+      d.managed.typed(SID);
+      await d.managed.save();
+      await new Promise((r) => setTimeout(r, 5));
+      await fs.appendFile(transcript, said(first!, Date.now()));
+
+      const again = make();
+      await again.loadManaged();
+      await again.refresh();
+      await until(() => term.entered.includes(second!), "the second input was typed");
+      assert.deepEqual(term.entered, [second]);
+    } finally {
+      await done();
+    }
+  });
+}
+
+test("a kept input is marked in the file before its first key is typed", async () => {
+  const s = await setup();
+  const { d, term, done } = s;
+  const { paste } = d.terminals;
+  try {
+    await backButNotTyped(s);
+    const file = path.join(d.cfg.stateDir, "managed.json");
+    const before = JSON.parse(await fs.readFile(file, "utf8"));
+    assert.equal(before[0].wokenFrom.inputs[0].typingAt, undefined);
+    let marked: unknown;
+    d.terminals.paste = async (name: string, text: string) => {
+      marked = JSON.parse(await fs.readFile(file, "utf8"))[0].wokenFrom.inputs[0].typingAt;
+      return paste(name, text);
+    };
+    await d.flushInput(SID);
+    assert.equal(typeof marked, "number");
+    assert.deepEqual(term.entered, ["預けた発言"]);
+  } finally {
+    d.terminals.paste = paste;
+    await done();
+  }
+});
+
+test("an input being typed at a restart is compared from when typing began", async () => {
+  const s = await setup();
+  const { d, make, term, done } = s;
+  try {
+    const transcript = await backButNotTyped(s, ["続けて", "続けて"]);
+    d.managed.next(SID);
+    d.managed.typed(SID);
+    await fs.appendFile(transcript, said("続けて", Date.now()));
+    await new Promise((r) => setTimeout(r, 5));
+    d.managed.next(SID).typingAt = Date.now();
+    await d.managed.save();
+
+    const again = make();
+    await again.loadManaged();
+    await again.refresh();
+    await until(() => term.entered.includes("続けて"), "the input was typed");
+  } finally {
+    await done();
+  }
+});
+
+test("an input being typed at a restart is compared whole", async () => {
+  const s = await setup();
+  const { d, make, term, done } = s;
+  try {
+    const transcript = await backButNotTyped(s, ["はい"]);
+    d.managed.next(SID).typingAt = Date.now();
+    await d.managed.save();
+    await new Promise((r) => setTimeout(r, 5));
+    await fs.appendFile(transcript, said("はい、この方針で進めてください", Date.now()));
+
+    const again = make();
+    await again.loadManaged();
+    await again.refresh();
+    await until(() => term.entered.includes("はい"), "the input was typed");
+  } finally {
+    await done();
+  }
+});
+
+test("a session whose Claude Code ends with inputs still kept is hibernated again, and says so", async () => {
+  const s = await setup();
+  const { d, term, started, killed, agents, procs, shown, done } = s;
+  try {
+    await backButNotTyped(s);
+    const name = started[0]!.name;
+    const resumed = procs.at(-1)!;
+    resumed.kill("SIGKILL");
+    await once(resumed, "exit");
+    agents([]);
+    delete d.refresh;
+    delete d.flushWaitingInputs;
+
+    await d.refresh();
+    assert.equal(d.managed.has(SID), true);
+    assert.equal(d.managed.pending(SID), 1);
+    assert.equal(shown().hibernation, "hibernated");
+    assert.match(shown().resumeError, /Claude Code が終了しました/);
+    assert.ok(killed.includes(name));
+    assert.equal(started.length, 1);
+
+    await d.wake(SID);
+    await until(() => term.entered.includes("預けた発言"), "the input was typed");
+    assert.equal(started.length, 2);
+  } finally {
+    await done();
+  }
+});
+
+test("a terminal slow to answer at a restart does not start a second Claude Code", async () => {
+  const s = await setup();
+  const { make, term, started, procs, done } = s;
+  try {
+    await backButNotTyped(s);
+    term.live.clear();
+
+    const again = make();
+    await again.loadManaged();
+    assert.equal(again.managed.get(SID).hibernated, undefined);
+    assert.equal(again.managed.pending(SID), 1);
+    again.wakeInterrupted();
+    await again.refresh();
+    await until(() => term.entered.includes("預けた発言"), "the input was typed");
+    assert.equal(started.length, 1);
+    assert.equal(procs.at(-1)!.signalCode, null);
+  } finally {
+    await done();
+  }
+});
+
+test("a PID that another process has taken at a restart counts as ended", async () => {
+  const s = await setup();
+  const { make, term, agents, done } = s;
+  try {
+    await backButNotTyped(s);
+    term.live.clear();
+    agents([]);
+
+    const again = make();
+    await again.loadManaged();
+    assert.ok(again.managed.get(SID).hibernated);
+    assert.equal(again.managed.pending(SID), 1);
   } finally {
     await done();
   }

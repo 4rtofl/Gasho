@@ -596,7 +596,9 @@ export interface QueuedInput {
    * the answer to it said that it was kept (see ManagedSession.wokenFrom).
    */
   keptAt?: number;
-  /** Read back after a restart of gasho-daemon, which may have typed it already: the transcript tells (see flushInput). */
+  /** When typing this kept input began (ms), saved before the first key: only such an input may have been typed already. */
+  typingAt?: number;
+  /** It may have been typed without Gasho knowing (see typingAt): the transcript tells, from that time on (see flushInput). */
   recheck?: boolean;
 }
 
@@ -1003,6 +1005,7 @@ export class ManagedSessions {
       this.sessions.set(m.sessionId, m);
       const inputs = m.hibernated?.inputs ?? m.wokenFrom?.inputs;
       if (inputs?.length) this.queues.set(m.sessionId, inputs);
+      this.recheckTyped(m.sessionId);
       delete m.hibernated?.inputs;
       delete m.wokenFrom?.inputs;
     }
@@ -1040,9 +1043,17 @@ export class ManagedSessions {
   /** The inputs kept for a session that has come back, the one being typed first, as they are saved. */
   private keptInputs(sessionId: string): QueuedInput[] {
     const typing = this.typing.get(sessionId);
-    return [...(typing ? [typing] : []), ...(this.queues.get(sessionId) ?? [])]
-      .filter((input) => input.keptAt !== undefined)
-      .map((input) => ({ ...input, recheck: true }));
+    return [...(typing ? [typing] : []), ...(this.queues.get(sessionId) ?? [])].filter((input) => input.keptAt !== undefined);
+  }
+
+  /** Whether inputs kept for a session that has come back are still to be typed. */
+  hasKept(sessionId: string): boolean {
+    return this.keptInputs(sessionId).length > 0;
+  }
+
+  /** Gasho lost sight of the session: the inputs it had begun to type are looked for in the transcript before going on. */
+  recheckTyped(sessionId: string): void {
+    for (const input of this.queues.get(sessionId) ?? []) if (input.typingAt !== undefined) input.recheck = true;
   }
 
   /** The session has come back: what waits for it stays saved until it is typed. Whether anything does. */

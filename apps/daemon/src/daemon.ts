@@ -175,6 +175,8 @@ const QUESTION_DIALOG_RE = /Chat about this/;
 /** Said when this machine cannot make a terminal for a session (see terminalWorks). */
 /** Why a hibernated session is not brought back while its conversation is open elsewhere (see hibernatedRow). */
 const OPEN_OUTSIDE = "この会話は Gasho の外の Claude Code で開かれています。そちらを終了してから、もう一度再開してください。";
+/** Why a session that had come back is hibernated again (see backToHibernation). */
+const ENDED_WITH_INPUTS = "再開したあと、発言を入力する前に Claude Code が終了しました。";
 const NO_TERMINAL =
   "この working server では、セッションの端末（node-pty）を用意できないので、セッションを起動できません。gasho-daemon の doctor で確かめてください。";
 /** Said when Claude Code asked about a folder's new MCP servers while starting, and was answered "not now". */
@@ -476,10 +478,15 @@ export class Daemon {
   private async loadManaged(): Promise<void> {
     const live = await this.terminals.builtIn.live();
     let inZellij: Set<string> | undefined;
+    let listing: Promise<AgentRow[] | undefined> | undefined;
     await this.managed.load(async (m) => {
       // Nothing of it runs: it stays until it is used.
       if (m.hibernated) return true;
       if (m.wokenFrom && !(isAlive(m.pid) && live.get(m.terminal)?.pid === m.pid)) {
+        // A terminal slow to answer is missing from `live`: its Claude Code still runs, and must not get a second one.
+        listing ??= listAgents(this.cfg.claudeBin).catch(() => undefined);
+        const rows = await listing;
+        if (isAlive(m.pid) && (rows === undefined || rows.some((r) => r.pid === m.pid))) return true;
         // It ended before the inputs kept for it were typed: they wait for it to come back once more.
         m.hibernated = m.wokenFrom;
         delete m.wokenFrom;
@@ -830,6 +837,20 @@ export class Daemon {
     if (changed) await this.managed.save();
   }
 
+  /**
+   * The Claude Code of a session that had come back ended before the inputs kept for it were typed. They stay, and the
+   * screen says so and can try again: starting it by itself could go on failing the same way.
+   */
+  private async backToHibernation(m: ManagedSession, h: Hibernated): Promise<void> {
+    m.hibernated = { ...h, resumeError: ENDED_WITH_INPUTS };
+    delete m.wokenFrom;
+    this.managed.recheckTyped(m.sessionId);
+    for (const map of [this.settleUntil, this.lastStop, this.latePicker]) map.delete(m.sessionId);
+    await this.terminals.kill(m.terminal);
+    await this.trackHibernated(m);
+    log(`${m.name} (${m.sessionId}) ended before the inputs kept for it were typed; it is hibernated again`);
+  }
+
   /** The attachment folders of a session started from Gasho: of its id, and of the ids it had before /clear. */
   private attachmentsOfSession(m: ManagedSession): string[] {
     return [m.sessionId, ...(m.previousIds ?? [])].map((id) => this.attachmentsOf(id));
@@ -840,6 +861,13 @@ export class Daemon {
     let changed = false;
     for (const m of this.managed.all()) {
       if (m.hibernated || seen.has(m.sessionId) || isAlive(m.pid)) continue;
+      if (m.wokenFrom && (this.flushing.has(m.terminal) || this.managed.hasKept(m.sessionId))) {
+        // Once typing has stopped, what it was typing is back on the queue.
+        if (this.flushing.has(m.terminal)) continue;
+        await this.backToHibernation(m, m.wokenFrom);
+        changed = true;
+        continue;
+      }
       this.managed.remove(m.sessionId);
       for (const map of [this.settleUntil, this.lastStop, this.latePicker, this.prompts, this.titleSent]) map.delete(m.sessionId);
       await this.terminals.kill(m.terminal);
@@ -1392,12 +1420,16 @@ export class Daemon {
     return (this.prompts.get(sessionId) ?? []).some((p) => p.at >= since && p.text.replace(/\s+/g, "").includes(head));
   }
 
-  /** Whether the transcript has an input kept over a restart of gasho-daemon, which may have typed it just before it. */
+  /**
+   * Whether the transcript has a kept input that typing had begun on, as the whole message, since typing began: the same
+   * words said earlier are another message.
+   */
   private async typedBeforeRestart(m: ManagedSession, item: QueuedInput): Promise<boolean> {
     const file = this.tracked.get(m.sessionId)?.transcript ?? (await findTranscript(this.cfg.claudeDir, m.sessionId));
     if (!file) return false;
-    const head = item.text.replace(/^\s*!/, "").replace(/\s+/g, "").slice(0, 24);
-    return (await userPrompts(file)).some((p) => !(p.at < (item.keptAt ?? 0)) && p.text.replace(/\s+/g, "").includes(head));
+    const same = (text: string) => text.replace(/<\/?bash-input>/g, "").replace(/^\s*!/, "").replace(/\s+/g, "");
+    const since = item.typingAt ?? item.keptAt ?? 0;
+    return (await userPrompts(file)).some((p) => !(p.at < since) && same(p.text) === same(item.text));
   }
 
   private async onHubMessage(m: HubToDaemon): Promise<void> {
@@ -2857,7 +2889,12 @@ export class Daemon {
           return out;
         }
         // Not in the transcript: whatever an earlier try did to the prompt box, it is typed from the start.
-        for (const done of ["recheck", "entered", "enteredAt", "seenBusy"] as const) delete item[done];
+        for (const done of ["recheck", "typingAt", "entered", "enteredAt", "seenBusy"] as const) delete item[done];
+      }
+      if (item.keptAt !== undefined && !item.entered) {
+        // Saved first: after a restart, only an input marked so can have been typed.
+        item.typingAt = Date.now();
+        await this.managed.save().catch((e: unknown) => log(`could not save the inputs of ${m.name}`, e));
       }
       if (item.entered) {
         // Taken since the Enter: by its transcript when it is followed (the box can hold the text again after a stop),
@@ -2884,6 +2921,7 @@ export class Daemon {
         }
         typed = await this.typeInput(m.terminal, item.text, item.entered, item.auto);
       } catch (e) {
+        if (item.keptAt !== undefined) item.recheck = true;
         this.managed.unshift(m.sessionId, item);
         if (!(e instanceof EnterNotTaken)) throw e;
         later(UNSURE_RETRY_MS, `${e.message}; trying the input again in ${UNSURE_RETRY_MS / 1000}s`);
@@ -2897,6 +2935,7 @@ export class Daemon {
         text: item.text,
         ...(item.auto ? { auto: true } : {}),
         ...(item.keptAt !== undefined ? { keptAt: item.keptAt } : {}),
+        ...(item.typingAt !== undefined ? { typingAt: item.typingAt } : {}),
       };
       const entered = item.entered ? { entered: true, enteredAt: item.enteredAt ?? enteredAt, ...(item.seenBusy ? { seenBusy: true } : {}) } : {};
       if (typed === "not-typed") {

@@ -258,7 +258,7 @@ test("結果が分からない指示が 2 件あると、古いものから 1 �
   await expect(c.putBack).toHaveText("入力欄に戻す");
 
   await c.box.fill("");
-  await page.getByRole("button", { name: "Remove notes.txt" }).click();
+  await page.getByRole("button", { name: "notes.txt を外す" }).click();
   await c.putBack.click();
   await expect(c.box).toHaveValue("2 件目");
   await expect(c.putBack).toHaveCount(0);

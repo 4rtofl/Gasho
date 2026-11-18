@@ -11,7 +11,7 @@ import { Terminals } from "../../apps/daemon/src/terminal.ts";
 import { FakeDaemon, type FakeDaemonOptions } from "./fake-daemon.ts";
 import { type ClaudeTable, FakeCommand, type FakeAnswer, npmLatestAnswer, catalogAnswer } from "./fakes.ts";
 import { HubService, type HubServiceOptions, makeLayout, SERVICE_BIN } from "./hub-service.ts";
-import { freePort, GASHO_DIR, isolatedEnv, onExit, Proc, runScript } from "./process.ts";
+import { freePort, GASHO_DIR, isolatedEnv, keepPort, onExit, Proc, runScript } from "./process.ts";
 
 const HUB_CLI = "apps/hub/src/cli.ts";
 const DAEMON_CLI = "apps/daemon/src/cli.ts";
@@ -117,6 +117,8 @@ export class GashoHub {
   private forget: () => void;
   /** The Gasho server's processes before startServer, for logs(). */
   private earlier: Proc[] = [];
+  /** Lets freePort give the port again, which stopServer kept. */
+  private releasePort: (() => void) | undefined;
   /** The first browser registered, which asks for the codes after it. */
   private cookie: BrowserCookie | undefined;
 
@@ -224,15 +226,28 @@ export class GashoHub {
 
   /** Stops the Gasho server, as one that ended; its folder and its port are kept for startServer. */
   async stopServer(): Promise<void> {
+    this.releasePort ??= keepPort(this.port);
     await this.proc.stop();
   }
 
   /** Starts the Gasho server again after stopServer, on the same port, with the same database and plugins. */
   async startServer(): Promise<void> {
     if (this.proc.alive) throw new Error("the Gasho server is running");
-    this.earlier.push(this.proc);
-    this.proc = new Proc("gasho-hub", HUB_CLI, ["start"], this.env);
-    await this.proc.waitForLog(/listening on /, START_MS);
+    for (let attempt = 1; ; attempt++) {
+      this.earlier.push(this.proc);
+      this.proc = new Proc("gasho-hub", HUB_CLI, ["start"], this.env);
+      try {
+        await this.proc.waitForLog(/listening on /, START_MS);
+        break;
+      } catch (e) {
+        await this.proc.stop();
+        // freePort of another worker had the port for a moment, before it found the port kept.
+        if (attempt < 3 && /is in use/.test(this.proc.log())) continue;
+        throw e;
+      }
+    }
+    this.releasePort?.();
+    this.releasePort = undefined;
   }
 
   /** What the Gasho server and the real gasho-daemons printed, for a test that failed. */
@@ -244,6 +259,7 @@ export class GashoHub {
     await Promise.all(this.fakeDaemons.map((d) => d.disconnect()));
     await Promise.all(this.daemons.map((d) => d.stop()));
     await this.proc.stop();
+    this.releasePort?.();
     await fsp.rm(this.root, { recursive: true, force: true, maxRetries: 5 });
     this.forget();
   }

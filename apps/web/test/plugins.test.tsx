@@ -46,6 +46,14 @@ test("a plugin's page is drawn once its web part has loaded, in an element of it
   expect(screen.getByRole("heading", { name: "メモの一覧" })).toBeTruthy();
 });
 
+test("a page opened before the Gasho server's first snapshot is loading, not missing", async () => {
+  render(<PluginPageView plugin="notes" page="list" params={{}} />);
+  expect(screen.getByText("読み込み中…")).toBeTruthy();
+  expect(screen.queryByText("このプラグインは、Gasho サーバーに入っていません。")).toBeNull();
+  await connectHub({ machines: [m1], plugins: [] });
+  expect(screen.getByText("このプラグインは、Gasho サーバーに入っていません。")).toBeTruthy();
+});
+
 test.each([
   ["a page the plugin does not have", [info()], "missing", "このページはありません。"],
   ["a disabled plugin", [info({ enabled: false })], "list", "メモ は無効になっています。"],

@@ -112,8 +112,8 @@ const toPlugins = (
 );
 
 /** Why a plugin's part cannot be drawn (undefined when it can). */
-function unavailable(info: PluginInfo | undefined, part: PluginPart | undefined, errors: Record<string, string>, loading: Record<string, boolean>): string | undefined {
-  if (!info) return "このプラグインは、Gasho サーバーに入っていません。";
+function unavailable(info: PluginInfo | undefined, part: PluginPart | undefined, errors: Record<string, string>, loading: Record<string, boolean>, synced: boolean): string | undefined {
+  if (!info) return synced ? "このプラグインは、Gasho サーバーに入っていません。" : "読み込み中…";
   if (!info.enabled) return `${info.manifest.name} は無効になっています。`;
   if (part) return undefined;
   if (errors[info.id]) return errors[info.id];
@@ -122,10 +122,10 @@ function unavailable(info: PluginInfo | undefined, part: PluginPart | undefined,
 }
 
 export function PluginPageView({ plugin, page, params }: { plugin: string; page: string; params: Params }) {
-  const { infos, parts, errors, loading } = usePluginRegistry();
+  const { infos, parts, errors, loading, synced } = usePluginRegistry();
   const info = infos.find((p) => p.id === plugin);
   const part = parts.find((p) => p.info.id === plugin);
-  const why = unavailable(info, part, errors, loading);
+  const why = unavailable(info, part, errors, loading, synced);
   if (why || !part) {
     return (
       <Notice title={info?.manifest.name ?? plugin}>
@@ -147,10 +147,10 @@ export function PluginPageView({ plugin, page, params }: { plugin: string; page:
 
 /** A panel of a plugin's page (route `panel`): beside the page on a computer (`docked`), in its place on a phone. */
 export function PluginPagePanelView({ plugin, panel, docked, onClose }: { plugin: string; panel: PagePanel; docked: boolean; onClose: () => void }) {
-  const { infos, parts, errors, loading } = usePluginRegistry();
+  const { infos, parts, errors, loading, synced } = usePluginRegistry();
   const info = infos.find((p) => p.id === plugin);
   const part = parts.find((p) => p.info.id === plugin);
-  const why = unavailable(info, part, errors, loading);
+  const why = unavailable(info, part, errors, loading, synced);
   const Panel = part && Object.hasOwn(part.def.pagePanels ?? {}, panel.id) ? part.def.pagePanels?.[panel.id] : undefined;
   const problem = why ?? (!Panel ? "このパネルはありません。" : undefined);
   const scope = { docked, onClose, backLabel: "戻る" };
@@ -180,14 +180,14 @@ export function PluginPagePanelView({ plugin, panel, docked, onClose }: { plugin
 // ---- session panels (P4) ----
 
 export function PluginPanelView({ machine, sessionId, panel, docked, onClose }: { machine: string; sessionId: string; panel: SessionPanel; docked: boolean; onClose: () => void }) {
-  const { infos, parts, errors, loading } = usePluginRegistry();
+  const { infos, parts, errors, loading, synced } = usePluginRegistry();
   const { machines } = useAppState();
   const plugin = panel.plugin ?? "";
   const info = infos.find((p) => p.id === plugin);
   const part = parts.find((p) => p.info.id === plugin);
   const m = machines.find((x) => x.id === machine);
   const s = m?.sessions.find((x) => x.sessionId === sessionId);
-  const why = unavailable(info, part, errors, loading);
+  const why = unavailable(info, part, errors, loading, synced);
   const Panel = part && Object.hasOwn(part.def.sessionPanels ?? {}, panel.id ?? "") ? part.def.sessionPanels?.[panel.id ?? ""] : undefined;
   const problem = why ?? (!m || !s ? `このセッションは見つかりません。終了したか、${m?.name ?? "この working server"} の gasho-daemon が接続していません。` : !Panel ? "このパネルはありません。" : undefined);
   if (problem || !part || !m || !s || !Panel) {
@@ -458,10 +458,10 @@ function WorktreeTabButton({ plugin, tab, worktree, open }: { plugin: string; ta
 
 /** The plugin's screen a worktree's tab opened, below the tabs. */
 export function PluginWorktreeView({ worktree, view }: { worktree: WorktreeSessions; view: WorktreeView }) {
-  const { infos, parts, errors, loading } = usePluginRegistry();
+  const { infos, parts, errors, loading, synced } = usePluginRegistry();
   const info = infos.find((p) => p.id === view.plugin);
   const part = parts.find((p) => p.info.id === view.plugin);
-  const why = unavailable(info, part, errors, loading);
+  const why = unavailable(info, part, errors, loading, synced);
   const View = part && Object.hasOwn(part.def.worktreeViews ?? {}, view.id) ? part.def.worktreeViews?.[view.id] : undefined;
   if (why || !part || !View) {
     return (

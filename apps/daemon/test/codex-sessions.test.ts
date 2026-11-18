@@ -116,12 +116,13 @@ async function setup(t: TestContext) {
   const events: HookEvent[] = [];
   const appended: TranscriptEntry[] = [];
   const file = path.join(dir, "codex-threads.json");
+  const folder = { describe: async (): Promise<Partial<SessionInfo>> => ({ gitBranch: "main" }) };
   const make = () =>
     new CodexSessions({
       file,
       version: "0.0.0",
       startServer: async () => server.socket,
-      describe: async () => ({ gitBranch: "main" }),
+      describe: (_cwd) => folder.describe(),
       changed: () => undefined,
       event: (e) => events.push(e),
       append: (_id, entries) => appended.push(...entries),
@@ -137,7 +138,7 @@ async function setup(t: TestContext) {
     assert.ok(found);
     return found;
   };
-  return { dir, server, sessions, events, appended, file, make, info, named: (name: string) => events.filter((e) => e.event === name) };
+  return { dir, server, sessions, events, appended, file, folder, make, info, named: (name: string) => events.filter((e) => e.event === name) };
 }
 
 test("a session starts with its folder alone, and shows as a session of Codex", async (t) => {
@@ -378,6 +379,51 @@ test("a turn that ended while the connection was gone is told, and its messages 
   await until("the Stop", () => named("Stop").length === 1, 8000);
   assert.equal(named("Stop")[0]?.summary, "終わりました");
   assert.deepEqual(appended.map((e) => e.uuid), ["m1"]);
+});
+
+/** Makes the next reconnection stop while it reads the folder, and ends that connection there. */
+async function dropWhileReadingTheFolder(server: FakeAppServer, folder: { describe: () => Promise<Partial<SessionInfo>> }) {
+  let reading = false;
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const describe = folder.describe;
+  folder.describe = async () => {
+    reading = true;
+    await held;
+    return {};
+  };
+  server.dropClients();
+  await until("reading the folder", () => reading, 8000);
+  folder.describe = describe;
+  server.dropClients();
+  await until("the connection ended", () => server.clients.size === 0);
+  return release;
+}
+
+test("when the connection ends during a reconnection, a session with its conversation open connects again", async (t) => {
+  const { server, sessions, folder, info } = await setup(t);
+  await sessions.launch("/work", undefined);
+  await sessions.page(THREAD, undefined, 80);
+
+  const release = await dropWhileReadingTheFolder(server, folder);
+  release();
+  await until("the thread loaded again", () => server.called("thread/resume").length === 2, 8000);
+  await until("usable", () => info().status === "idle");
+  assert.deepEqual(await sessions.page(THREAD, undefined, 80), { entries: [], start: 0, total: 0 });
+});
+
+test("when the retry comes during a reconnection that then fails, another retry follows", async (t) => {
+  const { server, sessions, folder, info } = await setup(t);
+  await sessions.launch("/work", undefined);
+
+  const release = await dropWhileReadingTheFolder(server, folder);
+  // The retry after the connection ended finds the reconnection still going on.
+  await new Promise((r) => setTimeout(r, 1300));
+  release();
+  await until("the thread loaded again", () => server.called("thread/resume").length === 2, 8000);
+  await until("usable", () => info().status === "idle");
 });
 
 test("after a restart of gasho-daemon, the sessions are loaded again from the file", async (t) => {

@@ -469,7 +469,8 @@ test("a command that takes too long is stopped with the processes it started, an
 
 test("an aborted call stops its command", async () => {
   const controller = new AbortController();
-  const running = exec("sleep", ["60"], {}, controller.signal);
+  // Past sleep's 60 s, so that only the abort can stop it (the default 30 s would stop it the same way).
+  const running = exec("sleep", ["60"], { timeoutMs: 120_000 }, controller.signal);
   setTimeout(() => controller.abort(), 100);
   await assert.rejects(running, (e: Error & { killed?: boolean }) => e.killed === true && /stopped/.test(e.message));
 });

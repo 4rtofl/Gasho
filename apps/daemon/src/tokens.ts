@@ -25,11 +25,14 @@ function add(to: TokenUsage, u: TokenUsage, sign = 1): void {
 
 const sum = (u: TokenUsage) => u.input + u.output + u.cacheWrite + u.cacheRead;
 
-/** The usage a transcript line records (a reply of Claude), or undefined. */
-export function usageOfLine(line: string): { id: string; at: number; usage: TokenUsage } | undefined {
+/**
+ * The usage a transcript line records (a reply of Claude), or undefined. `copied`: the line is a copy of a reply made
+ * before /branch moved the conversation to this transcript (Claude Code marks these with forkedFrom).
+ */
+export function usageOfLine(line: string): { id: string; at: number; usage: TokenUsage; copied?: true } | undefined {
   // Most lines record no usage; skip them before parsing.
   if (!line.includes('"usage"')) return undefined;
-  let r: { type?: unknown; timestamp?: unknown; message?: { id?: unknown; usage?: Record<string, unknown> } };
+  let r: { type?: unknown; timestamp?: unknown; forkedFrom?: unknown; message?: { id?: unknown; usage?: Record<string, unknown> } };
   try {
     r = JSON.parse(line) as typeof r;
   } catch {
@@ -49,6 +52,7 @@ export function usageOfLine(line: string): { id: string; at: number; usage: Toke
       cacheWrite: n(u.cache_creation_input_tokens),
       cacheRead: n(u.cache_read_input_tokens),
     },
+    ...(r.forkedFrom ? { copied: true as const } : {}),
   };
 }
 
@@ -65,12 +69,14 @@ async function transcriptsIn(dir: string): Promise<string[]> {
 /**
  * Counts the tokens of one session; `update` reads what was written since the last call. `since` (ms): replies made
  * before it are not counted. A fork's transcript starts with a copy of the conversation it was forked from, with the
- * replies' times and usage; those tokens were used by that session, not by the fork.
+ * replies' times and usage; those tokens were used by that session, not by the fork. After /branch the same process
+ * goes on in a new transcript that starts with such a copy: the session still shows them as its own, but the days leave
+ * them out, as the days of the id they were made under already hold them.
  */
 export class TokenCounter {
   private transcript: string;
   private since: number;
-  private replies = new Map<string, { hour: number; day: string; usage: TokenUsage }>();
+  private replies = new Map<string, { hour: number; day: string; dayTokens: number; usage: TokenUsage }>();
   private total = emptyUsage();
   private byHour = new Map<number, TokenUsage>();
   private byDay = new Map<string, number>();
@@ -130,23 +136,24 @@ export class TokenCounter {
   }
 
   /** Counts a reply, replacing what an earlier record of the same reply counted. */
-  private count({ id, at, usage }: { id: string; at: number; usage: TokenUsage }): boolean {
+  private count({ id, at, usage, copied }: { id: string; at: number; usage: TokenUsage; copied?: true }): boolean {
     const hour = Math.floor(at / HOUR) * HOUR;
     const day = tokenDayOf(at);
+    const dayTokens = copied ? 0 : sum(usage);
     const before = this.replies.get(id);
     if (before) {
       const u = before.usage;
-      if (before.hour === hour && u.input === usage.input && u.output === usage.output && u.cacheWrite === usage.cacheWrite && u.cacheRead === usage.cacheRead) {
+      if (before.hour === hour && before.day === day && before.dayTokens === dayTokens && u.input === usage.input && u.output === usage.output && u.cacheWrite === usage.cacheWrite && u.cacheRead === usage.cacheRead) {
         return false;
       }
       add(this.total, u, -1);
       const h = this.byHour.get(before.hour);
       if (h) add(h, u, -1);
-      this.byDay.set(before.day, (this.byDay.get(before.day) ?? 0) - sum(u));
+      this.byDay.set(before.day, (this.byDay.get(before.day) ?? 0) - before.dayTokens);
     }
-    this.replies.set(id, { hour, day, usage });
+    this.replies.set(id, { hour, day, dayTokens, usage });
     add(this.total, usage);
-    this.byDay.set(day, (this.byDay.get(day) ?? 0) + sum(usage));
+    this.byDay.set(day, (this.byDay.get(day) ?? 0) + dayTokens);
     const h = this.byHour.get(hour) ?? emptyUsage();
     add(h, usage);
     this.byHour.set(hour, h);

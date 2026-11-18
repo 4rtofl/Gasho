@@ -6,6 +6,8 @@ import { test } from "node:test";
 import { TokenDays, tokenDayOf } from "../src/token-days.ts";
 import { TokenCounter, usageOfLine } from "../src/tokens.ts";
 
+const NOW = Date.parse("2026-11-18T03:00:00Z");
+
 const reply = (id: string, at: string, usage: Record<string, number>, extra = "") =>
   `${JSON.stringify({ type: "assistant", timestamp: at, message: { id, model: "claude-opus-5-5", usage, content: [{ type: "text", text: `はい${extra}` }] } })}\n`;
 
@@ -115,7 +117,28 @@ test("a fork's days leave out the conversation it was forked from", async () => 
   assert.deepEqual([...counter.days()], [["2026-11-18", 3]]);
 });
 
-const NOW = Date.parse("2026-11-18T03:00:00Z");
+test("after /branch, the days leave out the replies copied from before it, and the two ids add up to each reply once", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-tokens-"));
+  const before = path.join(dir, "before.jsonl");
+  const after = path.join(dir, "after.jsonl");
+  const first = reply("m1", "2026-11-18T01:00:00Z", { input_tokens: 1100 });
+  const copy = `${JSON.stringify({ ...JSON.parse(first), forkedFrom: { sessionId: "before", messageUuid: "u1" } })}\n`;
+  await fs.writeFile(before, first);
+  await fs.writeFile(after, copy + reply("m2", "2026-11-18T01:05:00Z", { input_tokens: 1100 }));
+
+  const counters = [new TokenCounter(before), new TokenCounter(after)];
+  for (const c of counters) await c.update();
+  assert.deepEqual([...counters[0]!.days()], [["2026-11-18", 1100]]);
+  assert.deepEqual([...counters[1]!.days()], [["2026-11-18", 1100]]);
+  // The session on screen goes on showing the whole conversation.
+  assert.equal(counters[1]!.totals().input, 2200);
+
+  const days = new TokenDays("/nonexistent/token-days.json");
+  days.record("before", counters[0]!.days(), NOW);
+  days.record("after", counters[1]!.days(), NOW);
+  assert.deepEqual(days.all(NOW), [["2026-11-18", 2200]]);
+});
+
 
 test("the day of a moment is that of Japan, whatever the time zone of the server", () => {
   assert.equal(tokenDayOf(Date.parse("2026-11-17T14:59:59.999Z")), "2026-11-17");

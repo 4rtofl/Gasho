@@ -23,11 +23,10 @@ async function sidebar(page: Page, isMobile: boolean): Promise<Locator> {
 
 /** The worktrees' rows, which are the items of the list that can be put in another order. */
 const rows = (nav: Locator) => nav.locator("[data-sort-row]");
-/** The worktrees' names, in the order of their rows. */
-const rowLabels = (nav: Locator) => rows(nav).evaluateAll((els) => els.map((e) => e.querySelector("button span.block.truncate")?.textContent ?? ""));
+/** The worktrees' names, in the order of their rows: the first line of a row's button (its repository is under it). */
+const rowLabels = (nav: Locator) => rows(nav).evaluateAll((els) => els.map((e) => (e.querySelector("button")?.innerText ?? "").trim().split("\n")[0]));
 /** A worktree's row, by its name (the branch). */
-const row = (nav: Locator, label: string) =>
-  rows(nav).filter({ has: nav.page().locator("button span.block.truncate:first-child").getByText(label, { exact: true }) });
+const row = (nav: Locator, label: string) => rows(nav).filter({ has: nav.page().getByText(label, { exact: true }) });
 /** An item of the sidebar above the worktrees ("ホーム", "端末", "プラグイン"). */
 const item = (nav: Locator, label: string) => nav.getByRole("button", { name: new RegExp(`^${label}`) });
 
@@ -83,25 +82,25 @@ test.describe("worktree の行", () => {
     const daemon = await hub.fakeDaemon({ name: "mac", sessions: [busy, waiting, idle] });
     await page.goto("/");
     const nav = await sidebar(page, isMobile);
-    const dot = (label: string) => row(nav, label).locator("button span.relative.grid").first();
-    await expect(dot("feat/busy").locator(".bg-amber-500").last()).toBeVisible();
-    await expect(dot("feat/waiting").locator(".bg-amber-500").last()).toBeVisible();
-    await expect(dot("feat/idle").locator(".bg-emerald-500")).toBeVisible();
+    // The dot is all that has a colour in a row (the badges are gray): its colour tells the state.
+    await expect(row(nav, "feat/busy").locator(".bg-amber-500").last()).toBeVisible();
+    await expect(row(nav, "feat/waiting").locator(".bg-amber-500").last()).toBeVisible();
+    await expect(row(nav, "feat/idle").locator(".bg-emerald-500")).toBeVisible();
     await expect(row(nav, "feat/waiting")).toContainText("確認");
     await expect(row(nav, "feat/busy")).not.toContainText("確認");
     // With one working server, only the repository.
-    for (const label of ["feat/busy", "feat/waiting", "feat/idle"]) await expect(row(nav, label).locator("button span.block.truncate").nth(1)).toHaveText("gasho");
+    for (const label of ["feat/busy", "feat/waiting", "feat/idle"]) await expect(row(nav, label).getByText("gasho", { exact: true })).toBeVisible();
 
     sendHook(daemon, idle.sessionId, "Stop", { summary: "答え" });
-    await expect(dot("feat/idle").getByRole("img", { name: "読んでいない通知があります" })).toBeVisible();
-    await expect(dot("feat/busy").getByRole("img", { name: "読んでいない通知があります" })).toHaveCount(0);
+    await expect(row(nav, "feat/idle").getByRole("img", { name: "読んでいない通知があります" })).toBeVisible();
+    await expect(row(nav, "feat/busy").getByRole("img", { name: "読んでいない通知があります" })).toHaveCount(0);
 
     const ubuntu = await hub.fakeDaemon({ name: "ubuntu", sessions: [worktreeSession("s-far", { branch: "feat/far" })] });
-    await expect(row(nav, "feat/far").locator("button span.block.truncate").nth(1)).toHaveText("gasho · ubuntu");
-    await expect(row(nav, "feat/busy").locator("button span.block.truncate").nth(1)).toHaveText("gasho · mac");
+    await expect(row(nav, "feat/far").getByText("gasho · ubuntu", { exact: true })).toBeVisible();
+    await expect(row(nav, "feat/busy").getByText("gasho · mac", { exact: true })).toBeVisible();
     await ubuntu.disconnect();
     await expect(row(nav, "feat/far")).toContainText("オフライン");
-    await expect(dot("feat/far").locator(".bg-neutral-700")).toBeVisible();
+    await expect(row(nav, "feat/far").locator(".bg-neutral-700")).toBeVisible();
   });
 
   test("行を押すと、最後に開いたセッション、無ければ最後に使ったセッション、無ければ worktree の画面が開く", async ({ page, hub, isMobile }) => {
@@ -342,7 +341,7 @@ test.describe("畳む・開く", () => {
     await page.goto("/");
     const toggle = (name: string) => page.getByRole("button", { name });
     const aside = page.getByRole("navigation", { name: "Main" }).locator("xpath=../..");
-    const tip = page.locator(".fixed.z-\\[60\\]");
+    const tip = page.getByRole("tooltip");
     await expect(toggle("サイドバーを畳む")).toContainText("⌘B");
 
     await page.keyboard.press("Meta+b");

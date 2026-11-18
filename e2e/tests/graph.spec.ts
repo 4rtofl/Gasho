@@ -1,5 +1,6 @@
 // The branch graph of a session's repository (views/graph.tsx, components/commit-graph.tsx), from what gasho-daemon
 // answers to git.graph.get. Times are of Playwright's clock, paused at 09:30 in Tokyo.
+import type { ElementHandle } from "@playwright/test";
 import type { GitGraph } from "@gasho/protocol";
 import { expect, test } from "./fixtures.ts";
 import { commit, hashOf, pauseClockAt, serveGraph, sessionDaemon, sessionUrl, showSessionHeader } from "./panel-data.ts";
@@ -108,7 +109,16 @@ test("HEAD のブランチ・未コミットの変更・読み込んだ時刻・
 
   await test.step("長い件名は 1 行のまま、その行だけが横にスクロールする", async () => {
     const subject = commits.getByText(LONG);
-    const row = subject.locator("xpath=../..");
+    // The nearest box around the subject that scrolls sideways.
+    const row = (
+      await subject.evaluateHandle((el) => {
+        const w = globalThis as unknown as { getComputedStyle(e: unknown): { overflowX: string } };
+        let box = el.parentElement;
+        while (box && w.getComputedStyle(box).overflowX !== "auto") box = box.parentElement;
+        return box;
+      })
+    ).asElement() as ElementHandle | null;
+    if (!row) throw new Error("件名を囲む要素に、横にスクロールするものがありません");
     const size = await row.evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }));
     expect(size.scroll).toBeGreaterThan(size.client);
     expect((await subject.boundingBox())?.height).toBeLessThan(32);

@@ -150,6 +150,8 @@ test("the dialog's text tells which of the calls without a result it is about, o
   // The question tells the file's whole name and what the tool does to it.
   assert.equal(shownId([edit], editing.replace("edit to notes.txt?", "edit to mynotes.txt?")), undefined);
   assert.equal(shownId([call("toolu_11", "Write", { file_path: "/w/notes.txt", content: "a" })], editing), undefined);
+  // The count of dialogs waiting in a row is not part of the heading.
+  assert.equal(shownId([edit], editing.replace(" Edit file", " Edit file      1 of 2")), "toolu_9");
 
   // A fetch shows its URL; other tools their name and the texts of their input.
   const fetching = (...url: string[]) =>
@@ -185,8 +187,14 @@ test("the dialog's text tells which of the calls without a result it is about, o
     DASHES,
     ...bottom([" Do you want to proceed?"], COMMAND_CHOICES, 0),
   ].join("\n");
+  const cat = call("toolu_15", "Bash", { command: "cat /etc/hosts", description: "Read the hosts file" });
   assert.equal(shownId([call("toolu_14", "Read", { file_path: "/etc/hosts" })], hosts), undefined);
-  assert.equal(shownId([call("toolu_15", "Bash", { command: "cat /etc/hosts", description: "Read the hosts file" })], hosts), "toolu_15");
+  assert.equal(shownId([cat], hosts), "toolu_15");
+  // A subagent's dialog (as Claude Code 2.1.327 shows it) is about a call of its own transcript: none of the session's.
+  assert.equal(shownId([cat], hosts.replace(" Bash command", " Bash command · from the general-purpose agent")), undefined);
+  assert.equal(shownId([cat], hosts.replace(" Bash command", " Bash command\n · from the agent-with-a-name-too-long-for-the-line\n agent")), undefined);
+  const agentReading = reading.replace(" Read file", " Read file · from the general-purpose agent      1 of 2");
+  assert.equal(shownId([call("toolu_14", "Read", { file_path: "/etc/hosts" })], agentReading), undefined);
 });
 
 test("the transcript keeps the calls without a result until the person writes", () => {

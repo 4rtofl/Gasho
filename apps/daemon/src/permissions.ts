@@ -191,13 +191,23 @@ function callKind(name: string): DialogKind {
   return name === "WebFetch" ? "fetch" : "other";
 }
 
-/** The kind that a dialog's heading (its first line, below the rule) tells: "Bash command", "Edit file", "Fetch"… */
+/**
+ * The kind that a dialog's heading (its first line, below the rule) tells: "Bash command", "Edit file", "Fetch"…
+ * While dialogs wait in a row, the heading ends with their count ("Edit file      1 of 2").
+ */
 function headingKind(heading: string): DialogKind {
-  const h = heading.trim();
+  const h = heading.replace(/\s+\d+ of \d+$/, "").trim();
   if (/^(Bash|Run) command\b/.test(h)) return "command";
   if (/^((Edit|Create|Overwrite|Write) file|Edit notebook)$/.test(h)) return "file";
   return h === "Fetch" ? "fetch" : "other";
 }
+
+/**
+ * What Claude Code puts after the heading of a dialog about a call that is not the session's own: a subagent's, a
+ * workflow's, a remote agent's or a plugin's ("Read file · from the general-purpose agent"). It goes on the lines
+ * below when the heading's line has no room.
+ */
+const ELSEWHERE_RE = /(^|\s)· from /;
 
 /** The dashes that Claude Code draws above and below the command in its dialog. */
 const DASHES_RE = /^╌{8,}$/;
@@ -208,7 +218,8 @@ function flat(s: string): string {
 }
 
 /**
- * Whether Claude Code's permission dialog shows this call. Its heading must be of the call's kind; a dialog whose top
+ * Whether Claude Code's permission dialog shows this call. A dialog about another agent's or a plugin's call shows
+ * none of the session's. Its heading must be of the call's kind; a dialog whose top
  * is above the screen can only be a command's or a file's (only they grow so tall). A command must be all that is
  * drawn between the dashes above the question, or its end when the top is cut off; a file's question must end with
  * its tool's verb and the file's name; a fetch's URL must be all that its "url:" shows; another tool must show its
@@ -217,7 +228,9 @@ function flat(s: string): string {
  */
 function dialogShows(c: { name: string; input: Record<string, unknown> }, d: DialogText): boolean {
   const kind = callKind(c.name);
-  if (d.top ? headingKind(d.lines[0] ?? "") !== kind : kind !== "command" && kind !== "file") return false;
+  const first = d.lines.findIndex((l) => DASHES_RE.test(l));
+  const above = first < 0 ? d.lines : d.lines.slice(0, first);
+  if (d.top ? above.some((l) => ELSEWHERE_RE.test(l)) || headingKind(d.lines[0] ?? "") !== kind : kind !== "command" && kind !== "file") return false;
   if (kind === "command") {
     const command = str(c.input.command);
     const dashes = d.lines.flatMap((l, i) => (DASHES_RE.test(l) ? [i] : []));

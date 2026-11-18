@@ -6,7 +6,8 @@ import { GasshoOverlay } from "@/components/gassho";
 import { ResizeHandle } from "@/components/resize-handle";
 import { SessionHeaderToggle } from "@/components/session-header-toggle";
 import { PanelBarContext } from "@/components/side-panel";
-import { RegisterRepos, RepoFilter } from "@/components/repo-filter";
+import { CloneRepoDialog } from "@/components/clone-repo-dialog";
+import { CloneRepoButton, RegisterRepos, RepoFilter } from "@/components/repo-filter";
 import { ReposDialog } from "@/components/repos-dialog";
 import { SessionActionDialog, SessionContextMenu, type SessionActionRequest } from "@/components/session-menu";
 import { RemoveWorktreeDialog, WorktreeContextMenu } from "@/components/worktree-menu";
@@ -243,6 +244,7 @@ export function App() {
   const [launchOpen, setLaunchOpen] = useState(false);
   // The dialog that registers repositories, opened from the menu that narrows the sidebar's worktrees.
   const [reposOpen, setReposOpen] = useState(false);
+  const [cloneOpen, setCloneOpen] = useState(false);
   const [repoKeys, setRepoKeys] = useChoices(WORKTREE_REPO_KEY);
   // The order the sidebar's worktrees were dragged into (none: the one used last first), and the order held while the
   // pointer is over the list.
@@ -535,16 +537,19 @@ export function App() {
           }
         : undefined,
     tools: (
-      <RepoFilter
-        choices={repos}
-        picked={narrowed}
-        onPick={setRepoKeys}
-        onRegister={() => setReposOpen(true)}
-        machineNames={machines.length > 1}
-        groupings={groupings.options}
-        grouping={groupings.picked}
-        onGroup={groupings.pick}
-      />
+      <>
+        <RepoFilter
+          choices={repos}
+          picked={narrowed}
+          onPick={setRepoKeys}
+          onRegister={() => setReposOpen(true)}
+          machineNames={machines.length > 1}
+          groupings={groupings.options}
+          grouping={groupings.picked}
+          onGroup={groupings.pick}
+        />
+        <CloneRepoButton onClick={() => setCloneOpen(true)} />
+      </>
     ),
     sort: grouped
       ? undefined
@@ -762,6 +767,14 @@ export function App() {
         onLaunched={() => setMobileOpen(false)}
       />
       <ReposDialog open={reposOpen} onClose={() => setReposOpen(false)} />
+      <CloneRepoDialog
+        open={cloneOpen}
+        onClose={() => setCloneOpen(false)}
+        // A list narrowed to other repositories would not show the new one.
+        onCloned={(machine, path) => {
+          if (narrowed.length > 0) setRepoKeys([...repoKeys, worktreeKey(machine, path)]);
+        }}
+      />
       {/* Out of the sidebar: its events do not reach the drawer, and closing the drawer does not take it away. */}
       {gassho && <GasshoOverlay from={gassho} logo={LOGO} href={SITE_URL} onClose={() => setGassho(null)} />}
     </div>

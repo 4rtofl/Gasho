@@ -1,8 +1,9 @@
 // The repositories the sidebar's worktrees are narrowed to, checked in a menu at the right of their title. When plugins
 // offer groupings of the worktrees (docs/plugins.md, P18), the menu also picks one of them, or none. It also opens the
 // dialog that registers repositories with a working server (repos-dialog). While a plugin's categories list the
-// sessions instead (P17), they need no narrowing: a button opens that dialog alone.
-import { FolderGit2, ListFilter } from "lucide-react";
+// sessions instead (P17), they need no narrowing: a button opens that dialog alone. Beside the menu, a button opens the
+// dialog that clones a repository (clone-repo-dialog).
+import { BookOpen, FolderGit2, ListFilter } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
 import { useRef } from "react";
 import { MENU, MENU_ITEM } from "@/components/dialog-styles";
@@ -150,6 +151,15 @@ export function RegisterRepos({ onRegister }: { onRegister: () => void }) {
   return (
     <button type="button" onClick={onRegister} aria-label="リポジトリを登録・解除…" title="リポジトリを登録・解除…" className={SECTION_BUTTON}>
       <FolderGit2 />
+    </button>
+  );
+}
+
+/** The button that opens the dialog cloning a repository onto a working server. */
+export function CloneRepoButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} aria-label="リポジトリを clone" title="リポジトリを clone" className={SECTION_BUTTON}>
+      <BookOpen />
     </button>
   );
 }

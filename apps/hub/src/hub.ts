@@ -835,12 +835,12 @@ export class Hub {
         const daemon = this.daemons.get(msg.machine);
         const reply = { type: "transcript.page" as const, machine: msg.machine, sessionId: msg.sessionId, entries: [], start: 0, total: 0 };
         if (!daemon) {
-          peer.send({ ...reply, error: "machine is offline" });
+          peer.send({ ...reply, error: "working server がオフラインです。" });
           return;
         }
         const requestId = randomUUID();
         const timer = setTimeout(() => {
-          if (this.pending.delete(requestId)) peer.send({ ...reply, error: "timed out" });
+          if (this.pending.delete(requestId)) peer.send({ ...reply, error: "working server から応答がありません。" });
         }, REQUEST_TIMEOUT_MS).unref();
         this.pending.set(requestId, { kind: "transcript", client: peer, machine: msg.machine, sessionId: msg.sessionId, timer });
         const limit = Math.min(Math.max(1, msg.limit), 500);

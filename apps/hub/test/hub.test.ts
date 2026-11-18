@@ -157,7 +157,7 @@ test("transcript.get for an offline machine answers with an error", () => {
   hub.onClientMessage(c, { type: "transcript.get", machine: machineId, sessionId: "s1", limit: 50 });
   const page = c.sent.at(-1);
   assert.ok(page?.type === "transcript.page");
-  assert.equal(page.error, "machine is offline");
+  assert.equal(page.error, "working server がオフラインです。");
 });
 
 test("revoking a machine disconnects it, fails the commands under way on it, and removes it from browsers", () => {

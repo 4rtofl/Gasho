@@ -12,8 +12,10 @@ function find(text: string, from: number, at: (i: number) => boolean, nested = f
   let quote = "";
   for (let i = from; i < text.length; i++) {
     const c = text[i];
-    if (c === "\\") i++;
-    else if (quote) {
+    if (c === "\\") {
+      // A hex escape (`\31 ` in `.\31 23`) is up to 6 hex digits and the one whitespace after them.
+      i += /^[\da-f]{1,6}\s?/i.exec(text.slice(i + 1, i + 8))?.[0].length ?? 1;
+    } else if (quote) {
       if (c === quote) quote = "";
     } else if (c === '"' || c === "'") quote = c;
     else if (c === "(" || c === "[") depth++;

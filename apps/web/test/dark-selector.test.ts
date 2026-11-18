@@ -7,6 +7,8 @@ test("a selector that starts with .dark matches below a .dark above the plugin's
   assert.equal(darkSelector("html.dark > .a"), "html.dark & > .a, & html.dark > .a");
   assert.equal(darkSelector(".dark"), ".dark &, & .dark");
   assert.equal(darkSelector('.a, .dark .b[title="x, y"]'), '.a, .dark & .b[title="x, y"], & .dark .b[title="x, y"]');
+  // The whitespace after a hex escape is a part of it.
+  assert.equal(darkSelector(".dark.\\31 23 .a"), ".dark.\\31 23 & .a, & .dark.\\31 23 .a");
 });
 
 test("the other selectors stay as they are", () => {

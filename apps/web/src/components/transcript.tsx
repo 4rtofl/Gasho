@@ -450,7 +450,8 @@ interface Anchor {
  * touch scroll goes on, a page that arrives waits for it to stop. `pending`: messages sent from here that the
  * conversation does not show yet; they come after its entries. `end`: what comes after them (the plugins' parts at the
  * end of the conversation, P13); it takes no room while it shows nothing. `onLoadOlder` asks for the page before what
- * is loaded. `source`: the session, to read the images and videos Claude sent from.
+ * is loaded. `source`: the session, to read the images and videos Claude sent from; while its working server is
+ * offline, a conversation not read yet says why it is not shown.
  */
 export function Transcript({
   state,
@@ -692,7 +693,10 @@ export function Transcript({
             </div>
           )}
           {state?.error && all.length === 0 && <p className="text-center text-sm text-red-400">会話を読み込めませんでした：{state.error}</p>}
-          {!state || (state.loading && entries.length === 0) ? (
+          {!state && source?.online === false ? (
+            // Not asked for while offline (see SessionView): it is read once the working server connects.
+            <p className="text-center text-sm text-muted-foreground">working server がオフラインなので、会話を読めません。つながったら読み込みます。</p>
+          ) : !state || (state.loading && entries.length === 0) ? (
             <p className="text-center text-sm text-muted-foreground">読み込み中…</p>
           ) : entries.length === 0 && !state.error ? (
             pendingCount === 0 && <p className="text-center text-sm text-muted-foreground">まだ会話がありません</p>

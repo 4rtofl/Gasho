@@ -712,6 +712,7 @@ export function App() {
                 worktree={worktrees.find((w) => w.id === worktreeKey(route.machine, route.path))}
                 view={route.view}
                 onSessionAction={setSessionAction}
+                onAskTrust={openLaunch}
               />
             )}
             {route.name === "session" && (desktop || !panel) && (
@@ -721,6 +722,7 @@ export function App() {
                 sessionId={movedTo ?? route.sessionId}
                 panel={panel}
                 onSessionAction={setSessionAction}
+                onAskTrust={openLaunch}
               />
             )}
             {route.name === "session" && !desktop && panel && (

@@ -23,14 +23,30 @@ export function unreadSessions(notifications: GashoNotification[]): ReadonlySet<
   return new Set(notifications.flatMap((n) => (n.read ? [] : [unreadKey(n.machine, n.sessionId)])));
 }
 
+/** The ids a session's notifications came under: its own, and those it had before /clear. */
+function idsOf(s: SessionInfo): string[] {
+  return [s.sessionId, ...(s.previousSessionIds ?? [])];
+}
+
+const hasUnread = (machine: string, s: SessionInfo, unread: ReadonlySet<string>) => idsOf(s).some((id) => unread.has(unreadKey(machine, id)));
+
+/**
+ * The state to show for a session. Its turn has ended (idle) while work it started runs on in the background: it is
+ * shown as working, since Claude usually goes on once that work ends. `status` stays idle, which is what decides that
+ * input goes in at once.
+ */
+export function shownStatus(s: Pick<SessionInfo, "status" | "background">): SessionStatus {
+  return s.status === "idle" && (s.background?.length ?? 0) > 0 ? "busy" : s.status;
+}
+
 /** A session's dot. The bell shows also while its working server is offline: what was not read stays so. */
 export function sessionDot(m: MachineInfo, s: SessionInfo, unread: ReadonlySet<string>): Dot {
-  return { status: m.connected ? s.status : "unknown", unread: unread.has(unreadKey(m.id, s.sessionId)) };
+  return { status: m.connected ? shownStatus(s) : "unknown", unread: hasUnread(m.id, s, unread) };
 }
 
 /** A worktree's dot in the sidebar: that of its most pressing session, and a bell if any of them has one. */
 export function worktreeDot(w: WorktreeSessions, unread: ReadonlySet<string>): Dot {
-  const unreadOne = w.sessions.some((s) => unread.has(unreadKey(w.machine.id, s.sessionId)));
+  const unreadOne = w.sessions.some((s) => hasUnread(w.machine.id, s, unread));
   if (!w.machine.connected) return { status: "unknown", unread: unreadOne };
   if (w.sessions.length === 0) return { status: "none", unread: false };
   return { status: worktreeStatus(w), unread: unreadOne };
@@ -180,7 +196,7 @@ export function worktreesByLastUse(machines: MachineInfo[], remembered: Remember
  */
 export function worktreeStatus(w: Pick<WorktreeSessions, "machine" | "sessions">): SessionStatus {
   if (!w.machine.connected) return "unknown";
-  return (["waiting", "busy", "idle"] as const).find((st) => w.sessions.some((s) => s.status === st)) ?? "unknown";
+  return (["waiting", "busy", "idle"] as const).find((st) => w.sessions.some((s) => shownStatus(s) === st)) ?? "unknown";
 }
 
 /** When a worktree was last used: when its session used last was. Undefined without sessions. */
@@ -242,6 +258,15 @@ export function tabAfterRemoval(w: WorktreeSessions, sessionId: string): Session
   return w.sessions[i + 1] ?? w.sessions[i - 1];
 }
 
+/**
+ * The session that a page open on `sessionId` is to go to: after /clear, Claude Code goes on in the same process under
+ * a new id (see SessionInfo.previousSessionIds). Undefined while the machine lists `sessionId`, or when no session had it.
+ */
+export function movedSession(m: MachineInfo | undefined, sessionId: string): SessionInfo | undefined {
+  if (!m || m.sessions.some((s) => s.sessionId === sessionId)) return undefined;
+  return m.sessions.find((s) => s.previousSessionIds?.includes(sessionId));
+}
+
 /** The session each worktree had open last, by worktreeId, while this page is open. */
 const lastOpened = new Map<string, string>();
 
@@ -259,6 +284,13 @@ export function sessionToOpen(w: WorktreeSessions): SessionInfo | undefined {
 export function daemonAtLeast(m: MachineInfo, major: number, minor: number): boolean {
   const [a = 0, b = 0] = (m.daemonVersion ?? "").split(".").map((n) => Number.parseInt(n, 10) || 0);
   return a > major || (a === major && b >= minor);
+}
+
+/** The unread notifications of the session open on `sessionId`, those that came under an id it had before /clear too. */
+export function unreadOfSession(notifications: GashoNotification[], machines: MachineInfo[], machine: string, sessionId: string): GashoNotification[] {
+  const s = machines.find((m) => m.id === machine)?.sessions.find((x) => x.sessionId === sessionId);
+  const ids = s ? idsOf(s) : [sessionId];
+  return notifications.filter((n) => !n.read && n.machine === machine && ids.includes(n.sessionId));
 }
 
 /** A notification is shown unless it is about a session known to have been started elsewhere. */

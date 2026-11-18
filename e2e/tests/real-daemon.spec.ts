@@ -16,7 +16,7 @@ test("本物の daemon: 画面から起動したセッションに送った指�
   await page.getByPlaceholder("Agent への指示を入力…").fill("README を読んで");
   await page.getByRole("button", { name: "送信" }).click();
   await expect(page.getByText("README を読みました。")).toBeVisible({ timeout: 60_000 });
-  const launched = (await hub.claude.calls()).filter((c) => c.args[0] === "--remote-control");
+  const launched = (await hub.claude.calls()).filter((c) => c.args[0]?.startsWith("--remote-control="));
   expect(launched).toHaveLength(1);
   expect(launched[0]?.cwd).toBe(`${hub.home}/work/gasho`);
 });

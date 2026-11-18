@@ -89,13 +89,19 @@ const busy: { what: string; make: (page: Page, d: FakeDaemon) => Promise<void>; 
       await page.goto("/");
       await expect(page.getByRole("main").getByText("1 台の working server")).toBeVisible();
       await openSidebar(page);
-      await page.getByRole("navigation", { name: "Main" }).getByRole("button", { name: "リポジトリで絞り込む" }).click();
+      await page.getByRole("navigation", { name: "メニュー" }).getByRole("button", { name: "リポジトリで絞り込む" }).click();
       await page.getByRole("menuitem", { name: "リポジトリを登録・解除…" }).click();
       await expect(page.getByRole("dialog", { name: "リポジトリの登録" })).toBeVisible();
     },
     close: async (page) => {
       await page.keyboard.press("Escape");
       await expect(page.getByRole("dialog", { name: "リポジトリの登録" })).toBeHidden();
+      // On a phone, the drawer the dialog was opened from stays open after that Esc, over the band.
+      const drawer = page.getByRole("dialog", { name: "サイドバー" });
+      if (await drawer.isVisible()) {
+        await page.keyboard.press("Escape");
+        await expect(drawer).toHaveCount(0);
+      }
     },
   },
   {

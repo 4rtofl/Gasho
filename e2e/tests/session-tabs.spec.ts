@@ -96,6 +96,35 @@ test("同じ worktree のセッションのタブが起動した順に並び、�
   await expect(tabsOf(page).getByRole("button").filter({ hasText: /\S/ })).toHaveText(["一つ目", "二つ目", "三つ目", "四つ目"]);
 });
 
+test("タブの「＋」で信頼するかを聞かれると、確認を出し、信頼を選んだときだけ起動する", async ({ page, hub }) => {
+  const daemon = await openTabs(page, hub);
+  const FOUR = id(4);
+  daemon.handle("session.launch", (m) => {
+    if (!m.trust) return commandResult(m, { ok: false, error: "このフォルダーは、まだ Claude Code に信頼されていません。", needsTrust: true, trustWarnings: ["hooks があります（E2E）"] });
+    addsSession(daemon, tabSession(FOUR, "四つ目", 0));
+    return commandResult(m, { ok: true, sessionId: FOUR });
+  });
+  const launches = () => daemon.received.filter((m) => m.type === "session.launch").map((m) => m.trust);
+  const plus = page.getByRole("button", { name: "この worktree で新しいセッションを起動" });
+  const ask = page.getByRole("dialog").getByRole("region", { name: "このフォルダーは、まだ Claude Code に信頼されていません" });
+
+  await plus.click();
+  await expect(ask.getByText(WORKTREE.path, { exact: true })).toBeVisible();
+  await expect(ask.getByText("hooks があります（E2E）")).toBeVisible();
+  await expect(tabsOf(page).getByRole("alert")).toHaveCount(0);
+  await ask.getByRole("button", { name: "やめる" }).click();
+  await expect(ask).toHaveCount(0);
+  expect(launches()).toEqual([undefined]);
+  // The form stays open for another folder; closing it leaves the tabs as they were.
+  await page.getByRole("dialog").getByRole("button", { name: "閉じる" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  await plus.click();
+  await ask.getByRole("button", { name: "信頼して起動する" }).click();
+  await expect(openTab(page)).toHaveText("四つ目");
+  expect(launches()).toEqual([undefined, undefined, true]);
+});
+
 test("タブのメニューが、Chromium では右クリックとコンテキストメニューのキー、WebKit では長押しで開く", async ({ page, hub }, testInfo) => {
   await openTabs(page, hub);
 

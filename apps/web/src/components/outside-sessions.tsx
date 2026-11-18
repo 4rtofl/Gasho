@@ -8,7 +8,7 @@ import { useState } from "react";
 import { BUTTON_DANGER, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG_PANEL } from "@/components/dialog-styles";
 import { StatusDot } from "@/components/status-badge";
 import { relativeTime, sessionLabel } from "@/lib/format";
-import type { WorktreeSessions } from "@/lib/sessions";
+import { shownStatus, type WorktreeSessions } from "@/lib/sessions";
 import { sendCommand } from "@/lib/store";
 
 /** A little longer than the Gasho server waits for the Claude Codes to end. */
@@ -55,7 +55,7 @@ function EndDialog({ worktree, onClose, onEnded }: { worktree: WorktreeSessions;
   const [outside] = useState(worktree.outside);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  const working = outside.some((s) => s.status === "busy" || s.status === "waiting");
+  const working = outside.some((s) => shownStatus(s) === "busy" || s.status === "waiting");
 
   const end = async () => {
     setBusy(true);
@@ -93,7 +93,7 @@ function EndDialog({ worktree, onClose, onEnded }: { worktree: WorktreeSessions;
           <ul className="mt-3 max-h-60 space-y-0.5 overflow-y-auto rounded-lg border border-border p-1 text-sm">
             {outside.map((s) => (
               <li key={s.sessionId} className="flex items-center gap-2 px-2 py-1.5">
-                <StatusDot status={s.status} />
+                <StatusDot status={shownStatus(s)} />
                 <span className="min-w-0 flex-1 truncate" title={sessionLabel(s)}>
                   {sessionLabel(s)}
                 </span>

@@ -1,6 +1,9 @@
 // The folders of the launcher: the names a new folder or a clone may have and the folder a clone goes into, as
 // gasho-daemon decides them (apps/daemon/src/folders.ts), and the folders offered to start a session in.
 
+/** How long to wait for a clone's answer, a little longer than the Gasho server does: gasho-daemon stops a clone after 10 minutes. */
+export const CLONE_WAIT_MS = 660_000;
+
 const SEGMENT = "[A-Za-z0-9_.-]+";
 /** What `gh repo clone` is given: "name", "owner/name" or "host/owner/name", an https URL, or an SSH address. */
 const REPO_FORMS = [
@@ -41,6 +44,21 @@ export function repoFolderName(repo: string): string | undefined {
 /** The folder `name` inside the folder `parent`. */
 export function childPath(parent: string, name: string): string {
   return `${parent.replace(/\/+$/, "")}/${name}`;
+}
+
+/** Why `repo` cannot be cloned into the folder `name` (empty: the repository's name) inside `parent`, or undefined. */
+export function cloneProblem(parent: string, repo: string, name: string): string | undefined {
+  const repoWrong = repoProblem(repo);
+  if (repoWrong) return repoWrong;
+  if (!parent) return "clone 先のフォルダーを入れてください。";
+  if (!parent.startsWith("/")) return "clone 先のフォルダーを絶対パスで入れてください。";
+  if (name) return folderNameProblem(name);
+  return repoFolderName(repo) ? undefined : "フォルダーの名前を入れてください。";
+}
+
+/** Where a clone of `repo` goes, as far as it is known yet; undefined until `parent` is an absolute path. */
+export function clonePath(parent: string, repo: string, name: string): string | undefined {
+  return parent.startsWith("/") ? childPath(parent, name || repoFolderName(repo) || "…") : undefined;
 }
 
 /** The folder that holds `dir`, or undefined for "/" and the folders right under it. */

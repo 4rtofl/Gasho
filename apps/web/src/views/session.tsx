@@ -1,5 +1,5 @@
 import { ArrowLeft, ExternalLink, FolderOpen, GitBranch, GitPullRequest } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CommandResult, InputFeature, MachineInfo, SessionInfo, SessionModel } from "@gasho/protocol";
 import { BackgroundTasks } from "@/components/background-tasks";
 import { RepoPicker } from "@/components/repo-picker";
@@ -20,31 +20,35 @@ import {
   sessionLabel,
   waitingLabel,
 } from "@/lib/format";
-import { promptDraft, usePicks } from "@/lib/drafts";
+import { promptDraft, useDraftBox, usePicks } from "@/lib/drafts";
 import { addPending, noneWaiting, pendingShown, removePending, sessionWorking, settlePending, usePending } from "@/lib/pending";
 import { go, type SessionPanel } from "@/lib/route";
 import { closeSmallSessionHeader, useSessionHeaderShown } from "@/lib/session-header";
-import { daemonAtLeast, rememberOpened, worktreeId, worktreesByLastUse } from "@/lib/sessions";
+import { daemonAtLeast, rememberOpened, shownStatus, worktreeId, worktreesByLastUse } from "@/lib/sessions";
 import { loadSkills, useSkills } from "@/lib/skills";
 import { loadTranscript, sendCommand, transcriptKey, useAppState } from "@/lib/store";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
 import { PluginComposerFooter, PluginConversationEnd, PluginHeaderItems } from "@/plugins/parts";
+import type { LaunchInitial } from "@/views/launch";
 
 /**
  * `panel`: the panel open beside the session (a computer), if any; its link in the header shows as open.
  * `onSessionAction`: an item picked from a tab's menu (rename, fork, remove); the app opens its dialog.
+ * `onAskTrust`: Claude Code asks whether to trust the worktree's folder; the app opens its dialog.
  */
 export function SessionView({
   machine,
   sessionId,
   panel,
   onSessionAction,
+  onAskTrust,
 }: {
   machine: string;
   sessionId: string;
   panel?: SessionPanel;
   onSessionAction: (request: SessionActionRequest) => void;
+  onAskTrust: (initial: LaunchInitial) => void;
 }) {
   const { machines, transcripts } = useAppState();
   const now = useNow();
@@ -98,7 +102,7 @@ export function SessionView({
 
   return (
     <div className="flex h-full flex-col">
-      <SessionTabs worktree={worktreesByLastUse([m]).find((w) => w.id === worktree)!} current={sessionId} onAction={onSessionAction} />
+      <SessionTabs worktree={worktreesByLastUse([m]).find((w) => w.id === worktree)!} current={sessionId} onAction={onSessionAction} onAskTrust={onAskTrust} />
       {headerShown ? (
         <header className="shrink-0 space-y-2 border-b border-border px-4 py-3 md:px-6">
           <BackLink />
@@ -230,7 +234,7 @@ export function SessionView({
 /** The session's state, or "オフライン" while its working server is not connected. Also in a phone's top bar (see App). */
 export function SessionState({ machine, session }: { machine: MachineInfo; session: SessionInfo }) {
   return machine.connected ? (
-    <StatusBadge status={session.status} />
+    <StatusBadge status={shownStatus(session)} />
   ) : (
     <span className="shrink-0 text-xs text-muted-foreground">オフライン</span>
   );
@@ -341,6 +345,8 @@ function toBase64(file: File): Promise<string> {
  */
 function Composer({ machine, session: s, entries }: { machine: MachineInfo; session: SessionInfo; entries: number }) {
   const key = transcriptKey(machine.id, s.sessionId);
+  const box = useRef<HTMLDivElement>(null);
+  useDraftBox(key, box);
   const [error, setError] = useState<string>();
   const [warning, setWarning] = useState<string>();
   const [picks, setPicks] = usePicks(key);
@@ -407,7 +413,7 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
   };
 
   return (
-    <div className="flex min-h-0 flex-col">
+    <div ref={box} className="flex min-h-0 flex-col">
       <PermissionRequests machine={machine} session={s} />
       <BackgroundTasks machine={machine} session={s} />
       <PromptInput

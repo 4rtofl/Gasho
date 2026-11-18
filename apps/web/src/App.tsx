@@ -6,7 +6,8 @@ import { GasshoOverlay } from "@/components/gassho";
 import { ResizeHandle } from "@/components/resize-handle";
 import { SessionHeaderToggle } from "@/components/session-header-toggle";
 import { PanelBarContext } from "@/components/side-panel";
-import { RegisterRepos, RepoFilter } from "@/components/repo-filter";
+import { CloneRepoDialog } from "@/components/clone-repo-dialog";
+import { CloneRepoButton, RegisterRepos, RepoFilter } from "@/components/repo-filter";
 import { ReposDialog } from "@/components/repos-dialog";
 import { SessionActionDialog, SessionContextMenu, type SessionActionRequest } from "@/components/session-menu";
 import { UnusedSessionsDialog } from "@/components/unused-sessions-dialog";
@@ -29,6 +30,7 @@ import {
   arrangeCategories,
   hasOrder,
   holdOrder,
+  movedKeys,
   OTHER_CATEGORY,
   rowAfterRemoval,
   sessionKey,
@@ -44,6 +46,7 @@ import {
 import { useGroupingPrefs, useSessionListPrefs } from "@/lib/session-list-prefs";
 import { useSessionLauncher } from "@/lib/session-launch";
 import {
+  movedSession,
   narrowWorktrees,
   notificationShown,
   rememberedOf,
@@ -223,6 +226,12 @@ export function App() {
     if (main.current) main.current.scrollTop = 0;
   }, [page]);
   const { auth, me, machines, notifications, connected, plugins, catalog, latest, server, outdated } = useAppState();
+  // After /clear, the session goes on under a new id: its page (and the panel open beside it) goes there too, and shows
+  // it already while the address changes.
+  const movedTo = route.name === "session" ? movedSession(machines.find((m) => m.id === route.machine), route.sessionId)?.sessionId : undefined;
+  useEffect(() => {
+    if (movedTo && route.name === "session") go({ ...route, sessionId: movedTo }, { replace: true });
+  }, [route, movedTo]);
   const [mobileOpen, setMobileOpen] = useState(false);
   // The logo's easter egg while it is out (where the logo's 🙏 was when it started), drawn over everything.
   const [gassho, setGassho] = useState<GasshoFrom | null>(null);
@@ -236,6 +245,7 @@ export function App() {
   const [launchOpen, setLaunchOpen] = useState(false);
   // The dialog that registers repositories, opened from the menu that narrows the sidebar's worktrees.
   const [reposOpen, setReposOpen] = useState(false);
+  const [cloneOpen, setCloneOpen] = useState(false);
   const [repoKeys, setRepoKeys] = useChoices(WORKTREE_REPO_KEY);
   // The order the sidebar's worktrees were dragged into (none: the one used last first), and the order held while the
   // pointer is over the list.
@@ -330,7 +340,7 @@ export function App() {
   };
 
   // The plugin's categories, in the order dragged into (or held), each with its sessions as rows.
-  const categories = listMode.kind === "plugin" ? arrangeCategories(listMode.categories, listPrefs, heldOrder) : [];
+  const categories = listMode.kind === "plugin" ? arrangeCategories(listMode.categories, listPrefs, heldOrder, movedKeys(machines)) : [];
   // The grouping's categories of the worktrees, in the order dragged into, or as held.
   const worktreeCategories =
     groupings.mode.kind === "grouped"
@@ -530,16 +540,19 @@ export function App() {
           }
         : undefined,
     tools: (
-      <RepoFilter
-        choices={repos}
-        picked={narrowed}
-        onPick={setRepoKeys}
-        onRegister={() => setReposOpen(true)}
-        machineNames={machines.length > 1}
-        groupings={groupings.options}
-        grouping={groupings.picked}
-        onGroup={groupings.pick}
-      />
+      <>
+        <RepoFilter
+          choices={repos}
+          picked={narrowed}
+          onPick={setRepoKeys}
+          onRegister={() => setReposOpen(true)}
+          machineNames={machines.length > 1}
+          groupings={groupings.options}
+          grouping={groupings.picked}
+          onGroup={groupings.pick}
+        />
+        <CloneRepoButton onClick={() => setCloneOpen(true)} />
+      </>
     ),
     sort: grouped
       ? undefined
@@ -702,20 +715,22 @@ export function App() {
                 worktree={worktrees.find((w) => w.id === worktreeKey(route.machine, route.path))}
                 view={route.view}
                 onSessionAction={setSessionAction}
+                onAskTrust={openLaunch}
               />
             )}
             {route.name === "session" && (desktop || !panel) && (
               <SessionView
-                key={`${route.machine}/${route.sessionId}`}
+                key={`${route.machine}/${movedTo ?? route.sessionId}`}
                 machine={route.machine}
-                sessionId={route.sessionId}
+                sessionId={movedTo ?? route.sessionId}
                 panel={panel}
                 onSessionAction={setSessionAction}
+                onAskTrust={openLaunch}
               />
             )}
             {route.name === "session" && !desktop && panel && (
               <PanelBarContext.Provider value={panelBar}>
-                <PanelView machine={route.machine} sessionId={route.sessionId} panel={panel} docked={false} />
+                <PanelView machine={route.machine} sessionId={movedTo ?? route.sessionId} panel={panel} docked={false} />
               </PanelBarContext.Provider>
             )}
           </motion.main>
@@ -726,7 +741,7 @@ export function App() {
           )}
           {route.name === "session" && desktop && panel && (
             <DockedPanel>
-              <PanelView machine={route.machine} sessionId={route.sessionId} panel={panel} docked />
+              <PanelView machine={route.machine} sessionId={movedTo ?? route.sessionId} panel={panel} docked />
             </DockedPanel>
           )}
         </div>
@@ -758,6 +773,14 @@ export function App() {
         onLaunched={() => setMobileOpen(false)}
       />
       <ReposDialog open={reposOpen} onClose={() => setReposOpen(false)} />
+      <CloneRepoDialog
+        open={cloneOpen}
+        onClose={() => setCloneOpen(false)}
+        // A list narrowed to other repositories would not show the new one.
+        onCloned={(machine, path) => {
+          if (narrowed.length > 0) setRepoKeys([...repoKeys, worktreeKey(machine, path)]);
+        }}
+      />
       {/* Out of the sidebar: its events do not reach the drawer, and closing the drawer does not take it away. */}
       {gassho && <GasshoOverlay from={gassho} logo={LOGO} href={SITE_URL} onClose={() => setGassho(null)} />}
     </div>

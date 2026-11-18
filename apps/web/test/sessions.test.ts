@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { GashoNotification, MachineInfo, SessionInfo } from "@gasho/protocol";
 import {
+  movedSession,
   narrowWorktrees,
   rememberedOf,
   repoChoices,
   repoKeyOf,
   sessionDot,
+  shownStatus,
   tabAfterRemoval,
+  unreadOfSession,
   unreadSessions,
   worktreeDot,
   worktreeLastUsed,
@@ -234,4 +237,38 @@ test("a worktree's dot is its most pressing session's, gray without sessions, an
     "feat/old /src/old: unknown false",
   ]);
   assert.deepEqual(sessionDot(offline, offline.sessions[2]!, unreadSessions([note("mac", "c", false)])), { status: "unknown", unread: true });
+  // After /clear, what came under the id from before rings the bell of the session it went on as.
+  const cleared = machine("mac", [session("a2", { cwd: "/src/app", worktree: app, previousSessionIds: ["a"] })]);
+  assert.equal(dots([note("mac", "a", false)], [cleared])[0], "main /src/app: idle true");
+});
+
+test("a session idle while work it started runs on in the background shows as working; its own status stays idle", () => {
+  const task = { id: "t", kind: "shell", title: "tests" } as const;
+  const running = session("a", { status: "idle", background: [task] });
+  assert.equal(shownStatus(running), "busy");
+  assert.equal(running.status, "idle");
+  assert.equal(shownStatus(session("b", { status: "idle" })), "idle");
+  assert.equal(shownStatus(session("c", { status: "idle", background: [] })), "idle");
+  assert.equal(shownStatus(session("d", { status: "waiting", background: [task] })), "waiting");
+  const mac = machine("mac", [running]);
+  assert.equal(sessionDot(mac, running, new Set()).status, "busy");
+  assert.equal(worktreeStatus({ machine: mac, sessions: [running] }), "busy");
+});
+
+test("a page open on an id from before /clear goes to the session that had it; one on a listed or unknown id stays", () => {
+  const mac = machine("mac", [session("b", { previousSessionIds: ["a", "c"] }), session("c")]);
+  assert.equal(movedSession(mac, "a")?.sessionId, "b");
+  // "c" runs again as a session of its own (an earlier conversation opened again): its page stays.
+  assert.equal(movedSession(mac, "c"), undefined);
+  assert.equal(movedSession(mac, "x"), undefined);
+  assert.equal(movedSession(undefined, "a"), undefined);
+});
+
+test("an open session reads its unread notifications, those under an id it had before /clear too", () => {
+  const note = (id: string, machine: string, sessionId: string, read = false): GashoNotification => ({ id, machine, sessionId, at: 0, kind: "done", title: "", read });
+  const machines = [machine("mac", [session("b", { previousSessionIds: ["a"] }), session("c")])];
+  const notes = [note("1", "mac", "a"), note("2", "mac", "b"), note("3", "mac", "b", true), note("4", "mac", "c"), note("5", "ubuntu", "a")];
+  assert.deepEqual(unreadOfSession(notes, machines, "mac", "b").map((n) => n.id), ["1", "2"]);
+  // Open on an id no session lists (the page has not gone on to the new id yet): those under that id.
+  assert.deepEqual(unreadOfSession(notes, machines, "mac", "a").map((n) => n.id), ["1"]);
 });

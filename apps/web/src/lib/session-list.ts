@@ -7,7 +7,7 @@
 import type { SessionListContext, SessionListSession, SessionListWorktree } from "@gasho/plugin-sdk";
 import type { MachineInfo } from "@gasho/protocol";
 import { arrangeSessions, rememberSessions } from "./order.ts";
-import { lastUsed, type WorktreeSessions } from "./sessions.ts";
+import { lastUsed, movedSession, type WorktreeSessions } from "./sessions.ts";
 
 /** A row's id: its working server and session, as the sidebar's session list of before named it. */
 export const sessionKey = (machine: string, sessionId: string) => `${machine}\u001f${sessionId}`;
@@ -141,10 +141,32 @@ export interface HeldOrder {
 }
 
 /**
+ * The rows (sessionKey) of the ids that sessions had before /clear, each to the row of the id it runs under now (see
+ * movedSession), for arrangeCategories.
+ */
+export function movedKeys(machines: readonly MachineInfo[]): ReadonlyMap<string, string> {
+  const moved = new Map<string, string>();
+  for (const m of machines) {
+    for (const id of new Set(m.sessions.flatMap((s) => s.previousSessionIds ?? []))) {
+      const to = movedSession(m, id);
+      if (to) moved.set(sessionKey(m.id, id), sessionKey(m.id, to.sessionId));
+    }
+  }
+  return moved;
+}
+
+/**
  * The categories and their sessions in the order to show: the plugin's (its default, by last use), or the order `held`
  * kept, then the order dragged into over it. What is not in a saved or held order (started or forked since) comes first.
+ * A session that /clear gave a new id since (`moved`, see movedKeys) keeps the place it had.
  */
-export function arrangeCategories(categories: readonly ListedCategory[], prefs: SessionListPrefs, held?: HeldOrder | null): ListedCategory[] {
+export function arrangeCategories(
+  categories: readonly ListedCategory[],
+  prefs: SessionListPrefs,
+  held?: HeldOrder | null,
+  moved: ReadonlyMap<string, string> = new Map(),
+): ListedCategory[] {
+  const follow = (keys: readonly string[] | undefined) => keys?.map((k) => moved.get(k) ?? k);
   const byId = new Map(categories.map((c) => [c.id, c]));
   let ids = categories.map((c) => c.id);
   if (held) ids = arrangeSessions(ids, held.categories);
@@ -154,8 +176,8 @@ export function arrangeCategories(categories: readonly ListedCategory[], prefs: 
     if (!c) return [];
     const byKey = new Map(c.sessions.map((s) => [s.key, s]));
     let keys = c.sessions.map((s) => s.key);
-    if (held) keys = arrangeSessions(keys, held.sessions[id]);
-    keys = arrangeSessions(keys, prefs.sessions?.[id]);
+    if (held) keys = arrangeSessions(keys, follow(held.sessions[id]));
+    keys = arrangeSessions(keys, follow(prefs.sessions?.[id]));
     return [{ ...c, sessions: keys.flatMap((k) => byKey.get(k) ?? []) }];
   });
 }

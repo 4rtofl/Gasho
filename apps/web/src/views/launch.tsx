@@ -6,19 +6,19 @@ import { Check, FolderGit2, FolderPlus, LoaderCircle, Plus, TriangleAlert, X } f
 import { Dialog } from "radix-ui";
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG_PANEL } from "@/components/dialog-styles";
-import { childPath, folderChoices, folderNameProblem, repoFolderName, repoProblem } from "@/lib/folders";
+import { childPath, CLONE_WAIT_MS, folderChoices, folderNameProblem, repoFolderName, repoProblem } from "@/lib/folders";
 import { go } from "@/lib/route";
 import { useSessionLauncher } from "@/lib/session-launch";
 import { daemonAtLeast } from "@/lib/sessions";
 import { sendCommand, useAppState } from "@/lib/store";
+import { composing, keepOpenWhileComposing } from "@/lib/text-input";
 import { cn } from "@/lib/utils";
 
 const OTHER = "\u0000other";
 const TITLE = "新しいセッションを起動する";
 const NONE: readonly string[] = [];
-/** How long to wait for each answer, a little longer than the Gasho server does: gasho-daemon stops a clone after 10 minutes. */
+/** How long to wait for each answer, a little longer than the Gasho server does. */
 const FOLDER_WAIT_MS = 20_000;
-const CLONE_WAIT_MS = 660_000;
 
 type Tool = "folder" | "clone";
 
@@ -45,7 +45,7 @@ function Description() {
 
 /** Enter in a field of a tool runs the tool, not the form's launch (and not while a Japanese input method converts). */
 const onEnter = (run: () => void) => (e: KeyboardEvent<HTMLInputElement>) => {
-  if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+  if (e.key !== "Enter" || composing(e)) return;
   e.preventDefault();
   run();
 };
@@ -88,10 +88,16 @@ function LaunchForm({
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(initial?.error);
-  // A launch that stopped at Claude Code's question whether to trust the folder, and what Claude Code pointed out.
-  const [trustAsk, setTrustAsk] = useState<{ cwd: string; warnings: string[] } | undefined>(
-    initial?.trust ? { cwd: initial.folder, warnings: initial.trust } : undefined,
+  // A launch that stopped at Claude Code's question whether to trust the folder, and what Claude Code pointed out. The
+  // answer holds for the working server that asked: when the form moves to another (the one asking went offline, say),
+  // the question goes, for good, and "信頼して起動する" cannot reach a working server nobody was asked about.
+  const [trustAsked, setTrustAsk] = useState<{ machine: string; cwd: string; warnings: string[] } | undefined>(
+    initial?.trust ? { machine: initial.machine, cwd: initial.folder, warnings: initial.trust } : undefined,
   );
+  const trustAsk = trustAsked?.machine === machine?.id ? trustAsked : undefined;
+  useEffect(() => {
+    if (trustAsked && trustAsked.machine !== machine?.id) setTrustAsk(undefined);
+  }, [trustAsked, machine?.id]);
   // A session that started with something to tell, shown before it opens.
   const [started, setStarted] = useState<{ machine: string; sessionId: string; warning: string }>();
   const [tool, setTool] = useState<Tool>();
@@ -123,7 +129,7 @@ function LaunchForm({
     setBusy(false);
     if (r.cancelled) return;
     if (!r.ok || !r.sessionId) {
-      if (r.needsTrust) setTrustAsk({ cwd: dir, warnings: r.trustWarnings ?? [] });
+      if (r.needsTrust) setTrustAsk({ machine: machine.id, cwd: dir, warnings: r.trustWarnings ?? [] });
       else setError(r.error ?? "起動できませんでした。");
       return;
     }
@@ -553,6 +559,7 @@ export function LaunchDialog({ open, onClose, onLaunched, initial }: { open: boo
         <Dialog.Overlay className={DIALOG_OVERLAY} />
         <Dialog.Content
           className={cn(DIALOG_PANEL, "w-[min(36rem,calc(100vw-2rem))]")}
+          onEscapeKeyDown={keepOpenWhileComposing}
           onOpenAutoFocus={(e) => {
             // The first field rather than the close button; a select does not bring up a phone's keyboard.
             const first = (e.currentTarget as HTMLElement | null)?.querySelector<HTMLElement>("select, input");

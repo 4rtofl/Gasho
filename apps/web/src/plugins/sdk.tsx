@@ -338,7 +338,8 @@ function RelativeTime({ at, now }: { at: string | number; now: number }) {
  * A popup that a button of a plugin opens (plugin API 1.4), in the look of Gasho's own (the repositories in a session's
  * header). Not modal, as the menus of the chat box: a modal one would stop the conversation behind it from scrolling.
  * Its content goes in a portal at the end of the page, outside the part, so it sits in an element that carries the
- * plugin's id, the only place the plugin's CSS applies to (registry.ts). React's context, and so the SDK's hooks,
+ * plugin's id, the only place the plugin's CSS applies to (registry.ts). That element has no box, as a part's, so that
+ * a plugin's `body { padding: … }` (part-selector.ts) does not show on it. React's context, and so the SDK's hooks,
  * reach it there as well.
  */
 function Popover({ trigger, children, side = "bottom", align = "center", label, className, open, onOpenChange }: PopoverProps) {
@@ -348,7 +349,7 @@ function Popover({ trigger, children, side = "bottom", align = "center", label, 
       <RadixPopover.Trigger asChild>{trigger}</RadixPopover.Trigger>
       <RadixPopover.Portal>
         <RadixPopover.Content side={side} align={align} sideOffset={6} collisionPadding={12} aria-label={label} className="z-50 outline-none">
-          <div data-gasho-plugin={plugin}>
+          <div data-gasho-plugin={plugin} className="contents">
             <div className={cn("w-72 max-w-[calc(100vw-24px)] rounded-xl border border-border bg-surface p-3 text-sm text-foreground shadow-xl", className)}>
               {children}
             </div>

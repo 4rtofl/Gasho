@@ -17,9 +17,12 @@ function joinAt(had: readonly TranscriptEntry[], start: number, page: Transcript
   const first = page.entries[k];
   const found = first ? had.findIndex((e) => sameEntry(e, first)) : -1;
   if (found >= 0) return Math.max(found - k, 0);
-  // Live entries that came after the new connection, before the page, are at the end of `had` and in the page too:
-  // they do not reach the page, so they are not counted as loaded.
-  const live = had.findIndex((e) => page.entries.some((p) => sameEntry(p, e)));
+  // Live entries that came after the new connection are at the end of `had`, in the page too or newer than it: they
+  // do not reach the page, so they are not counted as loaded.
+  const lastTs = page.entries.at(-1)?.ts;
+  const live = had.findIndex(
+    (e) => page.entries.some((p) => sameEntry(p, e)) || (lastTs !== undefined && e.ts !== undefined && e.ts > lastTs),
+  );
   const loaded = live >= 0 ? live : had.length;
   const at = page.start - start;
   return at >= 0 && at <= loaded ? at : -1;

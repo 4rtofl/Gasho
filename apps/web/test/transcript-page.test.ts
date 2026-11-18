@@ -66,3 +66,11 @@ test("live entries that came before the latest page do not make it join what is 
   assert.deepEqual(uuids(t.entries), uuids(range(192, 272)));
   assert.equal(t.start, 192);
 });
+
+test("live entries that came after the latest page was read do not make it join what is loaded", () => {
+  // 100–189 loaded, 190–270 missed while the connection was down, 271 came live after the page (191–270) was read.
+  const cur = { entries: [...range(100, 190), entry(271)], start: 100, total: 191, loading: true };
+  const t = takePage(cur, { entries: range(191, 271), start: 191, total: 271 });
+  assert.deepEqual(uuids(t.entries), uuids(range(191, 272)));
+  assert.equal(t.start, 191);
+});

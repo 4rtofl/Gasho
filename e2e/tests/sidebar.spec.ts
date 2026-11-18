@@ -117,18 +117,18 @@ test.describe("worktree の行", () => {
     });
     await page.goto("/");
     await row(await sidebar(page, isMobile), "feat/a").getByRole("button").first().click();
-    await expect(page.getByRole("heading", { name: "a-newer" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "a-newer", exact: true })).toBeVisible();
 
     // Opened from home, without leaving the page: the row opens it from now on.
     await item(await sidebar(page, isMobile), "ホーム").click();
     await page.getByRole("main").getByRole("button", { name: /\ba-older\b/ }).click();
-    await expect(page.getByRole("heading", { name: "a-older" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "a-older", exact: true })).toBeVisible();
     await item(await sidebar(page, isMobile), "ホーム").click();
     await row(await sidebar(page, isMobile), "feat/a").getByRole("button").first().click();
-    await expect(page.getByRole("heading", { name: "a-older" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "a-older", exact: true })).toBeVisible();
 
     await row(await sidebar(page, isMobile), "feat/b").getByRole("button").first().click();
-    await expect(page.getByRole("heading", { name: "feat/b" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "feat/b", exact: true })).toBeVisible();
     await expect(page.getByRole("main")).toContainText("登録したリポジトリ（gasho）の worktree なので");
   });
 });
@@ -271,7 +271,7 @@ test.describe("ブラウザーが覚えている worktree", () => {
     await page.reload();
     nav = await sidebar(page, isMobile);
     await row(nav, "feat/old").getByRole("button").first().click();
-    await expect(page.getByRole("heading", { name: "feat/old" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "feat/old", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "サイドバーから外す" }).click();
     await expect(page.getByRole("main").getByRole("heading", { name: "ホーム" })).toBeVisible();
     nav = await sidebar(page, isMobile);

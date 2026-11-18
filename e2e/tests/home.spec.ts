@@ -122,7 +122,7 @@ test.describe("セッションのカード", () => {
     await expect(cards.getByRole("listitem")).toHaveText([/question|plan|permission/, /question|plan|permission/, /question|plan|permission/, /chips/, /gone/]);
 
     await card("plan").click();
-    await expect(page.getByRole("heading", { name: "plan" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "plan", exact: true })).toBeVisible();
   });
 
   test("10 件以上のセッションは 9 件まで出て、「すべて表示（n）」と「少なく表示」で切り替わる", async ({ page, hub }) => {
@@ -164,7 +164,7 @@ test.describe("通知", () => {
     const top = stack.getByRole("heading", { name: /の応答が終わりました/ }).first();
     const opened = (await top.textContent())?.replace(" の応答が終わりました", "") ?? "";
     await stack.getByRole("button", { name: /の応答が終わりました/ }).first().click();
-    await expect(page.getByRole("heading", { name: opened })).toBeVisible();
+    await expect(page.getByRole("heading", { name: opened, exact: true })).toBeVisible();
     await page.goto("/");
     await expect(stack).toContainText("通知（2）");
     await expect(stack).not.toContainText(`${opened} の応答`);
@@ -265,7 +265,7 @@ test.describe("通知", () => {
 
     // Open on the screen, a session's new notification is read at once.
     await tile(page, "セッション").getByRole("button", { name: /\bwatched\b/ }).click();
-    await expect(page.getByRole("heading", { name: "watched" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "watched", exact: true })).toBeVisible();
     const told = readTold;
     sendHook(daemon, watched.sessionId, "Stop", { summary: "見ていた答え" });
     await expect.poll(() => readTold).toBeGreaterThan(told);
@@ -323,7 +323,7 @@ test.describe("最近の操作と送った指示", () => {
     await expect(numberTile(page, "送った指示", 7)).toBeVisible();
 
     await operations.first().getByRole("button").click();
-    await expect(page.getByRole("heading", { name: "worker" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "worker", exact: true })).toBeVisible();
   });
 });
 

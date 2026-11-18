@@ -30,6 +30,8 @@ const WAIT_POLL_MS = 1000;
 const EXIT_DELAY_MS = 500;
 /** How long a version started by an update is on trial, as the Gasho server's (GASHO_DAEMON_PROBATION_MS). */
 export const TRIAL_MS = 60_000;
+/** The longest trial, as the Gasho server takes it (hub.ts): longer, the screen would not say it goes back. */
+export const TRIAL_MAX_MS = 3600_000;
 /** How long a version that went back by itself is told about. */
 const ROLLBACK_SHOWN_MS = 7 * 24 * 3600_000;
 /** Why a version on trial ended, when it did not record it (it was killed, or ended without an exception). */

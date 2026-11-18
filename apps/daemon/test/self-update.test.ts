@@ -226,11 +226,15 @@ test("a version on trial counts its first start, is tried again after a stop, an
   assert.ok(!existsSync(layout.trialFile));
 });
 
-test("a GASHO_DAEMON_PROBATION_MS that is no length of time leaves the trial at its default", () => {
+test("a GASHO_DAEMON_PROBATION_MS that is no length of time, or over an hour, leaves the trial at its default", () => {
   const creds = { server: "http://127.0.0.1:1", machineId: "m", token: "t", name: "n" };
   // Empty or not a number would confirm a version at once, without the screen saying it would go back.
-  for (const v of ["", "soon", "0", "-5", "Infinity"]) assert.equal(loadConfig(creds, { GASHO_DAEMON_PROBATION_MS: v }).trialMs, TRIAL_MS, v);
+  // Over an hour, the Gasho server does not take it; over about 24 days, setTimeout would end the trial at once.
+  for (const v of ["", "soon", "0", "-5", "Infinity", "3600001", "3000000000"]) {
+    assert.equal(loadConfig(creds, { GASHO_DAEMON_PROBATION_MS: v }).trialMs, TRIAL_MS, v);
+  }
   assert.equal(loadConfig(creds, { GASHO_DAEMON_PROBATION_MS: "20000" }).trialMs, 20_000);
+  assert.equal(loadConfig(creds, { GASHO_DAEMON_PROBATION_MS: "3600000" }).trialMs, 3600_000);
 });
 
 test("a version on trial is confirmed even when the versions no longer used cannot be removed", async (t) => {

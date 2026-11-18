@@ -341,7 +341,7 @@ gasho-daemon（`@4rtofl/gasho-daemon`）、Gasho サーバー（`@4rtofl/gasho-h
 | `GASHO_POLL_MS` | daemon | `3000` |
 | `GASHO_PLUGINS` | daemon | なし。`none` にすると、この working server ではプラグインの daemon の部分を動かさない |
 | `GASHO_DAEMON_HOME` | daemon | `~/.local/share/gasho/daemon`（`service install` と更新が、版ごとに gasho-daemon を入れるフォルダー） |
-| `GASHO_DAEMON_PROBATION_MS` | daemon | `60000`（更新したあとの試しの期間。そのうちに止まった版は、前の版に戻す） |
+| `GASHO_DAEMON_PROBATION_MS` | daemon | `60000`（更新したあとの試しの期間。そのうちに止まった版は、前の版に戻す。1時間を超える値は 60000 になる） |
 
 gasho-daemon の変数は `~/.config/gasho/daemon.env` に、hub の変数は `~/.config/gasho/hub.env` に、`名前=値` の形で書いておくこともできる。どちらも、コマンドが起動するときにこのファイルを読む。端末で設定した値のほうが優先される。
 

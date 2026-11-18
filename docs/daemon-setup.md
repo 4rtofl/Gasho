@@ -269,5 +269,5 @@ gasho-daemon の設定は環境変数で変える。gasho-daemon のコマンド
 | `GASHO_POLL_MS` | セッションの一覧を読み直す間隔（ミリ秒） | `3000` |
 | `GASHO_PLUGINS` | `none` にすると、この working server ではプラグインの daemon の部分を動かさない | なし |
 | `GASHO_DAEMON_HOME` | `service install` と更新が、gasho-daemon を版ごとに入れるフォルダー | `~/.local/share/gasho/daemon` |
-| `GASHO_DAEMON_PROBATION_MS` | 更新したあとの試しの期間（ミリ秒） | `60000` |
+| `GASHO_DAEMON_PROBATION_MS` | 更新したあとの試しの期間（ミリ秒）。1時間（`3600000`）を超える値と、正の数でない値は、既定の値になる | `60000` |
 | `GASHO_NPM_BIN` | 更新で版を入れる npm | Node.js と同じフォルダーの `npm` |

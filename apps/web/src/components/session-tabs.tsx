@@ -12,16 +12,14 @@ import { SessionContextMenu, type SessionActionRequest } from "@/components/sess
 import { StatusDot } from "@/components/status-badge";
 import { sessionLabel } from "@/lib/format";
 import { go, type WorktreeView } from "@/lib/route";
+import { useSessionLauncher } from "@/lib/session-launch";
 import { hidesSessionTabs } from "@/lib/session-list";
 import { sessionDot, unreadSessions, type WorktreeSessions } from "@/lib/sessions";
-import { sendCommand, useAppState } from "@/lib/store";
+import { useAppState } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { PluginWorktreeTabs } from "@/plugins/parts";
 import { useSessionListMode } from "@/plugins/session-list";
 import type { LaunchInitial } from "@/views/launch";
-
-/** How long to wait for a new session, a little longer than the Gasho server does. */
-export const LAUNCH_WAIT_MS = 60_000;
 
 /**
  * Starting a session in a worktree's top folder and opening it: whether it can be, whether it is under way, and why it
@@ -32,6 +30,7 @@ export const LAUNCH_WAIT_MS = 60_000;
  */
 export function useWorktreeLaunch(worktree: WorktreeSessions, onAskTrust: (initial: LaunchInitial) => void) {
   const { machine } = worktree;
+  const launchSession = useSessionLauncher();
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string>();
   const shown = useRef(true);
@@ -46,9 +45,10 @@ export function useWorktreeLaunch(worktree: WorktreeSessions, onAskTrust: (initi
     if (!canLaunch || launching) return;
     setLaunching(true);
     setError(undefined);
-    const r = await sendCommand(machine.id, { type: "session.launch", cwd: worktree.path }, LAUNCH_WAIT_MS);
+    const r = await launchSession(machine.id, { cwd: worktree.path });
     if (!shown.current) return;
     setLaunching(false);
+    if (r.cancelled) return;
     if (!r.ok || !r.sessionId) {
       if (r.needsTrust) onAskTrust({ machine: machine.id, folder: worktree.path, trust: r.trustWarnings ?? [] });
       else setError(r.error ?? "起動できませんでした。");

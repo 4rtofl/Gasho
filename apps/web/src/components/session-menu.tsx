@@ -13,6 +13,7 @@ import { forkName, MAX_SESSION_NAME, nameProblem } from "@/lib/session-names";
 import { hidesSessionTabs } from "@/lib/session-list";
 import { daemonAtLeast, tabAfterRemoval, worktreeId, worktreesByLastUse } from "@/lib/sessions";
 import { getAppState, sendCommand, useAppState } from "@/lib/store";
+import { keepOpenWhileComposing } from "@/lib/text-input";
 import { cn } from "@/lib/utils";
 import { useSessionListMode } from "@/plugins/session-list";
 
@@ -190,6 +191,7 @@ function NameDialog({ request: { action, machine, session }, onClose }: DialogPr
         <Dialog.Overlay className={DIALOG_OVERLAY} />
         <Dialog.Content
           className={DIALOG_PANEL}
+          onEscapeKeyDown={keepOpenWhileComposing}
           onOpenAutoFocus={(e) => {
             e.preventDefault();
             input.current?.focus();

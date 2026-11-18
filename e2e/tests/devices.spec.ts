@@ -179,7 +179,7 @@ test("取り消した working server が、サイドバーと実行中の指示�
   );
   await page.goto(`/#/s/${encodeURIComponent(mac.machineId)}/${sessionId}`);
   await expect(page.getByRole("heading", { name: "e2e-session" })).toBeVisible();
-  const sidebar = page.getByRole("navigation", { name: "Main" });
+  const sidebar = page.getByRole("navigation", { name: "メニュー" });
   await openSidebar(page);
   await expect(sidebar.getByRole("button", { name: /^gasho/ })).toBeVisible();
   await expect(sidebar.getByRole("button", { name: /^other/ })).toContainText("オフライン");

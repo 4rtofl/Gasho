@@ -89,7 +89,7 @@ const busy: { what: string; make: (page: Page, d: FakeDaemon) => Promise<void>; 
       await page.goto("/");
       await expect(page.getByRole("main").getByText("1 台の working server")).toBeVisible();
       await openSidebar(page);
-      await page.getByRole("navigation", { name: "Main" }).getByRole("button", { name: "リポジトリで絞り込む" }).click();
+      await page.getByRole("navigation", { name: "メニュー" }).getByRole("button", { name: "リポジトリで絞り込む" }).click();
       await page.getByRole("menuitem", { name: "リポジトリを登録・解除…" }).click();
       await expect(page.getByRole("dialog", { name: "リポジトリの登録" })).toBeVisible();
     },

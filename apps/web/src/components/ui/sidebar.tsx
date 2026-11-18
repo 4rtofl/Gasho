@@ -5,7 +5,8 @@
 // items of a section can be put in another order by dragging them (`sort`), a section can hold groups of items under
 // headings of their own that fold (`groups`, a plugin's categories of sessions), which can be dragged too
 // (`groupSort`), whose items can be dragged from one group into another (`itemMove`), and the width on a computer can
-// be changed by dragging the right edge (`ResizeHandle`, lib/widths).
+// be changed by dragging the right edge (`ResizeHandle`, lib/widths). On a Mac, iPhone and iPad, Ctrl+B in a box that
+// text is written in is left to the box (it moves the cursor back), and only ⌘B folds the sidebar there.
 
 import * as React from "react";
 import { AnimatePresence, motion, useDragControls, type PanInfo } from "framer-motion";
@@ -13,6 +14,7 @@ import { ChevronRight, GripVertical, PanelLeft } from "lucide-react";
 import { useWindowWidth } from "../../lib/media";
 import { SIDEBAR_WIDTH_DEFAULT, SIDEBAR_WIDTH_MAX, SIDEBAR_WIDTH_MIN, clampSidebarWidth, useSidebarWidth } from "../../lib/widths";
 import { groupDrop, itemsByGroup, useSortable, type Sortable } from "../../lib/sortable";
+import { appleKeys, typingIn } from "../../lib/text-input";
 import { cn } from "../../lib/utils";
 import { ResizeHandle } from "../resize-handle";
 
@@ -156,6 +158,7 @@ export function Sidebar({
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+        if (!e.metaKey && appleKeys(navigator.userAgent) && typingIn(e.target)) return;
         e.preventDefault();
         if (window.matchMedia("(min-width: 768px)").matches) setCollapsed(!collapsed);
         else setMobileOpen(!mobileOpen);
@@ -223,7 +226,7 @@ export function Sidebar({
             <motion.aside
               role="dialog"
               aria-modal="true"
-              aria-label="Navigation"
+              aria-label="サイドバー"
               className="absolute inset-y-0 left-0 w-[17rem] max-w-[85vw] overflow-hidden border-r border-neutral-200 bg-white pt-(--safe-top) pl-(--safe-left) shadow-2xl dark:border-neutral-800 dark:bg-neutral-950"
               initial={{ x: "-100%" }}
               animate={{ x: 0 }}
@@ -261,7 +264,7 @@ export function SidebarTrigger({ className, ...props }: React.ComponentProps<"bu
   return (
     <button
       type="button"
-      aria-label="Open navigation"
+      aria-label="サイドバーを開く"
       className={cn(
         "grid size-9 place-items-center rounded-lg text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900 md:hidden dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-white",
         className
@@ -856,7 +859,7 @@ function Panel({
         <motion.nav
           ref={nav}
           layoutScroll
-          aria-label="Main"
+          aria-label="メニュー"
           onMouseOver={(e) => {
             reached.current = e.nativeEvent;
             if (inside.current) return;

@@ -26,6 +26,7 @@ import { basename, relativeTime } from "@/lib/format";
 import { isDesktop } from "@/lib/media";
 import { go, hrefOf, type Route } from "@/lib/route";
 import { fileKey, loadDir, loadFile, saveFile, useAppState } from "@/lib/store";
+import { composing } from "@/lib/text-input";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
 
@@ -261,7 +262,7 @@ function NewFileForm({ machine, sessionId, dir, onCancel }: { machine: string; s
         // Esc closes the form, not the panel; while an input method converts, it only cancels the conversion.
         if (e.key !== "Escape") return;
         e.stopPropagation();
-        if (!busy && !e.nativeEvent.isComposing) onCancel();
+        if (!busy && !composing(e)) onCancel();
       }}
       className="mb-3 space-y-2.5 rounded-xl border border-border p-3"
     >

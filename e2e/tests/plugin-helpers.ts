@@ -14,12 +14,12 @@ export const plugin = (id: string) => `${TEST_PLUGINS}/${id}`;
  * before it is used).
  */
 export async function sidebar(page: Page): Promise<Locator> {
-  if (!onPhone(page)) return page.getByRole("navigation", { name: "Main" });
-  const drawer = page.getByRole("dialog", { name: "Navigation" });
+  if (!onPhone(page)) return page.getByRole("navigation", { name: "メニュー" });
+  const drawer = page.getByRole("dialog", { name: "サイドバー" });
   if ((await drawer.count()) > 0) await page.keyboard.press("Escape");
   await expect(drawer).toHaveCount(0);
-  await page.getByRole("button", { name: "Open navigation" }).click();
-  const nav = drawer.getByRole("navigation", { name: "Main" });
+  await page.getByRole("button", { name: "サイドバーを開く" }).click();
+  const nav = drawer.getByRole("navigation", { name: "メニュー" });
   await expect(nav).toBeVisible();
   return nav;
 }

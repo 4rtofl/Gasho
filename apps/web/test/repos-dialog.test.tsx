@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { MachineInfo } from "@gasho/protocol";
 import { expect, test } from "vitest";
@@ -38,6 +38,19 @@ test("the repositories offered are those of the trusted folders but the register
   await hub.say({ type: "machine", machine: linux({ repos: [...linux().repos!, registered] }) });
   expect(within(section).getAllByRole("option").map((o) => o.textContent)).toEqual([expect.stringContaining("zeta")]);
   expect(within(section).getAllByRole("button", { name: "解除" })).toHaveLength(2);
+});
+
+test("the Esc that cancels a conversion in the filter leaves the dialog open, and Esc closes it", async () => {
+  await connectHub({ machines: [linux()] });
+  let closed = 0;
+  render(<ReposDialog open onClose={() => closed++} />);
+  const filter = screen.getByRole("combobox", { name: "Linux に登録するリポジトリ" });
+  // Chromium sends the Esc while the conversion is on; Safari sends an input method's keys with keyCode 229.
+  fireEvent.keyDown(filter, { key: "Escape", isComposing: true });
+  fireEvent.keyDown(filter, { key: "Escape", keyCode: 229 });
+  expect(closed).toBe(0);
+  fireEvent.keyDown(filter, { key: "Escape", keyCode: 27 });
+  expect(closed).toBe(1);
 });
 
 test("a folder typed in is registered only as an absolute path, and the field empties once it is", async () => {

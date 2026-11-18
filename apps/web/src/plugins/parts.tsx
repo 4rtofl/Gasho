@@ -23,6 +23,7 @@ import { SidePanel } from "@/components/side-panel";
 import { go, hrefOf, useRoute, type PagePanel, type Route, type SessionPanel, type WorktreeView } from "@/lib/route";
 import type { WorktreeSessions } from "@/lib/sessions";
 import { useAppState } from "@/lib/store";
+import { composing } from "@/lib/text-input";
 import { cn } from "@/lib/utils";
 import { reportPluginError, usePluginRegistry, type PluginPart } from "./registry";
 import { PanelScopeContext, PluginScopeContext, readiness, SessionScopeContext, usePluginInfo, useSetting } from "./sdk";
@@ -668,7 +669,7 @@ function SettingRow({ settingKey, spec }: { settingKey: string; spec: PluginSett
         onChange={(e) => setDraft(e.currentTarget.value)}
         onBlur={done}
         onKeyDown={(e) => {
-          if (e.key === "Enter") done();
+          if (e.key === "Enter" && !composing(e)) done();
         }}
         className={cn(FIELD, spec.type === "number" ? "w-28" : "w-full max-w-sm")}
       />

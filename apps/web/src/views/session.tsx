@@ -450,7 +450,13 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
           if (r.unknown) {
             // Not put back in the box: it may have been typed into the session, and could be sent twice.
             removePending(key, pending);
-            setWarning("Gasho サーバーとの接続が切れたので、送れたか分かりません。会話に出ていなければ、もう一度送ってください。");
+            // A message that comes while Claude works waits on the working server until it is done. This page may not
+            // know yet that the session works (it sends nothing while it knows), so the warning says so either way.
+            const again = [...(text ? ["送った文は ↑ キーで戻せます"] : []), ...(files.length > 0 ? ["添付は付け直してください"] : [])];
+            setWarning(
+              "Gasho サーバーとの接続が切れたので、送れたか分かりません。Claude の作業中に届いた指示は、作業が終わってから会話に出ます。" +
+                `出なければ、もう一度送ってください（${again.join("。")}）。`,
+            );
             return;
           }
           if (!r.ok) {

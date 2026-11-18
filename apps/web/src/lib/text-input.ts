@@ -11,11 +11,20 @@ export const closesPanel = (e: { key: string; nativeEvent: { isComposing: boolea
 
 /**
  * The files a paste attaches. None when files cannot be attached, or when the clipboard also has text: an app such as
- * Excel on a Mac puts a picture of what was copied beside its text. A file copied in the Finder comes without text.
+ * Excel on a Mac puts a picture of what was copied beside its text. Files copied in the Finder come without text, or
+ * in Safari with their names as the text, one a line.
  */
 export function pastedFiles(data: { files: ArrayLike<File>; getData(type: string): string }, canAttach: boolean): File[] {
-  if (!canAttach || data.getData("text/plain").trim()) return [];
-  return Array.from(data.files);
+  if (!canAttach) return [];
+  const files = Array.from(data.files);
+  const lines = data
+    .getData("text/plain")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const names = files.map((f) => f.name);
+  if (lines.length && lines.sort().join("\n") !== names.sort().join("\n")) return [];
+  return files;
 }
 
 /**

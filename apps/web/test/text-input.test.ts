@@ -25,6 +25,14 @@ test("cells copied with a picture of them paste as text", () => {
   assert.deepEqual(pastedFiles(clipboard([png], "A1\tB1\nA2\tB2"), true), []);
 });
 
+test("files copied in the Finder are attached in Safari, which also gives their names as text", () => {
+  const pdf = new File([new Uint8Array([4])], "spec.pdf", { type: "application/pdf" });
+  assert.deepEqual(pastedFiles(clipboard([png, pdf], "spec.pdf\nimage.png"), true), [png, pdf]);
+  // Text that mentions a file's name stays text.
+  assert.deepEqual(pastedFiles(clipboard([png], "see image.png"), true), []);
+  assert.deepEqual(pastedFiles(clipboard([png, pdf], "image.png"), true), []);
+});
+
 test("nothing is attached where files cannot be", () => {
   assert.deepEqual(pastedFiles(clipboard([png]), false), []);
 });

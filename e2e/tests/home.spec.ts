@@ -177,7 +177,7 @@ test.describe("通知", () => {
   });
 
   test("右へドラッグすると既読になり、ホームのまま", async ({ page, hub, isMobile }) => {
-    test.fail(!isMobile, "マウスで右へドラッグすると、既読になったうえで、その通知のセッションが開く（ドラッグの終わりの click が本文に届く）");
+    test.fail(!isMobile, "マウスで右へドラッグすると、既読になったうえで、その通知のセッションが開く（ドラッグの終わりの click が本文に届く。#182）");
     await threeNotifications(hub);
     await page.goto("/");
     const stack = notificationTile(page);

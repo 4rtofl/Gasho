@@ -12,7 +12,7 @@ import { sessionLabel } from "@/lib/format";
 import { go, parseHash, useRoute } from "@/lib/route";
 import { forkName, MAX_SESSION_NAME, nameProblem } from "@/lib/session-names";
 import { hidesSessionTabs } from "@/lib/session-list";
-import { daemonAtLeast, tabAfterRemoval, worktreeId, worktreesByLastUse } from "@/lib/sessions";
+import { daemonAtLeast, shownStatus, tabAfterRemoval, worktreeId, worktreesByLastUse } from "@/lib/sessions";
 import { getAppState, sendCommand, useAppState } from "@/lib/store";
 import { keepOpenWhileComposing } from "@/lib/text-input";
 import { cn } from "@/lib/utils";
@@ -279,7 +279,7 @@ function RemoveDialog({ request: { machine, session }, onClose, rowAfter }: Dial
   const [error, setError] = useState<string>();
   // What the session is doing now (it may have started working since the menu was opened).
   const live = machines.find((m) => m.id === machine.id)?.sessions.find((s) => s.sessionId === session.sessionId) ?? session;
-  const working = live.status === "busy" || live.status === "waiting";
+  const working = shownStatus(live) === "busy" || live.status === "waiting";
 
   const remove = async () => {
     setBusy(true);

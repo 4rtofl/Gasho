@@ -549,7 +549,7 @@ worktreeGroupings: [
 | `worktrees` | サイドバーの一覧に出す worktree。絞り込みで選んだリポジトリのものだけで、並びは、セッションのある worktree を最後に使った順、登録したリポジトリのほかの worktree、セッションが無くなってブラウザーが覚えている worktree の順（ドラッグで並べ替えた順ではない）。P17 の `SessionListWorktree` に、行の点と同じ状態（`status`）と、最後に使った時刻（`lastUsed`）を足したもの |
 | `machines` | working server |
 
-`status` は、その worktree のセッションのうち、いちばん急ぐものの状態である。確認待ち（`waiting`）、作業中（`busy`）、待機中（`idle`）の順に見る。working server がオフラインのときと、セッションの無い worktree では `unknown` になる。`lastUsed` は、セッションの最後に使った時刻のうち、いちばん新しいもので、セッションが無ければ無い。
+`status` は、その worktree のセッションのうち、いちばん急ぐものの状態である。確認待ち（`waiting`）、作業中（`busy`）、待機中（`idle`）の順に見る。応答が終わっていても、バックグラウンドで動いているものがあるセッションは作業中とする。working server がオフラインのときと、セッションの無い worktree では `unknown` になる。`lastUsed` は、セッションの最後に使った時刻のうち、いちばん新しいもので、セッションが無ければ無い。
 
 返すのはカテゴリの配列で、その順が既定の順になる。カテゴリは、ID（`id`）、見出し（`title`）、見出しの後ろの薄い文字（`description`）、ポインターを乗せたときの説明（`hint`）、「＋」で起動する worktree の `key`（`launch`）、worktree（`worktrees`）を持つ。worktree は、`key` と、行の2行目（`description`）である。2行目を書かなければ、いまの一覧と同じ2行目（リポジトリ名と、working server が2台以上ならその名前）を出し、空の文字列にすれば2行目を出さない。
 

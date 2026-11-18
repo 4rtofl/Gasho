@@ -1,4 +1,5 @@
-// End-to-end over HTTP and WebSocket: registration, cookies, cross-origin guards and the allow list.
+// End-to-end over HTTP and WebSocket: registration, cookies, cross-origin guards and the allow list; and what the
+// server is set up with (config.ts).
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -8,6 +9,7 @@ import path from "node:path";
 import { after, before, test } from "node:test";
 import { WebSocket as WsClient } from "ws";
 import type { HubToClient, PairResponse } from "@gasho/protocol";
+import { loadConfig, webDistOf } from "../src/config.ts";
 import { Hub } from "../src/hub.ts";
 import { buildAllowList, parseNets } from "../src/netallow.ts";
 import { createServer } from "../src/server.ts";
@@ -222,4 +224,20 @@ test("only the hashed files under assets/ are cached for good; the browser asks 
     web.close();
     fs.rmSync(dist, { recursive: true, force: true });
   }
+});
+
+test("the screen served is GASHO_WEB_DIST, else the build beside the package's lib/, else a clone's apps/web/dist", () => {
+  assert.equal(webDistOf({ GASHO_WEB_DIST: "/srv/web" }, "file:///x/lib/config.js"), "/srv/web");
+  assert.equal(webDistOf({}, "file:///opt/gasho-hub/lib/config.js"), "/opt/gasho-hub/web");
+  assert.equal(webDistOf({}, "file:///src/Gasho/apps/hub/src/config.ts"), "/src/Gasho/apps/web/dist");
+});
+
+test("settings left empty in hub.env take their defaults", () => {
+  const cfg = loadConfig({ GASHO_PLUGIN_REPO: "", GASHO_GH_BIN: "", GASHO_VAPID_SUBJECT: "", XDG_CACHE_HOME: "", GASHO_ALLOW_NETS: "" });
+  assert.equal(cfg.pluginRepo, "4rtofl/GashoPlugins");
+  assert.equal(cfg.ghBin, "gh");
+  assert.match(cfg.vapidSubject, /^(mailto|https):/);
+  assert.equal(cfg.pluginCacheDir, path.join(os.homedir(), ".cache", "gasho", "hub-plugins"));
+  assert.deepEqual(cfg.allowNets, parseNets(undefined));
+  assert.equal(loadConfig({ XDG_CACHE_HOME: "/cache" }).pluginCacheDir, "/cache/gasho/hub-plugins");
 });

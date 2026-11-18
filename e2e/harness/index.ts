@@ -17,3 +17,4 @@ export {
 } from "./fakes.ts";
 export { GASHO_DIR } from "./process.ts";
 export { HUB_PACKAGE, hubInstallAnswer, type HubService, type HubServiceOptions } from "./hub-service.ts";
+export { addPlugin, catalogWith, copyTestPlugin, listedPlugin, type PluginRelease, pluginsDir, releasePlugin, TEST_PLUGINS, writePlugin } from "./plugins.ts";

@@ -968,6 +968,7 @@ function Panel({
         {collapsed && tip && (
           <div
             key="tip"
+            role="tooltip"
             className="pointer-events-none fixed z-[60] -translate-y-1/2"
             style={{ left: tip.x, top: tip.y }}
           >

@@ -274,6 +274,7 @@ Gasho サーバーは LAN の中だけで使う前提にしている。外から
 ```bash
 npm run web:dev    # Vite。/ws、/api、/plugins は Gasho サーバー（127.0.0.1:7740）に中継する
 npm test
+npm run test:coverage   # npm test のうち node --test で流すテスト（apps/*/test・scripts・e2e の .test.ts）について、ソースのファイルごとに、テストが通った行・分岐・関数の割合を出す。画面を描く Vitest のテストは含まない（CI では流さない）
 npm run typecheck
 ```
 

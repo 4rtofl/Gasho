@@ -20,8 +20,7 @@ test("Gasho の外のセッションと見つからないセッションは、�
   await expect(page).toHaveURL(/#\/$/);
 });
 
-test("オフラインのセッションを、読み込み直したあとに開いても「読み込み中…」のまま止まらない", async ({ page, hub }) => {
-  test.fail(true, "#179: 画面は working server がつながっているときだけ会話を頼むので、オフラインのまま読み込み直すと「読み込み中…」が消えない");
+test("オフラインのセッションを読み込み直すと、会話を読めない理由を出し、つながり直したら会話を読み込む", async ({ page, hub }) => {
   const daemon = await openSession(page, hub, { transcript: [textEntry("assistant", "前の返事")] });
   await expect(page.getByText("前の返事")).toBeVisible();
   await daemon.disconnect();
@@ -29,7 +28,12 @@ test("オフラインのセッションを、読み込み直したあとに開�
 
   await page.reload();
   await expect(page.getByText("working server がオフラインです。")).toBeVisible();
+  await expect(page.getByText("working server がオフラインなので、会話を読めません。つながったら読み込みます。")).toBeVisible();
   await expect(page.getByText("読み込み中…")).toBeHidden();
+
+  await daemon.connect();
+  await expect(page.getByText("前の返事")).toBeVisible();
+  await expect(page.getByText("working server がオフラインなので、会話を読めません。つながったら読み込みます。")).toBeHidden();
 });
 
 test("ヘッダーに、マシン名・フォルダー・状態・確認待ち・GitHub・ブランチ・PR・最終更新・費用を出す", async ({ page, hub, isMobile }) => {

@@ -51,8 +51,9 @@ export function isolatedEnv(home: string, more: Record<string, string> = {}): Re
 }
 
 /**
- * The ports of the Gasho servers stopped to be started again (GashoHub.stopServer), one file each, which freePort
- * gives to no test of any worker: such a server starts on its port again, which the screen and gasho-daemon go to.
+ * The ports of the Gasho servers stopped to be started again (GashoHub.stopServer, and those of HubOptions.service), one
+ * file each, which freePort gives to no test of any worker: such a server starts on its port again, which the screen
+ * and gasho-daemon go to.
  */
 const KEPT_PORTS = "/tmp/ge2e-ports";
 
@@ -60,7 +61,9 @@ const KEPT_PORTS = "/tmp/ge2e-ports";
 export function keepPort(port: number): () => void {
   fs.mkdirSync(KEPT_PORTS, { recursive: true });
   const file = path.join(KEPT_PORTS, String(port));
-  fs.writeFileSync(file, "");
+  // Not through a link put there in the file's place (another user may have made the folder): opening it fails, and
+  // the file it links to is not emptied.
+  fs.closeSync(fs.openSync(file, fs.constants.O_CREAT | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW));
   const forget = onExit(() => fs.rmSync(file, { force: true }));
   return () => {
     fs.rmSync(file, { force: true });

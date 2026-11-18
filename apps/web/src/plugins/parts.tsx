@@ -20,7 +20,7 @@ import type {
 } from "@gasho/plugin-sdk";
 import type { MachineInfo, PluginInfo, PluginSettingSpec, SessionInfo } from "@gasho/protocol";
 import { SidePanel } from "@/components/side-panel";
-import { go, hrefOf, type PagePanel, type Route, type SessionPanel, type WorktreeView } from "@/lib/route";
+import { go, hrefOf, useRoute, type PagePanel, type Route, type SessionPanel, type WorktreeView } from "@/lib/route";
 import type { WorktreeSessions } from "@/lib/sessions";
 import { useAppState } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -572,6 +572,14 @@ export function PluginSettingsSections() {
   const shown = infos
     .filter((info) => info.enabled && (Object.keys(info.manifest.settings ?? {}).length > 0 || parts.find((p) => p.info.id === info.id)?.def.settings))
     .sort((a, b) => a.manifest.name.localeCompare(b.manifest.name, "ja"));
+  // Opened for one of them (its "設定" on the plugins screen): scrolled to once it is drawn, also after the Gasho
+  // server's first snapshot when the page was reloaded there.
+  const route = useRoute();
+  const opened = route.name === "settings" ? route.plugin : undefined;
+  const drawn = shown.some((info) => info.id === opened);
+  useEffect(() => {
+    if (opened && drawn) document.getElementById(`plugin-settings-${opened}`)?.scrollIntoView({ block: "start" });
+  }, [opened, drawn]);
   return (
     <>
       {shown.map((info) => {
@@ -582,7 +590,7 @@ export function PluginSettingsSections() {
             key={info.id}
             id={`plugin-settings-${info.id}`}
             aria-labelledby={`plugin-settings-title-${info.id}`}
-            className="space-y-4 rounded-2xl border border-border bg-surface/40 p-4"
+            className="scroll-mt-4 space-y-4 rounded-2xl border border-border bg-surface/40 p-4"
           >
             <div>
               <h2 id={`plugin-settings-title-${info.id}`} className="text-sm font-medium">

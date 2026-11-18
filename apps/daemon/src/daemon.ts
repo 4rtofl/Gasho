@@ -36,6 +36,7 @@ import { isInside, statusLineLaunch, statusLineOf, userStatusLine } from "./stat
 import { HubClient } from "./hub-client.ts";
 import { type Install, type Layout, layoutOf } from "./install.ts";
 import { type MediaFailed, readMediaPart } from "./media.ts";
+import { readMemory } from "./memory.ts";
 import { answersMessage, dialogCall, OPEN_DIALOG, OPEN_QUESTION, openPermissionRequest, openQuestionRequest, PermissionRequests, questionAnswers } from "./permissions.ts";
 import {
   atBottom,
@@ -111,11 +112,13 @@ import { PluginRunner } from "./plugins.ts";
 import { npmOf, Updater } from "./self-update.ts";
 import { log, str } from "./util.ts";
 
-export const DAEMON_VERSION = "0.23.0";
+export const DAEMON_VERSION = "0.27.1";
 const GITHUB_CACHE_MS = 5 * 60_000;
 /** How long the worktree a folder is in, or the repositories inside it, and their branches are reused. */
 const REPOS_CACHE_MS = 60_000;
 const FOLDERS_REFRESH_MS = 5 * 60_000;
+/** How often the server's memory is read and told to the Gasho server. */
+const MEMORY_REFRESH_MS = 15_000;
 /** How often the registered repositories' worktrees are read again: one may be made or removed elsewhere (Orca, git). */
 const REGISTERED_REFRESH_MS = 10_000;
 const LAUNCH_TIMEOUT_MS = 30_000;
@@ -281,6 +284,8 @@ export class Daemon {
   private plugins: PluginRunner;
   /** Updates of gasho-daemon from Gasho. */
   private updater: Updater;
+  /** gasho-daemon has begun to end (exit). */
+  private exiting = false;
 
   /** How long the prompt box may take to let go of a text after Enter (see typeInput). */
   private enterWaitMs: number;
@@ -298,7 +303,7 @@ export class Daemon {
       env: process.env,
       waiting: () => this.inputsToType(),
       changed: () => this.emitCapabilities(),
-      exit: (code) => process.exit(code),
+      exit: (code) => void this.exit(code),
       log: (s) => log(s),
     });
     this.terminals = new SessionTerminals(new Terminals({ stateDir: cfg.stateDir, env: cleanEnv() }), new Zellij(cleanEnv()));
@@ -324,6 +329,7 @@ export class Daemon {
         this.emitSessions();
         this.emitCapabilities();
         this.emitRepos();
+        void this.emitMemory();
         // Also tells the Gasho server that this gasho-daemon runs plugins.
         this.plugins.status(true);
         this.plugins.connected();
@@ -332,9 +338,26 @@ export class Daemon {
       onRejected: (reason) => {
         log(`the Gasho server rejected this machine (${reason}). Its registration was revoked or is unknown;`);
         log("register again: node src/cli.ts register --server <url> --code <code>");
-        process.exit(1);
+        void this.exit(1);
       },
     });
+  }
+
+  /**
+   * Ends gasho-daemon with `code` once the plugins' daemon parts have stopped (each runs its `stop`, killed after a
+   * few seconds: PluginRunner.stopAll), so that what they started, as a command run from a panel, does not stay
+   * behind. Only the first call counts: an update may end it while a signal does.
+   */
+  async exit(code: number): Promise<void> {
+    if (this.exiting) return;
+    this.exiting = true;
+    await this.plugins.stopAll().catch((e: unknown) => log("could not stop the plugins", e));
+    process.exit(code);
+  }
+
+  private async emitMemory(): Promise<void> {
+    const memory = await readMemory();
+    this.hub.send(memory ? { type: "memory", memory } : { type: "memory" });
   }
 
   async start(): Promise<void> {
@@ -374,6 +397,7 @@ export class Daemon {
     setInterval(() => void this.refreshRepos(), REGISTERED_REFRESH_MS).unref();
 
     this.hub.connect();
+    setInterval(() => void this.emitMemory(), MEMORY_REFRESH_MS).unref();
     startHookServer({
       host: "127.0.0.1",
       port: this.cfg.hookPort,
@@ -1113,7 +1137,7 @@ export class Daemon {
   }
 
   /**
-   * A request on the local control socket (control.ts, `gasho-daemon session …`): done as the same command from the
+   * A request on the local control socket (control.ts, `gasho-daemon session …` and `gasho-daemon worktree …`): done as the same command from the
    * Gasho server is.
    */
   private async onControl(req: ControlRequest): Promise<ControlReply> {
@@ -1130,11 +1154,33 @@ export class Daemon {
         case "session.list":
           await this.refresh();
           return { ok: true, sessions: this.controlSessions() };
+        case "session.remove":
+          log(`session.remove of ${req.sessionId} from the control socket`);
+          return await this.remove(req.sessionId);
+        case "worktree.remove":
+          log(`worktree.remove of ${req.path}${req.force ? " (forced)" : ""} from the control socket`);
+          return await this.controlRemoveWorktree(req.path, req.force === true, requestId);
       }
     } catch (e) {
       log(`${req.op} from the control socket failed`, e);
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
+  }
+
+  /**
+   * worktree.remove from the control socket: as from Gasho's screen (no branch deleted, nothing counted as pushed but
+   * what a remote has), and the answer also names the worktree's folder and branch, and the sessions that ended.
+   */
+  private async controlRemoveWorktree(dir: string, force: boolean, requestId: string): Promise<ControlReply> {
+    const w = await removableWorktree(dir);
+    if ("error" in w) return { ok: false, error: w.error };
+    // Their names as they are before they end: once ended, they are gone from the lists.
+    const names = new Map<string, string>();
+    for (const m of this.managed.all()) names.set(m.sessionId, m.name);
+    for (const t of this.tracked.values()) if (t.info.name) names.set(t.info.sessionId, t.info.name);
+    const r = await this.removeWorktree({ type: "worktree.remove", requestId, path: w.path, ...(force ? { force: true } : {}) });
+    const endedSessions = (r.ended ?? []).map((sessionId) => ({ sessionId, ...(names.has(sessionId) ? { name: names.get(sessionId)! } : {}) }));
+    return { ...r, path: w.path, ...(w.branch ? { branch: w.branch } : {}), ...(endedSessions.length > 0 ? { endedSessions } : {}) };
   }
 
   /** The sessions Gasho started, under the names `claude agents` (and so ListAgents) shows. */
@@ -1151,6 +1197,7 @@ export class Daemon {
         terminal: m.terminal,
         status: info?.status ?? "unknown",
         ...(pending > 0 ? { pendingInputs: pending } : {}),
+        ...(fs.existsSync(m.cwd) ? {} : { cwdMissing: true }),
       };
     });
   }

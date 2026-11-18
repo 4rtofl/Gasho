@@ -508,6 +508,9 @@ export type LaunchResult =
   | { ok: true; sessionId: string }
   | { ok: false; error: string; needsTrust?: boolean; trustWarnings?: string[] };
 
+/** What removing a session gave (useRemoveSession, plugin API 1.14). */
+export type RemoveSessionResult = { ok: true } | { ok: false; error: string };
+
 /**
  * Removing a worktree with the sessions in it (useRemoveWorktree, plugin API 1.10), as "削除…" of its row in the
  * sidebar does.
@@ -627,6 +630,12 @@ export interface GashoSdk {
    */
   useLaunchSession(): (input: { machine: string; cwd: string; name?: string; trust?: boolean }) => Promise<LaunchResult>;
   /**
+   * Removes a session Gasho started (needs the permission "session.remove"), as "削除" of its menu does, without asking:
+   * its Claude Code ends, also in the middle of its work, and Gasho lists it no more. Its conversation stays on the
+   * working server. When the screen shows that session, Gasho opens the tab next to it, or its worktree. Plugin API 1.14.
+   */
+  useRemoveSession(): (input: { machine: string; sessionId: string }) => Promise<RemoveSessionResult>;
+  /**
    * Removes a worktree with the sessions in it (needs the permission "worktree.remove"), as "削除…" of its row in the
    * sidebar does: the sessions end (those started from Gasho are taken off it), then `git worktree remove`. Once it is
    * gone, the sidebar forgets it, and when the screen shows that worktree (one of its sessions, or its tabs, a plugin's
@@ -666,7 +675,10 @@ export interface GashoSdk {
   RepoTabs: ComponentType<{ repos: SessionRepo[]; selected: string; onSelect: (path: string) => void }>;
   /** The frame of a home tile: title and icon. */
   Tile: ComponentType<{ title?: string; icon?: ReactNode; className?: string; children?: ReactNode }>;
-  /** Markdown as the conversation shows it: no HTML, images as links. */
+  /**
+   * GitHub's Markdown of issues, pull requests and comments: also the HTML GitHub shows in them (<img>, <details>,
+   * <br> and the like; no scripts, event attributes or style), and images from http or https.
+   */
   Markdown: ComponentType<{ text: string }>;
   /** "3分前", with the exact time on hover. */
   RelativeTime: ComponentType<{ at: string | number; now: number }>;
@@ -686,6 +698,7 @@ export declare const useSharedState: GashoSdk["useSharedState"];
 export declare const useNavigation: GashoSdk["useNavigation"];
 export declare const useSendInput: GashoSdk["useSendInput"];
 export declare const useLaunchSession: GashoSdk["useLaunchSession"];
+export declare const useRemoveSession: GashoSdk["useRemoveSession"];
 export declare const useRemoveWorktree: GashoSdk["useRemoveWorktree"];
 export declare const removeWorktreeProblem: GashoSdk["removeWorktreeProblem"];
 export declare const useSessionActivity: GashoSdk["useSessionActivity"];

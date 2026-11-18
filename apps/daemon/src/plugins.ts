@@ -19,9 +19,10 @@ import type { FromHost, GitHubAnswer, LocalWire, MachineWire, SessionWire, ToHos
  * The plugin API this gasho-daemon runs plugins of. A daemon part runs only where this is at least its manifest's
  * `api`: 1.10, as worktree.remove (useRemoveWorktree) is answered only from this gasho-daemon on. 1.11 (the panels of
  * a plugin's page) and 1.12 (useSendInput's model, effort and ultracode, which this gasho-daemon switches since 0.6.0)
- * are the screen's alone: this gasho-daemon names them so that a plugin of 1.12 with a daemon part runs.
+ * are the screen's alone, as is 1.14 (useRemoveSession, session.remove having been answered long before): this
+ * gasho-daemon names them so that a plugin of 1.14 with a daemon part runs.
  */
-export const PLUGIN_API = "1.12";
+export const PLUGIN_API = "1.14";
 /** The process of a daemon part: next to this file (.ts when run from the repository, .js in the npm package). */
 const HOST_FILE = fileURLToPath(new URL(`./plugin-host${path.extname(fileURLToPath(import.meta.url))}`, import.meta.url));
 /** How long a new process may take to import the plugin and run its `start`. */
@@ -278,6 +279,8 @@ export class PluginRunner {
   private lastStatus = "";
   /** By plugin and topic ("<id>\0<topic>"). */
   private topics = new Map<string, Topic>();
+  /** gasho-daemon is stopping (stopAll): no daemon part starts any more. */
+  private closed = false;
 
   constructor(opts: PluginRunnerOptions) {
     this.opts = opts;
@@ -304,7 +307,8 @@ export class PluginRunner {
         slot.failed = undefined;
         slot.crashes = [];
       } else if (slot.failed?.retry) slot.failed = undefined;
-      if (slot.proc?.hash === entry.hash) slot.proc.settings(entry.settings);
+      // Also to a version still starting: it was given the settings of when it was started.
+      for (const p of [slot.proc, slot.starting]) if (p?.hash === entry.hash) p.settings(entry.settings);
       void this.ensure(slot);
     }
     for (const [id, slot] of this.slots) {
@@ -382,9 +386,14 @@ export class PluginRunner {
     }
   }
 
-  /** Ends every daemon part (gasho-daemon is stopping). */
+  /**
+   * Ends every daemon part, as gasho-daemon is stopping: each runs its `stop` at once, its calls aborted (a service
+   * manager does not wait the DRAIN_MS of a hot reload), and is killed when it takes longer than STOP_MS. None starts
+   * again.
+   */
   async stopAll(): Promise<void> {
-    await Promise.all([...this.slots.values()].map((s) => this.halt(s)));
+    this.closed = true;
+    await Promise.all([...this.slots.values()].map((s) => this.halt(s, true)));
   }
 
   // ---- events ----
@@ -449,7 +458,7 @@ export class PluginRunner {
   /** Starts the version the Gasho server asked for, unless it runs, is starting, or failed. */
   private async ensure(slot: Slot): Promise<void> {
     const { hash } = slot.entry;
-    if (!slot.entry.run || !this.opts.enabled) return;
+    if (!slot.entry.run || !this.opts.enabled || this.closed) return;
     if (slot.proc?.alive && slot.proc.hash === hash) return;
     if (slot.starting?.hash === hash || slot.failed?.hash === hash) return;
     let file: string;
@@ -463,7 +472,7 @@ export class PluginRunner {
       this.status();
       return;
     }
-    if (slot.entry.hash !== hash || !slot.entry.run || slot.starting?.hash === hash) return;
+    if (this.closed || slot.entry.hash !== hash || !slot.entry.run || slot.starting?.hash === hash) return;
     const local = { folders: this.opts.folders(), dataDir };
     const proc = new HostProcess(slot.id, hash, file, { machine: this.opts.machine(), settings: slot.entry.settings, local }, this.opts.github, this.opts.log);
     // From its start already (what it watches, as it starts).
@@ -522,7 +531,8 @@ export class PluginRunner {
     slot.backoff = Math.min(slot.backoff * 2, MAX_BACKOFF_MS);
   }
 
-  private async halt(slot: Slot): Promise<void> {
+  /** `now`: without waiting for the calls under way (stopAll). */
+  private async halt(slot: Slot, now = false): Promise<void> {
     if (slot.restart) clearTimeout(slot.restart);
     slot.restart = undefined;
     this.dropEvents(slot.id);
@@ -531,7 +541,7 @@ export class PluginRunner {
     slot.proc = undefined;
     slot.starting = undefined;
     this.wake(slot);
-    await Promise.all(procs.map((p) => p.retire()));
+    await Promise.all(procs.map((p) => (now ? p.stop() : p.retire())));
   }
 
   private wake(slot: Slot): void {

@@ -174,7 +174,7 @@ export class GashoHub {
     const name = o.name ?? `e2e-machine-${this.fakeDaemons.length + 1}`;
     const res = await this.pair("machine", name);
     const { deviceId, token } = (await res.json()) as { deviceId: string; token: string };
-    const d = new FakeDaemon({ ...o, name, url: this.url, machineId: deviceId, token, defaultVersion: checkoutVersion("daemon") });
+    const d = new FakeDaemon({ ...o, name, url: this.url, machineId: deviceId, token, defaultVersion: checkoutVersion("daemon"), fakeDaemons: this.fakeDaemons });
     this.fakeDaemons.push(d);
     await d.connect();
     return d;

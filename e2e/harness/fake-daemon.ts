@@ -93,9 +93,12 @@ export class FakeDaemon {
   private ws: WebSocket | undefined;
   private handlers = new Map<string, (msg: HubToDaemon) => Answer | Promise<Answer>>();
   private waiters = new Set<() => void>();
+  /** GashoHub.fakeDaemons, which the one startAgain makes is added to, so that GashoHub.stop disconnects it too. */
+  private fakeDaemons: FakeDaemon[] | undefined;
 
-  constructor(o: FakeDaemonOptions & { url: string; machineId: string; token: string; defaultVersion: string }) {
+  constructor(o: FakeDaemonOptions & { url: string; machineId: string; token: string; defaultVersion: string; fakeDaemons?: FakeDaemon[] }) {
     this.name = o.name ?? "e2e-machine";
+    this.fakeDaemons = o.fakeDaemons;
     this.version = o.version ?? o.defaultVersion;
     this.machineId = o.machineId;
     this.token = o.token;
@@ -165,7 +168,9 @@ export class FakeDaemon {
       sessions: this.sessions,
       repos: this.repos,
       transcripts: this.transcripts,
+      ...(this.fakeDaemons ? { fakeDaemons: this.fakeDaemons } : {}),
     });
+    this.fakeDaemons?.push(d);
     await d.connect();
     return d;
   }

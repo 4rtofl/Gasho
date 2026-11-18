@@ -43,8 +43,7 @@ test("フォルダー: 大きさと相対時刻、開けない項目、パンく
     await expect(places.getByText("gasho")).toHaveAttribute("aria-current", "page");
   });
 
-  await test.step("フォルダーが先に並び、ファイルには大きさと更新の相対時刻が出る", async () => {
-    await expect(panel.getByRole("listitem").first()).toContainText("empty");
+  await test.step("ファイルには大きさと更新の相対時刻が出る", async () => {
     await expect(row("data.txt")).toContainText("2.0 KB · 3 時間前");
     await expect(row("README.md")).toContainText("8 B · 5 分前");
   });

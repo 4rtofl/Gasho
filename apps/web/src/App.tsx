@@ -23,7 +23,7 @@ import { TAPS, countTap, type GasshoFrom, type Taps } from "@/lib/gassho";
 import { DESKTOP, useMediaQuery, useWindowWidth } from "@/lib/media";
 import { arrangeSessions, rememberSessions, reorderShown, useSavedOrder } from "@/lib/order";
 import { updateCount } from "@/lib/plugin-catalog";
-import { go, isOldGitHubLink, useRoute, type SessionPanel } from "@/lib/route";
+import { go, isOldGitHubLink, pageOf, useRoute, type SessionPanel } from "@/lib/route";
 import { rememberWorktrees, useRememberedWorktrees } from "@/lib/remembered-worktrees";
 import {
   arrangeCategories,
@@ -207,6 +207,13 @@ export function App() {
   useEffect(() => {
     if (isOldGitHubLink(location.hash)) go(route, { replace: true });
   }, [route]);
+  // The pages scroll in `main`, which stays as they change: another page starts at its top. A layout effect, so that it
+  // runs before the pages' own effects, which scroll to a section of theirs (#/devices/updates).
+  const main = useRef<HTMLElement>(null);
+  const page = pageOf(route);
+  useLayoutEffect(() => {
+    if (main.current) main.current.scrollTop = 0;
+  }, [page]);
   const { auth, me, machines, notifications, connected, plugins, catalog, latest, server, outdated } = useAppState();
   const [mobileOpen, setMobileOpen] = useState(false);
   // The logo's easter egg while it is out (where the logo's 🙏 was when it started), drawn over everything.
@@ -667,7 +674,7 @@ export function App() {
           {/* layoutScroll: the home screen's tiles slide to new places inside it, also while it scrolls. relative: an
               absolutely placed element with no placed parent of its own (an sr-only status line) is placed in here and
               scrolls with the screen. Otherwise it is placed on the page and makes the page longer than the window. */}
-          <motion.main layoutScroll className="relative min-h-0 min-w-0 flex-1 overflow-y-auto">
+          <motion.main ref={main} layoutScroll className="relative min-h-0 min-w-0 flex-1 overflow-y-auto">
             {route.name === "home" && <HomeView />}
             {route.name === "devices" && <DevicesView />}
             {route.name === "settings" && <SettingsView />}

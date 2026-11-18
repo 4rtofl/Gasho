@@ -136,6 +136,7 @@ test.describe("部品", () => {
       const button = main.getByRole("button", { name: "E2E 押す" });
       await button.click();
       await expect(button).toBeDisabled();
+      await page.evaluate("window.e2ePartsFail()");
       await expect(main.getByText("押せませんでした")).toBeVisible();
       await expect(button).toBeEnabled();
       // By now the http link would have opened a tab too.

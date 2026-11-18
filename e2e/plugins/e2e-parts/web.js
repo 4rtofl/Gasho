@@ -74,7 +74,11 @@ export default sdk.definePlugin({
     {
       id: "click",
       label: "E2E 押す",
-      onClick: () => new Promise((_, reject) => setTimeout(() => reject(new Error("押せませんでした")), 1000)),
+      // Fails when the test calls window.e2ePartsFail, so the test sees the button disabled however slow the machine is.
+      onClick: () =>
+        new Promise((_, reject) => {
+          globalThis.e2ePartsFail = () => reject(new Error("押せませんでした"));
+        }),
     },
     { id: "missing", label: "E2E 無いパネル", panel: { id: "nothing" } },
   ],

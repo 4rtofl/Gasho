@@ -10,10 +10,11 @@ import { credentialsPath, loadCredentials, register, saveCredentials } from "./c
 import { DAEMON_VERSION, Daemon } from "./daemon.ts";
 import { hooksConfig, installHooks, SECRET_ENV } from "./hooks.ts";
 import { commandOf, type Install, installOf, layoutOf, serviceCommand } from "./install.ts";
-import { checkVersion, currentVersion, installVersion, npmOf, recordUpdate, runAsService, switchTo } from "./self-update.ts";
+import { checkVersion, currentVersion, installVersion, npmOf, recordUpdate, runAsService, startOnTrial, stoppedOnTrial, switchTo, UPDATE_EXIT_CODE } from "./self-update.ts";
 import { stableNode } from "./node-path.ts";
 import { activateCommands, doctor, formatChecks, launchdPlist, serviceFile, servicePath, systemdUnit } from "./setup.ts";
 import { attach, listTerminals } from "./terminal.ts";
+import { log } from "./util.ts";
 
 // How this copy was installed (a clone, npx, npm install -g, or `service install`): the command to suggest and what a
 // service runs.
@@ -82,10 +83,21 @@ try {
       break;
     }
     case "run": {
+      const service = await runAsService();
+      const counted = install.kind === "managed" && service;
+      let daemon: Daemon | undefined;
+      // Stopped by the service manager, kill or Ctrl+C: the plugins' daemon parts stop first. On trial, a stop is no
+      // failure; this is set before startOnTrial counts the start, so that one right after it is not taken for one.
+      for (const signal of ["SIGTERM", "SIGINT"] as const) {
+        process.on(signal, () => {
+          if (counted) stoppedOnTrial(layout, DAEMON_VERSION);
+          void (daemon ? daemon.exit(0) : process.exit(0));
+        });
+      }
+      // After an update, a version on trial that ended before it was confirmed goes back first (self-update.ts).
+      if (counted && (await startOnTrial(layout, DAEMON_VERSION, log))) process.exit(UPDATE_EXIT_CODE);
       const creds = await loadCredentials(credentialsPath());
-      const daemon = new Daemon(loadConfig(creds), { update: { install, layout, service: await runAsService() } });
-      // Stopped by the service manager, kill or Ctrl+C: the plugins' daemon parts stop first.
-      for (const signal of ["SIGTERM", "SIGINT"] as const) process.on(signal, () => void daemon.exit(0));
+      daemon = new Daemon(loadConfig(creds), { update: { install, layout, service } });
       await daemon.start();
       break;
     }

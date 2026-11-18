@@ -27,11 +27,26 @@ export interface Layout {
   current: string;
   /** The last update: { from, to, at } (see self-update.ts). */
   updateFile: string;
+  /** An update on trial: { from, to, at, starts } (see self-update.ts). */
+  trialFile: string;
+  /** The last update that went back by itself: { from, to, error, at }. */
+  rollbackFile: string;
+  /** Why the version on trial ended: { message, at }. */
+  lastErrorFile: string;
 }
 
 export function layoutOf(env: NodeJS.ProcessEnv = process.env): Layout {
   const root = env.GASHO_DAEMON_HOME || path.join(env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "gasho", "daemon");
-  return { root, versions: path.join(root, "versions"), current: path.join(root, "current"), updateFile: path.join(root, "update.json") };
+  const at = (name: string) => path.join(root, name);
+  return {
+    root,
+    versions: at("versions"),
+    current: at("current"),
+    updateFile: at("update.json"),
+    trialFile: at("trial.json"),
+    rollbackFile: at("rollback.json"),
+    lastErrorFile: at("last-error.json"),
+  };
 }
 
 /** A version as the package registry has it, and as a folder of `versions` is named: x.y.z. */

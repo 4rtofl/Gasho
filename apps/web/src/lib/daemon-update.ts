@@ -11,7 +11,19 @@ export const STEP_LABEL: Record<DaemonUpdateStep, string> = {
   check: "起動できるか確かめています",
   wait: "送るのを待っている入力を、送り終えるまで待っています",
   restart: "切り替えて、動かし直しています",
+  trial: "新しいバージョンを確かめています",
 };
+
+/** A trial's length as the screen says it: in minutes when whole ones, else in seconds. */
+export function trialLength(ms: number): string {
+  return ms % 60_000 === 0 ? `${ms / 60_000}分` : `${Math.round(ms / 1000)}秒`;
+}
+
+/** What a working server's row says while its new gasho-daemon is on trial: how long, when gasho-daemon says it. */
+export function trialLabel(trialMs: number | undefined): string {
+  const length = trialMs !== undefined ? `${trialLength(trialMs)}ほど。` : "";
+  return `${STEP_LABEL.trial}（${length}起動できなければ、自動で前のバージョンに戻ります）`;
+}
 
 /** -1, 0 or 1 as `a` is older than, the same as, or newer than `b` (x.y.z; a missing part counts as 0). */
 export function compareVersions(a: string, b: string): number {
@@ -27,8 +39,18 @@ export function compareVersions(a: string, b: string): number {
 /** The version a working server's gasho-daemon can be updated to now, if any. */
 export function updateTo(m: MachineInfo, latest: LatestVersions | undefined): string | undefined {
   const to = latest?.daemon;
-  if (!to || !m.connected || !m.update?.canUpdate || m.update.progress) return undefined;
+  const u = m.update;
+  if (!to || !m.connected || !u?.canUpdate || (u.progress && u.progress.step !== "trial")) return undefined;
   return !m.daemonVersion || compareVersions(to, m.daemonVersion) > 0 ? to : undefined;
+}
+
+/**
+ * The version the sidebar tells of (its 端末 badge): one to update to, unless gasho-daemon went back by itself from that
+ * very version (it did not start; the row says why and still offers it).
+ */
+export function updateToTell(m: MachineInfo, latest: LatestVersions | undefined): string | undefined {
+  const to = updateTo(m, latest);
+  return to && m.update?.rolledBack?.from !== to ? to : undefined;
 }
 
 /** Whether a newer gasho-daemon is published than the one a working server runs (updatable from Gasho or not). */

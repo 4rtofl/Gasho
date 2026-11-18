@@ -418,6 +418,7 @@ test("gasho-daemon ends (an update, a signal) only once its plugins' daemon part
     pluginCacheDir: path.join(dir, "plugin-cache"),
     pluginDataDir: dataDir,
     runPlugins: true,
+    trialMs: 60_000,
   }) as unknown as Record<string, any>;
   let running = false;
   d.hub = {

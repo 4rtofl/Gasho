@@ -139,7 +139,9 @@ export function versionAtLeast(version: string | undefined, major: number, minor
 
 /** A version of gasho-daemon (daemon.update). */
 const VERSION_RE = /^\d{1,9}\.\d{1,9}\.\d{1,9}$/;
-const UPDATE_STEPS = new Set(["install", "check", "wait", "restart"]);
+const UPDATE_STEPS = new Set(["install", "check", "wait", "restart", "trial"]);
+/** The longest trial a gasho-daemon may say it has (an hour). */
+const TRIAL_MAX_MS = 3600_000;
 /** The command that installs the latest gasho-daemon as a service that Gasho can update. */
 const DAEMON_INSTALL_COMMAND = "npx @4rtofl/gasho-daemon@latest service install";
 /** Said when a gasho-daemon does not say whether Gasho can update it (one from before updates from Gasho). */
@@ -186,11 +188,16 @@ export function updateInfoOf(u: unknown): DaemonUpdateInfo | undefined {
   const at = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
   const p = (x.progress ?? {}) as Record<string, unknown>;
   const f = (x.failed ?? {}) as Record<string, unknown>;
+  const b = (x.rolledBack ?? {}) as Record<string, unknown>;
   const pv = version(p.version);
   const pat = at(p.at);
   const fv = version(f.version);
   const fe = text(f.error, 2000);
   const fat = at(f.at);
+  const bfrom = version(b.from);
+  const bto = version(b.to);
+  const bat = at(b.at);
+  const be = text(b.error, 2000);
   const installed = Array.isArray(x.installed) ? (x.installed.filter((v) => version(v) !== undefined).slice(0, 50) as string[]) : [];
   const step = typeof p.step === "string" && UPDATE_STEPS.has(p.step) ? (p.step as NonNullable<DaemonUpdateInfo["progress"]>["step"]) : undefined;
   return {
@@ -201,6 +208,8 @@ export function updateInfoOf(u: unknown): DaemonUpdateInfo | undefined {
     previous: version(x.previous),
     progress: pv && step && pat !== undefined ? { version: pv, step, at: pat } : undefined,
     failed: fv && fe && fat !== undefined ? { version: fv, error: fe, at: fat } : undefined,
+    rolledBack: bfrom && bto && bat !== undefined ? { from: bfrom, to: bto, ...(be ? { error: be } : {}), at: bat } : undefined,
+    trialMs: typeof x.trialMs === "number" && x.trialMs > 0 && x.trialMs <= TRIAL_MAX_MS ? x.trialMs : undefined,
   };
 }
 

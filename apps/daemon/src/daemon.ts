@@ -179,6 +179,11 @@ const MODELS_MAX_AGE_MS = 24 * 3600_000;
 const MODELS_PROBE_INTERVAL_MS = 10 * 60_000;
 /** How long after starting the folders of versions no longer used are removed (see Updater.prune). */
 const PRUNE_VERSIONS_MS = 2 * 60_000;
+/**
+ * How long a version on trial may take to start: past it, the start is taken to hang. A start may be slow without being
+ * a failure, as each terminal that does not answer is waited for (Terminals.live).
+ */
+export const TRIAL_START_LIMIT_MS = 5 * 60_000;
 
 /** How this gasho-daemon was installed and runs, for updates from Gasho (see self-update.ts). */
 export interface UpdateSetup {
@@ -310,8 +315,14 @@ export class Daemon {
       changed: () => this.emitCapabilities(),
       exit: (code) => void this.exit(code),
       log: (s) => log(s),
+      trialMs: cfg.trialMs,
     });
-    this.terminals = new SessionTerminals(new Terminals({ stateDir: cfg.stateDir, env: cleanEnv() }), new Zellij(cleanEnv()));
+    // On Linux, run as the service means in its cgroup, which systemd stops as a whole (terminal.ts).
+    const inService = setup.service && process.platform === "linux";
+    this.terminals = new SessionTerminals(
+      new Terminals({ stateDir: cfg.stateDir, env: cleanEnv(), inService, log: (s) => log(s) }),
+      new Zellij(cleanEnv()),
+    );
     this.managed = new ManagedSessions(path.join(cfg.stateDir, "managed.json"));
     this.registered = new RegisteredRepos(path.join(cfg.stateDir, "repos.json"));
     this.plugins = new PluginRunner({
@@ -343,6 +354,8 @@ export class Daemon {
       onRejected: (reason) => {
         log(`the Gasho server rejected this machine (${reason}). Its registration was revoked or is unknown;`);
         log("register again: node src/cli.ts register --server <url> --code <code>");
+        // Not this version's failure: the version before would be rejected all the same.
+        this.updater.stoppedOnTrial();
         void this.exit(1);
       },
     });
@@ -366,6 +379,15 @@ export class Daemon {
   }
 
   async start(): Promise<void> {
+    await this.updater.load();
+    if (!this.updater.onTrial()) {
+      setTimeout(() => void this.updater.prune().catch((e: unknown) => log("could not remove the versions no longer used", e)), PRUNE_VERSIONS_MS).unref();
+      return this.serve();
+    }
+    await this.serveOnTrial();
+  }
+
+  private async serve(): Promise<void> {
     log(`machine ${this.cfg.machineId}, Gasho server ${this.cfg.hubUrl}`);
     if (!this.cfg.hookSecret) log("GASHO_HOOK_SECRET is not set; hook requests are accepted without a secret");
     this.canLaunch = await this.terminals.builtIn.available();
@@ -395,8 +417,6 @@ export class Daemon {
       .catch(() => undefined);
     await this.refreshFolders();
     setInterval(() => void this.refreshFolders(), FOLDERS_REFRESH_MS).unref();
-    await this.updater.load();
-    setTimeout(() => void this.updater.prune().catch((e: unknown) => log("could not remove the versions no longer used", e)), PRUNE_VERSIONS_MS).unref();
     await this.registered.load();
     await this.refreshRepos();
     setInterval(() => void this.refreshRepos(), REGISTERED_REFRESH_MS).unref();
@@ -444,6 +464,52 @@ export class Daemon {
       log("cannot watch the sessions directory; relying on polling", e);
     }
     void this.refresh();
+  }
+
+  /**
+   * This version on trial, just started by an update (self-update.ts): it is confirmed once it has been up for a while
+   * after its start, and its hook server answers. Until then an exception, a failure to start or a start that does not
+   * end in TRIAL_START_LIMIT_MS ends it with why, and its next start goes back to the version before; a stop (SIGTERM,
+   * a restart of the machine) is not a failure (cli.ts), and the next start tries it again.
+   */
+  private async serveOnTrial(): Promise<void> {
+    let failed = false;
+    const fail = (e: unknown) => {
+      if (failed) return;
+      failed = true;
+      this.updater.recordFailure(e instanceof Error ? e.message : String(e));
+      console.error(new Date().toISOString(), "[gasho-daemon] stopped on trial:", e);
+      void this.exit(1);
+    };
+    process.on("uncaughtException", fail);
+    const ms = this.updater.trialMs();
+    log(`on trial: confirmed ${Math.round(ms / 1000)} s after it has started, if all is well`);
+    const limit = setTimeout(
+      () => fail(new Error(`起動が${TRIAL_START_LIMIT_MS / 60_000}分のうちに終わりませんでした。`)),
+      TRIAL_START_LIMIT_MS,
+    );
+    // Not left to the hook server's check at the end of the trial, which would go back without the real reason.
+    await this.serve().catch(fail);
+    clearTimeout(limit);
+    if (failed) return;
+    setTimeout(() => {
+      void (async () => {
+        const problem = await this.trialProblem();
+        if (problem) throw new Error(problem);
+        await this.updater.confirm();
+        process.off("uncaughtException", fail);
+      })().catch(fail);
+    }, ms);
+  }
+
+  /** What keeps this version on trial from being confirmed: its hook server does not answer (any answer counts). */
+  private async trialProblem(): Promise<string | undefined> {
+    try {
+      await fetch(`http://127.0.0.1:${this.cfg.hookPort}/`, { signal: AbortSignal.timeout(10_000) });
+      return undefined;
+    } catch (e) {
+      return `hooks の待ち受け（127.0.0.1:${this.cfg.hookPort}）が答えませんでした：${e instanceof Error ? e.message : String(e)}`;
+    }
   }
 
   /**

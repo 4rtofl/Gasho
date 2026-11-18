@@ -7,34 +7,51 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { Daemon } from "../src/daemon.ts";
-import { dialogOpen, permissionDialog, readScreen } from "../src/managed.ts";
-import { dialogCall } from "../src/permissions.ts";
+import { dialogOpen, permissionDialog, permissionDialogText, readScreen } from "../src/managed.ts";
+import { dialogCall, shownCall } from "../src/permissions.ts";
 import { emptyMeta, type OpenCall, parseRecord } from "../src/transcript.ts";
 
 const RULE = "─".repeat(50);
+const DASHES = "╌".repeat(50);
 const SID = "11111111-2222-3333-4444-555555555555";
-const COMMAND = "python3 - <<'EOF' ... EOF";
+const FIRST = "touch first-aaa.txt";
+const SECOND = "touch second-bbb.txt";
 
-/** Claude Code 2.1.325's dialog for a command in a pane 50 columns wide: the long choice wraps. */
-function dialog(cursor: number): string {
-  const choices = [
-    ["1. Yes"],
-    ["2. Yes, and don't ask again for python3", "   commands in /home/rg/repos/Gasho"],
-    ["3. No, and tell Claude what to do differently", "   (esc)"],
-  ];
+/** The question and choices at the bottom of the screen, with the cursor on one: long choices wrap. */
+function bottom(question: string[], choices: string[][], cursor: number): string[] {
   return [
-    " ▐▛███▛█   Claude Code v2.1.325",
-    "● Bash(python3 - <<'EOF' ...)",
-    RULE,
-    " Bash command",
-    "",
-    `   ${COMMAND}`,
-    "",
-    " Do you want to proceed?",
+    ...question,
     ...choices.flatMap((lines, i) => lines.map((l, j) => (j === 0 ? `${i === cursor ? " ❯ " : "   "}${l}` : `   ${l}`))),
-    "",
     " Esc to cancel · Tab to amend",
     "",
+  ];
+}
+
+const COMMAND_CHOICES = [
+  ["1. Yes"],
+  ["2. Yes, and always allow access to", "   /home/rg/repos/Gasho from this project"],
+  ["3. Yes, and switch to auto mode · auto mode", "   handles these prompts for you"],
+  ["4. No"],
+];
+const FILE_CHOICES = [["1. Yes"], ["2. Yes, and switch to accept edits", "   (auto-approve file edits and common file", "   commands) for this session (shift+tab)"], ["3. No"]];
+
+/** Claude Code 2.1.326's dialog for a command, in a pane 50 columns wide, while Claude has made two at once. */
+function dialog(cursor: number, command = FIRST): string {
+  return [
+    " ▐▛███▛█   Claude Code v2.1.326",
+    `⏺ Bash(${FIRST})`,
+    "  ⎿  Waiting…",
+    `⏺ Bash(${SECOND})`,
+    "  ⎿  Waiting…",
+    RULE,
+    " Bash command",
+    " Tip: auto mode handles these prompts for you —",
+    ' choose "switch to auto mode" below',
+    " Create a file",
+    DASHES,
+    ` ${command}`,
+    DASHES,
+    ...bottom([" Do you want to proceed?"], COMMAND_CHOICES, cursor),
   ].join("\n");
 }
 
@@ -44,11 +61,12 @@ test("the dialog's choices are read from the bottom of the screen, whatever the 
     options?.map((o) => [o.n, o.label, o.selected]),
     [
       [1, "Yes", true],
-      [2, "Yes, and don't ask again for python3", false],
-      [3, "No, and tell Claude what to do differently", false],
+      [2, "Yes, and always allow access to", false],
+      [3, "Yes, and switch to auto mode · auto mode", false],
+      [4, "No", false],
     ],
   );
-  assert.equal(permissionDialog(dialog(2))?.[2]?.selected, true);
+  assert.equal(permissionDialog(dialog(3))?.[3]?.selected, true);
   const edit = dialog(0).replace(" Do you want to proceed?", " Do you want to make this edit to managed.ts?");
   assert.ok(permissionDialog(edit));
   // An edit's dialog keeps typed input away like a command's.
@@ -60,23 +78,155 @@ test("the dialog's choices are read from the bottom of the screen, whatever the 
   assert.equal(permissionDialog(dialog(0).replace("1. Yes", "1. Opus")), undefined);
 });
 
+const call = (toolUseId: string, name: string, input: Record<string, unknown>): OpenCall => ({ toolUseId, name, input, cwd: "/w" });
+const CALLS = [call("toolu_3", "Bash", { command: FIRST }), call("toolu_4", "Bash", { command: SECOND })];
+const text = (screen: string) => permissionDialogText(screen) ?? assert.fail("no dialog on the screen");
+const shownId = (calls: OpenCall[], screen: string) => shownCall(calls, text(screen))?.toolUseId;
+
+test("the dialog's text tells which of the calls without a result it is about, or nothing is", () => {
+  // Claude Code asks about calls made at once in their order; the card follows the screen once it has been read.
+  assert.equal(dialogCall(CALLS)?.toolUseId, "toolu_3");
+  assert.equal(dialogCall(CALLS, text(dialog(0, SECOND)))?.toolUseId, "toolu_4");
+  assert.equal(shownId(CALLS, dialog(0)), "toolu_3");
+  assert.equal(shownId(CALLS, dialog(0, "touch third.txt")), undefined);
+  // The command on the screen is the whole command: one that only starts like it is another.
+  assert.equal(shownId([call("toolu_5", "Bash", { command: `${FIRST} && rm -rf build` })], dialog(0)), undefined);
+  // The same call twice is one; calls that differ and both fit are none.
+  assert.equal(shownId([...CALLS, call("toolu_5", "Bash", { command: FIRST })], dialog(0)), "toolu_3");
+  // Spaces within a line are compared: only where a line wraps may one be left out.
+  assert.equal(shownId([call("toolu_5", "Bash", { command: "touch first- aaa.txt" })], dialog(0)), undefined);
+  assert.equal(shownId([call("toolu_5", "Bash", { command: "rm -rf build /" })], dialog(0, "rm -rf build/")), undefined);
+
+  // A command of more than one line: each has "│" on its left, and long ones wrap between words or inside one.
+  const lines = "printf 'this is a very long string that will certainly wrap across lines in a narrow terminal %s' first > long-output.txt && mkdir -p sub/dir\ncat long-output.txt";
+  const wrapped = [
+    RULE,
+    " Bash command",
+    DASHES,
+    " │ printf 'this is a very long string that will",
+    " │ certainly wrap across lines in a narrow",
+    " │ terminal %s' first > long-output.txt && mkdir",
+    " │ -p sub/dir",
+    " │ cat long-output.txt",
+    DASHES,
+    ...bottom([" Do you want to proceed?"], COMMAND_CHOICES, 0),
+  ].join("\n");
+  assert.equal(shownId([call("toolu_6", "Bash", { command: lines })], wrapped), "toolu_6");
+
+  // A script taller than the screen: its start is above it, and what the screen shows must be its end. Two scripts
+  // that end alike are none.
+  const script = (first: string) => [first, ...Array.from({ length: 60 }, (_, i) => `print(${i + 1})`), "EOF"].join("\n");
+  const cut = [
+    ...script("python3 - <<'EOF'").split("\n").slice(24).map((l) => ` │ ${l}`),
+    DASHES,
+    " This command requires approval",
+    ...bottom([" Do you want to proceed?"], COMMAND_CHOICES, 0),
+  ].join("\n");
+  assert.equal(text(cut).top, false);
+  const heredoc = call("toolu_7", "Bash", { command: script("python3 - <<'EOF'") });
+  assert.equal(shownId([heredoc], cut), "toolu_7");
+  assert.equal(shownId([heredoc, call("toolu_8", "Bash", { command: script("python3 -u - <<'EOF'") })], cut), undefined);
+  assert.equal(shownId([call("toolu_8", "Bash", { command: script("python3 - <<'EOF'").replace("print(40)", "print(41)") })], cut), undefined);
+
+  // A file's tool: the path below the heading is the file's, and the question ends with its name.
+  const edit = call("toolu_9", "Edit", { file_path: "/w/notes.txt", old_string: "line two", new_string: "line 2" });
+  const write = call("toolu_10", "Write", { file_path: "/w/new-file.txt", content: "hello" });
+  const editing = [
+    `⏺ Update(notes.txt)`,
+    `⏺ Write(new-file.txt)`,
+    RULE,
+    " Edit file",
+    " notes.txt",
+    DASHES,
+    " 1  line one",
+    " 2 -line two",
+    " 2 +line 2",
+    " 3  line three",
+    DASHES,
+    ...bottom([" Do you want to make this edit to notes.txt?"], FILE_CHOICES, 0),
+  ].join("\n");
+  assert.equal(shownId([edit, write], editing), "toolu_9");
+  const creating = [...Array.from({ length: 30 }, (_, i) => `  ${i + 41} ${i + 41}`), DASHES, ...bottom([" Do you want to create new-file.txt?"], FILE_CHOICES, 0)].join("\n");
+  // When the dialog's top is above the screen, the path is not seen: nothing fits.
+  assert.equal(shownId([edit, write], creating), undefined);
+  // Another notes.txt has another path below the heading.
+  const other = call("toolu_11", "Edit", { file_path: "/w/sub/notes.txt", old_string: "a", new_string: "b" });
+  assert.equal(shownId([edit, other], editing), "toolu_9");
+  assert.equal(shownId([edit, other], editing.replace(" notes.txt\n", " sub/notes.txt\n")), "toolu_11");
+  // The question tells the file's whole name and what the tool does to it.
+  assert.equal(shownId([edit], editing.replace("edit to notes.txt?", "edit to mynotes.txt?")), undefined);
+  assert.equal(shownId([call("toolu_11", "Write", { file_path: "/w/notes.txt", content: "a" })], editing), undefined);
+  // The count of dialogs waiting in a row is not part of the heading.
+  assert.equal(shownId([edit], editing.replace(" Edit file", " Edit file      1 of 2")), "toolu_9");
+
+  // A fetch shows its URL; other tools their name and the texts of their input.
+  const fetching = (...url: string[]) =>
+    [
+      RULE,
+      " Fetch",
+      " Claude wants to fetch content from example.com",
+      DASHES,
+      ...url,
+      " prompt: What is the title of this page? Answer",
+      " with one word only.",
+      DASHES,
+      ...bottom([" Do you want to allow Claude to fetch this", " content?"], [["1. Yes"], ["2. Yes, and don't ask again for example.com"], ["3. No, and tell Claude what to do differently", "   (esc)"]], 0),
+    ].join("\n");
+  const fetch = (url: string) => call("toolu_12", "WebFetch", { url, prompt: "What is the title of this page?" });
+  assert.equal(shownId([fetch("https://example.com/")], fetching(" url: https://example.com/")), "toolu_12");
+  assert.equal(shownId([fetch("https://example.org/")], fetching(" url: https://example.com/")), undefined);
+  // The URL on the screen is the whole URL, also when it wraps.
+  assert.equal(shownId([fetch("https://example.com/")], fetching(" url: https://example.com/admin/delete")), undefined);
+  const long = "https://example.com/docs/a-rather-long-path/that-wraps/index.html";
+  assert.equal(shownId([fetch(long)], fetching(` url: ${long.slice(0, 44)}`, ` ${long.slice(44)}`)), "toolu_12");
+  const reading = [RULE, " Read file", DASHES, " Read(/etc/hosts)", DASHES, ...bottom([" Do you want to proceed?"], [["1. Yes"], ["2. Yes, allow reading from /etc and", "   /private/etc during this session"], ["3. No"]], 0)].join("\n");
+  assert.equal(shownId([call("toolu_13", "Read", { file_path: "/etc/passwd" }), call("toolu_14", "Read", { file_path: "/etc/hosts" })], reading), "toolu_14");
+  // The whole "Read(path)" is compared, also when a long path wraps inside a word.
+  assert.equal(shownId([call("toolu_14", "Read", { file_path: "/etc/host" })], reading), undefined);
+  const far = "/private/tmp/claude-501/-Users-someone-Project/outside/notes.txt";
+  const readingFar = reading.replace(" Read(/etc/hosts)", [` Read(${far.slice(0, 43)}`, ` ${far.slice(43)})`].join("\n"));
+  assert.equal(shownId([call("toolu_14", "Read", { file_path: far })], readingFar), "toolu_14");
+  // The heading tells the kind of dialog: a command's description may hold another tool's name and input.
+  const hosts = [
+    RULE,
+    " Bash command",
+    " Tip: auto mode handles these prompts for you —",
+    ' choose "switch to auto mode" below',
+    " Read the hosts file",
+    DASHES,
+    " cat /etc/hosts",
+    DASHES,
+    ...bottom([" Do you want to proceed?"], COMMAND_CHOICES, 0),
+  ].join("\n");
+  const cat = call("toolu_15", "Bash", { command: "cat /etc/hosts", description: "Read the hosts file" });
+  assert.equal(shownId([call("toolu_14", "Read", { file_path: "/etc/hosts" })], hosts), undefined);
+  assert.equal(shownId([cat], hosts), "toolu_15");
+  // A subagent's dialog (as Claude Code 2.1.327 shows it) is about a call of its own transcript: none of the session's.
+  assert.equal(shownId([cat], hosts.replace(" Bash command", " Bash command · from the general-purpose agent")), undefined);
+  assert.equal(shownId([cat], hosts.replace(" Bash command", " Bash command\n · from the agent-with-a-name-too-long-for-the-line\n agent")), undefined);
+  const agentReading = reading.replace(" Read file", " Read file · from the general-purpose agent      1 of 2");
+  assert.equal(shownId([call("toolu_14", "Read", { file_path: "/etc/hosts" })], agentReading), undefined);
+});
+
 test("the transcript keeps the calls without a result until the person writes", () => {
   const meta = emptyMeta();
   // Read anew each time: an assertion that it is undefined would narrow `meta.openCalls` for good.
   const open = (): OpenCall[] | undefined => meta.openCalls;
   const call = (id: string, name: string, input: Record<string, unknown>) =>
-    parseRecord({ type: "assistant", uuid: id, timestamp: "2026-11-14T17:13:11.780Z", message: { role: "assistant", content: [{ type: "tool_use", id, name, input }] } }, meta);
+    parseRecord({ type: "assistant", uuid: id, timestamp: "2026-11-14T17:13:11.780Z", cwd: "/w", message: { role: "assistant", content: [{ type: "tool_use", id, name, input }] } }, meta);
   const result = (id: string) =>
     parseRecord({ type: "user", uuid: `r${id}`, message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] } }, meta);
   call("toolu_1", "Read", { file_path: "/a" });
   result("toolu_1");
   assert.equal(meta.openCalls, undefined);
   call("toolu_2", "Agent", { prompt: "調べて" });
-  call("toolu_3", "Bash", { command: COMMAND });
+  call("toolu_3", "Bash", { command: FIRST });
   assert.deepEqual(
     open()?.map((c) => c.toolUseId),
     ["toolu_2", "toolu_3"],
   );
+  // A dialog shows paths from the folder Claude was in when it made the call.
+  assert.equal(open()?.[1]?.cwd, "/w");
   // A subagent asks nothing in the main transcript: the dialog is the command's.
   assert.equal(dialogCall(open())?.toolUseId, "toolu_3");
   result("toolu_3");
@@ -87,21 +237,25 @@ test("the transcript keeps the calls without a result until the person writes", 
 
 class FakeClaude {
   cursor = 0;
+  /** The command its dialog asks about. */
+  command = FIRST;
   open = true;
   keys: string[] = [];
   answered?: string;
+  onKey?: () => void;
   key(key: string): void {
     this.keys.push(key);
     if (!this.open) return;
     if (key === "Up") this.cursor = Math.max(0, this.cursor - 1);
-    else if (key === "Down") this.cursor = Math.min(2, this.cursor + 1);
+    else if (key === "Down") this.cursor = Math.min(3, this.cursor + 1);
     else if (key === "Enter" || key === "Esc") {
-      this.answered = key === "Esc" ? "no" : ["yes", "always", "no"][this.cursor];
+      this.answered = key === "Esc" ? "no" : ["yes", "always", "auto", "no"][this.cursor];
       this.open = false;
     }
+    this.onKey?.();
   }
   ansi(): string {
-    return this.open ? dialog(this.cursor) : [" ▐▛███▛█   Claude Code v2.1.325", RULE, "❯ ", RULE, "  ⏵⏵ auto mode on", ""].join("\n");
+    return this.open ? dialog(this.cursor, this.command) : [" ▐▛███▛█   Claude Code v2.1.326", RULE, "❯ ", RULE, "  ⏵⏵ auto mode on", ""].join("\n");
   }
 }
 
@@ -132,7 +286,7 @@ async function setup(c: FakeClaude) {
   d.managed.add({ sessionId: SID, terminal: "z", pid: 1, cwd: dir, name: "fake", launchedAt: 1 });
   d.tracked.set(SID, {
     info: { sessionId: SID, cwd: dir, status: "waiting", waitingFor: "permission prompt", rcMode: "none", prLinks: [] },
-    meta: { prLinks: [], openCalls: [{ toolUseId: "toolu_3", name: "Bash", input: { command: COMMAND }, at: 5 }] },
+    meta: { prLinks: [], openCalls: CALLS.map((c) => ({ ...c, at: 5 })) },
   });
   return { d, done: () => fs.rm(dir, { recursive: true, force: true }) };
 }
@@ -155,6 +309,9 @@ test("the open call is shown while the session waits on a permission prompt, onl
     assert.equal(r?.id, "dialog:toolu_3");
     assert.equal(r?.toolName, "Bash");
     assert.equal(r?.always, undefined);
+    // Once the screen has been read, the call its dialog is about.
+    t.dialog = permissionDialogText(dialog(0, SECOND));
+    assert.equal(d.openPermission(t)?.[0]?.id, "dialog:toolu_4");
     t.info.waitingFor = "input needed";
     assert.equal(d.openPermission(t), undefined);
     t.info.waitingFor = "permission prompt";
@@ -194,6 +351,29 @@ test("denying presses Esc and sends a message given as the next message; other a
     assert.deepEqual(c.keys, ["Esc"]);
     assert.equal(c.answered, "no");
     assert.equal(d.managed.pending(SID), 1);
+  } finally {
+    await done();
+  }
+});
+
+test("nothing is pressed while the dialog is about another call than the card's", async () => {
+  const c = new FakeClaude();
+  c.cursor = 2;
+  const { d, done } = await setup(c);
+  try {
+    const t = d.tracked.get(SID);
+    // The card shows the second call (the screen was read while its dialog was open); the terminal asks about the first.
+    t.dialog = permissionDialogText(dialog(0, SECOND));
+    for (const decision of ["allow", "deny"]) {
+      assert.match((await d.answerDialog(answer({ permissionId: "dialog:toolu_4", decision }))).error, /確かめられない/);
+    }
+    assert.deepEqual(c.keys, []);
+    // While the cursor moves, the first is answered in the terminal and the second's dialog opens: Enter is not pressed.
+    t.dialog = undefined;
+    c.onKey = () => (c.command = SECOND);
+    assert.match((await d.answerDialog(answer({}))).error, /確かめられない/);
+    assert.deepEqual(c.keys, ["Up", "Up"]);
+    assert.equal(c.answered, undefined);
   } finally {
     await done();
   }

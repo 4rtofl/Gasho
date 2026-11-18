@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import { fork } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import type { DaemonToHub } from "@gasho/protocol";
+import { Daemon } from "../src/daemon.ts";
+import { exec } from "../src/exec.ts";
 import { GitHubProxy } from "../src/github.ts";
 import { PluginRunner } from "../src/plugins.ts";
 
@@ -44,16 +47,57 @@ export default {
   },
 };
 `;
+const V6 = `
+export default {
+  async start(ctx) {
+    // Long enough for the settings to change while this version is still starting.
+    await new Promise((r) => setTimeout(r, 500));
+    let last;
+    globalThis.watch = setInterval(() => {
+      const now = JSON.stringify(ctx.settings);
+      if (now !== last) { last = now; ctx.emit("settings", ctx.settings); }
+    }, 20);
+  },
+  stop() { clearInterval(globalThis.watch); },
+  methods: { huge: () => "a".repeat(16 * 1024 * 1024), small: () => "ok" },
+};
+`;
+// What it started outlives it unless its stop runs; stop writes "stopped" in its folder, after it logged and emitted
+// (both fail once gasho-daemon is gone).
+const STOPS = `
+import fs from "node:fs";
+import path from "node:path";
+let ctx;
+export default {
+  start(c) { ctx = c; },
+  async stop() {
+    ctx.log("stopping");
+    ctx.emit("state", "stopping");
+    await new Promise((r) => setTimeout(r, 100));
+    ctx.log("stopped");
+    await new Promise((r) => setTimeout(r, 100));
+    fs.writeFileSync(path.join(ctx.dataDir, "stopped"), String(process.pid));
+  },
+  methods: {
+    slow: (params, c) => {
+      c.log("slow begins");
+      return new Promise((resolve) => c.signal.addEventListener("abort", () => resolve("aborted")));
+    },
+  },
+};
+`;
 const HASH1 = "aaaaaaaaaaaaaaaa";
 const HASH2 = "bbbbbbbbbbbbbbbb";
 const BROKEN = `export default { start() { throw new Error("動き始められません"); }, methods: {} };`;
 const HASH3 = "cccccccccccccccc";
 const HASH4 = "dddddddddddddddd";
+const HASH5 = "eeeeeeeeeeeeeeee";
+const HASH6 = "ffffffffffffffff";
 
 function setup(enabled = true, answerCode = true) {
   const sent: DaemonToHub[] = [];
   const logs: string[] = [];
-  const codes: Record<string, string> = { [HASH1]: V1, [HASH2]: V2, [HASH3]: V3, [HASH4]: BROKEN };
+  const codes: Record<string, string> = { [HASH1]: V1, [HASH2]: V2, [HASH3]: V3, [HASH4]: BROKEN, [HASH5]: STOPS, [HASH6]: V6 };
   let runner: PluginRunner;
   const local = { folders: ["/work"], dataDir: fs.mkdtempSync(path.join(os.tmpdir(), "gasho-plugin-data-")) };
   // A gh that writes down each time it runs.
@@ -208,6 +252,39 @@ test("a daemon part's events go to the Gasho server, at most once a second for e
   }
 });
 
+test("a change of the settings reaches a daemon part without a call, in what start got too", async () => {
+  const { runner, until, sent } = setup();
+  const seen = () => sent.flatMap((m) => (m.type === "plugin.event" && m.topic === "settings" ? [m.data] : []));
+  try {
+    runner.update([{ id: "hello", hash: HASH6, run: true, settings: { refreshSeconds: 60, old: true } }]);
+    // While the version starts (its start waits 500 ms), so that it is given the settings of when it was started.
+    await new Promise((r) => setTimeout(r, 200));
+    runner.update([{ id: "hello", hash: HASH6, run: true, settings: { refreshSeconds: 30 } }]);
+    await until(() => seen().length === 1);
+    assert.deepEqual(seen(), [{ refreshSeconds: 30 }]);
+    // Running, and no call: a key taken away is gone too.
+    runner.update([{ id: "hello", hash: HASH6, run: true, settings: { refreshSeconds: 0 } }]);
+    await until(() => seen().length === 2);
+    assert.deepEqual(seen(), [{ refreshSeconds: 30 }, { refreshSeconds: 0 }]);
+  } finally {
+    await runner.stopAll();
+  }
+});
+
+test("a result too big for one message to the Gasho server fails that call, and the next call is answered", async () => {
+  const { runner, call, state, until } = setup();
+  try {
+    runner.update([{ id: "hello", hash: HASH6, run: true, settings: {} }]);
+    await until(() => state()?.state === "running");
+    const big = await call("huge");
+    assert.equal(big.result, undefined);
+    assert.equal(big.error, "huge の答えが大きすぎます（JSON にして 15MB まで）。");
+    assert.equal((await call("small")).result, "ok");
+  } finally {
+    await runner.stopAll();
+  }
+});
+
 test("the code of a version is asked for once while it comes, and again after reconnecting", async () => {
   const { runner, sent, state, until, giveCode } = setup(true, false);
   const asks = () => sent.filter((m) => m.type === "plugin.code.get").length;
@@ -263,4 +340,156 @@ test("with GASHO_PLUGINS=none no daemon part runs", async () => {
   assert.ok(!sent.some((m) => m.type === "plugin.code.get"));
   assert.match((await call("version")).error ?? "", /GASHO_PLUGINS/);
   await runner.stopAll();
+});
+
+test("when gasho-daemon stops, each daemon part runs its stop at once, without waiting for its calls, and none starts again", async () => {
+  const { runner, call, state, until, local, logs, sent } = setup();
+  try {
+    runner.update([{ id: "hello", hash: HASH5, run: true, settings: {} }]);
+    await until(() => state()?.state === "running");
+    const slow = call("slow", { timeoutMs: 60_000 });
+    await until(() => logs.includes("plugin hello: slow begins"));
+    const at = Date.now();
+    await runner.stopAll();
+    // A hot reload would wait for the call (up to 60 s here); the bound leaves room for a busy machine.
+    assert.ok(Date.now() - at < 20_000);
+    assert.ok(fs.existsSync(path.join(local.dataDir, "hello", "stopped")));
+    assert.equal((await slow).result, "aborted");
+
+    // The Gasho server's list may still come while gasho-daemon ends.
+    runner.update([{ id: "hello", hash: HASH1, run: true, settings: {} }]);
+    assert.ok(!sent.some((m) => m.type === "plugin.code.get" && m.hash === HASH1));
+    assert.equal(state()?.state, "stopped");
+  } finally {
+    await runner.stopAll();
+  }
+});
+
+test("a daemon part runs its stop when gasho-daemon is gone or sends SIGTERM, and ends after 5 seconds when stop does not", async () => {
+  const host = path.resolve(import.meta.dirname, "../src/plugin-host.ts");
+  const run = async (code: string) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-plugin-host-"));
+    const file = path.join(dir, "daemon.mjs");
+    fs.writeFileSync(file, code);
+    const child = fork(host, [file], { stdio: ["ignore", "pipe", "pipe", "ipc"], serialization: "json" });
+    const exited = new Promise<number | null>((resolve) => child.on("exit", resolve));
+    const ready = new Promise<void>((resolve, reject) => child.on("message", (m: { t: string; error?: string }) => (m.t === "ready" ? resolve() : m.t === "failed" ? reject(new Error(m.error)) : undefined)));
+    child.send({ t: "init", plugin: "hello", machine: { id: "m1", name: "ubuntu" }, settings: {}, local: { folders: [], dataDir: dir } });
+    await ready;
+    return { child, exited, stopped: () => fs.existsSync(path.join(dir, "stopped")) };
+  };
+
+  // gasho-daemon ended without a word (it crashed, or was killed): its IPC channel and pipes close.
+  const gone = await run(STOPS);
+  gone.child.stdout?.destroy();
+  gone.child.stderr?.destroy();
+  gone.child.disconnect();
+  assert.equal(await gone.exited, 0);
+  assert.ok(gone.stopped());
+
+  // systemd stops a service by sending SIGTERM to all of its processes at once.
+  const term = await run(STOPS);
+  term.child.kill("SIGTERM");
+  assert.equal(await term.exited, 0);
+  assert.ok(term.stopped());
+
+  // A stop that never ends, and keeps the process busy: it would run on after gasho-daemon for good.
+  const stuck = await run(`export default { stop: () => new Promise(() => setInterval(() => {}, 1000)), methods: {} };`);
+  const at = Date.now();
+  stuck.child.disconnect();
+  assert.equal(await stuck.exited, 0);
+  assert.ok(Date.now() - at < 15_000);
+});
+
+test("gasho-daemon ends (an update, a signal) only once its plugins' daemon parts have stopped", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-daemon-exit-"));
+  const dataDir = path.join(dir, "plugin-data");
+  const d = new Daemon({
+    hubUrl: "ws://127.0.0.1:1",
+    machineId: "m",
+    token: "t",
+    hookPort: 0,
+    hookSecret: undefined,
+    claudeDir: path.join(dir, "claude-dir"),
+    claudeBin: "claude",
+    ghBin: "gh",
+    pollIntervalMs: 60_000,
+    stateDir: dir,
+    attachmentsDir: path.join(dir, "attachments"),
+    pluginCacheDir: path.join(dir, "plugin-cache"),
+    pluginDataDir: dataDir,
+    runPlugins: true,
+    trialMs: 60_000,
+  }) as unknown as Record<string, any>;
+  let running = false;
+  d.hub = {
+    connected: true,
+    send: (m: DaemonToHub) => {
+      if (m.type === "plugin.code.get") setTimeout(() => void d.onHubMessage({ type: "plugin.code", plugin: m.plugin, hash: m.hash, code: STOPS }), 5);
+      if (m.type === "plugin.status") running = m.plugins.some((p) => p.state === "running");
+    },
+  };
+  try {
+    await d.onHubMessage({ type: "plugins", plugins: [{ id: "hello", hash: HASH5, run: true, settings: {} }] });
+    // A daemon part may take its 10 s to start on a busy machine.
+    await t.waitFor(() => assert.ok(running), { interval: 10, timeout: 15_000 });
+
+    const exits: { code: number; stopped: boolean }[] = [];
+    t.mock.method(process, "exit", ((code: number) => {
+      exits.push({ code, stopped: fs.existsSync(path.join(dataDir, "hello", "stopped")) });
+    }) as typeof process.exit);
+    await Promise.all([d.exit(75), d.exit(0)]);
+    assert.deepEqual(exits, [{ code: 75, stopped: true }]);
+  } finally {
+    await d.plugins.stopAll();
+  }
+});
+
+// ctx.exec itself (exec.ts): a command that hangs or says too much is stopped with everything it started.
+
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+test("a command that takes too long is stopped with the processes it started, and says so", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-exec-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const pidFile = path.join(dir, "pid");
+  // Long enough for sh to write the pid on a busy machine.
+  const failed = await exec("/bin/sh", ["-c", `sleep 60 & echo $! > "${pidFile}"; wait`], { timeoutMs: 2000 }).catch((e: unknown) => e);
+  assert.ok(failed instanceof Error);
+  assert.match(failed.message, /^Command failed: \/bin\/sh -c .* \(stopped \(took too long or was aborted\)\)/);
+  assert.equal((failed as { killed?: boolean }).killed, true);
+  const pid = Number(fs.readFileSync(pidFile, "utf8"));
+  await t.waitFor(() => assert.equal(alive(pid), false), { timeout: 10_000 });
+});
+
+test("an aborted call stops its command", async () => {
+  const controller = new AbortController();
+  // Past sleep's 60 s, so that only the abort can stop it (the default 30 s would stop it the same way).
+  const running = exec("sleep", ["60"], { timeoutMs: 120_000 }, controller.signal);
+  setTimeout(() => controller.abort(), 100);
+  await assert.rejects(running, (e: Error & { killed?: boolean }) => e.killed === true && /stopped/.test(e.message));
+});
+
+test("a command that writes more than it may is stopped; one that fails says its exit code and what it wrote", async () => {
+  await assert.rejects(exec("/bin/sh", ["-c", "yes | head -c 100000"], { maxBuffer: 1000 }), /\(output too large\)/);
+  const failed = await exec("/bin/sh", ["-c", "echo partial; echo oops >&2; exit 3"]).catch((e: unknown) => e as Error & { code?: number; stdout?: string });
+  assert.ok(failed instanceof Error);
+  assert.equal(failed.message, "Command failed: /bin/sh -c echo partial; echo oops >&2; exit 3 (exit code 3)\noops\n");
+  assert.equal(failed.code, 3);
+  assert.equal(failed.stdout, "partial\n");
+});
+
+test("a command runs where it is told, never asked anything by gh or git, and only with arguments as strings", async (t) => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "gasho-exec-")));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const { stdout } = await exec("/bin/sh", ["-c", 'pwd; echo "$GH_PROMPT_DISABLED $GIT_TERMINAL_PROMPT $NO_COLOR $EXTRA"'], { cwd: dir, env: { EXTRA: "x" } });
+  assert.equal(stdout, `${dir}\n1 0 1 x\n`);
+  await assert.rejects(exec("echo", [1 as unknown as string]), /^Error: exec: give the command and its arguments as strings$/);
 });

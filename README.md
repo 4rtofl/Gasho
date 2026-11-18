@@ -70,7 +70,7 @@ npm config set //npm.pkg.github.com/:_authToken "$(gh auth token)"
 
 npx @4rtofl/gasho-daemon register --server http://<Gasho サーバーの IP アドレス>:7740 --code <コード>
 npx @4rtofl/gasho-daemon doctor          # 要るものが揃っているかを確かめる
-npx @4rtofl/gasho-daemon service install # 常駐させる（Ubuntu は systemd、Mac は launchd）。これからは Gasho の画面から更新できる
+npx @4rtofl/gasho-daemon service install # 常駐させる（Ubuntu は systemd、Mac は launchd）。これからは Gasho の画面から更新でき、新しい版がうまく起動しなかったときは前の版に戻す
 ```
 
 gasho-daemon は GitHub Packages の npm パッケージ `@4rtofl/gasho-daemon` として配っているので、リポジトリの clone も `npm install` も要らない。`doctor` は、Node.js、登録、Claude Code、セッションの端末、git、GitHub CLI、通知の hooks が揃っているかを確かめ、足りないものがあれば、使えなくなる機能と直し方を示す。
@@ -126,6 +126,7 @@ PC では、サイドバーの右の端をドラッグして、幅を200〜360px
 - クリップのボタン、ドラッグ、貼り付けでファイルを添付できる（1回に5個、合わせて10MB まで）。ファイルは working server の `~/.local/share/gasho/attachments/` に保存され、Claude が読む。セッションが終わると消える
 - 入力欄に書きかけた文、添付したファイル、選んだモデル・Effort・Ultracode、↑ で呼び出せる送った文は、セッションごとに覚えておく。ほかのセッションやホームに移って戻っても残る。ページを開いているあいだだけ覚えるので、読み込み直すと消える
 - ホームでは、Gasho が起動したセッションが使ったトークンを、過去24時間の推移と内訳（入力、出力、キャッシュへの書き込み、キャッシュからの読み込み）で見られる。daemon が、セッションとそのサブエージェントの会話の記録（`~/.claude/projects/` の下）から、返答ごとに1回ずつ数える。キャッシュからの読み込みは、それまでの会話を毎回読み直した分で、たいてい全体の大部分を占める
+- ホームの「メモリ」のタイルで、working server ごとのメモリの使用率と使用量／総量を見られる。daemon が 15 秒ごとに読み、ページキャッシュは使用中に数えない。80% 以上で「注意」、90% 以上で「警告」と出る。オフラインのサーバーは「オフライン」、メモリの値を送らない古い gasho-daemon のサーバーは「未対応」と出る
 - ホームのタイルは、上の辺の真ん中にあるつまみをドラッグして並べ替えられる。つまみは、PC ではタイルにポインターを乗せると出て、スマホではいつも出ている。ドラッグ中は、ほかのタイルが場所を空け、画面の上端・下端に近づけるとスクロールする。Esc を押すと元の並びに戻る。つまみにフォーカスして、矢印キーでも動かせる。並びはブラウザーごとに覚える。並べ替えると見出しの横に出る「並びを元に戻す」で、最初の並びに戻る
 - `/exit` を送るか公式アプリで終了すると、daemon がセッションの端末も閉じる
 - `claude rc` が起動したセッションには、外から入力する公式の手段がないので、Gasho からは入力できない。公式アプリから操作する
@@ -180,7 +181,7 @@ clone したリポジトリは、親のフォルダーを信頼していても�
 
 ### セッション画面とブランチグラフ
 
-- セッション画面のヘッダーは、右上のボタンで隠せる（スマホでは画面上部のバーの右端）。隠すと、セッション名と状態だけの1行になる。スマホでは、セッション名と状態をいつも画面上部のバーに出すので、隠すとこの1行もなくなり、その分を会話に使える。PC では、隠したかどうかをブラウザごとに覚える。スマホでは、セッション画面を開くたびに隠した状態から始まる
+- セッション画面のヘッダーは、右上のボタンで隠せる（スマホでは画面上部のバーの右端）。隠すと、セッション名と状態だけの1行になる。スマホでは、セッション名と状態をいつも画面上部のバーに出すので、隠すとこの1行もなくなり、その分を会話に使える。PC では、隠したかどうかをブラウザごとに覚える。スマホと、高さが 500px に満たない窓（スマホを横にしたとき）では、覚えずに、セッション画面を開くたびに隠した状態から始まる
 - 会話の文字の大きさは、サイドバーの「設定」で変えられる。12〜20px（標準は14px）のあいだで、見本の会話を見ながら選ぶ。時刻、ツールの折りたたみ、コード、表の文字も同じ割合で変わる。入力欄とヘッダーの文字は変わらない。ブラウザごとに覚えるので、スマホと PC で別々に決められる
 - 会話の中のツールの呼び出し（コマンドの実行など）は、その結果と一緒に1つの折りたたみにまとめて出す
 - ツールの呼び出しが続くところは、ツールの種類にかかわらず（Bash、Read、Edit などが混ざっていても）全部を1つの折りたたみにまとめる。閉じたままでも、呼び出した回数、最後に呼び出したツールとその内容、エラーになった回数がわかる。開くと、呼び出しごとの折りたたみが並ぶ
@@ -208,20 +209,26 @@ clone したリポジトリは、親のフォルダーを信頼していても�
 - 読み書きできるのは、セッションのフォルダーの中だけ。フォルダーの外を指すシンボリックリンクは、一覧に「フォルダーの外」と出すが、開かない
 - 保存と作成は、ファイルのパスと大きさを操作のログに残し、ホームの「最近の操作」に出す。ファイルの中身は Gasho サーバーに残さない
 
-### working server のコマンドからセッションを起動する
+### working server のコマンドからセッションを起動する・片付ける
 
-working server の上では、Gasho の画面を通さずに、`gasho-daemon session` でセッションを起動し、入力できる。Claude Code のセッションから別のセッションを立ち上げて作業させるときに使う（リポジトリの Skill `.claude/skills/launch-gasho-session` が、ワークツリーを作るところからこれを使う）。
+working server の上では、Gasho の画面を通さずに、`gasho-daemon session` でセッションを起動し、入力し、消せる。`gasho-daemon worktree remove` で、ワークツリーを中のセッションごと消せる。Claude Code のセッションから別のセッションを立ち上げて作業させるときや、終わった作業を片付けるときに使う（リポジトリの Skill `.claude/skills/launch-gasho-session` が、ワークツリーを作るところから起動を、`.claude/skills/remove-gasho-worktree` が片付けを、これで行う）。
 
 ```bash
 gasho-daemon session launch --cwd <フォルダー> --name <名前> [--trust] [--prompt <文> | --prompt-file <ファイル> | --prompt -]
 gasho-daemon session send <名前か ID> (--text <文> | --file <ファイル> | -)
 gasho-daemon session list [--json]
+gasho-daemon session remove <名前か ID>
+gasho-daemon worktree remove <フォルダー> [--force]
 ```
 
 - 動いている gasho-daemon に、その置き場（`~/.config/gasho/`、`GASHO_DAEMON_CONFIG` で変わる）の Unix ソケット `control.sock` で頼む。ソケットは本人だけが使える（0600）。Gasho サーバーを通らないので、ペアリングも要らず、Gasho サーバーが止まっていても使える
 - 中身は Gasho の画面からの起動・入力・名前の変更と同じ。起動したセッションは Gasho の画面にも出て、入力は作業中なら終わるまで待つ
 - `launch` は起動を待ち、プロンプトがあれば入力欄に送ってから、`{sessionId, name, cwd, terminal}` を JSON で出す。`name` は `claude agents`（Claude Code のセッション一覧）に出る名前で、ほかのセッションから SendMessage するときの宛先になる。Claude Code は新しいセッションを `--remote-control` の名前ではなくフォルダー名で並べるので、`--name` を付けたときは、まず `/rename` でその名前に変え、一覧に出るまで待ってからプロンプトを送る。`--name` が無いと、最初の発言のあとで Gasho が発言から名前を付け直すので、出した名前は変わる
 - `--trust` は、Claude Code の「このフォルダーを信頼するか」に Yes と答える（Gasho の画面の「信頼して起動する」と同じ）
+- `list` は、作業フォルダーが無くなったセッションに、行末の `(folder missing)`（`--json` では `"cwdMissing": true`）を付ける
+- `session remove` は、Gasho の画面のセッションの削除と同じ。Claude Code を終わらせて Gasho から外し、`{sessionId, name, cwd}` を JSON で出す。会話は残る。名前と ID の探し方は `send` と同じ。フォルダーが先に消えたセッションも消せる
+- `worktree remove` は、Gasho の画面のワークツリーの削除と同じ。中のセッションを終わらせてからフォルダーを消し（`git worktree remove`）、`{path, branch, ended}` を JSON で出す。`ended` は終わらせたセッション（`{sessionId, name}`）。未コミットの変更や、どのリモートにも無いコミットがあれば、何もせずにその件数を理由として返す。`--force` はそれでも消す。ブランチは消さない。`git worktree remove` で直接消すと、中のセッションは消えたフォルダーで動き続け、「リポジトリ外」に残る
+- 失敗したときは、gasho-daemon が返した理由をエラーとして出す（終了コード 1）
 - gasho-daemon が動いていないとき（ソケットが無い古い版のときも）は、そう伝えて起動の仕方を示す
 - `service install` で入れたときは PATH に `gasho-daemon` が無いので、`node ~/.local/share/gasho/daemon/current/node_modules/@4rtofl/gasho-daemon/lib/cli.js session …` で呼ぶ
 
@@ -267,10 +274,31 @@ Gasho サーバーは LAN の中だけで使う前提にしている。外から
 ```bash
 npm run web:dev    # Vite。/ws、/api、/plugins は Gasho サーバー（127.0.0.1:7740）に中継する
 npm test
+npm run test:coverage   # npm test のうち node --test で流すテスト（apps/*/test・scripts・e2e の .test.ts）について、ソースのファイルごとに、テストが通った行・分岐・関数の割合を出す。画面を描く Vitest のテストは含まない（CI では流さない）
 npm run typecheck
 ```
 
 PR と main への push のたびに、GitHub Actions（`.github/workflows/ci.yml`）が Ubuntu で `npm run typecheck`・`npm test`・`npm run web:build` を流す。PR の画面に、それぞれの結果が別々に出る。
+
+### E2E テスト
+
+`e2e/` に、Playwright で実際の画面を操作するテストがある。ビルドした画面（`apps/web/dist`）を、Chromium（PC の幅）と WebKit（iPhone の幅・タッチ）で開く。
+
+```bash
+npx playwright install chromium webkit   # 初回だけ。ブラウザーを入れる
+npm run e2e                              # 画面をビルドしてから、全部のテストを流す
+npm run e2e -- --project chromium        # Chromium だけ。後ろに Playwright の引数を付けられる
+npx playwright show-trace e2e/test-results/<テスト>/trace.zip   # 落ちたテストの操作と画面を見る
+```
+
+- テストごとに、`/tmp/ge2e-*` に置き場を作り、Gasho サーバーを 127.0.0.1 の空いているポートで起動する。DB・プラグイン・キャッシュ・`HOME` もそこに置くので、ふだん使う Gasho サーバー・gasho-daemon・Claude Code の設定と会話には触れない。テストが終わると置き場を消す
+- ブラウザーは、登録コードで登録した状態（Cookie）で始まる
+- working server は、テストから動かす偽の gasho-daemon（`hub.fakeDaemon()`）を主に使う。版・できること・セッション・会話・答えの遅れや失敗・オフラインを、テストから決められる
+- 本物の gasho-daemon（`hub.startDaemon()`）も起動できる。claude と gh は偽物（`e2e/harness/bin/`）で、テストが渡した表から答え、受けた引数を記録する。偽の claude は、端末で動かすと入力欄を描き、送られた文に答えて会話のファイルに書く
+- Gasho サーバーが使う gh（プラグインの一覧）と npm（公開されている最新の版）も偽物にしてある
+- 起動の処理（`e2e/harness/index.ts`）は `@playwright/test` を読み込まないので、GashoPlugins のテストからも使える。Playwright の fixture は `e2e/tests/fixtures.ts` で組む
+
+main では、GitHub Actions の `.github/workflows/e2e.yml` が毎日 5:00（日本時間）に流す。起動するのは Cloudflare Worker（`infra/release-trigger`）である。手で流すときは `gh workflow run e2e.yml`。テストが落ちると、trace・スクリーンショット・動画を run の artifact（`e2e-results`）に残し、落ちたテストの名前と run の URL を書いた Issue（`bug` ラベル）を立てる。同じテストの Issue が開いていれば、そこにコメントを足す。PR の CI では流さない。
 
 ### 公開
 
@@ -314,6 +342,7 @@ gasho-daemon（`@4rtofl/gasho-daemon`）、Gasho サーバー（`@4rtofl/gasho-h
 | `GASHO_POLL_MS` | daemon | `3000` |
 | `GASHO_PLUGINS` | daemon | なし。`none` にすると、この working server ではプラグインの daemon の部分を動かさない |
 | `GASHO_DAEMON_HOME` | daemon | `~/.local/share/gasho/daemon`（`service install` と更新が、版ごとに gasho-daemon を入れるフォルダー） |
+| `GASHO_DAEMON_PROBATION_MS` | daemon | `60000`（更新したあとの試しの期間。そのうちに止まった版は、前の版に戻す。1時間を超える値は 60000 になる） |
 
 gasho-daemon の変数は `~/.config/gasho/daemon.env` に、hub の変数は `~/.config/gasho/hub.env` に、`名前=値` の形で書いておくこともできる。どちらも、コマンドが起動するときにこのファイルを読む。端末で設定した値のほうが優先される。
 

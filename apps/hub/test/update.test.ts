@@ -1,10 +1,14 @@
 // Updating gasho-daemon from Gasho, as the Gasho server sees it: what each working server says about it, the update
-// command relayed only to one that can take it, and the latest versions looked up on the registry (a fake lookup).
+// command relayed only to one that can take it, and the latest versions looked up on the registry (a fake lookup, and
+// npm view run as a fake npm).
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { after, test } from "node:test";
 import type { HubToClient, HubToDaemon } from "@gasho/protocol";
 import { Hub, updateInfoFor, updateInfoOf, validateCommand, versionAfter } from "../src/hub.ts";
-import { DAEMON_PACKAGE, HUB_PACKAGE, LatestCheck } from "../src/latest.ts";
+import { DAEMON_PACKAGE, HUB_PACKAGE, LatestCheck, npmBin, npmLatest } from "../src/latest.ts";
 import { Store } from "../src/store.ts";
 
 function fakePeer<T>(deviceId = "") {
@@ -56,7 +60,19 @@ test("what a gasho-daemon says about updating it reaches browsers, kept to what 
     previous: "0.14.0",
     progress: { version: "0.23.0", step: "check", at: 5 },
     failed: undefined,
+    rolledBack: undefined,
+    trialMs: undefined,
   });
+  // A version on trial after an update, and one that went back by itself.
+  const trial = updateInfoOf({
+    canUpdate: true,
+    progress: { version: "0.22.0", step: "trial", at: 5 },
+    rolledBack: { from: "0.23.0", to: "0.22.0", error: "boom", at: 3 },
+    trialMs: 60_000,
+  });
+  assert.deepEqual([trial?.progress?.step, trial?.rolledBack, trial?.trialMs], ["trial", { from: "0.23.0", to: "0.22.0", error: "boom", at: 3 }, 60_000]);
+  const odd = updateInfoOf({ canUpdate: true, rolledBack: { from: "../x", to: "0.22.0", at: 3 }, trialMs: 1e12 });
+  assert.deepEqual([odd?.rolledBack, odd?.trialMs], [undefined, undefined]);
   assert.equal(updateInfoOf("yes"), undefined);
   assert.equal(updateInfoOf({ canUpdate: "true" })?.canUpdate, false);
   assert.equal(updateInfoOf({ canUpdate: true, progress: { version: "0.23.0", step: "reboot", at: 5 } })?.progress, undefined);
@@ -200,4 +216,48 @@ test("a gasho-daemon from before the package was renamed is told to be moved by 
   assert.ok(r?.type === "command.result");
   assert.match(r.result.error ?? "", /パッケージの名前が変わる前/);
   assert.ok(d.sent.every((m) => m.type !== "daemon.update"));
+});
+
+/** The folders made by the helpers below, removed once this file's tests are done. */
+const temps: string[] = [];
+after(() => {
+  for (const dir of temps) fs.rmSync(dir, { recursive: true, force: true });
+});
+
+/** A stand-in for npm that records its arguments and answers as `script` says. */
+function fakeNpm(script: string): { bin: string; args: () => string } {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-hub-npm-"));
+  temps.push(dir);
+  const bin = path.join(dir, "npm");
+  fs.writeFileSync(bin, `#!/bin/sh\necho "$*" > "${dir}/args"\n${script}\n`, { mode: 0o755 });
+  return { bin, args: () => fs.readFileSync(path.join(dir, "args"), "utf8").trim() };
+}
+
+test("npm view gives the version the latest tag points at, as JSON or plain, and anything else is refused", async () => {
+  const json = fakeNpm(`echo '"0.21.4"'`);
+  assert.equal(await npmLatest(json.bin, DAEMON_PACKAGE), "0.21.4");
+  // Not the versions npm read earlier and kept.
+  assert.equal(json.args(), `view ${DAEMON_PACKAGE} version --json --prefer-online`);
+  assert.equal(await npmLatest(fakeNpm("echo 0.7.3").bin, HUB_PACKAGE), "0.7.3");
+  await assert.rejects(npmLatest(fakeNpm(`echo '["0.7.3"]'`).bin, HUB_PACKAGE), /^Error: npm view @4rtofl\/gasho-hub がわからない答えを返しました：\["0\.7\.3"\]$/);
+  await assert.rejects(npmLatest(fakeNpm(`echo '"latest"'`).bin, HUB_PACKAGE), /がわからない答えを返しました/);
+});
+
+test("when npm view fails, the last lines it wrote say why (npm's E404 for a package not published yet)", async () => {
+  const failing = fakeNpm(`echo "npm notice a" >&2; echo "npm error code E404" >&2; echo "npm error 404 Not Found - GET https://npm.pkg.github.com/x" >&2; echo "npm error 404" >&2; exit 1`);
+  await assert.rejects(npmLatest(failing.bin, HUB_PACKAGE), (e: Error) => {
+    assert.equal(e.message, "npm error code E404\nnpm error 404 Not Found - GET https://npm.pkg.github.com/x\nnpm error 404");
+    return true;
+  });
+  await assert.rejects(npmLatest(fakeNpm("exit 3").bin, HUB_PACKAGE), /Command failed/);
+});
+
+test("npm is GASHO_NPM_BIN, or the one beside the Node.js that runs the Gasho server, or the one on PATH", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-hub-node-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const node = path.join(dir, "node");
+  assert.equal(npmBin({ GASHO_NPM_BIN: "/opt/npm" }, node), "/opt/npm");
+  assert.equal(npmBin({}, node), "npm");
+  fs.writeFileSync(path.join(dir, "npm"), "");
+  assert.equal(npmBin({}, node), path.join(dir, "npm"));
 });

@@ -204,12 +204,19 @@ export class Terminals {
   /** What systemd-run needs to start user scopes here, or undefined when it cannot (checked once; see scopeFlags). */
   private scopes: Promise<readonly string[] | undefined> | undefined;
   private works: Promise<boolean> | undefined;
+  private inService: boolean;
+  private log: (s: string) => void;
 
-  /** `env` is what the hosts run with; `scopes: false` never puts them in a systemd scope (for tests). */
-  constructor(o: { stateDir: string; env: Record<string, string>; scopes?: boolean }) {
+  /**
+   * `env` is what the hosts run with; `scopes: false` never puts them in a systemd scope (for tests). `inService`: the
+   * daemon runs in its systemd service, where a terminal without a scope of its own is stopped with the daemon.
+   */
+  constructor(o: { stateDir: string; env: Record<string, string>; scopes?: boolean; inService?: boolean; log?: (s: string) => void }) {
     this.dir = terminalsDir(o.stateDir);
     this.env = o.env;
     if (o.scopes === false) this.scopes = Promise.resolve(undefined);
+    this.inService = o.inService ?? false;
+    this.log = o.log ?? (() => undefined);
   }
 
   socketOf(name: string): string {
@@ -239,6 +246,11 @@ export class Terminals {
     const host = [process.execPath, HOST_FILE, configFile];
     const extra = await this.scopeFlags();
     const command = extra ? ["systemd-run", ...scopeArgs(o.name, extra), ...host] : host;
+    if (!extra && this.inService) {
+      this.log(
+        `terminal ${o.name} runs inside gasho-daemon's service (systemd-run cannot start a scope here): restarting or updating gasho-daemon stops it, as systemd stops the whole service`,
+      );
+    }
     let failed: string | undefined;
     try {
       const child = spawn(command[0] ?? "", command.slice(1), { detached: true, stdio: ["ignore", out.fd, out.fd], env: this.env });

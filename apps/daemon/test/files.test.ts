@@ -1,13 +1,16 @@
 // The files of a session's folder: what is listed, what is read (text as it is, images, or why not), what is written
 // (only over the version that was read, in place, and never over something when making a new file), and that nothing
-// outside the folder is reached, through ".." or through a symbolic link.
+// outside the folder is reached, through ".." or through a symbolic link; and gasho-daemon answering the Gasho server's
+// requests for them.
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import type { DirListing, FileContent, FileStamp } from "@gasho/protocol";
+import type { DaemonToHub, DirListing, FileContent, FileStamp } from "@gasho/protocol";
+import { Daemon } from "../src/daemon.ts";
 import { decodeText, type Failed, listDir, MAX_ENTRIES, MAX_TEXT_BYTES, readFileAt, relPathProblem, sha256, writeFileAt } from "../src/files.ts";
+import { emptyMeta } from "../src/transcript.ts";
 
 async function tmp(): Promise<{ root: string; outside: string; done: () => Promise<void> }> {
   const top = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-files-"));
@@ -253,6 +256,60 @@ test("a new file is made in a folder that is there, and never over anything alre
     assert.match(failed(await writeFileAt(root, "taken.md/a.md", "x", { create: true })).error, /フォルダーではありません|見つかりません/);
     assert.match(failed(await writeFileAt(root, " a.md", "x", { create: true })).error, /空白/);
     assert.match(failed(await writeFileAt(root, "a\nb.md", "x", { create: true })).error, /改行/);
+  } finally {
+    await done();
+  }
+});
+
+test("gasho-daemon answers the files panel only for a session it tracks, each answer with its request's id", async () => {
+  const { root, done } = await tmp();
+  const sent: DaemonToHub[] = [];
+  try {
+    const d = new Daemon({
+      hubUrl: "ws://127.0.0.1:1",
+      machineId: "m",
+      token: "t",
+      hookPort: 0,
+      claudeDir: path.join(root, ".claude"),
+      claudeBin: "/bin/false",
+      pollIntervalMs: 60_000,
+      stateDir: root,
+      attachmentsDir: path.join(root, ".attachments"),
+    } as ConstructorParameters<typeof Daemon>[0]) as unknown as Record<string, any>;
+    d.hub = { send: (m: DaemonToHub) => sent.push(m) };
+    d.tracked.set("s1", { info: { sessionId: "s1", cwd: root, status: "idle", rcMode: "none", prLinks: [] }, meta: emptyMeta() });
+    await fs.writeFile(path.join(root, "a.txt"), "hello");
+    const ask = async (m: Record<string, unknown>) => {
+      await d.onHubMessage(m);
+      return sent.at(-1) as Record<string, any> | undefined;
+    };
+
+    const dir = await ask({ type: "dir.get", requestId: "r1", sessionId: "s1", path: "" });
+    assert.deepEqual([dir?.type, dir?.requestId, dir?.sessionId, dir?.path], ["dir", "r1", "s1", ""]);
+    assert.ok(dir?.dir.entries.some((e: { name: string }) => e.name === "a.txt"));
+    const file = await ask({ type: "file.get", requestId: "r2", sessionId: "s1", path: "a.txt" });
+    assert.deepEqual([file?.type, file?.requestId, file?.file.text], ["file", "r2", "hello"]);
+    const outside = await ask({ type: "file.get", requestId: "r3", sessionId: "s1", path: "../outside/secret.txt" });
+    assert.deepEqual([outside?.requestId, outside?.file], ["r3", undefined]);
+    assert.ok(outside?.error);
+
+    for (const type of ["dir.get", "file.get"]) {
+      const unknown = await ask({ type, requestId: "r4", sessionId: "s2", path: "" });
+      assert.deepEqual([unknown?.requestId, unknown?.error], ["r4", "このセッションは見つかりません。"]);
+    }
+
+    const made = await ask({ type: "file.write", requestId: "r5", sessionId: "s1", path: "b.txt", content: "new", create: true });
+    assert.deepEqual([made?.type, made?.requestId, made?.result.ok], ["command.result", "r5", true]);
+    assert.equal(await fs.readFile(path.join(root, "b.txt"), "utf8"), "new");
+    const elsewhere = await ask({ type: "file.write", requestId: "r6", sessionId: "s2", path: "b.txt", content: "x", create: true });
+    assert.deepEqual(elsewhere?.result, { ok: false, error: "このセッションは見つかりません。" });
+
+    // A command that throws is answered too, with why.
+    d.registerRepo = async () => {
+      throw new Error("boom");
+    };
+    const thrown = await ask({ type: "repo.register", requestId: "r7", path: root });
+    assert.deepEqual(thrown, { type: "command.result", requestId: "r7", result: { ok: false, error: "boom" } });
   } finally {
     await done();
   }

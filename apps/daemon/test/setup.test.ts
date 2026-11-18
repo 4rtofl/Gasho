@@ -1,7 +1,25 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import fs from "node:fs";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import os from "node:os";
+import path from "node:path";
+import { after, test } from "node:test";
+import { saveCredentials } from "../src/credentials.ts";
+import { hookUrl, installHooks } from "../src/hooks.ts";
 import { commandOf, installOf, layoutOf, serviceCommand } from "../src/install.ts";
-import { activateCommands, atLeast, formatChecks, launchdPlist, serviceFile, servicePath, systemdUnit, versionOf } from "../src/setup.ts";
+import {
+  activateCommands,
+  atLeast,
+  type Check,
+  doctor,
+  formatChecks,
+  launchdPlist,
+  serviceFile,
+  servicePath,
+  systemdUnit,
+  versionOf,
+} from "../src/setup.ts";
 
 test("versions are read from what the tools print, and compared", () => {
   assert.deepEqual(versionOf("v24.22.2"), [24, 22, 2]);
@@ -130,4 +148,104 @@ test("service install writes the unit where systemd or launchd reads it, and res
   assert.equal(darwin[1]?.mayFail, true);
   assert.deepEqual(darwin[2]?.argv.slice(-2), ["gui/501", "/Users/u/Library/LaunchAgents/local.gasho.daemon.plist"]);
   assert.equal(darwin[2]?.mayFail, undefined);
+});
+
+// doctor, with stand-ins for claude and gh, a registration pointing at a local server, and a settings file of its own.
+
+/** The folders made by the helpers below, removed once this file's tests are done. */
+const temps: string[] = [];
+after(() => {
+  for (const dir of temps) fs.rmSync(dir, { recursive: true, force: true });
+});
+
+function doctorFolder(o: { ghLoggedIn: boolean }) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-doctor-"));
+  temps.push(dir);
+  const claude = path.join(dir, "claude");
+  fs.writeFileSync(claude, '#!/bin/sh\necho "2.1.326 (Claude Code)"\n', { mode: 0o755 });
+  const gh = path.join(dir, "gh");
+  const auth = o.ghLoggedIn ? 'echo "  ✓ Logged in to github.com account someone"' : 'echo "You are not logged into any GitHub hosts." >&2; exit 1';
+  fs.writeFileSync(gh, `#!/bin/sh\ncase "$1" in\n  --version) echo "gh version 2.80.0 (2025-10-01)" ;;\n  auth) ${auth} ;;\nesac\n`, { mode: 0o755 });
+  return { dir, claude, gh, settings: path.join(dir, "settings.json"), creds: path.join(dir, "daemon.json") };
+}
+
+async function listen(answer: number): Promise<{ port: number; close: () => void }> {
+  const server = http.createServer((_req, res) => res.writeHead(answer).end());
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return { port: (server.address() as AddressInfo).port, close: () => server.close() };
+}
+
+async function runDoctor(o: Parameters<typeof doctor>[0], creds: string): Promise<Map<string, Check>> {
+  const before = process.env.GASHO_DAEMON_CONFIG;
+  process.env.GASHO_DAEMON_CONFIG = creds;
+  try {
+    return new Map((await doctor(o)).map((c) => [c.name, c]));
+  } finally {
+    if (before === undefined) delete process.env.GASHO_DAEMON_CONFIG;
+    else process.env.GASHO_DAEMON_CONFIG = before;
+  }
+}
+
+test("doctor finds all that gasho-daemon needs: registered, the Gasho server answering, claude, gh logged in, the hooks, the daemon running", async () => {
+  const f = doctorFolder({ ghLoggedIn: true });
+  const hub = await listen(200);
+  const daemon = await listen(404);
+  try {
+    await saveCredentials(f.creds, { server: `http://127.0.0.1:${hub.port}`, machineId: "m1", token: "t", name: "ubuntu" });
+    await installHooks(f.settings, daemon.port);
+    const checks = await runDoctor({ claudeBin: f.claude, ghBin: f.gh, hookPort: daemon.port, settingsFile: f.settings }, f.creds);
+    assert.deepEqual(checks.get("登録"), { level: "ok", name: "登録", detail: `「ubuntu」として http://127.0.0.1:${hub.port} に登録済み` });
+    assert.equal(checks.get("Gasho サーバー")?.level, "ok");
+    assert.deepEqual(checks.get("Claude Code"), { level: "ok", name: "Claude Code", detail: "2.1.326 (Claude Code)" });
+    assert.deepEqual(checks.get("GitHub CLI"), { level: "ok", name: "GitHub CLI", detail: "2.80.0、ログイン済み" });
+    assert.equal(checks.get("hooks")?.level, "ok");
+    assert.deepEqual(checks.get("daemon"), { level: "ok", name: "daemon", detail: `動いています（127.0.0.1:${daemon.port}）` });
+  } finally {
+    hub.close();
+    daemon.close();
+  }
+});
+
+test("doctor says what is missing and how to get it, with the command for gasho-daemon as installed", async () => {
+  const f = doctorFolder({ ghLoggedIn: true });
+  const free = await listen(200);
+  free.close();
+  const checks = await runDoctor(
+    { claudeBin: path.join(f.dir, "no-claude"), ghBin: path.join(f.dir, "no-gh"), hookPort: free.port, settingsFile: f.settings, command: "npx @4rtofl/gasho-daemon" },
+    f.creds,
+  );
+  const registration = checks.get("登録");
+  assert.equal(registration?.level, "fail");
+  assert.equal(registration?.detail, `${f.creds} がありません`);
+  assert.match(registration?.hint ?? "", /^Gasho サーバーで登録コードを出し、npx @4rtofl\/gasho-daemon register --server /);
+  assert.equal(checks.has("Gasho サーバー"), false);
+  assert.equal(checks.get("Claude Code")?.level, "fail");
+  assert.equal(checks.get("GitHub CLI")?.detail, "ありません");
+  assert.equal(checks.get("hooks")?.detail, "入っていません");
+  assert.equal(checks.get("daemon")?.level, "warn");
+  assert.match(checks.get("daemon")?.hint ?? "", /npx @4rtofl\/gasho-daemon service install/);
+});
+
+test("doctor tells a Gasho server that refuses this machine from one it cannot reach, gh logged out, and hooks without PermissionRequest", async () => {
+  const f = doctorFolder({ ghLoggedIn: false });
+  const refusing = await listen(403);
+  try {
+    await saveCredentials(f.creds, { server: `http://127.0.0.1:${refusing.port}`, machineId: "m1", token: "t", name: "" });
+    const url = hookUrl(refusing.port);
+    fs.writeFileSync(f.settings, JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "http", url }] }] } }));
+    const checks = await runDoctor({ claudeBin: f.claude, ghBin: f.gh, hookPort: refusing.port, settingsFile: f.settings }, f.creds);
+    assert.equal(checks.get("登録")?.detail, `「${os.hostname()}」として http://127.0.0.1:${refusing.port} に登録済み`);
+    assert.equal(checks.get("Gasho サーバー")?.detail, "このマシンからの接続が許可されていません");
+    assert.match(checks.get("Gasho サーバー")?.hint ?? "", /GASHO_ALLOW_NETS/);
+    assert.deepEqual([checks.get("GitHub CLI")?.level, checks.get("GitHub CLI")?.detail], ["warn", "ログインしていません"]);
+    assert.equal(checks.get("hooks")?.detail, "PermissionRequest が入っていません");
+  } finally {
+    refusing.close();
+  }
+
+  const gone = await listen(200);
+  gone.close();
+  await saveCredentials(f.creds, { server: `http://127.0.0.1:${gone.port}`, machineId: "m1", token: "t", name: "ubuntu" });
+  const unreachable = await runDoctor({ claudeBin: f.claude, ghBin: f.gh, hookPort: gone.port, settingsFile: f.settings }, f.creds);
+  assert.deepEqual([unreachable.get("Gasho サーバー")?.level, unreachable.get("Gasho サーバー")?.detail], ["fail", `http://127.0.0.1:${gone.port} につながりません`]);
 });

@@ -30,7 +30,7 @@ const STATE: Record<PluginDaemonState, { label: string; className: string; dot: 
   offline: { label: "オフライン", className: "text-muted-foreground", dot: "bg-muted-foreground/50" },
 };
 
-const PERMISSION_NAMES: Record<string, string> = { "session.input": "セッションに発言を送る", "session.launch": "セッションを起動する" };
+const PERMISSION_NAMES: Record<string, string> = { "session.input": "セッションに発言を送る", "session.launch": "セッションを起動する", "session.remove": "セッションを削除する" };
 const BUTTON = "inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs hover:border-border-hover disabled:opacity-50";
 /** Removing a plugin: a red trash can alone (the dialog asks first). */
 const REMOVE_BUTTON =
@@ -242,10 +242,7 @@ function PluginCard({
             <button
               type="button"
               className={BUTTON}
-              onClick={() => {
-                go({ name: "settings" });
-                requestAnimationFrame(() => document.getElementById(`plugin-settings-${info.id}`)?.scrollIntoView({ block: "start" }));
-              }}
+              onClick={() => go({ name: "settings", plugin: info.id })}
             >
               <Settings2 className="size-3.5" />
               設定

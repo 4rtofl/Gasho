@@ -7,12 +7,13 @@
 // in memory until the page is reloaded.
 import { useSyncExternalStore } from "react";
 import type { PluginDefinition } from "@gasho/plugin-sdk";
-import { PLUGIN_API } from "@gasho/plugin-sdk/exports";
 import type { PluginInfo } from "@gasho/protocol";
 import { getAppState, subscribeAppState, useAppState } from "@/lib/store";
-import { checkWorktreeGroupings } from "@/lib/worktree-groupings";
 import { ruleText } from "./dark-selector";
+import { apiSupported, checkDefinition } from "./definition";
 import { installShared } from "./sdk";
+
+export { apiSupported };
 
 /** How long a plugin's files may take to load. */
 const LOAD_MS = 15_000;
@@ -45,13 +46,6 @@ function set(next: Partial<RegistryState>): void {
 function subscribe(l: () => void): () => void {
   listeners.add(l);
   return () => listeners.delete(l);
-}
-
-/** Whether this screen runs plugins written for `api` (the same major, a minor up to its own). */
-export function apiSupported(api: string): boolean {
-  const [major, minor] = PLUGIN_API.split(".").map(Number);
-  const m = /^(\d+)\.(\d+)$/.exec(api);
-  return Boolean(m && Number(m[1]) === major && Number(m[2]) <= (minor ?? 0));
 }
 
 function timeout<T>(p: Promise<T>, what: string): Promise<T> {
@@ -108,31 +102,6 @@ function addSheet(sheet: CSSStyleSheet): void {
 
 function removeSheet(sheet: CSSStyleSheet | undefined): void {
   if (sheet) document.adoptedStyleSheets = document.adoptedStyleSheets.filter((s) => s !== sheet);
-}
-
-const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-
-/** What a web.js exports, checked enough that drawing it cannot fail on its shape. */
-export function checkDefinition(d: unknown): PluginDefinition {
-  if (!isRecord(d)) throw new Error("web.js が、プラグイン（export default definePlugin({ … })）を書き出していません。");
-  for (const k of ["sidebar", "sessionHeader", "homeTiles", "conversationEnd", "composerFooter", "worktreeTabs"] as const) {
-    if (d[k] !== undefined && !Array.isArray(d[k])) throw new Error(`${k} は配列にしてください。`);
-    for (const item of (d[k] as unknown[] | undefined) ?? []) {
-      if (!isRecord(item) || typeof item.id !== "string" || !item.id) throw new Error(`${k} の項目に id がありません。`);
-    }
-  }
-  for (const k of ["pages", "sessionPanels", "pagePanels", "worktreeViews"] as const) {
-    if (d[k] !== undefined && !isRecord(d[k])) throw new Error(`${k} はオブジェクトにしてください。`);
-  }
-  if (d.settings !== undefined && typeof d.settings !== "function") throw new Error("settings は部品にしてください。");
-  if (d.sessionList !== undefined) {
-    const l = d.sessionList;
-    if (!isRecord(l) || typeof l.useCategories !== "function") throw new Error("sessionList には、関数 useCategories を書いてください。");
-    if (l.hideSessionTabs !== undefined && typeof l.hideSessionTabs !== "boolean") throw new Error("sessionList の hideSessionTabs は true か false にしてください。");
-  }
-  const groupings = checkWorktreeGroupings(d.worktreeGroupings);
-  if (groupings) throw new Error(groupings);
-  return d as PluginDefinition;
 }
 
 async function load(info: PluginInfo): Promise<void> {
@@ -222,9 +191,12 @@ export interface PluginPart {
   version: string;
 }
 
-/** The installed plugins, the loaded web parts of the enabled ones (in the plugins' order), and their troubles. */
-export function usePluginRegistry(): { infos: PluginInfo[]; parts: PluginPart[]; errors: Record<string, string>; loading: Record<string, boolean> } {
-  const { plugins } = useAppState();
+/**
+ * The installed plugins, the loaded web parts of the enabled ones (in the plugins' order), their troubles, and whether
+ * the Gasho server's first snapshot came (before it, `infos` is empty for not being known yet).
+ */
+export function usePluginRegistry(): { infos: PluginInfo[]; parts: PluginPart[]; errors: Record<string, string>; loading: Record<string, boolean>; synced: boolean } {
+  const { plugins, synced } = useAppState();
   const s = useSyncExternalStore(subscribe, () => state);
   const parts = [...plugins]
     .sort((a, b) => a.manifest.name.localeCompare(b.manifest.name, "ja"))
@@ -232,5 +204,5 @@ export function usePluginRegistry(): { infos: PluginInfo[]; parts: PluginPart[];
       const l = info.enabled ? s.loaded[info.id] : undefined;
       return l ? [{ info, def: l.def, version: l.hash }] : [];
     });
-  return { infos: plugins, parts, errors: s.errors, loading: s.loading };
+  return { infos: plugins, parts, errors: s.errors, loading: s.loading, synced };
 }

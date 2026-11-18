@@ -21,6 +21,7 @@ import {
   GripHorizontal,
   Hand,
   Layers,
+  MemoryStick,
   Moon,
   Pencil,
   Plus,
@@ -49,6 +50,7 @@ import type {
 import { EFFORTS } from "@/components/session-controls";
 import { StatusBadge } from "@/components/status-badge";
 import { NotificationStack, type NotificationItem } from "@/components/ui/notification-stack";
+import { MemoryMeters } from "@/components/memory-meters";
 import { CHART_BLUE, StatCard, TILE, TILE_SHADOW } from "@/components/ui/stat-card";
 import { updateTo } from "@/lib/daemon-update";
 import { branchLabel, formatCost, relativeTime, repoLabel, sessionLabel, waitingText } from "@/lib/format";
@@ -99,6 +101,7 @@ const TILE_NAMES = {
   tokenBreakdown: "トークンの内訳",
   operations: "最近の操作",
   machines: "working server",
+  memory: "メモリ",
 } as const;
 type TileId = keyof typeof TILE_NAMES;
 const TILE_IDS = Object.keys(TILE_NAMES) as TileId[];
@@ -151,7 +154,7 @@ function openSession(machine: string, sessionId: string): void {
 }
 
 export function HomeView() {
-  const { machines, notifications, operations } = useAppState();
+  const { machines, memory, notifications, operations } = useAppState();
   const now = useNow();
   const [launching, setLaunching] = useState(false);
 
@@ -327,6 +330,14 @@ export function HomeView() {
       content: (
         <Tile title="working server" icon={<Server className="size-4" />}>
           <Machines machines={machines} now={now} />
+        </Tile>
+      ),
+    },
+    memory: {
+      size: "small",
+      content: (
+        <Tile title="メモリ" icon={<MemoryStick className="size-4" />}>
+          <MemoryMeters machines={machines} memory={memory} />
         </Tile>
       ),
     },

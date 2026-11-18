@@ -1,0 +1,7 @@
+{
+  "id": "e2e-theme-a",
+  "name": "E2E 夜",
+  "version": "1.0.0",
+  "api": "1.6",
+  "theme": { "background": "#102030", "radius": "0.25rem", "neutral-950": "#0a0b0c" }
+}

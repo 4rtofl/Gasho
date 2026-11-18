@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -16,11 +17,15 @@ export const CLAUDE_TMP_SWEEP_MS = 60 * 60_000;
 
 const SESSION_DIR_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-/** What Claude Code is given as CLAUDE_CODE_TMPDIR: GASHO_CLAUDE_TMPDIR when it is an absolute path, or gasho's cache folder. */
-export function claudeTmpRoot(env: NodeJS.ProcessEnv = process.env): string {
+/**
+ * What Claude Code is given as CLAUDE_CODE_TMPDIR: a folder of this daemon's own, in GASHO_CLAUDE_TMPDIR when that is an
+ * absolute path, or else in gasho's cache folder. A daemon knows only its own sessions, and would take the folders of
+ * another daemon's on the same machine for ones left behind. The daemons are told apart by their state folders.
+ */
+export function claudeTmpRoot(stateDir: string, env: NodeJS.ProcessEnv = process.env): string {
   const chosen = env.GASHO_CLAUDE_TMPDIR;
-  if (chosen && path.isAbsolute(chosen)) return path.normalize(chosen);
-  return path.join(env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "gasho", "claude-tmp");
+  const base = chosen && path.isAbsolute(chosen) ? chosen : path.join(env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "gasho", "claude-tmp");
+  return path.join(base, createHash("sha256").update(path.resolve(stateDir)).digest("hex").slice(0, 12));
 }
 
 /** A real folder: not a symbolic link, and not a file. */

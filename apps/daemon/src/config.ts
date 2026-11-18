@@ -29,6 +29,7 @@ export interface DaemonConfig {
 }
 
 export function loadConfig(creds: Credentials, env: NodeJS.ProcessEnv = process.env): DaemonConfig {
+  const stateDir = path.dirname(credentialsPath(env));
   return {
     hubUrl: env.GASHO_HUB_URL ?? daemonUrl(creds.server),
     machineId: creds.machineId,
@@ -39,9 +40,9 @@ export function loadConfig(creds: Credentials, env: NodeJS.ProcessEnv = process.
     claudeBin: env.GASHO_CLAUDE_BIN ?? "claude",
     ghBin: env.GASHO_GH_BIN ?? "gh",
     pollIntervalMs: Number(env.GASHO_POLL_MS ?? 3000),
-    stateDir: path.dirname(credentialsPath(env)),
+    stateDir,
     attachmentsDir: path.join(env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "gasho", "attachments"),
-    claudeTmpDir: claudeTmpRoot(env),
+    claudeTmpDir: claudeTmpRoot(stateDir, env),
     pluginCacheDir: path.join(env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "gasho", "daemon-plugins"),
     pluginDataDir: path.join(env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "gasho", "plugin-data"),
     runPlugins: env.GASHO_PLUGINS !== "none",

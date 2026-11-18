@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { CLAUDE_TMP_MAX_AGE_MS, claudeTmpRoot, removeSessionTmp, sessionTmpDirs, sweepClaudeTmp } from "../src/claude-tmp.ts";
+import { loadConfig } from "../src/config.ts";
 
 const UID = 1000;
 const A = "0b4d15fc-2468-4535-a574-5db3ba695366";
@@ -44,12 +45,35 @@ async function session(project: string, id: string, at: number): Promise<string>
 
 const exists = (file: string) => fs.lstat(file).then(() => true, () => false);
 
-test("the folder is the one chosen with an absolute path, or gasho's in the cache folder", () => {
-  assert.equal(claudeTmpRoot({ GASHO_CLAUDE_TMPDIR: "/data/tmp/", XDG_CACHE_HOME: "/c" }), "/data/tmp/");
-  assert.equal(claudeTmpRoot({ XDG_CACHE_HOME: "/c" }), "/c/gasho/claude-tmp");
-  assert.equal(claudeTmpRoot({ GASHO_CLAUDE_TMPDIR: "relative/tmp", XDG_CACHE_HOME: "/c" }), "/c/gasho/claude-tmp");
-  assert.equal(claudeTmpRoot({ GASHO_CLAUDE_TMPDIR: "", XDG_CACHE_HOME: "/c" }), "/c/gasho/claude-tmp");
-  assert.equal(claudeTmpRoot({}), path.join(os.homedir(), ".cache", "gasho", "claude-tmp"));
+test("the folder is in the one chosen with an absolute path, or in gasho's in the cache folder", () => {
+  const own = path.basename(claudeTmpRoot("/state", {}));
+  assert.match(own, /^[0-9a-f]{12}$/);
+  assert.equal(claudeTmpRoot("/state", { GASHO_CLAUDE_TMPDIR: "/data/tmp/", XDG_CACHE_HOME: "/c" }), `/data/tmp/${own}`);
+  assert.equal(claudeTmpRoot("/state", { XDG_CACHE_HOME: "/c" }), `/c/gasho/claude-tmp/${own}`);
+  assert.equal(claudeTmpRoot("/state", { GASHO_CLAUDE_TMPDIR: "relative/tmp", XDG_CACHE_HOME: "/c" }), `/c/gasho/claude-tmp/${own}`);
+  assert.equal(claudeTmpRoot("/state", { GASHO_CLAUDE_TMPDIR: "", XDG_CACHE_HOME: "/c" }), `/c/gasho/claude-tmp/${own}`);
+  assert.equal(claudeTmpRoot("/state", {}), path.join(os.homedir(), ".cache", "gasho", "claude-tmp", own));
+});
+
+test("a daemon with another state folder has another folder, and its clean-up leaves the first one's sessions alone", async () => {
+  const { root, done } = await tmp();
+  try {
+    for (const env of [{ XDG_CACHE_HOME: root }, { XDG_CACHE_HOME: "/c", GASHO_CLAUDE_TMPDIR: root }]) {
+      const creds = { server: "http://127.0.0.1:1", machineId: "m", token: "t", name: "" };
+      const first = loadConfig(creds, { ...env, GASHO_DAEMON_CONFIG: "/state/one/daemon.json" }).claudeTmpDir;
+      const second = loadConfig(creds, { ...env, GASHO_DAEMON_CONFIG: "/state/two/daemon.json" }).claudeTmpDir;
+      assert.notEqual(first, second);
+      assert.equal(loadConfig(creds, { ...env, GASHO_DAEMON_CONFIG: "/state/one/other.json" }).claudeTmpDir, first);
+
+      const running = await session(path.join(first, `claude-${UID}`, "-home-rg-app"), A, NOW - 100 * HOUR);
+      const left = await session(path.join(second, `claude-${UID}`, "-home-rg-app"), B, NOW - 100 * HOUR);
+      const { removed } = await sweepClaudeTmp(second, { keep: nobody, now: NOW, uid: UID });
+      assert.deepEqual(removed, [left]);
+      assert.equal(await fs.lstat(running).then(() => true, () => false), true);
+    }
+  } finally {
+    await done();
+  }
 });
 
 test("removing a session removes its folder in every working folder, and nothing else", async () => {

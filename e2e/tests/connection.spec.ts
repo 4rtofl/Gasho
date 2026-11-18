@@ -7,6 +7,7 @@ import { expect, test } from "./fixtures.ts";
 import { expectConnection, onPhone, routeConnection } from "./screen.ts";
 
 const SESSION = "5d2a7c1e-3b4f-4e8a-9c6d-1f0e2b3a4c5d";
+const OTHER = "8e1b4d2f-6a7c-4b9e-8d3f-2c5a1e7b9d4f";
 const BROWSER = "e2e-browser";
 
 const sessionUrl = (d: FakeDaemon, panel = "") => `/#/s/${encodeURIComponent(d.machineId)}/${SESSION}${panel}`;
@@ -89,31 +90,148 @@ test("接続が切れているあいだに指示を送ると「Gasho サーバ�
   expect(countOf(d, "session.input")).toBe(0);
 });
 
+/** The session's chat box, its files, and the button that puts back a message whose result never came. */
+function composer(page: Page) {
+  return {
+    box: page.getByPlaceholder("Agent への指示を入力…"),
+    attached: page.getByRole("list", { name: "添付ファイル" }).getByRole("listitem"),
+    putBack: page.getByRole("button", { name: /^入力欄に戻す/ }),
+    notice: page.getByText(/送れたか分かりません/),
+  };
+}
+
+/** Sends a message from the session's chat box, with a text file attached when `file` is given. */
+async function send(page: Page, text: string, file?: string): Promise<void> {
+  if (file) {
+    const chooser = page.waitForEvent("filechooser");
+    await page.getByRole("button", { name: "ファイルを添付" }).click();
+    await (await chooser).setFiles({ name: file, mimeType: "text/plain", buffer: Buffer.from("メモ") });
+  }
+  await composer(page).box.fill(text);
+  await page.getByRole("button", { name: "送信" }).click();
+}
+
 test("送った直後に接続が切れると、結果が分からないと出て、指示は「入力欄に戻す」を押したときだけ戻る（#106）", async ({ page, hub }) => {
   const d = await hub.fakeDaemon({ name: "mac", sessions: [fakeSession({ sessionId: SESSION, cwd: "/work/gasho", name: "e2e-session" })] });
   // Typed into the session, but its result is lost with the connection.
   d.handle("session.input", () => undefined);
   const conn = await routeConnection(page);
   await openSession(page, d);
+  const c = composer(page);
 
-  const box = page.getByPlaceholder("Agent への指示を入力…");
-  const attached = page.getByRole("list", { name: "添付ファイル" }).getByRole("listitem");
-  const chooser = page.waitForEvent("filechooser");
-  await page.getByRole("button", { name: "ファイルを添付" }).click();
-  await (await chooser).setFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("メモ") });
-  await box.fill("README を読んで");
-  await page.getByRole("button", { name: "送信" }).click();
+  await send(page, "README を読んで", "notes.txt");
   await d.waitFor("session.input");
   await conn.drop();
-  await expect(page.getByText(/分かりません/)).toBeVisible();
-  await expect(box).toHaveValue("");
-  await expect(attached).toHaveCount(0);
+  await expect(c.notice).toBeVisible();
+  await expect(c.box).toHaveValue("");
+  await expect(c.attached).toHaveCount(0);
 
   // A phone has no ↑ key to recall it.
-  await page.getByRole("button", { name: "入力欄に戻す" }).click();
-  await expect(box).toHaveValue("README を読んで");
-  await expect(attached).toHaveCount(1);
-  await expect(page.getByRole("button", { name: "入力欄に戻す" })).toHaveCount(0);
+  await c.putBack.click();
+  await expect(c.box).toHaveValue("README を読んで");
+  await expect(c.attached).toHaveCount(1);
+  await expect(c.putBack).toHaveCount(0);
+  await expect(c.notice).toHaveCount(0);
+});
+
+test("結果が分からない指示が会話に出ると、「入力欄に戻す」は消える（#106）", async ({ page, hub }) => {
+  const d = await hub.fakeDaemon({ name: "mac", sessions: [fakeSession({ sessionId: SESSION, cwd: "/work/gasho", name: "e2e-session" })] });
+  d.handle("session.input", () => undefined);
+  const conn = await routeConnection(page);
+  await openSession(page, d);
+  const c = composer(page);
+
+  await send(page, "README を読んで");
+  await d.waitFor("session.input");
+  // Typed into the session after all (it waited there while Claude worked): the conversation shows it once read again.
+  d.transcripts[SESSION] = [...(d.transcripts[SESSION] ?? []), textEntry("user", "README を読んで")];
+  await conn.drop();
+  await expect(page.getByText("README を読んで", { exact: true })).toBeVisible();
+  await expect(c.putBack).toHaveCount(0);
+  await expect(c.notice).toHaveCount(0);
+});
+
+test("結果を待つあいだに別の会話へ移っても、戻ると「入力欄に戻す」で指示を戻せる（#106）", async ({ page, hub }) => {
+  const d = await hub.fakeDaemon({
+    name: "mac",
+    sessions: [
+      fakeSession({ sessionId: SESSION, cwd: "/work/gasho", name: "e2e-session" }),
+      fakeSession({ sessionId: OTHER, cwd: "/work/gasho", name: "e2e-other" }),
+    ],
+  });
+  d.handle("session.input", () => undefined);
+  const conn = await routeConnection(page);
+  await openSession(page, d);
+  const c = composer(page);
+  const goTo = async (sessionId: string, name: string) => {
+    await page.evaluate(`location.hash = ${JSON.stringify(`/s/${encodeURIComponent(d.machineId)}/${sessionId}`)}`);
+    await expect(page.getByRole("heading", { name })).toBeVisible();
+  };
+
+  await send(page, "README を読んで", "notes.txt");
+  await d.waitFor("session.input");
+  await goTo(OTHER, "e2e-other");
+  await conn.drop();
+  await expect(c.notice).toHaveCount(0);
+  await goTo(SESSION, "e2e-session");
+  await expect(c.notice).toBeVisible();
+  // Leaving it once it shows keeps it too.
+  await goTo(OTHER, "e2e-other");
+  await goTo(SESSION, "e2e-session");
+  await c.putBack.click();
+  await expect(c.box).toHaveValue("README を読んで");
+  await expect(c.attached).toHaveCount(1);
+});
+
+test("結果が分からない指示が 2 件あると、古いものから 1 件ずつ、入力欄に書いた文の後ろに戻る（#106）", async ({ page, hub }) => {
+  const d = await hub.fakeDaemon({ name: "mac", sessions: [fakeSession({ sessionId: SESSION, cwd: "/work/gasho", name: "e2e-session" })] });
+  d.handle("session.input", () => undefined);
+  const conn = await routeConnection(page);
+  await openSession(page, d);
+  const c = composer(page);
+
+  await send(page, "1 件目", "notes.txt");
+  await send(page, "2 件目");
+  await expect.poll(() => countOf(d, "session.input")).toBe(2);
+  await conn.drop();
+  await expect(c.putBack).toHaveText("入力欄に戻す（残り 2 件）");
+
+  await c.box.fill("あ");
+  await c.putBack.click();
+  await expect(c.box).toHaveValue("あ\n1 件目");
+  await expect(c.attached).toHaveCount(1);
+  await expect(c.putBack).toHaveText("入力欄に戻す");
+
+  await c.box.fill("");
+  await page.getByRole("button", { name: "Remove notes.txt" }).click();
+  await c.putBack.click();
+  await expect(c.box).toHaveValue("2 件目");
+  await expect(c.putBack).toHaveCount(0);
+});
+
+test("working server がオフラインのあいだに「入力欄に戻す」を押すと、戻せなかった添付はボタンに残る（#106）", async ({ page, hub }) => {
+  const d = await hub.fakeDaemon({ name: "mac", sessions: [fakeSession({ sessionId: SESSION, cwd: "/work/gasho", name: "e2e-session" })] });
+  d.handle("session.input", () => undefined);
+  const conn = await routeConnection(page);
+  await openSession(page, d);
+  const c = composer(page);
+
+  await send(page, "README を読んで", "notes.txt");
+  await d.waitFor("session.input");
+  await conn.drop();
+  await expect(c.notice).toBeVisible();
+  await d.disconnect();
+  await expect(page.getByText("working server がオフラインです。")).toBeVisible();
+
+  await c.putBack.click();
+  await expect(c.box).toHaveValue("README を読んで");
+  await expect(c.attached).toHaveCount(0);
+  await expect(c.putBack).toBeDisabled();
+
+  await d.connect();
+  await c.putBack.click();
+  await expect(c.attached).toHaveCount(1);
+  await expect(c.putBack).toHaveCount(0);
 });
 
 test("つなぎ直したあとも、遡って読み込んだ会話が残る（#106）", async ({ page, hub }) => {

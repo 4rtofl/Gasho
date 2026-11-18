@@ -20,13 +20,13 @@ import {
   sessionLabel,
   waitingLabel,
 } from "@/lib/format";
-import { promptDraft, usePicks } from "@/lib/drafts";
-import { addPending, noneWaiting, pendingShown, removePending, sessionWorking, settlePending, usePending } from "@/lib/pending";
+import { promptDraft, usePicks, useUnsent } from "@/lib/drafts";
+import { addPending, noneWaiting, pendingShown, recorded, removePending, sessionWorking, settlePending, usePending } from "@/lib/pending";
 import { go, type SessionPanel } from "@/lib/route";
 import { closeSessionHeaderOnPhone, useSessionHeaderShown } from "@/lib/session-header";
 import { daemonAtLeast, rememberOpened, worktreeId, worktreesByLastUse } from "@/lib/sessions";
 import { loadSkills, useSkills } from "@/lib/skills";
-import { loadTranscript, sendCommand, type SentResult, transcriptKey, useAppState } from "@/lib/store";
+import { loadTranscript, sendCommand, type SentResult, transcriptKey, type TranscriptState, useAppState } from "@/lib/store";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
 import { PluginComposerFooter, PluginConversationEnd, PluginHeaderItems } from "@/plugins/parts";
@@ -218,7 +218,7 @@ export function SessionView({
           state={t}
           pending={pending}
           onLoadOlder={() => loadTranscript(machine, sessionId, true)}
-          footer={<Composer machine={m} session={s} entries={t?.total ?? 0} />}
+          footer={<Composer machine={m} session={s} transcript={t} />}
           end={<PluginConversationEnd machine={m} session={s} />}
           source={source}
         />
@@ -344,22 +344,46 @@ function toBase64(file: File): Promise<string> {
 /**
  * The chat box. It floats over the bottom of the conversation (see the footer of Transcript). What is typed and picked
  * in it is kept per session (see lib/drafts), and a message sent shows in the conversation at once (see lib/pending).
- * `entries`: how many entries the conversation has.
+ * `transcript`: what is loaded of the conversation.
  */
-function Composer({ machine, session: s, entries }: { machine: MachineInfo; session: SessionInfo; entries: number }) {
+function Composer({ machine, session: s, transcript }: { machine: MachineInfo; session: SessionInfo; transcript?: TranscriptState }) {
   const key = transcriptKey(machine.id, s.sessionId);
+  const entries = transcript?.total ?? 0;
   const [error, setError] = useState<string>();
   const [warning, setWarning] = useState<string>();
   const box = useRef<PromptInputHandle>(null);
-  // Sent when the connection closed before its result came: put back in the box only when asked (see UNKNOWN_SENT).
-  const [unsent, setUnsent] = useState<{ text: string; files: File[] }>();
+  // Sent when the connection closed before their results came: put back in the box only when asked (see UNKNOWN_SENT).
+  const [unsent, setUnsent] = useUnsent(key);
+  // One the conversation shows was typed into the session after all.
+  useEffect(() => {
+    if (!transcript) return;
+    setUnsent((list) => {
+      const left = list.filter((u) => !recorded(u, transcript.entries, transcript.start));
+      return left.length < list.length ? left : list;
+    });
+  }, [transcript, setUnsent]);
+  // Puts back the oldest one: each goes back as it was sent, to be sent again on its own.
   const putBack = () => {
-    if (!unsent) return;
-    // What was typed since stays, as when a send fails.
-    if (!promptDraft(key).get().text) box.current?.setValue(unsent.text);
-    if (unsent.files.length > 0) box.current?.attach(unsent.files);
+    const first = unsent[0];
+    if (!first) return;
+    const draft = promptDraft(key);
+    if (first.text) {
+      // What was typed since stays, before it.
+      const typed = draft.get().text.trimEnd();
+      box.current?.setValue(typed ? `${typed}\n${first.text}` : first.text);
+    }
+    box.current?.attach(first.files);
+    // The box takes no files while the working server is offline, nor more than it holds: those stay to put back.
+    const taken = draft.get().attachments;
+    const left = first.files.filter(
+      (f) => !taken.some((a) => a.name === f.name && a.size === f.size && a.file.lastModified === f.lastModified),
+    );
+    setUnsent((list) =>
+      left.length > 0
+        ? list.map((u) => (u.id === first.id ? { ...u, text: "", files: left } : u))
+        : list.filter((u) => u.id !== first.id),
+    );
     box.current?.focus();
-    setUnsent(undefined);
   };
   const [picks, setPicks] = usePicks(key);
   const { model: picked, effort: pickedEffort, ultracode: pickedUltracode } = picks;
@@ -432,7 +456,6 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
         onSend={async ({ text, files }) => {
           setError(undefined);
           setWarning(undefined);
-          setUnsent(undefined);
           const fail = (message: string): never => {
             setError(message);
             throw new Error(message);
@@ -469,8 +492,7 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
           if (r.unknown) {
             // Not put back in the box at once: it may have been typed into the session, and could be sent twice.
             removePending(key, pending);
-            setUnsent({ text, files });
-            setWarning(UNKNOWN_SENT);
+            setUnsent((list) => [...list, { id: pending, text, files, after: entries }]);
             return;
           }
           if (!r.ok) {
@@ -541,15 +563,20 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
       {(status || error || warning) && (
         <p className={cn("mt-1.5 px-3 text-xs", error ? "text-red-400" : warning ? "text-amber-400" : "text-muted-foreground")}>
           {error ?? warning ?? status}
-          {!error && warning === UNKNOWN_SENT && unsent && (
-            <button
-              type="button"
-              onClick={putBack}
-              className="ml-1.5 font-medium underline decoration-amber-400/50 underline-offset-4 hover:text-foreground"
-            >
-              入力欄に戻す
-            </button>
-          )}
+        </p>
+      )}
+      {unsent.length > 0 && (
+        <p className="mt-1.5 px-3 text-xs text-amber-400">
+          {UNKNOWN_SENT}
+          <button
+            type="button"
+            onClick={putBack}
+            // Only files are left, and the box takes none now.
+            disabled={!unsent[0]?.text && (offline || !features.includes("files"))}
+            className="ml-1.5 font-medium underline decoration-amber-400/50 underline-offset-4 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+          >
+            {unsent.length > 1 ? `入力欄に戻す（残り ${unsent.length} 件）` : "入力欄に戻す"}
+          </button>
         </p>
       )}
     </div>

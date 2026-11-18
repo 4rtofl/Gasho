@@ -44,7 +44,7 @@ function entryText(e: TranscriptEntry): string {
  * tags); a slash command becomes a note that starts with it; files sent alone show as their paths under Gasho's
  * attachments folder. `start` is the index of entries[0] in the whole conversation.
  */
-export function recorded(p: PendingMessage, entries: readonly TranscriptEntry[], start: number): boolean {
+export function recorded(p: Pick<PendingMessage, "text" | "after">, entries: readonly TranscriptEntry[], start: number): boolean {
   const head = squeeze(p.text.replace(/^\s*!/, "")).slice(0, HEAD);
   const command = p.text.startsWith("/");
   for (let i = Math.max(0, p.after - start); i < entries.length; i++) {

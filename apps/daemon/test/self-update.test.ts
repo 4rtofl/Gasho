@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import type { DaemonUpdateInfo, HubToDaemon } from "@gasho/protocol";
+import { loadConfig } from "../src/config.ts";
 import { Daemon } from "../src/daemon.ts";
 import { cliIn, type Install, layoutOf, type Layout } from "../src/install.ts";
 import {
@@ -17,6 +18,7 @@ import {
   startOnTrial,
   stoppedOnTrial,
   switchTo,
+  TRIAL_MS,
   UPDATE_EXIT_CODE,
   Updater,
   versionsInUse,
@@ -222,6 +224,13 @@ test("a version on trial counts its first start, is tried again after a stop, an
   // Confirmed, its starts are no longer counted.
   assert.equal(await startOnTrial(layout, "0.15.0", () => undefined), undefined);
   assert.ok(!existsSync(layout.trialFile));
+});
+
+test("a GASHO_DAEMON_PROBATION_MS that is no length of time leaves the trial at its default", () => {
+  const creds = { server: "http://127.0.0.1:1", machineId: "m", token: "t", name: "n" };
+  // Empty or not a number would confirm a version at once, without the screen saying it would go back.
+  for (const v of ["", "soon", "0", "-5", "Infinity"]) assert.equal(loadConfig(creds, { GASHO_DAEMON_PROBATION_MS: v }).trialMs, TRIAL_MS, v);
+  assert.equal(loadConfig(creds, { GASHO_DAEMON_PROBATION_MS: "20000" }).trialMs, 20_000);
 });
 
 test("a version on trial is confirmed even when the versions no longer used cannot be removed", async (t) => {

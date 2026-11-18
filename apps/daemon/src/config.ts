@@ -44,6 +44,12 @@ export function loadConfig(creds: Credentials, env: NodeJS.ProcessEnv = process.
     pluginCacheDir: path.join(env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "gasho", "daemon-plugins"),
     pluginDataDir: path.join(env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "gasho", "plugin-data"),
     runPlugins: env.GASHO_PLUGINS !== "none",
-    trialMs: Number(env.GASHO_DAEMON_PROBATION_MS ?? TRIAL_MS),
+    trialMs: positiveMs(env.GASHO_DAEMON_PROBATION_MS) ?? TRIAL_MS,
   };
+}
+
+/** A length of time in milliseconds set in the environment, when it is one: empty or not a number would be none at all. */
+function positiveMs(value: string | undefined): number | undefined {
+  const n = Number(value);
+  return value && Number.isFinite(n) && n > 0 ? n : undefined;
 }

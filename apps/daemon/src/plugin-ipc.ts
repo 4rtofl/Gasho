@@ -45,7 +45,8 @@ export type GitHubAnswer =
 /** gasho-daemon -> the plugin's process. */
 export type ToHost =
   | { t: "init"; plugin: string; machine: MachineWire; settings: Record<string, unknown>; local: LocalWire }
-  | { t: "call"; id: number; method: string; params: unknown; session?: SessionWire; settings: Record<string, unknown> }
+  /** `hook`: not a method of the web part, but the daemon part's onSessionStop (plugin API 1.13). */
+  | { t: "call"; id: number; method: string; params: unknown; session?: SessionWire; settings: Record<string, unknown>; hook?: "sessionStop" }
   | { t: "abort"; id: number }
   | { t: "settings"; settings: Record<string, unknown> }
   | { t: "folders"; folders: string[] }

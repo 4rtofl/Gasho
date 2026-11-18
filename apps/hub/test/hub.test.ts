@@ -12,7 +12,7 @@ import {
   UPDATING,
   validateCommand,
 } from "../src/hub.ts";
-import { notificationFor } from "../src/notify.ts";
+import { NotificationGate, notificationFor } from "../src/notify.ts";
 import { Store } from "../src/store.ts";
 
 function fakePeer<T>(deviceId = "") {
@@ -274,6 +274,27 @@ test("notificationFor covers permission, idle and errors, and ignores other even
   assert.equal(notificationFor("m", { ...ev, event: "StopFailure" }, session, "3")?.kind, "error");
   assert.equal(notificationFor("m", { ...ev, event: "PreToolUse" }, session, "4"), null);
   assert.equal(notificationFor("m", { ...ev, event: "Stop" }, undefined, "5")?.title, "s1 の応答が終わりました");
+});
+
+test("what a plugin says of a Stop replaces Gasho's notification, and is not dropped in a turn of its own (API 1.13)", () => {
+  const ev = { sessionId: "s1", event: "Stop", at: 1, summary: "会話の中身" };
+  const said = notificationFor("m", { ...ev, notification: { plugin: "github-review", title: " #5 のレビューが終わりました ", body: "o/r" } }, undefined, "1");
+  assert.deepEqual(
+    { kind: said?.kind, title: said?.title, body: said?.body, plugin: said?.plugin },
+    { kind: "done", title: "#5 のレビューが終わりました", body: "o/r", plugin: "github-review" },
+  );
+  const empty = notificationFor("m", { ...ev, notification: { plugin: "p", title: "  " } }, undefined, "2");
+  assert.equal(empty?.title, "s1 の応答が終わりました");
+  assert.equal(empty?.plugin, undefined);
+
+  const gate = new NotificationGate();
+  gate.pass("m", { sessionId: "s1", event: "UserPromptSubmit", at: 1, automatic: true }, null, () => true);
+  const stop = { sessionId: "s1", event: "Stop", at: 2 };
+  assert.equal(gate.pass("m", stop, notificationFor("m", stop, undefined, "3"), () => false), true);
+  gate.pass("m", { sessionId: "s1", event: "UserPromptSubmit", at: 3, automatic: true }, null, () => true);
+  assert.equal(gate.pass("m", stop, notificationFor("m", stop, undefined, "4"), () => true), false);
+  gate.pass("m", { sessionId: "s1", event: "UserPromptSubmit", at: 4, automatic: true }, null, () => true);
+  assert.equal(gate.pass("m", stop, said, () => true), true);
 });
 
 test("a permission prompt for Claude's question or plan is notified as such", () => {

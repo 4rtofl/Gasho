@@ -11,7 +11,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { DaemonPluginEntry, DaemonPluginStatus, DaemonToHub, HubToDaemon } from "@gasho/protocol";
+import type { DaemonPluginEntry, DaemonPluginStatus, DaemonToHub, HubToDaemon, PluginStopNotification } from "@gasho/protocol";
 import type { GitHubProxy } from "./github.ts";
 import type { FromHost, GitHubAnswer, LocalWire, MachineWire, SessionWire, ToHost } from "./plugin-ipc.ts";
 
@@ -19,9 +19,10 @@ import type { FromHost, GitHubAnswer, LocalWire, MachineWire, SessionWire, ToHos
  * The plugin API this gasho-daemon runs plugins of. A daemon part runs only where this is at least its manifest's
  * `api`: 1.10, as worktree.remove (useRemoveWorktree) is answered only from this gasho-daemon on. 1.11 (the panels of
  * a plugin's page) and 1.12 (useSendInput's model, effort and ultracode, which this gasho-daemon switches since 0.6.0)
- * are the screen's alone: this gasho-daemon names them so that a plugin of 1.12 with a daemon part runs.
+ * are the screen's alone: this gasho-daemon names them so that a plugin of 1.12 with a daemon part runs. 1.13: the
+ * daemon part's onSessionStop is asked from this gasho-daemon on.
  */
-export const PLUGIN_API = "1.12";
+export const PLUGIN_API = "1.13";
 /** The process of a daemon part: next to this file (.ts when run from the repository, .js in the npm package). */
 const HOST_FILE = fileURLToPath(new URL(`./plugin-host${path.extname(fileURLToPath(import.meta.url))}`, import.meta.url));
 /** How long a new process may take to import the plugin and run its `start`. */
@@ -39,6 +40,8 @@ const BACKOFF_MS = 1000;
 const MAX_BACKOFF_MS = 60_000;
 /** How long the Gasho server may take to hand over a daemon part's code. */
 const CODE_MS = 30_000;
+/** How long a notification waits for what the daemon parts say of a session that stopped (onSessionStop). */
+export const SESSION_STOP_MS = 5000;
 /** Events of a topic are passed on at most this often; of those in between, the last one, when the time comes. */
 const EVENT_EVERY_MS = 1000;
 
@@ -173,7 +176,15 @@ class HostProcess {
     }
   }
 
-  call(method: string, params: unknown, session: SessionWire | undefined, settings: Record<string, unknown>, timeoutMs: number, write: boolean): Promise<Answer> {
+  call(
+    method: string,
+    params: unknown,
+    session: SessionWire | undefined,
+    settings: Record<string, unknown>,
+    timeoutMs: number,
+    write: boolean,
+    hook?: "sessionStop",
+  ): Promise<Answer> {
     return new Promise((resolve) => {
       if (!this.alive) {
         resolve({ ok: false, error: NOT_RUNNING, user: true });
@@ -186,7 +197,7 @@ class HostProcess {
         resolve({ ok: false, error: "working server から応答がありません。", user: true });
       }, timeoutMs);
       this.calls.set(id, { resolve, timer, write });
-      this.send({ t: "call", id, method, params, ...(session ? { session } : {}), settings });
+      this.send({ t: "call", id, method, params, ...(session ? { session } : {}), settings, ...(hook ? { hook } : {}) });
     });
   }
 
@@ -358,6 +369,37 @@ export class PluginRunner {
       slot.running--;
       slot.waiting.shift()?.();
     }
+  }
+
+  /** Whether a daemon part running here may have something to say when a session stops. */
+  hearsSessionStop(): boolean {
+    return this.opts.enabled && [...this.slots.values()].some((s) => s.entry.run && s.entry.sessionStop === true && s.proc?.alive);
+  }
+
+  /**
+   * What the daemon parts say of a session that ended a turn (onSessionStop, plugin API 1.13): the first answer, in the
+   * order of the plugins, of those asked at the same time. Nothing for a session not started from Gasho, and when none
+   * answers within SESSION_STOP_MS: Gasho's own notification is sent then.
+   */
+  async sessionStop(sessionId: string): Promise<PluginStopNotification | undefined> {
+    const slots = [...this.slots.values()].filter((s) => this.opts.enabled && s.entry.run && s.entry.sessionStop === true && s.proc?.alive);
+    if (slots.length === 0) return undefined;
+    const session = await this.opts.session(sessionId);
+    if (!session?.managed) return undefined;
+    const answers = await Promise.all(
+      slots.map(async (slot): Promise<PluginStopNotification | undefined> => {
+        const a = await slot.proc?.call("onSessionStop", undefined, session, slot.entry.settings, SESSION_STOP_MS, false, "sessionStop");
+        if (!a) return undefined;
+        if (!a.ok) {
+          this.opts.log(`plugin ${slot.id}: onSessionStop failed: ${a.error}`);
+          return undefined;
+        }
+        const said = a.data as { title?: unknown; body?: unknown } | null | undefined;
+        if (typeof said?.title !== "string" || !said.title.trim()) return undefined;
+        return { plugin: slot.id, title: said.title, ...(typeof said.body === "string" ? { body: said.body } : {}) };
+      }),
+    );
+    return answers.find((a) => a !== undefined);
   }
 
   /** Tells the Gasho server what runs here (also that this gasho-daemon runs plugins at all). */

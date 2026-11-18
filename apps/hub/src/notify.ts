@@ -7,6 +7,13 @@ export function sessionLabel(s: SessionInfo | undefined, sessionId: string): str
   return sessionId.slice(0, 8);
 }
 
+/** What a plugin says of a Stop (plugin API 1.13), when gasho-daemon sent something that can be shown. */
+function pluginNotification(ev: HookEvent): HookEvent["notification"] {
+  const n = ev.notification;
+  if (typeof n?.plugin !== "string" || typeof n.title !== "string" || !n.title.trim()) return undefined;
+  return { plugin: n.plugin, title: n.title.trim().slice(0, 120), ...(typeof n.body === "string" && n.body.trim() ? { body: n.body.trim().slice(0, 300) } : {}) };
+}
+
 /**
  * Decides whether a hook event deserves a notification.
  * Server-mode sessions never send idle_prompt, so "waiting for input" there is shown from Stop.
@@ -20,6 +27,8 @@ export function notificationFor(
   const label = sessionLabel(session, ev.sessionId);
   const base = { id, machine, sessionId: ev.sessionId, at: ev.at, read: false };
   if (ev.event === "Stop") {
+    const said = pluginNotification(ev);
+    if (said) return { ...base, kind: "done", title: said.title, body: said.body, plugin: said.plugin };
     return { ...base, kind: "done", title: `${label} の応答が終わりました`, body: ev.summary || undefined };
   }
   if (ev.event === "StopFailure") {
@@ -85,7 +94,8 @@ export class NotificationGate {
       s.automatic = ev.automatic === true;
     } else if (ev.event === "Stop" || ev.event === "StopFailure") {
       // A failure is notified even in a turn of its own: it may need the user.
-      if (ev.event === "Stop" && s.automatic && s.last !== undefined && unread(s.last)) send = false;
+      // So is what a plugin says of this turn: it is news, whoever began the turn.
+      if (ev.event === "Stop" && !n?.plugin && s.automatic && s.last !== undefined && unread(s.last)) send = false;
       s.automatic = false;
       s.told = true;
     } else if (ev.event === "Notification" && ev.notificationType === "idle_prompt") {

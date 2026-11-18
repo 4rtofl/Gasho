@@ -427,7 +427,8 @@ export class PluginHub {
     return this.deps.registry.entries().flatMap((e) => {
       const r = e.revision;
       if (!r?.manifest.daemon) return [];
-      return [{ id: e.id, hash: r.hash, run: this.state(e.id).enabled, settings: this.values(e.id, r.manifest) }];
+      const sessionStop = r.manifest.permissions?.includes("session.notification") === true;
+      return [{ id: e.id, hash: r.hash, run: this.state(e.id).enabled, settings: this.values(e.id, r.manifest), ...(sessionStop ? { sessionStop } : {}) }];
     });
   }
 

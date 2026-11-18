@@ -7,7 +7,7 @@ import { test } from "node:test";
 import type { DaemonToHub } from "@gasho/protocol";
 import { Daemon } from "../src/daemon.ts";
 import { GitHubProxy } from "../src/github.ts";
-import { PluginRunner } from "../src/plugins.ts";
+import { PluginRunner, SESSION_STOP_MS } from "../src/plugins.ts";
 
 const V1 = `
 export default {
@@ -35,6 +35,17 @@ export default {
 };
 `;
 const V2 = `export default { methods: { version: () => 2 } };`;
+const STOP_SAYS = `
+export default {
+  methods: {},
+  onSessionStop(ctx) {
+    if (ctx.session.cwd !== "/work/zen") return undefined;
+    return { title: "レビューが終わりました", body: ctx.settings.body };
+  },
+};
+`;
+const STOP_HANGS = `export default { methods: {}, onSessionStop: (ctx) => new Promise((r) => ctx.signal.addEventListener("abort", () => r({ title: "遅い" }))) };`;
+const STOP_THROWS = `export default { methods: {}, onSessionStop() { throw new Error("だめ"); } };`;
 const V3 = `
 export default {
   start(ctx) { ctx.emit("state", { up: true }, { retain: true }); },
@@ -76,11 +87,14 @@ const BROKEN = `export default { start() { throw new Error("動き始められ�
 const HASH3 = "cccccccccccccccc";
 const HASH4 = "dddddddddddddddd";
 const HASH5 = "eeeeeeeeeeeeeeee";
+const HASH6 = "ffffffffffffffff";
+const HASH7 = "1111111111111111";
+const HASH8 = "2222222222222222";
 
 function setup(enabled = true, answerCode = true) {
   const sent: DaemonToHub[] = [];
   const logs: string[] = [];
-  const codes: Record<string, string> = { [HASH1]: V1, [HASH2]: V2, [HASH3]: V3, [HASH4]: BROKEN, [HASH5]: STOPS };
+  const codes: Record<string, string> = { [HASH1]: V1, [HASH2]: V2, [HASH3]: V3, [HASH4]: BROKEN, [HASH5]: STOPS, [HASH6]: STOP_SAYS, [HASH7]: STOP_HANGS, [HASH8]: STOP_THROWS };
   let runner: PluginRunner;
   const local = { folders: ["/work"], dataDir: fs.mkdtempSync(path.join(os.tmpdir(), "gasho-plugin-data-")) };
   // A gh that writes down each time it runs.
@@ -150,6 +164,42 @@ test("a daemon part runs in a process of its own, gets its session and settings,
     local.folders = ["/work", "/home/rg/repos"];
     runner.foldersChanged();
     assert.deepEqual((await call("local")).result, { folders: ["/work", "/home/rg/repos"], dataDir });
+  } finally {
+    await runner.stopAll();
+  }
+});
+
+test("onSessionStop says what to notify, only with the permission and only of a session started from Gasho", async () => {
+  const { runner, state, until, logs } = setup();
+  try {
+    assert.equal(runner.hearsSessionStop(), false);
+    runner.update([{ id: "hello", hash: HASH6, run: true, settings: { body: "本文" }, sessionStop: true }]);
+    await until(() => state()?.state === "running");
+    assert.equal(runner.hearsSessionStop(), true);
+    assert.deepEqual(await runner.sessionStop("s1"), { plugin: "hello", title: "レビューが終わりました", body: "本文" });
+    assert.equal(await runner.sessionStop("nope"), undefined);
+
+    runner.update([{ id: "hello", hash: HASH6, run: true, settings: {} }]);
+    assert.equal(runner.hearsSessionStop(), false);
+    assert.equal(await runner.sessionStop("s1"), undefined);
+
+    runner.update([{ id: "hello", hash: HASH8, run: true, settings: {}, sessionStop: true }]);
+    await until(() => state()?.hash === HASH8);
+    assert.equal(await runner.sessionStop("s1"), undefined);
+    assert.ok(logs.some((l) => l.includes("onSessionStop failed")));
+  } finally {
+    await runner.stopAll();
+  }
+});
+
+test("onSessionStop that does not answer in time leaves Gasho's own notification", async () => {
+  const { runner, state, until } = setup();
+  try {
+    runner.update([{ id: "hello", hash: HASH7, run: true, settings: {}, sessionStop: true }]);
+    await until(() => state()?.state === "running");
+    const from = Date.now();
+    assert.equal(await runner.sessionStop("s1"), undefined);
+    assert.ok(Date.now() - from < SESSION_STOP_MS + 1000);
   } finally {
     await runner.stopAll();
   }

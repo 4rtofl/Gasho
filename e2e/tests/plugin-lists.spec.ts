@@ -18,7 +18,7 @@ function machine(hub: GashoHub): Promise<FakeDaemon> {
   return hub.fakeDaemon({ name: "mac", sessions: [session(1, "確認の作業", "feat/1-a", "waiting"), session(2, "待機の作業", "fix/2-b", "idle"), session(0, "その他へ", "main", "idle")] });
 }
 
-/** The labels of the sidebar's buttons from the section's title on, each on one line. */
+/** The labels of all the sidebar's buttons, each on one line. */
 async function rows(nav: Locator): Promise<string[]> {
   return (await nav.getByRole("button").allInnerTexts()).map((t) => t.replace(/\s+/g, " ").trim());
 }

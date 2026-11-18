@@ -81,7 +81,7 @@ export function WorktreeView({
 /** What to do in a worktree without a session: start one ("＋" after the tabs, or here), or open a past conversation. */
 function NoSession({ worktree }: { worktree: WorktreeSessions }) {
   const hidden = hidesSessionTabs(useSessionListMode());
-  const { canLaunch, launching, error, launch } = useWorktreeLaunch(worktree);
+  const { canLaunch, launching, error, launch, trustDialog } = useWorktreeLaunch(worktree);
   if (!hidden) return <p>この worktree にセッションはありません。タブの右の「＋」で新しいセッションを起動するか、左の履歴から過去の会話を開き直せます。</p>;
   return (
     <>
@@ -103,6 +103,7 @@ function NoSession({ worktree }: { worktree: WorktreeSessions }) {
           </p>
         )}
       </div>
+      {trustDialog}
     </>
   );
 }

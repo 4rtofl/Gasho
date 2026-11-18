@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { TranscriptEntry } from "@gasho/protocol";
-import { pendingShown, recorded, recordedAsSent, SENT_GRACE_MS, type PendingMessage } from "../src/lib/pending.ts";
+import { safeFileName } from "../../daemon/src/managed.ts";
+import { pendingShown, recorded, recordedAsSent, savedName, SENT_GRACE_MS, type PendingMessage } from "../src/lib/pending.ts";
 
 const message = (text: string, extra: Partial<PendingMessage> = {}): PendingMessage => ({
   id: "p1",
@@ -86,6 +87,12 @@ test("a message whose result never came is found only as it was sent, not by ano
   // Sent before, or by a subagent: not this one.
   assert.equal(recordedAsSent({ ...sent("テストして"), after: 1 }, [entry("user", "テストして")], 0), false);
   assert.equal(recordedAsSent(sent("テストして"), [entry("user", "テストして", { isSidechain: true })], 0), false);
+});
+
+test("a file's name is matched as gasho-daemon saves it", () => {
+  const names = ["notes.txt", "my notes.txt", "画面 1.png", "Cafe\u0301.txt", "🙏.png", "../../etc/passwd", "..\\secret.txt"];
+  names.push(".env", "a;b|c$(d).sh", "", `${"x".repeat(150)}.pdf`);
+  for (const name of names) assert.equal(savedName(name), safeFileName(name), JSON.stringify(name));
 });
 
 test("a message waiting on the working server is shown while the session has messages waiting there", () => {

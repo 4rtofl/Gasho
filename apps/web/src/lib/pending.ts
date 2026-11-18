@@ -61,7 +61,7 @@ export function recorded(p: Pick<PendingMessage, "text" | "after">, entries: rea
 const ATTACHED_RE = /@(\S*\/gasho\/attachments\/\S+)/g;
 
 /** A file's name as gasho-daemon saves it (safeFileName in apps/daemon/src/managed.ts). */
-function savedName(name: string): string {
+export function savedName(name: string): string {
   const base = name.split(/[\\/]/).pop() ?? "";
   const cleaned = base.normalize("NFC").replace(/[^\p{L}\p{N}._-]+/gu, "_").replace(/^[._]+/, "");
   return cleaned.slice(-100) || "file";

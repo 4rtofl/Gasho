@@ -299,6 +299,7 @@ for (const surface of SURFACES) {
 
     test("起動の答えが来ないと、時間切れの文を出し、もう一度起動できる", async ({ page, hub }) => {
       await page.clock.install();
+      const pings = unanswered(page);
       const daemon = await hub.fakeDaemon({ name: "mac", capabilities: { folders: ["/work/a"] } });
       let answers = false;
       daemon.handle("session.launch", (msg) => (answers ? started(daemon, msg) : undefined));
@@ -306,8 +307,12 @@ for (const surface of SURFACES) {
       await form.getByRole("button", LAUNCH).click();
       await expect(form.getByRole("button", { name: "起動しています…（最大30秒）" })).toBeVisible();
       await daemon.waitFor("session.launch");
-      // The screen gives up after 60 s. In steps, so that the answers to the pings it sends meanwhile come in.
-      for (let i = 0; i < 12; i++) await page.clock.fastForward(5_000);
+      // The screen gives up after 60 s. Meanwhile it pings every 25 s, and makes the connection again when 8 s go by
+      // without the answer: the clock goes on in short steps, each once the pings sent so far are answered.
+      for (let i = 0; i < 30; i++) {
+        await page.clock.fastForward(2_000);
+        await expect.poll(pings).toBe(0);
+      }
       await expect(form.getByText("応答がありませんでした。")).toBeVisible();
 
       answers = true;
@@ -459,6 +464,21 @@ async function newFolderDaemon(hub: GashoHub) {
     commandResult(msg, msg.name === "ws" ? { ok: true, path: `${msg.parent}/ws` } : { ok: false, error: `${msg.name} は作りません。` }),
   );
   return daemon;
+}
+
+/** Counts the pings the page sends to the Gasho server, less its answers: how many have not been answered yet. */
+function unanswered(page: Page): () => number {
+  let open = 0;
+  const type = (payload: string | Buffer) => (JSON.parse(String(payload)) as { type?: string }).type;
+  page.on("websocket", (ws) => {
+    ws.on("framesent", (f) => {
+      if (type(f.payload) === "ping") open++;
+    });
+    ws.on("framereceived", (f) => {
+      if (type(f.payload) === "pong") open--;
+    });
+  });
+  return () => open;
 }
 
 /** The names of the folders the fake daemon was asked to make. */

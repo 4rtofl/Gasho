@@ -120,9 +120,9 @@ class FakeStart {
   /** 0: "No, exit", 1: "Yes, I trust this folder". */
   cursor = 0;
   keys: string[] = [];
-  private readonly o: { mcp?: boolean; warnings?: string[]; agentsFile: string; sessionId: string };
+  private readonly o: { mcp?: boolean; warnings?: string[]; agentsFile: string; registryFile?: string; sessionId: string };
 
-  constructor(o: { mcp?: boolean; warnings?: string[]; agentsFile: string; sessionId: string }) {
+  constructor(o: { mcp?: boolean; warnings?: string[]; agentsFile: string; registryFile?: string; sessionId: string }) {
     this.o = o;
   }
 
@@ -138,8 +138,10 @@ class FakeStart {
 
   private to(state: FakeStart["state"]): void {
     this.state = state;
-    // Once its prompt is up, `claude agents` lists the session.
-    if (state === "repl") writeFileSync(this.o.agentsFile, JSON.stringify([{ pid: process.pid, sessionId: this.o.sessionId, status: "idle" }]));
+    // Once its prompt is up, `claude agents` lists the session, and Claude Code's file has its id.
+    if (state !== "repl") return;
+    writeFileSync(this.o.agentsFile, JSON.stringify([{ pid: process.pid, sessionId: this.o.sessionId, status: "idle" }]));
+    if (this.o.registryFile) writeFileSync(this.o.registryFile, JSON.stringify({ pid: process.pid, sessionId: this.o.sessionId, status: "idle" }));
   }
 
   screen(): string {
@@ -151,16 +153,23 @@ class FakeStart {
 
 const SID = "11111111-2222-3333-4444-666666666666";
 
-/** A daemon whose terminal is the fake one and whose `claude agents` reads a file the fake writes. */
-async function setup(o: { mcp?: boolean; warnings?: string[] } = {}) {
+/**
+ * A daemon whose terminal is the fake one and whose `claude agents` reads a file the fake writes. With `emptyList`,
+ * `claude agents` prints nothing, as it did when stopped at its time limit on a busy machine, and Claude Code's file
+ * (~/.claude/sessions/<pid>.json) has the session id.
+ */
+async function setup(o: { mcp?: boolean; warnings?: string[]; emptyList?: boolean } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-launch-"));
   const agentsFile = path.join(dir, "agents.json");
   await fs.writeFile(agentsFile, "[]");
   const claude = path.join(dir, "claude");
-  await fs.writeFile(claude, `#!/bin/sh\ncat '${agentsFile}'\n`, { mode: 0o755 });
+  await fs.writeFile(claude, o.emptyList ? "#!/bin/sh\n" : `#!/bin/sh\ncat '${agentsFile}'\n`, { mode: 0o755 });
   const folder = path.join(dir, "cloned");
   await fs.mkdir(folder);
-  const fake = new FakeStart({ ...o, agentsFile, sessionId: SID });
+  const sessions = path.join(dir, "claude-dir", "sessions");
+  await fs.mkdir(sessions, { recursive: true });
+  const registryFile = o.emptyList ? path.join(sessions, `${process.pid}.json`) : undefined;
+  const fake = new FakeStart({ ...o, agentsFile, ...(registryFile ? { registryFile } : {}), sessionId: SID });
   const killed: string[] = [];
   const d = new Daemon({
     hubUrl: "ws://127.0.0.1:1",
@@ -233,6 +242,33 @@ test("with trust, the cursor is moved to yes before the one Enter, and the sessi
     assert.match(started[0]?.name ?? "", /^gasho-clone-test-[0-9a-f]{4}$/);
     assert.equal(d.managed.get(SID)?.terminal, started[0]?.name);
   } finally {
+    await done();
+  }
+});
+
+test("with `claude agents` printing nothing, the session starts with the id in Claude Code's file", async () => {
+  const { d, folder, killed, done } = await setup({ emptyList: true });
+  try {
+    assert.deepEqual(await d.launch(folder, "clone-test", true), { ok: true, sessionId: SID });
+    assert.deepEqual(killed, []);
+    assert.equal(d.managed.get(SID)?.cwd, folder);
+  } finally {
+    await done();
+  }
+});
+
+test("with `claude agents` printing nothing, a Claude Code that ends before it has a session id fails the launch, and its terminal is closed", async () => {
+  const { d, folder, killed, done } = await setup({ emptyList: true });
+  const p = spawn(process.execPath, ["-e", "setTimeout(() => {}, 1500)"], { stdio: "ignore" });
+  try {
+    d.terminals.start = async () => p.pid;
+    const r = await d.launch(folder, "clone-test", true);
+    assert.equal(r.ok, false);
+    assert.match(r.error, /時間内にセッションを確認できませんでした/);
+    assert.equal(killed.length, 1);
+    assert.equal(d.managed.has(SID), false);
+  } finally {
+    p.kill("SIGKILL");
     await done();
   }
 });

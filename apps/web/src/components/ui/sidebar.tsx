@@ -277,7 +277,7 @@ export function SidebarTrigger({ className, ...props }: React.ComponentProps<"bu
 
 /** Gasho: the look of a button at the right of a section's title (SectionAction, and what `tools` gives). */
 export const SECTION_BUTTON =
-  "grid size-6 shrink-0 place-items-center rounded-md text-neutral-400 outline-none transition-colors hover:bg-neutral-100 hover:text-neutral-900 focus-visible:ring-2 focus-visible:ring-neutral-400/50 dark:text-neutral-500 dark:hover:bg-neutral-800 dark:hover:text-white dark:focus-visible:ring-neutral-600/60 [&>svg]:size-4";
+  "grid size-6 shrink-0 place-items-center rounded-md text-neutral-400 outline-none transition-colors hover:bg-neutral-100 hover:text-neutral-900 focus-visible:ring-2 focus-visible:ring-ring/50 dark:text-neutral-500 dark:hover:bg-neutral-800 dark:hover:text-white [&>svg]:size-4";
 
 /** Gasho: the button at the right of a section's title. In the drawer, it closes the drawer too (`onNavigate`). */
 function SectionAction({ action, onNavigate }: { action: SidebarAction; onNavigate?: () => void }) {
@@ -481,6 +481,30 @@ function Panel({
   }, []);
   const nav = React.useRef<HTMLElement>(null);
 
+  // Gasho: the mouse is over the list, and the last mouse event that reached the list through React's tree (a row's
+  // menu, drawn outside the list, is in it). The list's onMouseLeave did not come once a category's "＋" failed to
+  // start a session and the dialog it opened was closed, and the list stayed held with the mouse outside it: a
+  // mouseover outside the list ends it too.
+  const inside = React.useRef(false);
+  const reached = React.useRef<Event | null>(null);
+  const pointerInside = React.useRef(onPointerInside);
+  React.useEffect(() => {
+    pointerInside.current = onPointerInside;
+  });
+  const leave = React.useCallback(() => {
+    inside.current = false;
+    setHovering(false);
+    setTip(null);
+    pointerInside.current?.(false);
+  }, []);
+  React.useEffect(() => {
+    const over = (e: MouseEvent) => {
+      if (inside.current && reached.current !== e) leave();
+    };
+    document.addEventListener("mouseover", over);
+    return () => document.removeEventListener("mouseover", over);
+  }, [leave]);
+
   const enter = (e: React.MouseEvent<HTMLElement> | React.FocusEvent<HTMLElement>, label: string) => {
     if (sorting.current.size > 0) return;
     const el = e.currentTarget;
@@ -529,7 +553,7 @@ function Panel({
         aria-expanded={hasChildren ? isOpen : undefined}
         aria-current={isActive ? "page" : undefined}
         className={cn(
-          "relative flex w-full items-center gap-3 rounded-lg px-2.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-neutral-400/50 dark:focus-visible:ring-neutral-600/60",
+          "relative flex w-full items-center gap-3 rounded-lg px-2.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50",
           item.description ? "min-h-9 py-1" : "h-9",
           isActive || childActive
             ? "text-neutral-900 dark:text-white"
@@ -603,7 +627,7 @@ function Panel({
                     }}
                     aria-current={active ? "page" : undefined}
                     className={cn(
-                      "relative flex h-8 w-full items-center gap-2 rounded-md px-2 text-[13px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-neutral-400/50 dark:focus-visible:ring-neutral-600/60",
+                      "relative flex h-8 w-full items-center gap-2 rounded-md px-2 text-[13px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50",
                       active
                         ? "text-neutral-900 dark:text-white"
                         : "text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white"
@@ -717,7 +741,7 @@ function Panel({
             onFocus={(e) => enter(e, tipLabel)}
             aria-expanded={!group.folded}
             title={group.hint}
-            className="relative flex h-7 min-w-0 flex-1 items-center gap-1 rounded-md pl-1.5 pr-1.5 text-left text-xs text-neutral-500 outline-none transition-colors hover:text-neutral-900 focus-visible:ring-2 focus-visible:ring-neutral-400/50 dark:text-neutral-400 dark:hover:text-white dark:focus-visible:ring-neutral-600/60"
+            className="relative flex h-7 min-w-0 flex-1 items-center gap-1 rounded-md pl-1.5 pr-1.5 text-left text-xs text-neutral-500 outline-none transition-colors hover:text-neutral-900 focus-visible:ring-2 focus-visible:ring-ring/50 dark:text-neutral-400 dark:hover:text-white"
           >
             <ChevronRight className={cn("size-3.5 shrink-0 transition-transform duration-200", !group.folded && "rotate-90")} />
             <span className="min-w-0 truncate font-medium">{group.title}</span>
@@ -758,7 +782,7 @@ function Panel({
           onFocus={(e) => enter(e, tipLabel)}
           aria-label={tipLabel}
           aria-expanded={false}
-          className="relative flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-sm text-neutral-500 outline-none transition-colors hover:text-neutral-900 focus-visible:ring-2 focus-visible:ring-neutral-400/50 dark:text-neutral-400 dark:hover:text-white dark:focus-visible:ring-neutral-600/60"
+          className="relative flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-sm text-neutral-500 outline-none transition-colors hover:text-neutral-900 focus-visible:ring-2 focus-visible:ring-ring/50 dark:text-neutral-400 dark:hover:text-white"
         >
           <span className="relative grid size-5 shrink-0 place-items-center [&>svg]:size-[18px]">{group.icon}</span>
         </button>
@@ -833,12 +857,13 @@ function Panel({
           ref={nav}
           layoutScroll
           aria-label="Main"
-          onMouseEnter={() => onPointerInside?.(true)}
-          onMouseLeave={() => {
-            setHovering(false);
-            setTip(null);
-            onPointerInside?.(false);
+          onMouseOver={(e) => {
+            reached.current = e.nativeEvent;
+            if (inside.current) return;
+            inside.current = true;
+            onPointerInside?.(true);
           }}
+          onMouseLeave={leave}
           className="relative flex-1 space-y-1 overflow-y-auto overflow-x-hidden p-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {hoverBox && (
@@ -874,7 +899,7 @@ function Panel({
                   onMouseEnter={(e) => enter(e, section.action!.label)}
                   onFocus={(e) => enter(e, section.action!.label)}
                   aria-label={section.action.label}
-                  className="relative flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-sm text-neutral-500 outline-none transition-colors hover:text-neutral-900 focus-visible:ring-2 focus-visible:ring-neutral-400/50 dark:text-neutral-400 dark:hover:text-white dark:focus-visible:ring-neutral-600/60"
+                  className="relative flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-sm text-neutral-500 outline-none transition-colors hover:text-neutral-900 focus-visible:ring-2 focus-visible:ring-ring/50 dark:text-neutral-400 dark:hover:text-white"
                 >
                   <span className="relative grid size-5 shrink-0 place-items-center [&>svg]:size-[18px]">{section.action.icon}</span>
                 </button>
@@ -912,7 +937,7 @@ function Panel({
                 }}
                 onMouseLeave={() => setTip(null)}
                 aria-label={collapsed ? "サイドバーを開く" : "サイドバーを畳む"}
-                className="flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-sm text-neutral-500 outline-none transition-colors hover:bg-neutral-100 hover:text-neutral-900 focus-visible:ring-2 focus-visible:ring-neutral-400/50 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-white dark:focus-visible:ring-neutral-600/60"
+                className="flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-sm text-neutral-500 outline-none transition-colors hover:bg-neutral-100 hover:text-neutral-900 focus-visible:ring-2 focus-visible:ring-ring/50 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-white"
               >
                 <span className="grid size-5 shrink-0 place-items-center">
                   <PanelLeft className="size-[18px]" />

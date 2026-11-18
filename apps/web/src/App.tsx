@@ -23,7 +23,7 @@ import { TAPS, countTap, type GasshoFrom, type Taps } from "@/lib/gassho";
 import { DESKTOP, useMediaQuery, useWindowWidth } from "@/lib/media";
 import { arrangeSessions, rememberSessions, reorderShown, useSavedOrder } from "@/lib/order";
 import { updateCount } from "@/lib/plugin-catalog";
-import { go, isOldGitHubLink, useRoute, type SessionPanel } from "@/lib/route";
+import { go, isOldGitHubLink, pageOf, useRoute, type SessionPanel } from "@/lib/route";
 import { rememberWorktrees, useRememberedWorktrees } from "@/lib/remembered-worktrees";
 import {
   arrangeCategories,
@@ -69,7 +69,7 @@ import {
   type HeldWorktreeList,
   type PendingMove,
 } from "@/lib/worktree-groupings";
-import { PANEL_WIDTH_MAX, PANEL_WIDTH_MIN, clampPanelWidth, defaultPanelWidth, usePanelWidth } from "@/lib/widths";
+import { PANEL_WIDTH_MAX, PANEL_WIDTH_MIN, clampPanelWidth, defaultPanelWidth, panelOverlays, usePanelWidth } from "@/lib/widths";
 import { PluginBadgeProbes, PluginPagePanelView, PluginPageView, PluginPanelView, usePluginBadges } from "@/plugins/parts";
 import { usePluginRegistry } from "@/plugins/registry";
 import { PluginSessionListProbe, useSessionListMode } from "@/plugins/session-list";
@@ -129,7 +129,10 @@ function Brand({ away, onGassho }: { away: boolean; onGassho: (from: GasshoFrom)
   );
 }
 
-/** A panel of a session beside it on a computer, its left edge dragged to change its width (lib/widths). */
+/**
+ * A panel of a session beside it on a computer, its left edge dragged to change its width (lib/widths). Where the
+ * conversation would be too narrow to be read beside it, it goes over the conversation, at the right.
+ */
 function DockedPanel({ children }: { children: ReactNode }) {
   const ref = useRef<HTMLElement>(null);
   const [savedWidth, setSavedWidth] = usePanelWidth();
@@ -148,7 +151,11 @@ function DockedPanel({ children }: { children: ReactNode }) {
   const clampWidth = (w: number) => clampPanelWidth(w, room);
   const width = clampWidth(dragWidth ?? savedWidth ?? defaultPanelWidth(windowWidth));
   return (
-    <aside ref={ref} style={{ width }} className="relative shrink-0 border-l border-border bg-background">
+    <aside
+      ref={ref}
+      style={{ width }}
+      className={cn("shrink-0 border-l border-border bg-background", panelOverlays(room) ? "absolute inset-y-0 right-0 z-30 shadow-2xl shadow-black/50" : "relative")}
+    >
       {children}
       <ResizeHandle
         edge="left"
@@ -208,6 +215,13 @@ export function App() {
   useEffect(() => {
     if (isOldGitHubLink(location.hash)) go(route, { replace: true });
   }, [route]);
+  // The pages scroll in `main`, which stays as they change: another page starts at its top. A layout effect, so that it
+  // runs before the pages' own effects, which scroll to a section of theirs (#/devices/updates).
+  const main = useRef<HTMLElement>(null);
+  const page = pageOf(route);
+  useLayoutEffect(() => {
+    if (main.current) main.current.scrollTop = 0;
+  }, [page]);
   const { auth, me, machines, notifications, connected, plugins, catalog, latest, server, outdated } = useAppState();
   // After /clear, the session goes on under a new id: its page (and the panel open beside it) goes there too.
   const movedTo = route.name === "session" ? movedSession(machines.find((m) => m.id === route.machine), route.sessionId)?.sessionId : undefined;
@@ -669,11 +683,11 @@ export function App() {
           {!connected && <span className="ml-auto shrink-0 text-xs text-red-400">再接続中…</span>}
           {onScreen && <SessionHeaderToggle className={cn("-mr-1", connected && "ml-auto")} />}
         </header>
-        <div className="flex min-h-0 flex-1">
+        <div className="relative flex min-h-0 flex-1">
           {/* layoutScroll: the home screen's tiles slide to new places inside it, also while it scrolls. relative: an
               absolutely placed element with no placed parent of its own (an sr-only status line) is placed in here and
               scrolls with the screen. Otherwise it is placed on the page and makes the page longer than the window. */}
-          <motion.main layoutScroll className="relative min-h-0 min-w-0 flex-1 overflow-y-auto">
+          <motion.main ref={main} layoutScroll className="relative min-h-0 min-w-0 flex-1 overflow-y-auto">
             {route.name === "home" && <HomeView />}
             {route.name === "devices" && <DevicesView />}
             {route.name === "settings" && <SettingsView />}

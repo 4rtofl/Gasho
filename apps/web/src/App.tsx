@@ -69,7 +69,7 @@ import {
   type PendingMove,
 } from "@/lib/worktree-groupings";
 import { PANEL_WIDTH_MAX, PANEL_WIDTH_MIN, clampPanelWidth, defaultPanelWidth, usePanelWidth } from "@/lib/widths";
-import { PluginBadgeProbes, PluginPageView, PluginPanelView, usePluginBadges } from "@/plugins/parts";
+import { PluginBadgeProbes, PluginPagePanelView, PluginPageView, PluginPanelView, usePluginBadges } from "@/plugins/parts";
 import { usePluginRegistry } from "@/plugins/registry";
 import { PluginSessionListProbe, useSessionListMode } from "@/plugins/session-list";
 import { PluginWorktreeGroupingProbe, useWorktreeGroupings } from "@/plugins/worktree-groupings";
@@ -222,8 +222,10 @@ export function App() {
   // The dialog that registers repositories, opened from the menu that narrows the sidebar's worktrees.
   const [reposOpen, setReposOpen] = useState(false);
   const [repoKeys, setRepoKeys] = useChoices(WORKTREE_REPO_KEY);
-  // The order the sidebar's worktrees were dragged into (none: the one used last first).
+  // The order the sidebar's worktrees were dragged into (none: the one used last first), and the order held while the
+  // pointer is over the list.
   const [worktreeOrder, setWorktreeOrder] = useSavedOrder(WORKTREE_ORDER_KEY);
+  const [heldWorktreeOrder, setHeldWorktreeOrder] = useState<string[]>();
   const desktop = useMediaQuery(DESKTOP);
   // A panel takes a phone's screen: its heading goes into the top bar, in this place (see SidePanel).
   const [panelBar, setPanelBar] = useState<HTMLElement | null>(null);
@@ -268,6 +270,7 @@ export function App() {
     setMobileOpen(false);
     setHeldOrder(null);
     setHeldWorktrees(null);
+    setHeldWorktreeOrder(undefined);
   }, [desktop]);
   // The category whose "＋" is starting a session, and what the dialog opens with when that did not work.
   const [launchingIn, setLaunchingIn] = useState<string>();
@@ -280,10 +283,10 @@ export function App() {
 
   const unread = notifications.filter((n) => !n.read && notificationShown(n, machines)).length;
   const unreadOnes = unreadSessions(notifications);
-  // The worktrees of all working servers in one list: the one used last first, then those without sessions, or in the
-  // order they were dragged into (worktrees that got their first session since then come first).
+  // The worktrees of all working servers in one list: the one used last first, then those without sessions, or as held,
+  // then in the order they were dragged into (worktrees that got their first session since then come first).
   const byId = new Map(allWorktrees.map((w) => [w.id, w]));
-  const worktrees = arrangeSessions([...byId.keys()], worktreeOrder).flatMap((id) => byId.get(id) ?? []);
+  const worktrees = arrangeSessions(arrangeSessions([...byId.keys()], heldWorktreeOrder), worktreeOrder).flatMap((id) => byId.get(id) ?? []);
   // Narrowed to the repositories picked.
   const listed = narrowWorktrees(worktrees, narrowed);
   const openSession =
@@ -326,6 +329,7 @@ export function App() {
   // worktrees also stay in the categories they showed in: their state, and with it their category, changes as Claude
   // works. What shows while waiting for the categories is not held.
   const holdList = (on: boolean) => {
+    setHeldWorktreeOrder(on ? worktrees.map((w) => w.id) : undefined);
     setHeldOrder(on ? holdOrder(categories) : null);
     setHeldWorktrees(on && shownGrouping && groupings.mode.kind === "grouped" ? holdWorktreeList(shownGrouping, worktreeCategories) : null);
   };
@@ -489,16 +493,24 @@ export function App() {
     groupings.mode.kind === "grouped" ? moveError : undefined,
   ].filter(Boolean);
   const worktreeSection: SidebarSection = {
-    // Shown even without sessions, for its "＋".
+    // Shown even without worktrees, for its menu that registers the repositories. No "＋": the rows are worktrees, and
+    // a "＋" there reads as adding one. A session starts from a worktree's tabs, or from "新しいセッション" at home.
     title: narrowed.length > 0 ? `worktree · ${narrowed.map((r) => r.name).join("、")}` : "worktree",
     notice: notices.length > 0 ? notices.join(" ") : undefined,
-    action: { label: "新しいセッション", icon: <Plus />, onClick: () => openLaunch() },
     secondaryAction: grouped
       ? hasOrder(groupingPrefs)
         ? { label: "最後に使った順に戻す", icon: <ListRestart />, onClick: () => changeGroupingPrefs(withoutOrder) }
         : undefined
       : worktreeOrder
-        ? { label: "最後に使った順に戻す", icon: <ListRestart />, onClick: () => setWorktreeOrder(undefined) }
+        ? {
+            label: "最後に使った順に戻す",
+            icon: <ListRestart />,
+            onClick: () => {
+              setWorktreeOrder(undefined);
+              // Held, the list would keep the order dragged into until the pointer leaves it.
+              setHeldWorktreeOrder((held) => held && allWorktrees.map((w) => w.id));
+            },
+          }
         : undefined,
     tools: (
       <RepoFilter
@@ -565,6 +577,11 @@ export function App() {
         ? (pluginItems.find((i) => i.plugin === route.plugin && i.page.id === route.page)?.id ?? "")
         : route.name;
   const panel = route.name === "session" ? route.panel : undefined;
+  // A panel of a plugin's page (P19), shown as a session's panel is.
+  const pagePanel = route.name === "plugin" ? route.panel : undefined;
+  const closePagePanel = () => {
+    if (route.name === "plugin") go({ name: "plugin", plugin: route.plugin, page: route.page, params: route.params }, { replace: true });
+  };
   // The session on a phone's screen (not while one of its panels takes the screen): the top bar shows its name and
   // state, and its header leaves them out (see SessionView), so the two bars become one.
   const onScreen = route.name === "session" && !panel && openSession?.managed ? openSession : undefined;
@@ -627,7 +644,7 @@ export function App() {
               holdList(true);
             }}
           />
-          {route.name === "session" && !desktop && panel ? (
+          {!desktop && (panel || pagePanel) ? (
             <div ref={setPanelBar} className="flex min-w-0 flex-1 items-center gap-2" />
           ) : onScreen && onScreenMachine ? (
             <>
@@ -647,13 +664,21 @@ export function App() {
           {onScreen && <SessionHeaderToggle className={cn("-mr-1", connected && "ml-auto")} />}
         </header>
         <div className="flex min-h-0 flex-1">
-          {/* layoutScroll: the home screen's tiles slide to new places inside it, also while it scrolls. */}
-          <motion.main layoutScroll className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+          {/* layoutScroll: the home screen's tiles slide to new places inside it, also while it scrolls. relative: an
+              absolutely placed element with no placed parent of its own (an sr-only status line) is placed in here and
+              scrolls with the screen. Otherwise it is placed on the page and makes the page longer than the window. */}
+          <motion.main layoutScroll className="relative min-h-0 min-w-0 flex-1 overflow-y-auto">
             {route.name === "home" && <HomeView />}
             {route.name === "devices" && <DevicesView />}
             {route.name === "settings" && <SettingsView />}
             {route.name === "plugins" && <PluginsView />}
-            {route.name === "plugin" && <PluginPageView plugin={route.plugin} page={route.page} params={route.params} />}
+            {/* The page stays where it is while its panel opens beside it, so it keeps its state and its scroll. */}
+            {route.name === "plugin" && (desktop || !pagePanel) && <PluginPageView plugin={route.plugin} page={route.page} params={route.params} />}
+            {route.name === "plugin" && !desktop && pagePanel && (
+              <PanelBarContext.Provider value={panelBar}>
+                <PluginPagePanelView plugin={route.plugin} panel={pagePanel} docked={false} onClose={closePagePanel} />
+              </PanelBarContext.Provider>
+            )}
             {route.name === "worktree" && (
               <WorktreeView
                 key={worktreeKey(route.machine, route.path)}
@@ -677,6 +702,11 @@ export function App() {
               </PanelBarContext.Provider>
             )}
           </motion.main>
+          {route.name === "plugin" && desktop && pagePanel && (
+            <DockedPanel>
+              <PluginPagePanelView key={`${route.plugin}/${route.page}`} plugin={route.plugin} panel={pagePanel} docked onClose={closePagePanel} />
+            </DockedPanel>
+          )}
           {route.name === "session" && desktop && panel && (
             <DockedPanel>
               <PanelView machine={route.machine} sessionId={route.sessionId} panel={panel} docked />

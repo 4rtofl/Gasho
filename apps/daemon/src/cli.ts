@@ -5,7 +5,7 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { loadConfig } from "./config.ts";
-import { controlRequest, controlSocketOf, SESSION_USAGE, sessionCommand } from "./control.ts";
+import { controlRequest, controlSocketOf, SESSION_USAGE, sessionCommand, WORKTREE_USAGE, worktreeCommand } from "./control.ts";
 import { credentialsPath, loadCredentials, register, saveCredentials } from "./credentials.ts";
 import { DAEMON_VERSION, Daemon } from "./daemon.ts";
 import { hooksConfig, installHooks, SECRET_ENV } from "./hooks.ts";
@@ -44,6 +44,7 @@ const usage = `usage: ${command} <command>
   attach [NAME]                                    show the terminal of a session Gasho started, and type into it
                                                    (Ctrl+] leaves it running); without NAME, list the terminals
 ${SESSION_USAGE}
+${WORKTREE_USAGE}
   version                                          print the version
 
 The registration is stored in ${credentialsPath()} (GASHO_DAEMON_CONFIG to change).
@@ -86,7 +87,10 @@ try {
       // After an update, a version on trial that ended before it was confirmed goes back first (self-update.ts).
       if (install.kind === "managed" && service && (await startOnTrial(layout, DAEMON_VERSION, log))) process.exit(UPDATE_EXIT_CODE);
       const creds = await loadCredentials(credentialsPath());
-      await new Daemon(loadConfig(creds), { update: { install, layout, service } }).start();
+      const daemon = new Daemon(loadConfig(creds), { update: { install, layout, service } });
+      // Stopped by the service manager, kill or Ctrl+C: the plugins' daemon parts stop first.
+      for (const signal of ["SIGTERM", "SIGINT"] as const) process.on(signal, () => void daemon.exit(0));
+      await daemon.start();
       break;
     }
     case "doctor": {
@@ -135,6 +139,11 @@ try {
         out: (s) => console.log(s),
         note: (s) => console.error(s),
       });
+      break;
+    }
+    case "worktree": {
+      const socket = controlSocketOf(path.dirname(credentialsPath()));
+      await worktreeCommand(args.slice(1), { request: (req, timeoutMs) => controlRequest(socket, req, timeoutMs), out: (s) => console.log(s) });
       break;
     }
     case "hooks": {

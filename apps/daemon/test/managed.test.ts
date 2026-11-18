@@ -115,6 +115,41 @@ test("managed sessions keep their input queue in order and survive a reload", as
   }
 });
 
+test("saves close together are written one at a time and the last state is kept; an unreadable file is logged", async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-test-"));
+  try {
+    const file = path.join(dir, "managed.json");
+    const a = new ManagedSessions(file);
+    // A rename and a refresh that save at the same time.
+    a.add({ sessionId: "s1", terminal: "z1", pid: 1, cwd: "/x", name: "x", launchedAt: 1 });
+    const first = a.save();
+    a.setName("s1", "renamed");
+    a.add({ sessionId: "s2", terminal: "z2", pid: 2, cwd: "/y", name: "y", launchedAt: 2 });
+    await Promise.all([first, a.save()]);
+    const saved = JSON.parse(await fs.readFile(file, "utf8")) as { name: string }[];
+    assert.deepEqual(
+      saved.map((m) => m.name),
+      ["renamed", "y"],
+    );
+    assert.deepEqual(await fs.readdir(dir), ["managed.json"]);
+
+    const logged = t.mock.method(console, "log", () => undefined);
+    for (const broken of ['[{"sessionId": "s1", "termi', "{}"]) {
+      await fs.writeFile(file, broken);
+      const b = new ManagedSessions(file);
+      await b.load(async () => true);
+      assert.deepEqual(b.all(), []);
+    }
+    assert.equal(logged.mock.callCount(), 2);
+    // No file yet is the first start: nothing is logged.
+    await fs.rm(file);
+    await new ManagedSessions(file).load(async () => true);
+    assert.equal(logged.mock.callCount(), 2);
+  } finally {
+    await fs.rm(dir, { recursive: true });
+  }
+});
+
 test("launchableFolders lists trusted folders that exist, plus the given ones", async () => {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-home-"));
   try {

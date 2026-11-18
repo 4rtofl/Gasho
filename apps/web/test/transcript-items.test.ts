@@ -23,9 +23,9 @@ function items(entries: TranscriptEntry[], start = 0): TranscriptItem[] {
   return transcriptItems(entries, start, (id) => Boolean(id && calls.has(id)));
 }
 
-/** "entry:<key>" or "tools:<call ids>", to compare the shape at a glance. */
+/** "tools:<call ids>", or "<kind>:<key>" for the other items, to compare the shape at a glance. */
 const shape = (list: TranscriptItem[]): string[] =>
-  list.map((i) => (i.kind === "entry" ? `entry:${i.key}` : `tools:${i.calls.map((c) => c.id).join(",")}`));
+  list.map((i) => (i.kind === "tools" ? `tools:${i.calls.map((c) => c.id).join(",")}` : `${i.kind}:${i.key}`));
 
 test("tool calls in a row become one item, with the results between them; one call alone stays as it is", () => {
   const list = items([text("t1", "user"), call("a"), result("a"), call("b"), result("b"), call("c"), result("c"), text("t2"), call("d"), result("d")]);

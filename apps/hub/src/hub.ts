@@ -7,15 +7,18 @@ import type {
   DaemonToHub,
   DaemonUpdateInfo,
   DeviceInfo,
+  HookEvent,
   HubToClient,
   HubToDaemon,
   InputFeature,
   MachineHookEvent,
   MachineInfo,
+  MachineMemory,
   MediaPart,
   PermissionRequestInfo,
   ServerInfo,
   SessionCommand,
+  SessionInfo,
 } from "@gasho/protocol";
 import type { LatestCheck } from "./latest.ts";
 import { NotificationGate, notificationFor, sessionLabel } from "./notify.ts";
@@ -314,7 +317,30 @@ function mediaAnswerOf(msg: Extract<DaemonToHub, { type: "media" }>, offset: num
   if (typeof p.data !== "string" || !BASE64_RE.test(p.data)) return { status: 502, error: "working server の答えが正しくありません。" };
   const bytes = Buffer.from(p.data, "base64");
   if (bytes.length > length || offset + bytes.length > p.size) return { status: 502, error: "working server の答えが正しくありません。" };
-  return { part: { mime: p.mime, size: p.size, mtime: p.mtime, offset }, bytes };
+  // Browsers ignore a type's case. Lowercased here, an SVG is always found by media.ts and sent with a sandbox.
+  return { part: { mime: p.mime.toLowerCase(), size: p.size, mtime: p.mtime, offset }, bytes };
+}
+
+function isMemory(v: unknown): v is MachineMemory {
+  const m = v as MachineMemory | undefined;
+  return typeof m?.total === "number" && typeof m.used === "number" && Number.isFinite(m.total) && m.total > 0 && m.used >= 0 && m.used <= m.total;
+}
+
+/**
+ * Whether a working server's sessions have what the Gasho server reads of each (the database and the browsers take the
+ * rest as it is).
+ */
+function isSessionList(v: unknown): v is SessionInfo[] {
+  return Array.isArray(v) && v.every((s: unknown) => {
+    const x = s as Partial<SessionInfo> | null;
+    return typeof x === "object" && x !== null && typeof x.sessionId === "string" && typeof x.cwd === "string";
+  });
+}
+
+/** Whether a hook event has what the Gasho server reads and keeps of it. */
+function isHookEvent(v: unknown): v is HookEvent {
+  const e = v as Partial<HookEvent> | null;
+  return typeof e === "object" && e !== null && typeof e.sessionId === "string" && typeof e.event === "string" && Number.isFinite(e.at);
 }
 
 /** Files sent with one input: how many, and their size in all. */
@@ -384,8 +410,10 @@ export function validateCommand(cmd: SessionCommand): string | undefined {
       if (total > MAX_FILES_BYTES) return `添付できるのは、合わせて ${MAX_FILES_BYTES / 1024 / 1024}MB までです。`;
       return undefined;
     }
-    case "session.interrupt":
     case "session.remove":
+      if (cmd.via !== undefined && (typeof cmd.via !== "string" || !/^[a-z][a-z0-9-]{1,31}$/.test(cmd.via))) return "送ったプラグインの指定が正しくありません。";
+      return undefined;
+    case "session.interrupt":
     case "session.resume":
     case "session.skills":
       return undefined;
@@ -475,6 +503,8 @@ export const PRESENCE_TTL_MS = 60_000;
 export class Hub {
   private store: Store;
   private machines = new Map<string, MachineInfo>();
+  /** The connected working servers' latest memory: never written to the database, it changes at every reading. */
+  private memory = new Map<string, MachineMemory>();
   private daemons = new Map<string, DaemonPeer>();
   private clients = new Set<ClientPeer>();
   private pending = new Map<string, PendingRequest>();
@@ -529,7 +559,8 @@ export class Hub {
 
   onDaemonMessage(peer: DaemonPeer, msg: DaemonToHub): void {
     if (msg.type === "hello") {
-      const device = this.store.verifyDevice(msg.machineId, msg.token, "machine");
+      const device =
+        typeof msg.machineId === "string" && typeof msg.token === "string" ? this.store.verifyDevice(msg.machineId, msg.token, "machine") : undefined;
       if (!device) {
         peer.close(CLOSE_INVALID_CREDENTIALS, "invalid credentials");
         return;
@@ -542,7 +573,7 @@ export class Hub {
       m.name = device.name;
       m.connected = true;
       m.lastSeen = Date.now();
-      m.daemonVersion = msg.daemonVersion;
+      m.daemonVersion = typeof msg.daemonVersion === "string" ? msg.daemonVersion : undefined;
       // Said again by its capabilities and plugin.status; an update that ended with the restart is over.
       m.update = undefined;
       m.pluginApi = undefined;
@@ -550,6 +581,8 @@ export class Hub {
       this.store.touchDevice(device.id);
       peer.send({ type: "welcome" });
       this.broadcast({ type: "machine", machine: m });
+      // What the connection it replaces told: this gasho-daemon may be one that does not tell it.
+      this.forgetMemory(device.id);
       this.plugins?.onDaemonReady(peer);
       this.plugins?.toClients();
       return;
@@ -564,9 +597,16 @@ export class Hub {
     m.lastSeen = Date.now();
     switch (msg.type) {
       case "sessions":
+        if (!isSessionList(msg.sessions)) break;
         m.sessions = msg.sessions;
         this.store.saveMachine(m);
         this.broadcast({ type: "machine", machine: m });
+        break;
+      case "memory":
+        if (isMemory(msg.memory)) {
+          this.memory.set(id, msg.memory);
+          this.broadcast({ type: "machine.memory", machine: id, memory: msg.memory });
+        } else this.forgetMemory(id);
         break;
       case "transcript.append":
         this.broadcast({ type: "transcript.append", machine: id, sessionId: msg.sessionId, entries: msg.entries });
@@ -654,6 +694,7 @@ export class Hub {
         this.plugins?.onDaemonMessage(id, peer, msg);
         break;
       case "hook": {
+        if (!isHookEvent(msg.event)) break;
         const event: MachineHookEvent = { ...msg.event, machine: id };
         this.store.addEvent(event);
         this.broadcast({ type: "event", event });
@@ -687,6 +728,7 @@ export class Hub {
       this.store.saveMachine(m);
       this.broadcast({ type: "machine", machine: m });
     }
+    this.forgetMemory(id);
     this.failPending((req) => req.machine === id, "machine disconnected");
     this.failCommands((c) => c.machine === id, "working server との接続が切れました。");
     this.failMedia(id, "working server との接続が切れました。");
@@ -735,12 +777,14 @@ export class Hub {
       machines: [...this.machines.values()],
       notifications: this.store.recentNotifications(),
       events: this.store.recentEvents(),
+      operations: this.store.recentOperations(),
       ...(this.plugins ? { plugins: this.plugins.infos(), pluginEvents: this.plugins.retainedEvents() } : {}),
       ...(this.plugins?.catalog() ? { catalog: this.plugins.catalog() } : {}),
       ...(this.latest ? { latest: this.latest.latest() } : {}),
       ...(this.server ? { server: this.server.info() } : {}),
       ...(this.push ? { push: this.push.info(peer.deviceId) } : {}),
       heartbeat: true,
+      memory: Object.fromEntries(this.memory),
     });
   }
 
@@ -853,6 +897,7 @@ export class Hub {
         break;
       }
       case "notification.read":
+        if (!Array.isArray(msg.ids) || !msg.ids.every((id) => typeof id === "string")) break;
         this.store.markRead(msg.ids);
         this.broadcast({ type: "notification.read", ids: msg.ids });
         break;
@@ -1010,7 +1055,7 @@ export class Hub {
       case "session.remove": {
         // Once removed, the session is gone from the list: the record keeps its name.
         const s = this.machines.get(machine)?.sessions.find((x) => x.sessionId === cmd.sessionId);
-        return s?.name ?? s?.title ?? "";
+        return [s?.name ?? s?.title ?? "", cmd.via && `[via: ${cmd.via}]`].filter(Boolean).join(" ");
       }
       case "permission.answer":
         // What was asked, as the request said: it is gone once answered.
@@ -1161,9 +1206,12 @@ export class Hub {
     return true;
   }
 
-  /** Closes connections of devices revoked elsewhere, e.g. with the command line tool. */
+  /**
+   * Closes connections of devices revoked elsewhere, e.g. with the command line tool, and takes their machines off the
+   * browsers, offline ones too.
+   */
   checkRevocations(): void {
-    const ids = [...this.daemons.keys(), ...[...this.clients].map((c) => c.deviceId)];
+    const ids = [...this.machines.keys(), ...[...this.clients].map((c) => c.deviceId)];
     const revoked = this.store.revokedSince([...new Set(ids)]);
     if (revoked.length > 0) this.disconnectRevoked(revoked);
   }
@@ -1181,8 +1229,11 @@ export class Hub {
         this.presence.delete(c);
         c.close(CLOSE_UNAUTHORIZED, "registration revoked");
       }
+      // The daemon was taken out of `daemons` before it was closed, so onDaemonClose leaves this to be done here.
+      this.memory.delete(id);
       if (this.machines.delete(id)) {
         this.failPending((req) => req.machine === id, "machine was removed");
+        this.failCommands((c) => c.machine === id, "working server の登録が外されました。");
         this.failMedia(id, "working server の登録が外されました。");
         this.broadcast({ type: "machine.removed", id });
         this.plugins?.onDaemonClose(id);
@@ -1199,6 +1250,11 @@ export class Hub {
       this.machines.set(id, m);
     }
     return m;
+  }
+
+  /** Stops telling a working server's memory, to the browsers too, when it was known. */
+  private forgetMemory(id: string): void {
+    if (this.memory.delete(id)) this.broadcast({ type: "machine.memory", machine: id });
   }
 
   private failPending(match: (req: PendingRequest) => boolean, error: string): void {

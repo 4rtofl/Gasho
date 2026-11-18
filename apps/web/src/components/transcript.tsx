@@ -607,6 +607,7 @@ export function Transcript({
     if (!el) return;
     const observer = new ResizeObserver(() => {
       boxSize.current = { width: el.clientWidth, height: el.clientHeight };
+      el.style.setProperty("--transcript-height", `${el.clientHeight}px`);
       if (atBottom.current) el.scrollTop = el.scrollHeight;
     });
     for (const box of [el, footerBox.current, endBox.current]) if (box) observer.observe(box);
@@ -617,8 +618,8 @@ export function Transcript({
     <div
       ref={scroller}
       // relative: an absolutely placed element with no placed parent of its own (a plugin's sr-only status line at the
-      // end of the conversation) is placed in here. Otherwise it is placed on the page, where the end of the
-      // conversation would be unscrolled, and makes the whole page longer than the screen.
+      // end of the conversation) is placed in here. Otherwise it is placed in the screen's main box, where the end of
+      // the conversation would be unscrolled, and makes that box scroll below the conversation.
       className="relative h-full overflow-y-auto"
       // The rows on screen are kept in place here (keepAnchor); the browser's own anchoring would move them twice.
       style={{ overflowAnchor: "none" }}
@@ -712,9 +713,11 @@ export function Transcript({
           )}
         </div>
         {hasFooter && (
+          // At most as tall as the conversation's box: a footer taller than it would keep its top out of view (it sticks
+          // by its bottom). What the footer lets shrink scrolls in it (the cards above the chat box, see Composer).
           <div
             ref={footerBox}
-            className="sticky bottom-0 z-10 px-4 md:px-6"
+            className="sticky bottom-0 z-10 flex max-h-(--transcript-height) flex-col px-4 md:px-6"
             style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
           >
             {/* The conversation behind the chat box: blurred and darkened, fading in from above. The bottom
@@ -724,7 +727,7 @@ export function Transcript({
               className="pointer-events-none absolute inset-x-0 -top-10 bottom-0 bg-linear-to-b from-transparent to-background/85 backdrop-blur-md"
               style={{ maskImage: BLUR_MASK, WebkitMaskImage: BLUR_MASK }}
             />
-            <div className="relative mx-auto max-w-3xl">
+            <div className="relative mx-auto flex min-h-0 w-full max-w-3xl flex-col">
               <AnimatePresence>
                 {!following && (
                   <div className="pointer-events-none absolute inset-x-0 bottom-full mb-3 flex justify-center">

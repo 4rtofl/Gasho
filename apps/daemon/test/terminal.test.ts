@@ -174,8 +174,9 @@ process.exit(spawnSync(run[0], run.slice(1), { stdio: "inherit" }).status ?? 1);
 `;
 
 test("where systemd runs for the user, a terminal gets a scope of its own, outside gasho-daemon's service, and its paths reach it as they are", async () => {
-  // systemd 254 and later would make the "$$" in this folder a "$" (and the terminal would find no config).
-  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-$$-term-"));
+  // systemd 254 and later would make the "$$" in this folder a "$" (and the terminal would find no config). The name is
+  // short so that the sockets' paths stay within 100 bytes in macOS's deep temporary folder.
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "g$$-"));
   const bin = path.join(stateDir, "bin");
   await fs.mkdir(bin);
   const log = path.join(stateDir, "systemd-run.log");

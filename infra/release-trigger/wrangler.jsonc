@@ -1,23 +1,30 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	// GitHub Actions の Release ワークフロー（.github/workflows/release.yml）を、15分ごとに workflow_dispatch で動かす。
-	// GitHub Actions の schedule は動かないことがあるため、Cloudflare の Cron から起動する。README.md を参照
+	// GitHub Actions のワークフローを、Cloudflare の Cron から workflow_dispatch で動かす。
+	// Release（.github/workflows/release.yml）は15分ごと、Gasho と GashoPlugins の E2E（e2e.yml）は毎日 5:00（日本時間）。
+	// GitHub Actions の schedule は動かないことがあるため。README.md を参照
 	"name": "gasho-release-trigger",
 	"main": "src/index.ts",
 	"compatibility_date": "2026-11-01",
 	"workers_dev": false,
 	"triggers": {
-		"crons": ["*/15 * * * *"]
+		"crons": ["*/15 * * * *", "0 20 * * *"]
 	},
 	"observability": {
 		"enabled": true
 	},
 	"vars": {
-		"GITHUB_REPOSITORY": "4rtofl/Gasho",
-		"GITHUB_WORKFLOW": "release.yml",
-		"GITHUB_REF": "main"
+		// Cron の式（triggers.crons と同じ文字列）ごとに、動かすワークフロー
+		"DISPATCHES": {
+			"*/15 * * * *": [{ "repo": "4rtofl/Gasho", "workflow": "release.yml", "ref": "main" }],
+			// GashoPlugins の e2e.yml は 4rtofl/GashoPlugins#135 で足す。それまでの 404 は失敗にせず、ログに残すだけにする
+			"0 20 * * *": [
+				{ "repo": "4rtofl/Gasho", "workflow": "e2e.yml", "ref": "main" },
+				{ "repo": "4rtofl/GashoPlugins", "workflow": "e2e.yml", "ref": "main", "mayBeMissing": true }
+			]
+		}
 	},
-	// Actions の Read and write だけを持つ fine-grained PAT。npx wrangler secret put GITHUB_TOKEN で入れる
+	// Gasho と GashoPlugins の Actions の Read and write だけを持つ fine-grained PAT。npx wrangler secret put GITHUB_TOKEN で入れる
 	"secrets": {
 		"required": ["GITHUB_TOKEN"]
 	}

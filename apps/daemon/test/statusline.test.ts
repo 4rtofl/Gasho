@@ -9,6 +9,9 @@ import { test } from "node:test";
 import { startHookServer } from "../src/hooks.ts";
 import { isInside, RELAY_FILE, shellQuote, statusLineLaunch, statusLineOf, userStatusLine } from "../src/statusline.ts";
 
+/** How t.waitFor waits for what the hook server does after answering: up to 5 seconds, for a machine under load. */
+const WAIT = { interval: 10, timeout: 5_000 };
+
 /** What Claude Code 2.1.325 passed to the status line after a first reply (a Claude.ai plan without a 5-hour limit). */
 const AFTER_REPLY = {
   session_id: "00ac671e-4a2a-4519-a349-923e94127b77",
@@ -110,10 +113,14 @@ test("isInside tells a plugin's own folder from the rest", () => {
   assert.ok(isInside(`${root}/..data`, root));
 });
 
-/** Runs the relay as Claude Code would: the JSON on stdin, the environment statusLineLaunch gives. */
+/**
+ * Runs the relay as Claude Code would: the JSON on stdin, the environment statusLineLaunch gives. The send may take
+ * up to 10 seconds instead of 2, for a machine under load.
+ */
 function runRelay(env: Record<string, string>, input: string): Promise<{ code: number | null; stdout: string }> {
   return new Promise((resolve) => {
-    const child = execFile(process.execPath, [RELAY_FILE], { env: { PATH: process.env.PATH ?? "", HOME: os.tmpdir(), ...env }, timeout: 15_000 }, (e, stdout) =>
+    const full = { PATH: process.env.PATH ?? "", HOME: os.tmpdir(), GASHO_STATUSLINE_SEND_MS: "10000", ...env };
+    const child = execFile(process.execPath, [RELAY_FILE], { env: full, timeout: 15_000 }, (e, stdout) =>
       resolve({ code: e ? ((e as { code?: number }).code ?? 1) : 0, stdout }),
     );
     child.stdin?.end(input);
@@ -137,13 +144,16 @@ test("the relay sends the context window and the limits, and prints the user's s
       port,
       secret: "s3cret",
       // Reads the JSON as a status line command does; must not see the relay's own variables.
-      user: { type: "command", command: `printf '%s|%s' "$(cat | head -c 13)" "\${GASHO_STATUSLINE_SECRET:-none}"; exit 3` },
+      user: { type: "command", command: `printf '%s|%s|%s' "$(cat | head -c 13)" "\${GASHO_STATUSLINE_SECRET:-none}" "\${GASHO_STATUSLINE_SEND_MS:-none}"; exit 3` },
     });
     const r = await runRelay(env, JSON.stringify(AFTER_REPLY));
-    assert.equal(r.stdout, `{"session_id"|none`);
+    assert.equal(r.stdout, `{"session_id"|none|none`);
     assert.equal(r.code, 3);
     assert.equal(got.length, 1);
     assert.equal(got[0]?.headers["x-gasho-secret"], "s3cret");
+    // What the hook server takes (#99).
+    assert.equal(got[0]?.headers["content-type"], "application/json");
+    assert.equal(got[0]?.headers.origin, undefined);
     assert.deepEqual(got[0]?.body, { session_id: AFTER_REPLY.session_id, context_window: AFTER_REPLY.context_window, rate_limits: AFTER_REPLY.rate_limits });
 
     // No status line of the user's: nothing is printed, and the update is still sent.
@@ -166,7 +176,7 @@ test("the relay prints the user's status line when gasho-daemon is away, and tak
   assert.deepEqual(await runRelay(env, "not json"), { code: 0, stdout: "away" });
 });
 
-test("the hook server passes what the relay sends to onStatusLine, with the same secret", async () => {
+test("the hook server passes what the relay sends to onStatusLine, with the same secret", async (t) => {
   const lines: Array<Record<string, unknown>> = [];
   const events: Array<Record<string, unknown>> = [];
   const server = startHookServer({ host: "127.0.0.1", port: 0, secret: "s3cret", onEvent: (p) => events.push(p), onStatusLine: (p) => lines.push(p) });
@@ -175,11 +185,10 @@ test("the hook server passes what the relay sends to onStatusLine, with the same
   try {
     const url = `http://127.0.0.1:${port}/statusline`;
     const body = JSON.stringify({ session_id: "s1", context_window: AFTER_REPLY.context_window });
-    assert.equal((await fetch(url, { method: "POST", body, headers: { "x-gasho-secret": "nope" } })).status, 401);
-    const ok = await fetch(url, { method: "POST", body, headers: { "x-gasho-secret": "s3cret" } });
+    assert.equal((await fetch(url, { method: "POST", body, headers: { "content-type": "application/json", "x-gasho-secret": "nope" } })).status, 401);
+    const ok = await fetch(url, { method: "POST", body, headers: { "content-type": "application/json", "x-gasho-secret": "s3cret" } });
     assert.equal(ok.status, 200);
-    await new Promise((r) => setTimeout(r, 20));
-    assert.equal(lines.length, 1);
+    await t.waitFor(() => assert.equal(lines.length, 1), WAIT);
     assert.equal(lines[0]?.session_id, "s1");
     // A status line update is not a hook.
     assert.equal(events.length, 0);

@@ -77,15 +77,15 @@ gasho-daemon は GitHub Packages の npm パッケージ `@4rtofl/gasho-daemon` 
 
 ### Gasho からセッションを起動して、入力する
 
-ホームの「新しいセッション」か、サイドバーの worktree の一覧の見出しにある「＋」を押して、working server とフォルダーを選ぶと、そのマシンで `claude --remote-control <名前>` が起動する。「＋」はどの画面からでも押せて、選ぶ項目はダイアログに出る。このセッションには、セッション画面の入力欄から指示を送れる。公式アプリ（スマホ・Desktop）からも、同じセッションを操作できる。
+ホームの「新しいセッション」を押して、working server とフォルダーを選ぶと、そのマシンで `claude --remote-control <名前>` が起動する。サイドバーにある worktree で起動するなら、その worktree のタブの右の「＋」で、すぐ起動できる（後述）。このセッションには、セッション画面の入力欄から指示を送れる。公式アプリ（スマホ・Desktop）からも、同じセッションを操作できる。
 
 セッションの一覧に出すのは、こうして Gasho が起動したセッションだけ。端末や `claude rc` で起動したセッションは、一覧にも通知にも出さず、サイドバーにある worktree のものだけ、タブの上に件数を出す（後述の「Gasho に移す」）。
 
-サイドバーには、これらのセッションがある worktree を、working server に分けずに1つの一覧で出す。どの worktree のセッションかは、gasho-daemon がセッションの作業フォルダーで git を流して調べる。各行にはブランチ名（ブランチが無いときはフォルダー名）とリポジトリ名を出し、working server が2台以上あるときはその名前も出す。最後に会話があったセッションの worktree から並べ、まだ会話がないセッションは起動した時刻で数える。確認を待っているセッションがある worktree には「確認」、オフラインの working server の worktree には「オフライン」と出す。リポジトリの外のフォルダーのセッションと、worktree を調べない前の版の gasho-daemon のセッションは、作業フォルダーごとに1行にする。セッションがまだないときも、一覧の見出しと「＋」は出す。
+サイドバーには、これらのセッションがある worktree を、working server に分けずに1つの一覧で出す。どの worktree のセッションかは、gasho-daemon がセッションの作業フォルダーで git を流して調べる。各行にはブランチ名（ブランチが無いときはフォルダー名）とリポジトリ名を出し、working server が2台以上あるときはその名前も出す。最後に会話があったセッションの worktree から並べ、まだ会話がないセッションは起動した時刻で数える。確認を待っているセッションがある worktree には「確認」、オフラインの working server の worktree には「オフライン」と出す。リポジトリの外のフォルダーのセッションと、worktree を調べない前の版の gasho-daemon のセッションは、作業フォルダーごとに1行にする。セッションがまだないときも、一覧の見出しは出す。
 
 セッションがすべて無くなった worktree も、ブラウザーが覚えていて、一覧の最後に残す。その worktree を押すと、セッションの無い worktree の画面が開き、そこの「サイドバーから外す」で一覧から外せる。覚えるのはそのブラウザーだけなので、スマホと PC では別になる。登録したリポジトリ（次の段落）の worktree は、覚えずに git の一覧に合わせて出し入れする。
 
-リポジトリを登録すると、その worktree を、Gasho のセッションが無くても一覧に出す。一覧の見出しの絞り込みのボタン（「＋」の左）から「リポジトリを登録・解除…」を開き、working server ごとにリポジトリを選んで登録する。候補は、Claude Code が信頼しているフォルダーとセッションのフォルダーのリポジトリで、worktree のフォルダーや、本体と worktree を並べた親フォルダーは、その本体の1行にまとめる（Git でないフォルダーは出さない）。gasho-daemon が5分おきに git で調べ、行には本体のフォルダー名・パス・worktree の数を出す。検索欄で名前やパスを絞り込み、行を押すと登録する。一覧に無いフォルダーは、パスを入れて登録する。worktree のフォルダーを入れると、そのリポジトリの本体のフォルダーを登録する。リポジトリの外のフォルダーを入れると、その直下にある worktree が1つのリポジトリのものなら、そのリポジトリを登録する（本体と worktree を1つの親フォルダーに並べる置き方）。直下に別々のリポジトリがあるときは登録しない。候補が出るのは gasho-daemon 0.17.1 より新しい版から。gasho-daemon が `git worktree list` で worktree を 10 秒おきに読み、セッションのある worktree の後ろに並べる。Orca や git で worktree を足したり消したりすると、一覧も変わる。登録は gasho-daemon の置き場（`~/.config/gasho/repos.json`）に残るので、どのブラウザーにも同じ一覧が出る。登録と解除は、working server がつながっているときだけできる。
+リポジトリを登録すると、その worktree を、Gasho のセッションが無くても一覧に出す。一覧の見出しの右にある絞り込みのボタンから「リポジトリを登録・解除…」を開き、working server ごとにリポジトリを選んで登録する。候補は、Claude Code が信頼しているフォルダーとセッションのフォルダーのリポジトリで、worktree のフォルダーや、本体と worktree を並べた親フォルダーは、その本体の1行にまとめる（Git でないフォルダーは出さない）。gasho-daemon が5分おきに git で調べ、行には本体のフォルダー名・パス・worktree の数を出す。検索欄で名前やパスを絞り込み、行を押すと登録する。一覧に無いフォルダーは、パスを入れて登録する。worktree のフォルダーを入れると、そのリポジトリの本体のフォルダーを登録する。リポジトリの外のフォルダーを入れると、その直下にある worktree が1つのリポジトリのものなら、そのリポジトリを登録する（本体と worktree を1つの親フォルダーに並べる置き方）。直下に別々のリポジトリがあるときは登録しない。候補が出るのは gasho-daemon 0.17.1 より新しい版から。gasho-daemon が `git worktree list` で worktree を 10 秒おきに読み、セッションのある worktree の後ろに並べる。Orca や git で worktree を足したり消したりすると、一覧も変わる。登録は gasho-daemon の置き場（`~/.config/gasho/repos.json`）に残るので、どのブラウザーにも同じ一覧が出る。登録と解除は、working server がつながっているときだけできる。
 
 絞り込みのボタンのメニューでリポジトリにチェックを付けると、一覧にはチェックを付けたリポジトリの worktree だけを出し、見出しを「worktree · <リポジトリ名>」（2つ以上なら「、」でつなぐ）にする。チェックは複数付けられ、付けてもメニューは閉じない。「すべて」で元に戻す（1つも付けていないときも、すべてを出す）。選べるのは、一覧にある worktree のリポジトリ（登録していなくても、セッションがあれば出る）。選んだリポジトリはブラウザーごとに覚える。
 
@@ -99,7 +99,7 @@ Gasho の外（Orca や端末）で起動した Claude Code が、サイドバ�
 
 worktree の一覧は、プラグイン（[docs/plugins.md](docs/plugins.md) の P18）で、行はそのままにカテゴリに分けても出せる。たとえば GashoPlugins の Better WorktreeList は、リポジトリごとか、確認待ち・作業中・待機中などの状態ごとのカテゴリ（見出し）の下に worktree を並べる。分け方は、一覧の見出しの絞り込みのボタンのメニューで選ぶ。分け方が `useOnMove`（API 1.9）を持っていれば、worktree の行を別のカテゴリへドラッグして入れられる。入れた先は、プラグインが `useSharedState` で Gasho サーバーに保存すれば、すべてのブラウザーで同じになる。
 
-サイドバーの worktree は、ドラッグで並べ替えられる。PC では、マウスで項目をそのままドラッグする（押して離すだけなら、worktree を開く）。スマホでは、項目の右端のつまみをドラッグする（項目に触れて動かすと一覧がスクロールする）。キーボードでは、項目にフォーカスして Alt+↑・Alt+↓ で動かせる。並べ替えると、それからは最後に使った順ではなく、その並びのまま変わらない。並べ替えたあとに初めてセッションを起動した worktree は、一覧の先頭に出る。見出しの「最後に使った順に戻す」（「＋」の左）を押すと、元の並び方に戻る。並び順はブラウザーごとに覚えるので、PC とスマホでは別々になる。
+サイドバーの worktree は、ドラッグで並べ替えられる。PC では、マウスで項目をそのままドラッグする（押して離すだけなら、worktree を開く）。スマホでは、項目の右端のつまみをドラッグする（項目に触れて動かすと一覧がスクロールする）。キーボードでは、項目にフォーカスして Alt+↑・Alt+↓ で動かせる。並べ替えると、それからは最後に使った順ではなく、その並びのまま変わらない。並べ替えたあとに初めてセッションを起動した worktree は、一覧の先頭に出る。見出しの右に出る「最後に使った順に戻す」を押すと、元の並び方に戻る。並び順はブラウザーごとに覚えるので、PC とスマホでは別々になる。
 
 PC では、サイドバーの右の端をドラッグして、幅を200〜360px（標準は248px）のあいだで変えられる。セッションの右に開くパネル（ブランチグラフ、ファイル、プラグインのパネル）も、左の端をドラッグして、幅を380〜620px（標準はウィンドウの幅の40%）のあいだで変えられる。ウィンドウが狭いときは、パネルを開いても会話の欄に140px残るところで止まる。端をダブルクリックすると標準の幅に戻る。端にフォーカスして ←・→ でも変えられる。幅はブラウザーごとに覚える。
 
@@ -126,6 +126,7 @@ PC では、サイドバーの右の端をドラッグして、幅を200〜360px
 - クリップのボタン、ドラッグ、貼り付けでファイルを添付できる（1回に5個、合わせて10MB まで）。ファイルは working server の `~/.local/share/gasho/attachments/` に保存され、Claude が読む。セッションが終わると消える
 - 入力欄に書きかけた文、添付したファイル、選んだモデル・Effort・Ultracode、↑ で呼び出せる送った文は、セッションごとに覚えておく。ほかのセッションやホームに移って戻っても残る。ページを開いているあいだだけ覚えるので、読み込み直すと消える
 - ホームでは、Gasho が起動したセッションが使ったトークンを、過去24時間の推移と内訳（入力、出力、キャッシュへの書き込み、キャッシュからの読み込み）で見られる。daemon が、セッションとそのサブエージェントの会話の記録（`~/.claude/projects/` の下）から、返答ごとに1回ずつ数える。キャッシュからの読み込みは、それまでの会話を毎回読み直した分で、たいてい全体の大部分を占める
+- ホームの「メモリ」のタイルで、working server ごとのメモリの使用率と使用量／総量を見られる。daemon が 15 秒ごとに読み、ページキャッシュは使用中に数えない。80% 以上で「注意」、90% 以上で「警告」と出る。オフラインのサーバーは「オフライン」、メモリの値を送らない古い gasho-daemon のサーバーは「未対応」と出る
 - ホームのタイルは、上の辺の真ん中にあるつまみをドラッグして並べ替えられる。つまみは、PC ではタイルにポインターを乗せると出て、スマホではいつも出ている。ドラッグ中は、ほかのタイルが場所を空け、画面の上端・下端に近づけるとスクロールする。Esc を押すと元の並びに戻る。つまみにフォーカスして、矢印キーでも動かせる。並びはブラウザーごとに覚える。並べ替えると見出しの横に出る「並びを元に戻す」で、最初の並びに戻る
 - `/exit` を送るか公式アプリで終了すると、daemon がセッションの端末も閉じる
 - `claude rc` が起動したセッションには、外から入力する公式の手段がないので、Gasho からは入力できない。公式アプリから操作する
@@ -208,20 +209,26 @@ clone したリポジトリは、親のフォルダーを信頼していても�
 - 読み書きできるのは、セッションのフォルダーの中だけ。フォルダーの外を指すシンボリックリンクは、一覧に「フォルダーの外」と出すが、開かない
 - 保存と作成は、ファイルのパスと大きさを操作のログに残し、ホームの「最近の操作」に出す。ファイルの中身は Gasho サーバーに残さない
 
-### working server のコマンドからセッションを起動する
+### working server のコマンドからセッションを起動する・片付ける
 
-working server の上では、Gasho の画面を通さずに、`gasho-daemon session` でセッションを起動し、入力できる。Claude Code のセッションから別のセッションを立ち上げて作業させるときに使う（リポジトリの Skill `.claude/skills/launch-gasho-session` が、ワークツリーを作るところからこれを使う）。
+working server の上では、Gasho の画面を通さずに、`gasho-daemon session` でセッションを起動し、入力し、消せる。`gasho-daemon worktree remove` で、ワークツリーを中のセッションごと消せる。Claude Code のセッションから別のセッションを立ち上げて作業させるときや、終わった作業を片付けるときに使う（リポジトリの Skill `.claude/skills/launch-gasho-session` が、ワークツリーを作るところから起動を、`.claude/skills/remove-gasho-worktree` が片付けを、これで行う）。
 
 ```bash
 gasho-daemon session launch --cwd <フォルダー> --name <名前> [--trust] [--prompt <文> | --prompt-file <ファイル> | --prompt -]
 gasho-daemon session send <名前か ID> (--text <文> | --file <ファイル> | -)
 gasho-daemon session list [--json]
+gasho-daemon session remove <名前か ID>
+gasho-daemon worktree remove <フォルダー> [--force]
 ```
 
 - 動いている gasho-daemon に、その置き場（`~/.config/gasho/`、`GASHO_DAEMON_CONFIG` で変わる）の Unix ソケット `control.sock` で頼む。ソケットは本人だけが使える（0600）。Gasho サーバーを通らないので、ペアリングも要らず、Gasho サーバーが止まっていても使える
 - 中身は Gasho の画面からの起動・入力・名前の変更と同じ。起動したセッションは Gasho の画面にも出て、入力は作業中なら終わるまで待つ
 - `launch` は起動を待ち、プロンプトがあれば入力欄に送ってから、`{sessionId, name, cwd, terminal}` を JSON で出す。`name` は `claude agents`（Claude Code のセッション一覧）に出る名前で、ほかのセッションから SendMessage するときの宛先になる。Claude Code は新しいセッションを `--remote-control` の名前ではなくフォルダー名で並べるので、`--name` を付けたときは、まず `/rename` でその名前に変え、一覧に出るまで待ってからプロンプトを送る。`--name` が無いと、最初の発言のあとで Gasho が発言から名前を付け直すので、出した名前は変わる
 - `--trust` は、Claude Code の「このフォルダーを信頼するか」に Yes と答える（Gasho の画面の「信頼して起動する」と同じ）
+- `list` は、作業フォルダーが無くなったセッションに、行末の `(folder missing)`（`--json` では `"cwdMissing": true`）を付ける
+- `session remove` は、Gasho の画面のセッションの削除と同じ。Claude Code を終わらせて Gasho から外し、`{sessionId, name, cwd}` を JSON で出す。会話は残る。名前と ID の探し方は `send` と同じ。フォルダーが先に消えたセッションも消せる
+- `worktree remove` は、Gasho の画面のワークツリーの削除と同じ。中のセッションを終わらせてからフォルダーを消し（`git worktree remove`）、`{path, branch, ended}` を JSON で出す。`ended` は終わらせたセッション（`{sessionId, name}`）。未コミットの変更や、どのリモートにも無いコミットがあれば、何もせずにその件数を理由として返す。`--force` はそれでも消す。ブランチは消さない。`git worktree remove` で直接消すと、中のセッションは消えたフォルダーで動き続け、「リポジトリ外」に残る
+- 失敗したときは、gasho-daemon が返した理由をエラーとして出す（終了コード 1）
 - gasho-daemon が動いていないとき（ソケットが無い古い版のときも）は、そう伝えて起動の仕方を示す
 - `service install` で入れたときは PATH に `gasho-daemon` が無いので、`node ~/.local/share/gasho/daemon/current/node_modules/@4rtofl/gasho-daemon/lib/cli.js session …` で呼ぶ
 
@@ -271,6 +278,26 @@ npm run typecheck
 ```
 
 PR と main への push のたびに、GitHub Actions（`.github/workflows/ci.yml`）が Ubuntu で `npm run typecheck`・`npm test`・`npm run web:build` を流す。PR の画面に、それぞれの結果が別々に出る。
+
+### E2E テスト
+
+`e2e/` に、Playwright で実際の画面を操作するテストがある。ビルドした画面（`apps/web/dist`）を、Chromium（PC の幅）と WebKit（iPhone の幅・タッチ）で開く。
+
+```bash
+npx playwright install chromium webkit   # 初回だけ。ブラウザーを入れる
+npm run e2e                              # 画面をビルドしてから、全部のテストを流す
+npm run e2e -- --project chromium        # Chromium だけ。後ろに Playwright の引数を付けられる
+npx playwright show-trace e2e/test-results/<テスト>/trace.zip   # 落ちたテストの操作と画面を見る
+```
+
+- テストごとに、`/tmp/ge2e-*` に置き場を作り、Gasho サーバーを 127.0.0.1 の空いているポートで起動する。DB・プラグイン・キャッシュ・`HOME` もそこに置くので、ふだん使う Gasho サーバー・gasho-daemon・Claude Code の設定と会話には触れない。テストが終わると置き場を消す
+- ブラウザーは、登録コードで登録した状態（Cookie）で始まる
+- working server は、テストから動かす偽の gasho-daemon（`hub.fakeDaemon()`）を主に使う。版・できること・セッション・会話・答えの遅れや失敗・オフラインを、テストから決められる
+- 本物の gasho-daemon（`hub.startDaemon()`）も起動できる。claude と gh は偽物（`e2e/harness/bin/`）で、テストが渡した表から答え、受けた引数を記録する。偽の claude は、端末で動かすと入力欄を描き、送られた文に答えて会話のファイルに書く
+- Gasho サーバーが使う gh（プラグインの一覧）と npm（公開されている最新の版）も偽物にしてある
+- 起動の処理（`e2e/harness/index.ts`）は `@playwright/test` を読み込まないので、GashoPlugins のテストからも使える。Playwright の fixture は `e2e/tests/fixtures.ts` で組む
+
+main では、GitHub Actions の `.github/workflows/e2e.yml` が毎日 5:00（日本時間）に流す。起動するのは Cloudflare Worker（`infra/release-trigger`）である。手で流すときは `gh workflow run e2e.yml`。テストが落ちると、trace・スクリーンショット・動画を run の artifact（`e2e-results`）に残し、落ちたテストの名前と run の URL を書いた Issue（`bug` ラベル）を立てる。同じテストの Issue が開いていれば、そこにコメントを足す。PR の CI では流さない。
 
 ### 公開
 

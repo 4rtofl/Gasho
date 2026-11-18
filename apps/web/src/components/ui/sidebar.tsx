@@ -171,8 +171,9 @@ export function Sidebar({
   // drawer: Esc to close + scroll lock
   React.useEffect(() => {
     if (!mobileOpen || window.matchMedia("(min-width: 768px)").matches) return;
-    // A menu or dialog open in the drawer closes on the same Esc first, and marks it (preventDefault): that Esc leaves
-    // the drawer open.
+    // One Esc does one thing: what takes it first marks it (preventDefault), and the drawer stays open for the next Esc.
+    // That is a menu or dialog open in the drawer, which closes, or the chat box left focused behind the drawer (opened
+    // with ⌘B), which stops the answer being written.
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && !e.defaultPrevented && setMobileOpen(false);
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";

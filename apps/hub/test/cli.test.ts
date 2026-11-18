@@ -181,6 +181,12 @@ function start(env: NodeJS.ProcessEnv) {
   return { child, exited, listening, output: () => out };
 }
 
+/** The Gasho server's exit code, or null once it is killed for not ending within `ms`, which would leave the test waiting. */
+function ended(hub: ReturnType<typeof start>, ms = 60_000) {
+  const timer = setTimeout(() => hub.child.kill("SIGKILL"), ms);
+  return hub.exited.finally(() => clearTimeout(timer));
+}
+
 test("start serves on its port until SIGTERM, which ends it with 0", async () => {
   const { env } = setup();
   const port = await freePort();
@@ -193,7 +199,7 @@ test("start serves on its port until SIGTERM, which ends it with 0", async () =>
   } finally {
     hub.child.kill("SIGTERM");
   }
-  assert.equal(await hub.exited, 0);
+  assert.equal(await ended(hub), 0);
 });
 
 test("start, while another Gasho server holds the port, ends with 1 before it opens the database", async () => {
@@ -203,7 +209,7 @@ test("start, while another Gasho server holds the port, ends with 1 before it op
   try {
     const { port } = holder.address() as net.AddressInfo;
     const hub = start({ ...env, GASHO_HUB_HOST: "127.0.0.1", GASHO_HUB_PORT: String(port) });
-    assert.equal(await hub.exited, 1);
+    assert.equal(await ended(hub), 1);
     assert.match(hub.output(), new RegExp(`port ${port} on 127\\.0\\.0\\.1 is in use`));
     assert.equal(fs.existsSync(env.GASHO_DB ?? ""), false);
   } finally {

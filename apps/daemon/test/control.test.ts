@@ -220,6 +220,8 @@ test("send finds the session by the name Claude Code lists, its Gasho name or it
   await assert.rejects(sessionCommand(["send", "nobody", "--text", "x"], cli), /no session started by Gasho is named "nobody"/);
   await assert.rejects(sessionCommand(["send", "impl-79"], cli), /needs --text/);
   assert.throws(() => pick([...sessions, { ...sessions[0]!, sessionId: "id-3" }], "impl-79"), /2 sessions are named/);
+  // After /clear, the id from before still finds it.
+  assert.equal(pick([sessions[0]!, { ...sessions[1]!, sessionId: "id-3", previousSessionIds: ["id-2"] }], "id-2").sessionId, "id-3");
 });
 
 test("list prints one line per session, or JSON", async () => {

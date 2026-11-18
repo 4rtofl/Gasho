@@ -1233,6 +1233,7 @@ export class Daemon {
       const pending = this.managed.waiting(m.sessionId).filter((input) => !input.auto).length;
       return {
         sessionId: m.sessionId,
+        ...(m.previousIds?.length ? { previousSessionIds: [...m.previousIds] } : {}),
         name,
         ...(name !== m.name ? { gashoName: m.name } : {}),
         cwd: m.cwd,

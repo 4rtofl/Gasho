@@ -226,6 +226,7 @@ gasho-daemon worktree remove <フォルダー> [--force]
 - 中身は Gasho の画面からの起動・入力・名前の変更と同じ。起動したセッションは Gasho の画面にも出て、入力は作業中なら終わるまで待つ
 - `launch` は起動を待ち、プロンプトがあれば入力欄に送ってから、`{sessionId, name, cwd, terminal}` を JSON で出す。`name` は `claude agents`（Claude Code のセッション一覧）に出る名前で、ほかのセッションから SendMessage するときの宛先になる。Claude Code は新しいセッションを `--remote-control` の名前ではなくフォルダー名で並べるので、`--name` を付けたときは、まず `/rename` でその名前に変え、一覧に出るまで待ってからプロンプトを送る。`--name` が無いと、最初の発言のあとで Gasho が発言から名前を付け直すので、出した名前は変わる
 - `--trust` は、Claude Code の「このフォルダーを信頼するか」に Yes と答える（Gasho の画面の「信頼して起動する」と同じ）
+- `send` と `remove` は、`/clear` の前の ID でもセッションを見つける。出す JSON の `sessionId` は今の ID になる。`list --json` は、前の ID を `previousSessionIds` に出す
 - `list` は、作業フォルダーが無くなったセッションに、行末の `(folder missing)`（`--json` では `"cwdMissing": true`）を付ける
 - `session remove` は、Gasho の画面のセッションの削除と同じ。Claude Code を終わらせて Gasho から外し、`{sessionId, name, cwd}` を JSON で出す。会話は残る。名前と ID の探し方は `send` と同じ。フォルダーが先に消えたセッションも消せる
 - `worktree remove` は、Gasho の画面のワークツリーの削除と同じ。中のセッションを終わらせてからフォルダーを消し（`git worktree remove`）、`{path, branch, ended}` を JSON で出す。`ended` は終わらせたセッション（`{sessionId, name}`）。未コミットの変更や、どのリモートにも無いコミットがあれば、何もせずにその件数を理由として返す。`--force` はそれでも消す。ブランチは消さない。`git worktree remove` で直接消すと、中のセッションは消えたフォルダーで動き続け、「リポジトリ外」に残る

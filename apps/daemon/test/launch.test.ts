@@ -414,6 +414,8 @@ test("after /clear, a session started from Gasho goes on under its new id, with 
     assert.deepEqual(s?.previousSessionIds, [OLD]);
     const saved = JSON.parse(await fs.readFile(path.join(d.cfg.stateDir, "managed.json"), "utf8"));
     assert.deepEqual(saved.map((x: { sessionId: string; previousIds?: string[] }) => [x.sessionId, x.previousIds]), [[NEW, [OLD]]]);
+    // gasho-daemon session send|remove <the id from before> finds it (see pick).
+    assert.deepEqual(d.controlSessions().map((x: { sessionId: string; previousSessionIds?: string[] }) => [x.sessionId, x.previousSessionIds]), [[NEW, [OLD]]]);
 
     // The files attached before /clear stay while the session runs, and go with it.
     await d.pruneAttachments();

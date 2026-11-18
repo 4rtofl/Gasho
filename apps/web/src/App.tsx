@@ -29,6 +29,7 @@ import {
   arrangeCategories,
   hasOrder,
   holdOrder,
+  movedKeys,
   OTHER_CATEGORY,
   rowAfterRemoval,
   sessionKey,
@@ -335,7 +336,7 @@ export function App() {
   };
 
   // The plugin's categories, in the order dragged into (or held), each with its sessions as rows.
-  const categories = listMode.kind === "plugin" ? arrangeCategories(listMode.categories, listPrefs, heldOrder) : [];
+  const categories = listMode.kind === "plugin" ? arrangeCategories(listMode.categories, listPrefs, heldOrder, movedKeys(machines)) : [];
   // The grouping's categories of the worktrees, in the order dragged into, or as held.
   const worktreeCategories =
     groupings.mode.kind === "grouped"

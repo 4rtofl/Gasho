@@ -23,6 +23,11 @@ function find(text: string, from: number, at: (i: number) => boolean, nested = f
   return text.length;
 }
 
+/** Where the block of a rule's cssText starts: its first `{` outside (), [] and strings (as in `@supports (content: "{")`). */
+export function blockStart(cssText: string): number {
+  return find(cssText, 0, (i) => cssText[i] === "{");
+}
+
 /** `.dark .foo` as `.dark & .foo, & .dark .foo`; another selector as it is. */
 function dark(selector: string): string {
   // CSS nesting puts `& ` before a selector only when it has no `&` (even in `:is()`): one with `&` places the part itself.

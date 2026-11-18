@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { darkSelector } from "../src/plugins/dark-selector.ts";
+import { blockStart, darkSelector } from "../src/plugins/dark-selector.ts";
 
 test("a selector that starts with .dark matches below a .dark above the plugin's part or inside it", () => {
   assert.equal(darkSelector(".dark .rcs"), ".dark & .rcs, & .dark .rcs");
@@ -28,4 +28,9 @@ test("the other selectors stay as they are", () => {
   ]) {
     assert.equal(darkSelector(s), undefined, s);
   }
+});
+
+test("the block of a rule starts after a { in its condition's string", () => {
+  const text = '@supports (content: "{") { .a { color: red; } }';
+  assert.equal(text.slice(0, blockStart(text)), '@supports (content: "{") ');
 });

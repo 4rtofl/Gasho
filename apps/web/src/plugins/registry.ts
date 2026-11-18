@@ -11,7 +11,7 @@ import { PLUGIN_API } from "@gasho/plugin-sdk/exports";
 import type { PluginInfo } from "@gasho/protocol";
 import { getAppState, subscribeAppState, useAppState } from "@/lib/store";
 import { checkWorktreeGroupings } from "@/lib/worktree-groupings";
-import { darkSelector } from "./dark-selector";
+import { blockStart, darkSelector } from "./dark-selector";
 import { installShared } from "./sdk";
 
 /** How long a plugin's files may take to load. */
@@ -68,7 +68,7 @@ function ruleText(rule: CSSRule): string {
     // CSSOM writes a style rule as its selectorText and then its block.
     if (selector && rule.cssText.startsWith(rule.selectorText)) return selector + rule.cssText.slice(rule.selectorText.length);
   } else if (rule instanceof CSSGroupingRule) {
-    return `${rule.cssText.slice(0, rule.cssText.indexOf("{"))}{${Array.from(rule.cssRules, ruleText).join("")}}`;
+    return `${rule.cssText.slice(0, blockStart(rule.cssText))}{${Array.from(rule.cssRules, ruleText).join("")}}`;
   }
   return rule.cssText;
 }

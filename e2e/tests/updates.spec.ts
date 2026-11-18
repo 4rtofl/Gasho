@@ -223,6 +223,17 @@ test.describe("gasho-daemon を更新できる working server", () => {
       return d;
     });
 
+    await test.step("ページを読み込み直しても、更新したと出る", async () => {
+      await page.reload();
+      await expect(row).toContainText(`${NEWER} に更新しました。`);
+    });
+
+    await test.step("端末の画面を離れて戻ると、更新したとは出なくなる", async () => {
+      await page.goto("/#/");
+      await openDevices(page, await devicesItem(page));
+      await expect(row).toContainText("最新のバージョンです。");
+    });
+
     await test.step("更新できるものが無くなると、バッジが消える", async () => {
       const item = await devicesItem(page);
       await expect(item).not.toContainText("更新");
@@ -409,12 +420,13 @@ test.describe("Gasho から更新できる Gasho サーバー", () => {
       await expect(slow).toBeVisible();
     });
 
-    await test.step("起動し直した新しいバージョンにつながると、ページはそのバージョンの画面に読み込み直され、試験のあと確定して、前のバージョンに戻すボタンが出る", async () => {
+    await test.step("起動し直した新しいバージョンにつながると、ページはそのバージョンの画面に読み込み直され、試験のあと確定して、更新したと出て、前のバージョンに戻すボタンが出る", async () => {
       await mark(page);
       await service.allowRestarts();
       await expect(row).toContainText("gasho-hub 0.90.1", AFTER_RESTART);
       await expect.poll(() => marked(page), AFTER_RESTART).toBe(false);
       await expect.poll(() => hub.proc.log(), AFTER_RESTART).toContain("0.90.1 started well; it is no longer on trial");
+      await expect(row).toContainText("0.90.1 に更新しました。");
       await expect(row.getByRole("button", { name: "0.90.0 に戻す" })).toBeVisible();
       // The steps the screen showed too briefly to be seen, in the Gasho server's log, in order.
       const log = hub.proc.log();
@@ -437,7 +449,6 @@ test.describe("Gasho から更新できる Gasho サーバー", () => {
   });
 
   test("更新して読み込み直したページに、更新したと出る", async ({ page, hub }) => {
-    test.fail(true, "#191 読み込み直したページは、更新を始めたことを覚えていないので、「0.90.1 に更新しました。」が出ない");
     test.slow();
     await hub.npm.set({ answers: [...((await hub.npm.table()).answers ?? []), await hubInstallAnswer("0.90.1")] });
     await page.goto("/#/devices");

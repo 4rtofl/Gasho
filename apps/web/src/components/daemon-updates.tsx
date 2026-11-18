@@ -25,6 +25,31 @@ import { cn, copyToClipboard } from "@/lib/utils";
 
 const SMALL_BUTTON = "inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs hover:border-border-hover disabled:opacity-50";
 
+/**
+ * Where DaemonUpdates keeps the updates this tab started, so that a page reloaded meanwhile (to the updated Gasho
+ * server's build of the screen) still says "updated". Per tab, as the reload itself (store.ts).
+ */
+const STARTED_KEY = "gasho.updatesStarted";
+
+function startedInTab(): Record<string, string> {
+  try {
+    const v: unknown = JSON.parse(sessionStorage.getItem(STARTED_KEY) ?? "{}");
+    if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+    return Object.fromEntries(Object.entries(v).filter((e): e is [string, string] => typeof e[1] === "string"));
+  } catch {
+    return {};
+  }
+}
+
+function keepInTab(started: Record<string, string>): void {
+  try {
+    if (Object.keys(started).length > 0) sessionStorage.setItem(STARTED_KEY, JSON.stringify(started));
+    else sessionStorage.removeItem(STARTED_KEY);
+  } catch {
+    // kept for this page only: a reload does not say "updated"
+  }
+}
+
 /** A command to run on the working server, copied with a click. */
 function CommandLine({ command }: { command: string }) {
   return (
@@ -47,7 +72,12 @@ export function DaemonUpdates() {
   const [asking, setAsking] = useState<{ machine: MachineInfo; version: string }>();
   const [askingServer, setAskingServer] = useState<string>();
   // The versions this browser updated working servers (and the Gasho server, "") to: "updated" is shown once they run them.
-  const [started, setStarted] = useState<Record<string, string>>({});
+  const [started, setStarted] = useState<Record<string, string>>(startedInTab);
+  // Forgotten once the 端末 screen is left; a reload does not run the cleanup, and the page loaded again reads them.
+  useEffect(() => {
+    keepInTab(started);
+    return () => keepInTab({});
+  }, [started]);
   // Opened for it (the settings screen's versions): scrolled to once drawn, however long the 端末 screen took to show.
   const route = useRoute();
   const opened = route.name === "devices" && route.section === "updates";

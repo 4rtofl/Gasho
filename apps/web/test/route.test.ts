@@ -8,6 +8,7 @@ test("routes survive a round trip through the URL, including a session's panel a
     { name: "devices" },
     { name: "devices", section: "updates" },
     { name: "settings" },
+    { name: "settings", plugin: "github-review" },
     { name: "session", machine: "m1", sessionId: "s/1" },
     { name: "session", machine: "m1", sessionId: "s1", panel: { kind: "graph" } },
     { name: "session", machine: "m1", sessionId: "s1", panel: { kind: "graph", repo: "org/web app" } },
@@ -17,6 +18,7 @@ test("routes survive a round trip through the URL, including a session's panel a
   assert.equal(hrefOf({ name: "session", machine: "m", sessionId: "s", panel: { kind: "graph", repo: "org/web" } }), "#/s/m/s/graph/org%2Fweb");
   assert.deepEqual(parseHash("#/s/m/s/graph/a/b"), { name: "home" });
   assert.deepEqual(parseHash("#/s/m/s/wiki"), { name: "home" });
+  assert.deepEqual(parseHash("#/settings/p/Bad_ID"), { name: "home" });
 });
 
 test("plugins' pages, panels and worktree screens keep their params in the query, sorted, and a bad plugin id goes home", () => {

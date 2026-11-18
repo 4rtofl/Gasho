@@ -1,8 +1,8 @@
 // Finds Claude Code sessions on this machine.
-// `claude agents --json` is the supported interface; ~/.claude/sessions/<pid>.json is internal
-// and only read for the Remote Control session id, for the state it records ("shell", which the list does not
-// tell from "busy"; see sessionStatus), and for the session id of a Claude Code being started (the list took 20 s and
-// more on a busy machine). Without it, the list's state is used.
+// `claude agents --json` is the supported interface; ~/.claude/sessions/<pid>.json is internal and only read for the
+// Remote Control session id, for the session id of a Claude Code being started, and for the state it records. The list
+// reads these from that file too, but takes seconds on a busy machine (20 s and more); the file has the state as
+// Claude Code wrote it last (see sessionStatus). Without it, the list's state is used.
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -28,7 +28,8 @@ export interface AgentRow {
 export async function listAgents(claudeBin: string): Promise<AgentRow[]> {
   const { stdout } = await execFileP(claudeBin, ["agents", "--json"], {
     cwd: os.tmpdir(),
-    timeout: 20_000,
+    // It took 21 to 27 s on a Mac with a load average of 170 (2026-11-18); stopped earlier, it printed nothing.
+    timeout: 60_000,
     maxBuffer: 10 * 1024 * 1024,
   });
   const data: unknown = JSON.parse(stdout);
@@ -66,6 +67,8 @@ export interface RegistryInfo {
    * and only shells and monitors run on in the background), which `claude agents` reports as "busy".
    */
   status?: string;
+  /** What a waiting session waits for ("permission prompt", "input needed"), written with the state. */
+  waitingFor?: string;
   /** When Claude Code wrote that state (ms). */
   statusAt?: number;
 }
@@ -80,6 +83,7 @@ export async function readRegistry(claudeDir: string, pid: number): Promise<Regi
       bridgeSessionId: str(d.bridgeSessionId),
       entrypoint: str(d.entrypoint),
       status: str(d.status),
+      waitingFor: str(d.waitingFor),
       ...(statusAt ? { statusAt } : {}),
     };
   } catch {
@@ -88,14 +92,27 @@ export async function readRegistry(claudeDir: string, pid: number): Promise<Regi
 }
 
 /**
- * Gasho's state of a session: Claude Code's, except that a session whose turn has ended while only shells and
- * monitors run on in the background is idle. Claude Code's list calls it busy, but Claude waits for the person then:
- * input goes in as it would in the terminal, and Esc would stop nothing (the shells are stopped from the list of
- * background tasks). A session whose subagents or workflows run on stays busy: Claude goes on once they report.
+ * Gasho's state of a session: the one Claude Code wrote last in its file, else the list's (`row`). A session whose
+ * turn has ended while only shells and monitors run on in the background ("shell") is idle. Claude Code's list calls
+ * it busy, but Claude waits for the person then: input goes in as it would in the terminal, and Esc would stop nothing
+ * (the shells are stopped from the list of background tasks). A session whose subagents or workflows run on stays
+ * busy: Claude goes on once they report.
  */
-export function sessionStatus(row: AgentRow, registry: RegistryInfo | undefined): SessionStatus {
-  const status = mapStatus(row);
-  return status === "busy" && registry?.status === "shell" ? "idle" : status;
+export function sessionStatus(row: AgentRow | undefined, registry: RegistryInfo | undefined): SessionStatus {
+  switch (registry?.status) {
+    case "busy":
+    case "waiting":
+    case "idle":
+      return registry.status;
+    case "shell":
+      return "idle";
+  }
+  return row ? mapStatus(row) : "unknown";
+}
+
+/** What a session waits for, from where its state came (see sessionStatus). */
+export function waitingForOf(row: AgentRow | undefined, registry: RegistryInfo | undefined): string | undefined {
+  return registry?.status ? registry.waitingFor : row?.waitingFor;
 }
 
 /** Claude Code's own state of a session (see RegistryInfo.status), and when it was written, when known. */

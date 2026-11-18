@@ -69,6 +69,9 @@ interface ThreadState {
   items: Map<string, CodexItem>;
   /** It was working when the connection ended. */
   wasActive: boolean;
+  /** Loading it failed: when it is tried again, and how long the next wait is. */
+  resumeTimer?: NodeJS.Timeout;
+  resumeRetryMs: number;
   transcript?: { entries: TranscriptEntry[]; ids: Set<string> };
   loading?: Promise<void>;
   /** What came in while the conversation was read. */
@@ -153,6 +156,8 @@ export class CodexSessions {
     if (t.queue.length === 1) {
       const error = await this.flush(t);
       if (error) return { ok: false, error };
+    } else {
+      this.flushInBackground(t);
     }
     this.o.changed();
     return { ok: true, queued: t.queue.length > 0 };
@@ -289,6 +294,7 @@ export class CodexSessions {
       t.info.status = "unknown";
       t.pending.clear();
       delete t.turnId;
+      this.stopResumeRetry(t);
     }
     this.o.changed();
     this.retryLater();
@@ -297,6 +303,7 @@ export class CodexSessions {
   /** Loads a thread into this connection, and catches up with what happened while it was away. */
   private async resume(rpc: CodexRpc, t: ThreadState): Promise<void> {
     const threadId = t.info.sessionId;
+    this.stopResumeRetry(t);
     try {
       const r = await rpc.request<{ thread: Record<string, unknown>; model?: string }>("thread/resume", { threadId, excludeTurns: true });
       this.applyThread(t, r.thread, r.model);
@@ -305,6 +312,7 @@ export class CodexSessions {
       if (t.transcript) await this.catchUp(rpc, t);
       if (t.wasActive && t.info.status === "idle") this.event(t, "Stop", { summary: eventSummary(t.said) });
       t.wasActive = false;
+      t.resumeRetryMs = RETRY_MIN_MS;
       this.flushInBackground(t);
     } catch (e) {
       if (e instanceof CodexRpcError && /no rollout found/.test(e.message)) {
@@ -312,8 +320,28 @@ export class CodexSessions {
         await this.forget(t, "gone");
       } else {
         this.o.log(`could not load the thread ${threadId}`, messageOf(e));
+        this.retryResume(rpc, t);
       }
     }
+  }
+
+  /** Loads a thread again after a while: the others on the connection work, so the connection stays. */
+  private retryResume(rpc: CodexRpc, t: ThreadState): void {
+    if (this.rpc !== rpc || this.threads.get(t.info.sessionId) !== t) return;
+    t.info.status = "unknown";
+    delete t.turnId;
+    this.o.changed();
+    t.resumeTimer = setTimeout(() => {
+      delete t.resumeTimer;
+      if (this.rpc === rpc && this.threads.get(t.info.sessionId) === t) void this.resume(rpc, t);
+    }, t.resumeRetryMs);
+    t.resumeTimer.unref();
+    t.resumeRetryMs = Math.min(t.resumeRetryMs * 2, RETRY_MAX_MS);
+  }
+
+  private stopResumeRetry(t: ThreadState): void {
+    clearTimeout(t.resumeTimer);
+    delete t.resumeTimer;
   }
 
   private async activeTurn(rpc: CodexRpc, threadId: string): Promise<string | undefined> {
@@ -431,6 +459,8 @@ export class CodexSessions {
       return `Codex が発言を受け付けませんでした：${messageOf(e)}`;
     } finally {
       t.sending = false;
+      // Nothing else would send the next one: the thread stayed idle (the input failed), or became idle meanwhile.
+      if (t.queue.length > 0 && t.info.status === "idle" && this.rpc === rpc) this.flushInBackground(t);
     }
   }
 
@@ -537,6 +567,7 @@ export class CodexSessions {
       notified: new Set(),
       items: new Map(),
       wasActive: false,
+      resumeRetryMs: RETRY_MIN_MS,
       buffered: [],
     };
     this.setName(t, name);
@@ -568,6 +599,7 @@ export class CodexSessions {
   }
 
   private async forget(t: ThreadState, reason: string): Promise<void> {
+    this.stopResumeRetry(t);
     this.threads.delete(t.info.sessionId);
     await this.save();
     this.event(t, "SessionEnd", { summary: reason });

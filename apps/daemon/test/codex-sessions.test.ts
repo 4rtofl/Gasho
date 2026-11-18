@@ -199,6 +199,43 @@ test("an input that Codex refuses is said to be refused, and does not wait", asy
   assert.equal(info().pendingInputs, undefined);
 });
 
+test("when Codex refuses a waiting input, the inputs after it are still sent", async (t) => {
+  const { server, sessions, info, named } = await setup(t);
+  await sessions.launch("/work", undefined);
+  await sessions.input(THREAD, "1つ目");
+  await sessions.input(THREAD, "2つ目");
+  await sessions.input(THREAD, "3つ目");
+  let refused = false;
+  server.handlers.set("turn/start", () => {
+    if (refused) return { turn: { id: "turn-3", status: "inProgress" } };
+    refused = true;
+    throw new Error("too long");
+  });
+  server.notify("thread/status/changed", { status: { type: "idle" } });
+  await until("the third input", () => server.called("turn/start").length === 3);
+  assert.equal((server.called("turn/start")[2]?.params.input as { text: string }[])[0]?.text, "3つ目");
+  await until("nothing waits", () => info().pendingInputs === undefined);
+  assert.match(named("StopFailure")[0]?.summary ?? "", /too long/);
+});
+
+test("when a turn ends before turn/start is answered, the input waiting behind it is sent", async (t) => {
+  const { server, sessions, info } = await setup(t);
+  await sessions.launch("/work", undefined);
+  server.handlers.set("turn/start", () => {
+    const id = `fast-${server.called("turn/start").length}`;
+    server.notify("thread/status/changed", { status: { type: "active", activeFlags: [] } });
+    server.notify("turn/completed", { turn: { id, status: "completed" } });
+    server.notify("thread/status/changed", { status: { type: "idle" } });
+    return { turn: { id, status: "completed" } };
+  });
+  const first = sessions.input(THREAD, "1つ目");
+  const second = sessions.input(THREAD, "2つ目");
+  await Promise.all([first, second]);
+  await until("the second input", () => server.called("turn/start").length === 2);
+  await until("nothing waits", () => info().pendingInputs === undefined);
+  assert.equal(info().status, "idle");
+});
+
 test("the events of a turn are those the Gasho server makes notifications from", async (t) => {
   const { server, sessions, named } = await setup(t);
   await sessions.launch("/work", undefined);
@@ -357,6 +394,36 @@ test("after a restart of gasho-daemon, the sessions are loaded again from the fi
   assert.equal(info(again).name, "続きの作業");
   assert.deepEqual(await again.interrupt(THREAD), { ok: true });
   assert.equal(server.called("turn/interrupt").at(-1)?.params.turnId, "turn-7");
+});
+
+test("a thread that could not be loaded is loaded again, and the input waiting for it goes", async (t) => {
+  const { server, sessions, info } = await setup(t);
+  await sessions.launch("/work", undefined);
+  let failures = 1;
+  server.handlers.set("thread/resume", (p) => {
+    if (failures-- > 0) throw new Error("the thread is busy loading");
+    return { thread: { id: p.threadId, cwd: "/work", status: { type: "idle" }, name: null, createdAt: 100, updatedAt: 200 }, model: "gpt-test" };
+  });
+  server.dropClients();
+  await until("the failed load", () => server.called("thread/resume").length === 1, 8000);
+  await until("not usable yet", () => info().status === "unknown");
+  assert.deepEqual(await sessions.input(THREAD, "待っている発言"), { ok: true, queued: true });
+  await until("loaded again", () => server.called("thread/resume").length === 2, 8000);
+  await until("usable", () => server.called("turn/start").length === 1);
+  assert.equal(info().pendingInputs, undefined);
+});
+
+test("a session removed while its thread waits to be loaded again is not loaded", async (t) => {
+  const { server, sessions } = await setup(t);
+  await sessions.launch("/work", undefined);
+  server.handlers.set("thread/resume", () => {
+    throw new Error("the thread is busy loading");
+  });
+  server.dropClients();
+  await until("the failed load", () => server.called("thread/resume").length === 1, 8000);
+  await sessions.remove(THREAD);
+  await new Promise((r) => setTimeout(r, 1300));
+  assert.equal(server.called("thread/resume").length, 1);
 });
 
 test("a thread Codex no longer has is taken off the list", async (t) => {

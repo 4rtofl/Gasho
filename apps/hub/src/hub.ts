@@ -139,7 +139,7 @@ export function agentsOf(u: unknown): MachineAgents | undefined {
     const a = (u as Record<string, Partial<AgentInfo> | null | undefined>)[kind];
     if (!a || !AGENT_STATUSES.has(a.status)) continue;
     const version = typeof a.version === "string" && AGENT_VERSION_RE.test(a.version) ? a.version : undefined;
-    agents[kind] = { status: a.status as AgentStatus, ...(version ? { version } : {}) };
+    agents[kind] = { status: a.status as AgentStatus, ...(version ? { version } : {}), ...(a.canLaunch === true ? { canLaunch: true } : {}) };
   }
   return agents;
 }
@@ -1139,9 +1139,11 @@ export class Hub {
   private unsupported(machine: string, cmd: SessionCommand): string | undefined {
     const m = this.machines.get(machine);
     if (cmd.type === "daemon.update") return m?.update?.canUpdate ? undefined : (m?.update?.reason ?? UPDATE_TOO_OLD);
-    // A gasho-daemon that knows no agents would start Claude Code instead.
-    if (cmd.type === "session.launch" && cmd.agent === "codex" && m && !m.agents?.codex) {
-      return "この working server では Codex を使えません。Codex を入れて、gasho-daemon を更新してください。";
+    // A gasho-daemon that does not read `agent` (0.30.0 reports Codex, but cannot start it) would start Claude Code instead.
+    if (cmd.type === "session.launch" && cmd.agent === "codex" && m && !m.agents?.codex?.canLaunch) {
+      return m.agents?.codex
+        ? "この working server の gasho-daemon は古いため、Codex のセッションを起動できません。gasho-daemon を更新してください。"
+        : "この working server では Codex を使えません。Codex を入れて、gasho-daemon を更新してください。";
     }
     if (cmd.type === "file.write") return !m || versionAtLeast(m.daemonVersion, ...FILES_SINCE) ? undefined : FILES_TOO_OLD;
     if (cmd.type === "repo.register" || cmd.type === "repo.unregister") {

@@ -1026,7 +1026,7 @@ export class Daemon {
       canEnd: true,
       canRemoveWorktree: true,
       canListSkills: true,
-      agents: this.codex ? { codex: this.codex } : {},
+      agents: this.codex ? { codex: { ...this.codex, canLaunch: true } } : {},
       update: this.updater.info(),
     });
   }

@@ -175,13 +175,13 @@ Codex のセッションは、Codex の常駐の app-server のスレッドで�
 
 - つなぐ前に `codex app-server daemon start` を実行し、返ってきた Unix ソケットに WebSocket でつなぐ。このコマンドは systemd のスコープの中で実行し、gasho-daemon のサービスを起動し直しても app-server が止まらないようにする
 - 起動は `thread/start` にフォルダーだけを渡す。承認のポリシーとサンドボックスは、利用者の Codex の設定に従う
-- Gasho が起動したスレッドは、`managed.json` と同じ場所の `codex-threads.json` に残す。接続が切れたら間隔を広げながら（1秒から30秒まで）つなぎ直し、スレッドを `thread/resume` で読み込み直す。切れているあいだに増えた会話は画面に送り、作業中だったターンが終わっていれば `Stop` を送る。Codex にスレッドが無くなっていたら、一覧から外す
-- 発言は、スレッドが idle なら `turn/start` で送り、作業中は gasho-daemon で待たせて、idle になったら1つずつ送る。待たせた発言は、gasho-daemon を起動し直すと消える（Claude Code と同じ）
+- Gasho が起動したスレッドは、`managed.json` と同じ場所の `codex-threads.json` に残す。接続が切れたら間隔を広げながら（1秒から30秒まで）つなぎ直し、スレッドを `thread/resume` で読み込み直す。切れているあいだに増えた会話は画面に送り、作業中だったターンが終わっていれば `Stop` を送る。読み込み直しに失敗したスレッドは、そのスレッドだけを間隔を広げながら（1秒から30秒まで）読み込み直す。Codex にスレッドが無くなっていたら、一覧から外す
+- 発言は、スレッドが idle なら `turn/start` で送り、作業中は gasho-daemon で待たせて、idle になったら1つずつ送る。Codex が発言を受け付けなかったときは、その発言を捨てて通知し、次の発言を送る。待たせた発言は、gasho-daemon を起動し直すと消える（Claude Code と同じ）
 - 権限の確認の許可は `accept`、拒否は `decline`、今後も許可は Codex が提案した実行ポリシーの追加である。提案がないときは、今後も許可を出さない。別のクライアントが答えたら（`serverRequest/resolved`）、画面から消す
 - Gasho の画面で答えられない要求（MCP サーバーからの問い合わせなど）は、エラーで返す
 - 通知は、Claude Code の hook と同じ名前のイベント（`UserPromptSubmit`、`Stop`、`StopFailure`、`Notification`、`SessionEnd`）を gasho-daemon が作って送る
 - セッションの削除は、進行中のターンを止めてスレッドから離れ、記録から外す。会話は Codex に残り、`codex resume` で開ける
-- Codex が使えない working server への起動は、Gasho サーバーが断る。Codex を知らない古い gasho-daemon に届くと、Claude Code が起動してしまうためである
+- Codex のセッションを起動できると gasho-daemon が知らせていない working server への起動は、Gasho サーバーが断る（`AgentInfo.canLaunch`）。gasho-daemon 0.30.0 は Codex の状態を知らせるが `session.launch` の `agent` を読まないので、届くと Claude Code が起動してしまうためである
 - モデル、Effort、Ultracode の切り替えは適用しない（`unapplied` で返す）。ファイルの添付、フォーク、バックグラウンドの作業の停止は断る
 
 ### セッションの端末

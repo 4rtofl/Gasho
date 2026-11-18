@@ -423,6 +423,8 @@ export interface AgentInfo {
   status: AgentStatus;
   /** Its version (x.y.z), when it told it. */
   version?: string;
+  /** gasho-daemon starts sessions of this agent (session.launch's `agent`). Absent from one that only reports the agent. */
+  canLaunch?: boolean;
 }
 
 /** The agents gasho-daemon looked for and found on its working server: one that is not installed is not listed. */

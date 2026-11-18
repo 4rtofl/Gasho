@@ -4,9 +4,10 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { CHAT_TEXT_DEFAULT, CHAT_TEXT_MAX, useChatTextSize } from "@/lib/chat-text";
 import { hasDrafts, promptDraft, useDraftBox, usePicks } from "@/lib/drafts";
+import { getFileDraft, hasUnsavedFiles, setFileDraft } from "@/lib/file-drafts";
 import { useChoices, useFlag } from "@/lib/flag";
 import { useSavedOrder } from "@/lib/order";
-import { transcriptKey } from "@/lib/store";
+import { fileKey, transcriptKey } from "@/lib/store";
 import { PANEL_WIDTH_MAX, usePanelWidth, useSidebarWidth } from "@/lib/widths";
 import { connectHub, machine, session } from "./hub";
 
@@ -131,13 +132,15 @@ function chatBox(text: string): { current: HTMLDivElement; text: HTMLTextAreaEle
   return { current: box, text: area };
 }
 
-test("after /clear, a session's chat box goes on under its new id, with the cursor where it was, also while the session is not on screen", async () => {
+test("after /clear, a session's chat box and the files being written in it go on under its new id, with the cursor where it was, also while the session is not on screen", async () => {
   const key = (id: string) => transcriptKey("m2", id);
   const hub = await connectHub({ machines: [machine("m2", [session("a"), session("other")])] });
   promptDraft(key("a")).set({ text: "書きかけ", attachments: [], history: ["前の発言"] });
   const picked = renderHook(() => usePicks(key("a")));
   act(() => picked.result.current[1]((p) => ({ ...p, model: "opus" })));
   promptDraft(key("other")).set({ text: "別のセッション", attachments: [], history: [] });
+  const edited = { value: "編集中", original: "元", eol: "\n" as const, bom: false };
+  setFileDraft(fileKey("m2", "a", "src/x.ts"), edited);
   // The page of "a" is open, with its box being typed in.
   const before = chatBox("書きかけ");
   const open = renderHook(() => useDraftBox(key("a"), before));
@@ -153,7 +156,10 @@ test("after /clear, a session's chat box goes on under its new id, with the curs
   expect(promptDraft(key("b")).get()).toEqual({ text: "書きかけ", attachments: [], history: ["前の発言"] });
   expect(renderHook(() => usePicks(key("b"))).result.current[0]).toEqual({ model: "opus" });
   expect(promptDraft(key("other")).get().text).toBe("別のセッション");
-  // Nothing is left under the id from before: once the boxes are sent, no page reload waits for them.
+  expect(getFileDraft(fileKey("m2", "b", "src/x.ts"))).toBe(edited);
+  // Nothing is left under the id from before: once the boxes are sent and the file saved, no page reload waits for them.
   for (const id of ["b", "other"]) promptDraft(key(id)).set({ text: "", attachments: [], history: [] });
+  setFileDraft(fileKey("m2", "b", "src/x.ts"), undefined);
   expect(hasDrafts()).toBe(false);
+  expect(hasUnsavedFiles()).toBe(false);
 });

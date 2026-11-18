@@ -23,7 +23,7 @@ import type {
 } from "@gasho/protocol";
 import { fetchMe } from "./api";
 import { hasDrafts, moveDraft } from "./drafts";
-import { hasUnsavedFiles } from "./file-drafts";
+import { hasUnsavedFiles, moveFileDrafts } from "./file-drafts";
 import { usePageVisible } from "./media";
 import { type AutoReload, onOutOfDate, outOfDate } from "./server-update";
 import { movedSession, unreadOfSession } from "./sessions";
@@ -506,14 +506,16 @@ function sameEntry(a: TranscriptEntry, b: TranscriptEntry): boolean {
 }
 
 /**
- * After /clear a session goes on under a new id (see movedSession): what its chat box holds goes with it, also for a
- * session not on screen, before a page goes to the new id.
+ * After /clear a session goes on under a new id (see movedSession): what its chat box holds and the files being written
+ * in its panel go with it, also for a session not on screen, before a page goes to the new id.
  */
 function moveDrafts(machines: MachineInfo[]): void {
   for (const m of machines) {
     for (const id of new Set(m.sessions.flatMap((s) => s.previousSessionIds ?? []))) {
       const to = movedSession(m, id);
-      if (to) moveDraft(transcriptKey(m.id, id), transcriptKey(m.id, to.sessionId));
+      if (!to) continue;
+      moveDraft(transcriptKey(m.id, id), transcriptKey(m.id, to.sessionId));
+      moveFileDrafts(fileKey(m.id, id, ""), fileKey(m.id, to.sessionId, ""));
     }
   }
 }

@@ -43,6 +43,21 @@ export function setFileDraft(key: string, draft: FileDraft | undefined): void {
   for (const l of listeners) l();
 }
 
+/**
+ * After /clear the session goes on under a new id (see lib/drafts' moveDraft): so do the files being written in it,
+ * also those not open. `from` and `to` start the keys of the session's files (fileKey(machine, sessionId, "")).
+ */
+export function moveFileDrafts(from: string, to: string): void {
+  const moving = [...drafts].filter(([key]) => key.startsWith(from));
+  if (moving.length === 0) return;
+  drafts = new Map(drafts);
+  for (const [key, draft] of moving) {
+    drafts.delete(key);
+    drafts.set(to + key.slice(from.length), draft);
+  }
+  for (const l of listeners) l();
+}
+
 function subscribe(l: () => void): () => void {
   listeners.add(l);
   return () => listeners.delete(l);

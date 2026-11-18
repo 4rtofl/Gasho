@@ -3,18 +3,28 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import type { DaemonToHub, TranscriptEntry } from "@gasho/protocol";
+import { Daemon } from "../src/daemon.ts";
 import {
+  appendBatches,
   compactSummaryText,
   emptyMeta,
+  followTranscript,
   modelLabel,
   parseRecord,
   pastConversations,
   projectDirName,
-  readTranscript,
   toUrlSessionId,
+  type TranscriptMeta,
   TranscriptTail,
   unwrapPasted,
 } from "../src/transcript.ts";
+
+async function readAll(tail: TranscriptTail, meta: TranscriptMeta): Promise<TranscriptEntry[]> {
+  const out: TranscriptEntry[] = [];
+  for await (const entries of tail.read(meta)) out.push(...entries);
+  return out;
+}
 
 test("user text: interrupt marker, branch and timestamp", () => {
   const meta = emptyMeta();
@@ -138,19 +148,19 @@ test("tail returns only complete lines, even when a multibyte character is split
   try {
     const file = path.join(dir, "s.jsonl");
     await fs.writeFile(file, `${JSON.stringify({ type: "user", uuid: "1", message: { content: "最初" } })}\n`);
-    const { entries, consumed } = await readTranscript(file);
-    assert.equal(entries.length, 1);
+    const { tail } = await followTranscript(file);
+    assert.equal((await tail.page(undefined, 80)).total, 1);
 
-    const tail = new TranscriptTail(file, consumed);
     const meta = emptyMeta();
     const line = Buffer.from(
       `${JSON.stringify({ type: "assistant", uuid: "2", message: { content: [{ type: "text", text: "日本語の応答" }] } })}\n`,
     );
     const cut = line.indexOf(Buffer.from("本")) + 1; // inside the 3-byte character
     await fs.appendFile(file, line.subarray(0, cut));
-    assert.deepEqual(await tail.poll(meta), []);
+    assert.deepEqual(await readAll(tail, meta), []);
+    assert.equal((await tail.page(undefined, 80)).entries.length, 1);
     await fs.appendFile(file, line.subarray(cut));
-    const got = await tail.poll(meta);
+    const got = await readAll(tail, meta);
     assert.equal(got.length, 1);
     assert.deepEqual(got[0]?.blocks, [{ type: "text", text: "日本語の応答" }]);
   } finally {
@@ -158,18 +168,85 @@ test("tail returns only complete lines, even when a multibyte character is split
   }
 });
 
-test("readTranscript ignores a partial last line", async () => {
+/** `n` messages of about 3 KB, each followed by a line without an entry: 1,000 of them cross the 1 MB pieces read. */
+async function writeMessages(file: string, n: number): Promise<void> {
+  const lines: string[] = [];
+  for (let i = 0; i < n; i++) {
+    lines.push(JSON.stringify({ type: "user", uuid: `u${i}`, message: { content: `${i} ${"あ".repeat(1000 + (i % 13) * 7)}` } }));
+    lines.push(JSON.stringify({ type: "ai-title", aiTitle: `t${i}` }));
+  }
+  await fs.writeFile(file, `${lines.join("\n")}\n`);
+}
+
+const uuids = (p: { entries: TranscriptEntry[] }) => p.entries.map((e) => e.uuid);
+const range = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => `u${from + i}`);
+
+test("a page is read from its entries' lines alone, across the pieces the file was read in", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-test-"));
   try {
     const file = path.join(dir, "s.jsonl");
-    const full = `${JSON.stringify({ type: "user", uuid: "1", message: { content: "a" } })}\n`;
-    await fs.writeFile(file, `${full}{"type":"user","uu`);
-    const { entries, consumed } = await readTranscript(file);
-    assert.equal(entries.length, 1);
-    assert.equal(consumed, Buffer.byteLength(full));
+    await writeMessages(file, 1000);
+    const { tail, meta } = await followTranscript(file);
+    assert.equal(meta.title, "t999");
+
+    const latest = await tail.page(undefined, 80);
+    assert.deepEqual({ start: latest.start, total: latest.total }, { start: 920, total: 1000 });
+    assert.deepEqual(uuids(latest), range(920, 1000));
+    for (const before of [920, 400, 330, 80]) assert.deepEqual(uuids(await tail.page(before, 80)), range(before - 80, before));
+    assert.deepEqual(uuids(await tail.page(30, 80)), range(0, 30));
+    assert.deepEqual(uuids(await tail.page(0, 80)), []);
+
+    await fs.appendFile(file, `${JSON.stringify({ type: "user", uuid: "u1000", message: { content: "next" } })}\n`);
+    assert.deepEqual((await readAll(tail, meta)).map((e) => e.uuid), ["u1000"]);
+    assert.deepEqual(uuids(await tail.page(undefined, 2)), ["u999", "u1000"]);
   } finally {
     await fs.rm(dir, { recursive: true });
   }
+});
+
+test("a page asked for while the daemon first reads the transcript waits for the read", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-test-"));
+  try {
+    const claudeDir = path.join(dir, "claude");
+    await fs.mkdir(path.join(claudeDir, "projects", "p"), { recursive: true });
+    await writeMessages(path.join(claudeDir, "projects", "p", "s1.jsonl"), 1000);
+    const d = new Daemon({
+      hubUrl: "ws://127.0.0.1:1",
+      machineId: "m",
+      token: "t",
+      hookPort: 0,
+      claudeDir,
+      claudeBin: "/bin/false",
+      pollIntervalMs: 60_000,
+      stateDir: dir,
+      attachmentsDir: path.join(dir, "attachments"),
+    } as ConstructorParameters<typeof Daemon>[0]) as unknown as Record<string, any>;
+    const sent: DaemonToHub[] = [];
+    d.hub = { send: (m: DaemonToHub) => sent.push(m) };
+    const t = { info: { sessionId: "s1", cwd: dir, status: "idle", rcMode: "none", prLinks: [] }, meta: emptyMeta() };
+    d.tracked.set("s1", t);
+    const updating = d.update(t, { sessionId: "s1", cwd: dir });
+    while (!("opening" in t)) await new Promise((r) => setImmediate(r));
+    await d.onHubMessage({ type: "transcript.get", requestId: "r1", sessionId: "s1", limit: 80 });
+    const page = sent.at(-1);
+    assert.ok(page?.type === "transcript.page");
+    assert.deepEqual({ start: page.start, total: page.total }, { start: 920, total: 1000 });
+    await updating;
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("appended entries are sent in runs that each stay within the limit, in order", () => {
+  const entry = (i: number): TranscriptEntry => ({ uuid: `u${i}`, role: "user", blocks: [{ type: "text", text: "あ".repeat(300) }], isSidechain: false });
+  const entries = Array.from({ length: 50 }, (_, i) => entry(i));
+  const size = Buffer.byteLength(JSON.stringify(entries[0]));
+  const batches = appendBatches(entries, size * 8);
+  assert.equal(batches.length, 7);
+  assert.ok(batches.every((b) => b.reduce((n, e) => n + Buffer.byteLength(JSON.stringify(e)), 0) <= size * 8));
+  assert.deepEqual(batches.flat(), entries);
+  // An entry larger than the limit goes alone.
+  assert.deepEqual(appendBatches(entries.slice(0, 2), size - 1), [[entries[0]], [entries[1]]]);
 });
 
 // Records as Claude Code v2.1.322 writes them.
@@ -259,6 +336,31 @@ test("commands recorded as system records are notes too", () => {
     meta,
   );
   assert.deepEqual(command?.blocks, [{ type: "text", text: "/model" }]);
+});
+
+test("/rename (or /name) and what it printed are not shown in the chat", () => {
+  const meta = emptyMeta();
+  const name = "端末画面とプラグイン画面の更新ボタン";
+  // As Claude Code records the /rename gasho-daemon sends.
+  const records = [
+    { type: "system", subtype: "local_command", uuid: "r1", content: `<command-name>/rename</command-name>\n            <command-message>rename</command-message>\n            <command-args>${name}</command-args>` },
+    { type: "system", subtype: "local_command", uuid: "r2", content: `<local-command-stdout>Session renamed to: ${name}</local-command-stdout>`, commandRun: { command: "rename", args: name } },
+    { type: "user", uuid: "r3", message: { role: "user", content: `<command-name>/name</command-name>\n  <command-args>${name}</command-args>` } },
+    { type: "user", uuid: "r4", message: { role: "user", content: `<local-command-stdout>Session renamed to: ${name}</local-command-stdout>` } },
+    // What else it prints, and words it may print one day: the record says which command printed them.
+    { type: "system", subtype: "local_command", uuid: "r5", content: `<local-command-stdout>Session is named: ${name} (a newer rename landed first)</local-command-stdout>`, commandRun: { command: "rename", args: "" } },
+    { type: "system", subtype: "local_command", uuid: "r6", content: "<local-command-stdout>Couldn't generate a name: no conversation yet. Usage: /rename <name></local-command-stdout>", commandRun: { command: "rename", args: "" } },
+    { type: "system", subtype: "local_command", uuid: "r7", content: `<local-command-stdout>Now called ${name}</local-command-stdout>`, commandRun: { command: "name", args: name } },
+    { type: "user", uuid: "r8", message: { role: "user", content: `<local-command-stdout>Session is named: ${name} (a newer rename landed first)</local-command-stdout>` } },
+  ];
+  for (const rec of records) assert.equal(parseRecord(rec, meta), null, rec.uuid);
+  // Other commands are still notes, and what they print still counts.
+  const other = parseRecord({ type: "system", subtype: "local_command", uuid: "r9", content: "<command-name>/model</command-name>" }, meta);
+  assert.deepEqual(other?.blocks, [{ type: "text", text: "/model" }]);
+  const printed = "Set model to Opus 5.5 for this session only";
+  const output = parseRecord({ type: "system", subtype: "local_command", uuid: "r10", content: `<local-command-stdout>${printed}</local-command-stdout>`, commandRun: { command: "model", args: "" } }, meta);
+  assert.deepEqual(output?.blocks, [{ type: "text", text: printed }]);
+  assert.equal(meta.model, "Opus 5.5");
 });
 
 test("the effort level comes from replies and from /effort and /model output; ultracode from /effort ultracode", () => {

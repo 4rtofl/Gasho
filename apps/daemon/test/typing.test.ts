@@ -9,7 +9,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { Daemon } from "../src/daemon.ts";
 import { readScreen } from "../src/managed.ts";
-import { readTranscript, TranscriptTail } from "../src/transcript.ts";
+import { followTranscript, TranscriptTail } from "../src/transcript.ts";
 
 const RULE = "─".repeat(50);
 const MODELS = ["Default (recommended)  Sonnet 5.5 · Efficient", "Opus 5.5", "Fable 5.2", "Sonnet 5.5", "Haiku 5.5"];
@@ -168,6 +168,8 @@ async function setup(c: FakeClaude, enterWaitMs = 400) {
   d.currentStatus = async () => "idle";
   d.scheduleRefresh = () => undefined;
   d.emitSessions = () => undefined;
+  // As after the first refresh, which the session tracked below stands for.
+  d.refreshed = true;
   d.managed.add({ sessionId: SID, terminal: "z", pid: 1, cwd: dir, name: "fake", launchedAt: 1 });
   d.tracked.set(SID, {
     info: { sessionId: SID, cwd: dir, status: "idle", rcMode: "none", prLinks: [], model: name(c.model), effort: "medium", ultracode: false },
@@ -352,7 +354,7 @@ async function startedWithoutName(d: Record<string, any>) {
   const t = d.tracked.get(SID);
   const file = path.join(t.info.cwd, "transcript.jsonl");
   await fs.writeFile(file, "");
-  Object.assign(t, { transcript: file, tail: new TranscriptTail(file, 0) });
+  Object.assign(t, { transcript: file, tail: new TranscriptTail(file) });
   return (...records: object[]) => fs.appendFile(file, records.map((r) => `${JSON.stringify({ sessionId: SID, ...r })}\n`).join(""));
 }
 
@@ -448,8 +450,7 @@ test("after a restart of gasho-daemon, a /rename lost with the queue is sent aga
   // Restarted again once Claude Code had recorded it: the transcript is read anew, and nothing is sent.
   await write({ type: "custom-title", customTitle: "セッション名の自動設定" });
   const t = d.tracked.get(SID);
-  const { meta, consumed } = await readTranscript(t.transcript);
-  Object.assign(t, { meta, tail: new TranscriptTail(t.transcript, consumed) });
+  Object.assign(t, await followTranscript(t.transcript));
   d.titleSent.clear();
   d.managed.get(SID).autoName = true;
   await d.pollTails();

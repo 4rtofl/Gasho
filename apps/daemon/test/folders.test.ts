@@ -11,7 +11,8 @@ import { cloneError, cloneRepo, createFolder, folderNameProblem, type Made, repo
 const errorOf = (m: Made): string => ("error" in m ? m.error : "");
 
 async function tmp(): Promise<{ dir: string; done: () => Promise<void> }> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-folders-"));
+  // The real path: on macOS the temporary folder is under /var, a link to /private/var, and gh's $PWD is the real one.
+  const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "gasho-folders-")));
   return { dir, done: () => fs.rm(dir, { recursive: true, force: true }) };
 }
 

@@ -17,9 +17,12 @@ import type { FromHost, GitHubAnswer, LocalWire, MachineWire, SessionWire, ToHos
 
 /**
  * The plugin API this gasho-daemon runs plugins of. A daemon part runs only where this is at least its manifest's
- * `api`: 1.10, as worktree.remove (useRemoveWorktree) is answered only from this gasho-daemon on.
+ * `api`: 1.10, as worktree.remove (useRemoveWorktree) is answered only from this gasho-daemon on. 1.11 (the panels of
+ * a plugin's page) and 1.12 (useSendInput's model, effort and ultracode, which this gasho-daemon switches since 0.6.0)
+ * are the screen's alone, as is 1.14 (useRemoveSession, session.remove having been answered long before): this
+ * gasho-daemon names them so that a plugin of 1.14 with a daemon part runs.
  */
-export const PLUGIN_API = "1.10";
+export const PLUGIN_API = "1.14";
 /** The process of a daemon part: next to this file (.ts when run from the repository, .js in the npm package). */
 const HOST_FILE = fileURLToPath(new URL(`./plugin-host${path.extname(fileURLToPath(import.meta.url))}`, import.meta.url));
 /** How long a new process may take to import the plugin and run its `start`. */
@@ -226,8 +229,12 @@ interface Slot {
   proc?: HostProcess;
   /** A new version being started. */
   starting?: HostProcess;
-  /** The version that failed, and why; not started again until the plugin changes or is turned off and on. */
-  failed?: { hash: string; error: string };
+  /**
+   * The version that failed, and why; not started again until the plugin changes or is turned off and on. `retry`: it
+   * failed before a process started (its code was not handed over, or its folder not made), so the next list tries
+   * again; the Gasho server sends the list after each reconnection.
+   */
+  failed?: { hash: string; error: string; retry?: true };
   crashes: number[];
   backoff: number;
   restart?: NodeJS.Timeout;
@@ -265,10 +272,15 @@ interface Topic {
 export class PluginRunner {
   private opts: PluginRunnerOptions;
   private slots = new Map<string, Slot>();
-  private code = new Map<string, { resolve: (code: string) => void; reject: (e: Error) => void }>();
+  /** The code asked of the Gasho server and not handed over yet, by plugin and version ("<id>\0<hash>"). */
+  private code = new Map<string, { ask: () => void; resolve: (code: string) => void; reject: (e: Error) => void }>();
+  /** The code files being fetched, by plugin and version: one fetch for all who need it, as `code` keeps one waiter for each. */
+  private fetching = new Map<string, Promise<string>>();
   private lastStatus = "";
   /** By plugin and topic ("<id>\0<topic>"). */
   private topics = new Map<string, Topic>();
+  /** gasho-daemon is stopping (stopAll): no daemon part starts any more. */
+  private closed = false;
 
   constructor(opts: PluginRunnerOptions) {
     this.opts = opts;
@@ -294,8 +306,9 @@ export class PluginRunner {
       if (!was.run || was.hash !== entry.hash) {
         slot.failed = undefined;
         slot.crashes = [];
-      }
-      if (slot.proc?.hash === entry.hash) slot.proc.settings(entry.settings);
+      } else if (slot.failed?.retry) slot.failed = undefined;
+      // Also to a version still starting: it was given the settings of when it was started.
+      for (const p of [slot.proc, slot.starting]) if (p?.hash === entry.hash) p.settings(entry.settings);
       void this.ensure(slot);
     }
     for (const [id, slot] of this.slots) {
@@ -314,6 +327,11 @@ export class PluginRunner {
     this.code.delete(key);
     if (typeof m.code === "string") waiting.resolve(m.code);
     else waiting.reject(new Error(m.error ?? "Gasho サーバーから daemon.js を受け取れませんでした。"));
+  }
+
+  /** Connected to the Gasho server (again): the code still awaited is asked for again, as an answer on its way is lost with the old connection. */
+  connected(): void {
+    for (const waiting of this.code.values()) waiting.ask();
   }
 
   /** A call from a plugin's web part. */
@@ -368,9 +386,14 @@ export class PluginRunner {
     }
   }
 
-  /** Ends every daemon part (gasho-daemon is stopping). */
+  /**
+   * Ends every daemon part, as gasho-daemon is stopping: each runs its `stop` at once, its calls aborted (a service
+   * manager does not wait the DRAIN_MS of a hot reload), and is killed when it takes longer than STOP_MS. None starts
+   * again.
+   */
   async stopAll(): Promise<void> {
-    await Promise.all([...this.slots.values()].map((s) => this.halt(s)));
+    this.closed = true;
+    await Promise.all([...this.slots.values()].map((s) => this.halt(s, true)));
   }
 
   // ---- events ----
@@ -435,7 +458,7 @@ export class PluginRunner {
   /** Starts the version the Gasho server asked for, unless it runs, is starting, or failed. */
   private async ensure(slot: Slot): Promise<void> {
     const { hash } = slot.entry;
-    if (!slot.entry.run || !this.opts.enabled) return;
+    if (!slot.entry.run || !this.opts.enabled || this.closed) return;
     if (slot.proc?.alive && slot.proc.hash === hash) return;
     if (slot.starting?.hash === hash || slot.failed?.hash === hash) return;
     let file: string;
@@ -445,11 +468,11 @@ export class PluginRunner {
       file = await this.codeFile(slot.id, hash);
       await fsp.mkdir(dataDir, { recursive: true, mode: 0o700 });
     } catch (e) {
-      if (slot.entry.hash === hash) slot.failed = { hash, error: e instanceof Error ? e.message : String(e) };
+      if (slot.entry.hash === hash) slot.failed = { hash, error: e instanceof Error ? e.message : String(e), retry: true };
       this.status();
       return;
     }
-    if (slot.entry.hash !== hash || !slot.entry.run || slot.starting?.hash === hash) return;
+    if (this.closed || slot.entry.hash !== hash || !slot.entry.run || slot.starting?.hash === hash) return;
     const local = { folders: this.opts.folders(), dataDir };
     const proc = new HostProcess(slot.id, hash, file, { machine: this.opts.machine(), settings: slot.entry.settings, local }, this.opts.github, this.opts.log);
     // From its start already (what it watches, as it starts).
@@ -508,7 +531,8 @@ export class PluginRunner {
     slot.backoff = Math.min(slot.backoff * 2, MAX_BACKOFF_MS);
   }
 
-  private async halt(slot: Slot): Promise<void> {
+  /** `now`: without waiting for the calls under way (stopAll). */
+  private async halt(slot: Slot, now = false): Promise<void> {
     if (slot.restart) clearTimeout(slot.restart);
     slot.restart = undefined;
     this.dropEvents(slot.id);
@@ -517,7 +541,7 @@ export class PluginRunner {
     slot.proc = undefined;
     slot.starting = undefined;
     this.wake(slot);
-    await Promise.all(procs.map((p) => p.retire()));
+    await Promise.all(procs.map((p) => (now ? p.stop() : p.retire())));
   }
 
   private wake(slot: Slot): void {
@@ -525,17 +549,32 @@ export class PluginRunner {
   }
 
   /** The daemon part's code in the cache, asked of the Gasho server when it is not there yet. */
-  private async codeFile(id: string, hash: string): Promise<string> {
+  private codeFile(id: string, hash: string): Promise<string> {
+    const key = `${id}\0${hash}`;
+    let file = this.fetching.get(key);
+    if (!file) {
+      file = this.fetchCode(id, hash, key).finally(() => this.fetching.delete(key));
+      this.fetching.set(key, file);
+    }
+    return file;
+  }
+
+  private async fetchCode(id: string, hash: string, key: string): Promise<string> {
     if (!/^[a-z][a-z0-9-]{1,31}$/.test(id) || !/^[0-9a-f]{16}$/.test(hash)) throw new Error("プラグインの指定が正しくありません。");
     const file = path.join(this.opts.cacheDir, id, hash, "daemon.mjs");
     if (fs.existsSync(file)) return file;
-    const key = `${id}\0${hash}`;
     const code = await new Promise<string>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.code.delete(key);
-        reject(new Error("Gasho サーバーから daemon.js を受け取れませんでした。"));
-      }, CODE_MS);
+      let timer: NodeJS.Timeout | undefined;
+      const ask = () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          this.code.delete(key);
+          reject(new Error("Gasho サーバーから daemon.js を受け取れませんでした。"));
+        }, CODE_MS);
+        this.opts.send({ type: "plugin.code.get", plugin: id, hash });
+      };
       this.code.set(key, {
+        ask,
         resolve: (c) => {
           clearTimeout(timer);
           resolve(c);
@@ -545,7 +584,7 @@ export class PluginRunner {
           reject(e);
         },
       });
-      this.opts.send({ type: "plugin.code.get", plugin: id, hash });
+      ask();
     });
     await fsp.mkdir(path.dirname(file), { recursive: true });
     const tmp = `${file}.${process.pid}.tmp`;

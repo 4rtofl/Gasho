@@ -1,10 +1,15 @@
 # gasho-release-trigger
 
-GitHub Actions の Release ワークフロー（`.github/workflows/release.yml`）を、15分ごとに動かす Cloudflare Worker。
+GitHub Actions のワークフローを、決まった時刻に動かす Cloudflare Worker。次の 2 つを動かす。
 
-GitHub Actions の `schedule` は、遅れたり動かなかったりする。Gasho でも、`schedule` で一度も動かなかった。そこで、Cloudflare の Cron Trigger で15分ごとにこの Worker を動かし、GitHub の API（`POST /repos/4rtofl/Gasho/actions/workflows/release.yml/dispatches`）で、main の Release ワークフローを `workflow_dispatch` として起動する。
+- Gasho の Release ワークフロー（`.github/workflows/release.yml`）：15分ごと
+- Gasho と GashoPlugins の E2E（どちらも `e2e.yml`）：毎日 5:00（日本時間。Cron は UTC で `0 20 * * *`）
 
-公開するかどうかは、これまでどおりワークフローの中の `scripts/release.ts plan` が決める。この Worker は起動するだけである。GitHub が起動を断ったとき（トークンの期限切れなど）は、例外を投げる。Cloudflare のダッシュボードで、この Worker のログと Cron の実行結果を見るとわかる。
+GitHub Actions の `schedule` は、遅れたり動かなかったりする。Gasho でも、`schedule` で一度も動かなかった。そこで、Cloudflare の Cron Trigger でこの Worker を動かし、GitHub の API（`POST /repos/<リポジトリ>/actions/workflows/<ワークフロー>/dispatches`）で、main のワークフローを `workflow_dispatch` として起動する。どの Cron で何を動かすかは、`wrangler.jsonc` の `vars.DISPATCHES` に、Cron の式ごとに書く。式は `triggers.crons` と同じ文字列にする。
+
+公開するかどうかは、これまでどおりワークフローの中の `scripts/release.ts plan` が決める。この Worker は起動するだけである。GitHub が起動を断ったとき（トークンの期限切れなど）は、例外を投げる。同じ Cron のほかのワークフローは、それでも起動する。Cloudflare のダッシュボードで、この Worker のログと Cron の実行結果を見るとわかる。
+
+GashoPlugins の `e2e.yml` は 4rtofl/GashoPlugins#135 で足す。それまでは GitHub が 404 を返すので、`mayBeMissing` を付けて、404 を失敗にせずログに書くだけにしている。#135 が main に入ったら、`mayBeMissing` を外す（外さないと、ワークフローの名前を変えたときなどの 404 に気付けない）。
 
 ## 準備
 
@@ -14,10 +19,12 @@ GitHub の Settings → Developer settings → Personal access tokens → Fine-g
 
 - Resource owner：`4rtofl`
 - Expiration：組織が認める最長
-- Repository access：Only select repositories → `4rtofl/Gasho`
+- Repository access：Only select repositories → `4rtofl/Gasho` と `4rtofl/GashoPlugins`
 - Permissions：Repository permissions の Actions を Read and write にする。ほかは足さない（Metadata の Read-only は自動で付く）
 
 組織が fine-grained PAT に承認を求めているときは、組織のオーナーが承認するまで使えない。
+
+Release だけを動かしていたころのトークンは、`4rtofl/Gasho` にしか権限がない。GitHub の画面でそのトークンを開き、Repository access に `4rtofl/GashoPlugins` を足す（作り直さなくてよい）。足すまでは、GashoPlugins の E2E の起動を GitHub が断り、Cloudflare のログに失敗が出る。
 
 ### 2. デプロイする
 
@@ -30,7 +37,7 @@ npx wrangler deploy
 npx wrangler secret put GITHUB_TOKEN   # 1 で作ったトークンを貼る
 ```
 
-`npx wrangler tail` を開いておくと、次の15分の区切りで起動したことがわかる。GitHub 側では `gh run list --workflow release.yml` に、`workflow_dispatch` の実行が15分ごとに並ぶ。
+`npx wrangler tail` を開いておくと、次の15分の区切りで起動したことがわかる。GitHub 側では `gh run list --workflow release.yml` に、`workflow_dispatch` の実行が15分ごとに並ぶ。E2E は、毎日 5:00（日本時間）のあとに `gh run list --workflow e2e.yml` に並ぶ。
 
 ## 公開を止める
 

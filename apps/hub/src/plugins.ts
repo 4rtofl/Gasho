@@ -14,7 +14,7 @@ import type { PluginManifest, PluginMethodSpec, PluginPermission, PluginSettingS
 
 /** The plugin API this Gasho server serves: plugins written for 1.0 … 1.PLUGIN_API_MINOR. */
 export const PLUGIN_API_MAJOR = 1;
-export const PLUGIN_API_MINOR = 11;
+export const PLUGIN_API_MINOR = 14;
 /** The version of the plugin API, as plugins and gasho-daemon name it. */
 export const PLUGIN_API = `${PLUGIN_API_MAJOR}.${PLUGIN_API_MINOR}`;
 
@@ -24,7 +24,7 @@ export const GENRE_RE = ID_RE;
 export const VERSION_RE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 const API_RE = /^(\d+)\.(\d+)$/;
 const KEY_RE = /^[A-Za-z][\w-]{0,63}$/;
-const PERMISSIONS = new Set<PluginPermission>(["session.input", "session.launch", "worktree.remove"]);
+const PERMISSIONS = new Set<PluginPermission>(["session.input", "session.launch", "session.remove", "worktree.remove"]);
 /** The names a theme (P16) may set. */
 const THEME_NAMES: Record<PluginThemeName, true> = {
   background: true,
@@ -237,7 +237,7 @@ export function checkManifest(raw: unknown, folder: string | undefined, files: R
   }
   if (permissions !== undefined) {
     if (!Array.isArray(permissions) || !permissions.every((p) => PERMISSIONS.has(p as PluginPermission))) {
-      return { error: "permissions に使えるのは session.input、session.launch、worktree.remove です。" };
+      return { error: "permissions に使えるのは session.input、session.launch、session.remove、worktree.remove です。" };
     }
     manifest.permissions = [...new Set(permissions as PluginPermission[])];
   }

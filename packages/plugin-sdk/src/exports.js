@@ -14,6 +14,7 @@ export const SDK_EXPORTS = [
   "useNavigation",
   "useSendInput",
   "useLaunchSession",
+  "useRemoveSession",
   "useRemoveWorktree",
   "removeWorktreeProblem",
   "useSessionActivity",
@@ -34,4 +35,4 @@ export const SDK_EXPORTS = [
 ];
 
 /** The version of the plugin API that this SDK describes (gasho-plugin.json `api`). */
-export const PLUGIN_API = "1.11";
+export const PLUGIN_API = "1.14";

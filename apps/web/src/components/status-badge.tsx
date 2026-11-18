@@ -1,6 +1,6 @@
 import { motion, useReducedMotion } from "framer-motion";
 import { Bell } from "lucide-react";
-import type { SessionStatus } from "@gasho/protocol";
+import type { SessionInfo, SessionStatus } from "@gasho/protocol";
 import { Badge } from "@/components/ui/badge";
 import { STATUS_LABEL, STATUS_TONE } from "@/lib/format";
 import type { DotStatus } from "@/lib/sessions";
@@ -11,7 +11,14 @@ import { cn } from "@/lib/utils";
  * works; their words are left to screen readers and the tooltip. Waiting for an answer, and a state Gasho cannot
  * tell, keep their words.
  */
-export function StatusBadge({ status }: { status: SessionStatus }) {
+export function StatusBadge({ status, hibernation }: { status: SessionStatus; hibernation?: SessionInfo["hibernation"] }) {
+  if (hibernation) {
+    return (
+      <Badge tone="neutral" dot pulse={hibernation === "resuming"}>
+        {hibernation === "resuming" ? "再開中" : "休止中"}
+      </Badge>
+    );
+  }
   if (status === "busy" || status === "idle") {
     return (
       // As tall as the badge, so what is beside it does not move when the state changes.
@@ -32,6 +39,8 @@ const DOT: Record<DotStatus, string> = {
   busy: "bg-amber-500",
   waiting: "bg-amber-500",
   idle: "bg-emerald-500",
+  // Hollow: nothing of it runs now.
+  hibernated: "bg-transparent ring-1 ring-inset ring-neutral-500",
   none: "bg-neutral-500",
   unknown: "bg-neutral-700",
 };
@@ -61,7 +70,7 @@ export function StatusDot({ status, unread = false }: { status: DotStatus; unrea
     );
   }
   return (
-    <span className="relative inline-flex size-2.5">
+    <span className="relative inline-flex size-2.5" {...(status === "hibernated" ? { role: "img", "aria-label": "休止中", title: "休止中" } : {})}>
       {(status === "busy" || status === "waiting") && (
         <span className={cn("absolute inline-flex size-full animate-ping rounded-full opacity-60 motion-reduce:animate-none", DOT[status])} />
       )}

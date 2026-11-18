@@ -235,3 +235,16 @@ test("a worktree's dot is its most pressing session's, gray without sessions, an
   ]);
   assert.deepEqual(sessionDot(offline, offline.sessions[2]!, unreadSessions([note("mac", "c", false)])), { status: "unknown", unread: true });
 });
+
+test("a hibernated session has a dot of its own, and a worktree has it only when all of its sessions are hibernated", () => {
+  const worktree = { path: "/repo", repo: "/repo", branch: "main" };
+  const asleep = session("s1", { hibernation: "hibernated", worktree });
+  const back = session("s2", { hibernation: "resuming", worktree });
+  const awake = session("s3", { worktree });
+  const m = machine("m1", [asleep, back, awake]);
+  assert.equal(sessionDot(m, asleep, new Set()).status, "hibernated");
+  assert.equal(sessionDot(m, back, new Set()).status, "busy");
+  assert.equal(sessionDot({ ...m, connected: false }, asleep, new Set()).status, "unknown");
+  assert.equal(worktreeDot({ machine: m, sessions: [asleep] } as never, new Set()).status, "hibernated");
+  assert.equal(worktreeDot({ machine: m, sessions: [asleep, awake] } as never, new Set()).status, "idle");
+});

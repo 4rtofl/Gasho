@@ -30,6 +30,7 @@ import { listDir, readFileAt, writeFileAt } from "./files.ts";
 import { cloneRepo, createFolder } from "./folders.ts";
 import { githubRepoOf, nestedRepos, readGitGraph, worktreeOf } from "./git.ts";
 import { GitHubProxy } from "./github.ts";
+import { mayHibernate, resumeArgs } from "./hibernate.ts";
 import { TokenCounter } from "./tokens.ts";
 import { startHookServer, summarizeHook } from "./hooks.ts";
 import { isInside, statusLineLaunch, statusLineOf, userStatusLine } from "./statusline.ts";
@@ -48,6 +49,7 @@ import {
   permissionDialog,
   EFFORT_LEVELS,
   forkName,
+  type Hibernated,
   isAlive,
   isRename,
   launchableFolders,
@@ -129,6 +131,8 @@ const FORK_READY_MS = 15_000;
 const FORK_TRANSCRIPT_MS = 5000;
 /** Removing a session: how long Claude Code may take to end after SIGTERM (Remote Control sessions take a moment). */
 const REMOVE_WAIT_MS = 8000;
+/** How often the sessions are looked at for one to hibernate (see hibernateIdle). */
+const HIBERNATE_CHECK_MS = 60_000;
 const MAX_INPUT = 20_000;
 const INTERRUPT_SETTLE_MS = 1500;
 /**
@@ -271,6 +275,11 @@ export class Daemon {
   /** Counts the reads of the registered repositories: a read that a later one overtook is not sent. */
   private reposRead = 0;
   private flushing = new Set<string>();
+  /** The hibernated sessions being brought back, and how that ends (see wake). */
+  private waking = new Map<string, Promise<CommandResult>>();
+  /** The sessions whose Claude Code is being ended to hibernate them (it may still be listed), and when that is done. */
+  private hibernating = new Map<string, Promise<void>>();
+  private sweepingIdle = false;
   /** Sessions whose /rename to the name from the first message was sent, until Claude Code records it (nameAfterTitle). */
   private titleSent = new Set<string>();
   /** Until when input must wait after an interrupt, so Claude Code has put the stopped prompt back first. */
@@ -365,15 +374,16 @@ export class Daemon {
     this.hub.send(memory ? { type: "memory", memory } : { type: "memory" });
   }
 
-  async start(): Promise<void> {
-    log(`machine ${this.cfg.machineId}, Gasho server ${this.cfg.hubUrl}`);
-    if (!this.cfg.hookSecret) log("GASHO_HOOK_SECRET is not set; hook requests are accepted without a secret");
-    this.canLaunch = await this.terminals.builtIn.available();
-    if (!this.canLaunch) log("no pseudo-terminal on this machine (node-pty did not load); sessions cannot be started from Gasho");
-    // The sessions started before this daemon: those whose Claude Code and terminal still run are kept.
+  /**
+   * The sessions started before this daemon: those whose Claude Code and terminal still run are kept, and those
+   * hibernated, which stay until they are used.
+   */
+  private async loadManaged(): Promise<void> {
     const live = await this.terminals.builtIn.live();
     let inZellij: Set<string> | undefined;
     await this.managed.load(async (m) => {
+      // Nothing of it runs: it stays until it is used.
+      if (m.hibernated) return true;
       if (!isAlive(m.pid)) return false;
       if (!m.zellij) return live.get(m.terminal)?.pid === m.pid;
       inZellij ??= (await this.terminals.zellij.available()) ? await this.terminals.zellij.liveSessions() : new Set();
@@ -384,10 +394,20 @@ export class Daemon {
     const old = this.managed.all().filter((m) => m.zellij).length;
     if (old > 0) log(`${old} session(s) started by gasho-daemon 0.10 or before still run in zellij; they are used through zellij until they end`);
     // Not closed: a terminal that no record names may still be someone's work (`gasho-daemon attach` shows it).
-    const kept = new Set(this.managed.all().map((m) => m.terminal));
+    const kept = new Set(this.managed.all().filter((m) => !m.hibernated).map((m) => m.terminal));
     for (const [name, h] of live) {
       if (!kept.has(name)) log(`terminal ${name} (pid ${h.pid}, ${h.cwd}) is not one of the sessions Gasho keeps; it is left as it is`);
     }
+    // One at a time: long conversations take memory to read.
+    for (const m of this.managed.all()) if (m.hibernated) await this.trackHibernated(m);
+  }
+
+  async start(): Promise<void> {
+    log(`machine ${this.cfg.machineId}, Gasho server ${this.cfg.hubUrl}`);
+    if (!this.cfg.hookSecret) log("GASHO_HOOK_SECRET is not set; hook requests are accepted without a secret");
+    this.canLaunch = await this.terminals.builtIn.available();
+    if (!this.canLaunch) log("no pseudo-terminal on this machine (node-pty did not load); sessions cannot be started from Gasho");
+    await this.loadManaged();
     await this.pruneAttachments();
     this.models = await fsp
       .readFile(this.modelsFile(), "utf8")
@@ -435,6 +455,7 @@ export class Daemon {
     );
     setInterval(() => void this.refresh(), this.cfg.pollIntervalMs);
     setInterval(() => void this.pollTails(), 1000);
+    if (this.cfg.hibernateAfterMs !== undefined) setInterval(() => void this.hibernateIdle(), HIBERNATE_CHECK_MS).unref();
     try {
       fs.watch(path.join(this.cfg.claudeDir, "sessions"), () => {
         this.scheduleStatuses();
@@ -444,6 +465,10 @@ export class Daemon {
       log("cannot watch the sessions directory; relying on polling", e);
     }
     void this.refresh();
+    // Inputs kept over a restart, for sessions that were coming back or had not been tried yet.
+    for (const m of this.managed.all()) {
+      if (m.hibernated && !m.hibernated.resumeError && this.managed.pending(m.sessionId) > 0) void this.wake(m.sessionId);
+    }
   }
 
   /**
@@ -536,7 +561,8 @@ export class Daemon {
   /** Types the waiting inputs of the sessions started from Gasho, those that can take them now (see flushInput). */
   private flushWaitingInputs(): void {
     for (const m of this.managed.all()) {
-      if (this.managed.pending(m.sessionId) === 0) continue;
+      // A hibernated session's inputs wait until it is back (see wake).
+      if (m.hibernated || this.managed.pending(m.sessionId) === 0) continue;
       // A failure leaves the input on the queue for the next try.
       void this.flushInput(m.sessionId).catch((e) => log(`could not send the waiting input to ${m.name}`, e));
     }
@@ -555,12 +581,14 @@ export class Daemon {
         // A Claude Code that a plugin runs in its own folder is no session (see fromPlugin).
         if (!row.sessionId || !row.cwd || isInside(row.cwd, this.cfg.pluginDataDir)) continue;
         seen.add(row.sessionId);
+        if (await this.hibernatedRow(row)) continue;
         const t = this.tracked.get(row.sessionId) ?? this.newTracked(row);
         this.tracked.set(row.sessionId, t);
         await this.update(t, row);
       }
       for (const id of [...this.tracked.keys()]) {
-        if (seen.has(id)) continue;
+        // A hibernated session's conversation can still be read.
+        if (seen.has(id) || this.managed.get(id)?.hibernated) continue;
         this.tracked.delete(id);
         this.permissions.settleSession(id);
       }
@@ -591,7 +619,7 @@ export class Daemon {
   private async forgetEndedSessions(seen: Set<string>): Promise<void> {
     let changed = false;
     for (const m of this.managed.all()) {
-      if (seen.has(m.sessionId) || isAlive(m.pid)) continue;
+      if (m.hibernated || seen.has(m.sessionId) || isAlive(m.pid)) continue;
       this.managed.remove(m.sessionId);
       for (const map of [this.settleUntil, this.lastStop, this.latePicker, this.prompts, this.titleSent]) map.delete(m.sessionId);
       await this.terminals.kill(m.terminal);
@@ -741,6 +769,7 @@ export class Daemon {
           managed: m ? true : undefined,
           pendingInputs: pending || undefined,
           permissionRequests: this.permissions.of(t.info.sessionId) ?? this.openQuestion(t) ?? this.openPermission(t),
+          ...(m?.hibernated ? this.hibernatedInfo(m, m.hibernated, t.info) : {}),
         };
       })
       .sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0));
@@ -819,7 +848,11 @@ export class Daemon {
   /** Inputs still to be typed into sessions, the one being typed included: they are not kept over a restart. */
   private inputsToType(): number {
     let n = this.flushing.size;
-    for (const m of this.managed.all()) n += this.managed.waiting(m.sessionId).filter((input) => !input.auto).length;
+    for (const m of this.managed.all()) {
+      // A hibernated session's inputs are saved with it, unless it is coming back and they are about to be typed.
+      if (m.hibernated && !this.waking.has(m.sessionId)) continue;
+      n += this.managed.waiting(m.sessionId).filter((input) => !input.auto).length;
+    }
     return n;
   }
 
@@ -866,7 +899,7 @@ export class Daemon {
   private async readManagedScreens(): Promise<void> {
     for (const m of this.managed.all()) {
       const t = this.tracked.get(m.sessionId);
-      if (!t || this.flushing.has(m.sessionId)) continue;
+      if (!t || m.hibernated || this.flushing.has(m.sessionId)) continue;
       // What the screen shows now wins over the transcript: the line above the prompt box ("◐ medium · ultracode ·
       // /effort", shown for a while after a change) and the "ultracode" in the rule above the box (while it is on).
       const screen = (await this.terminals.screen(m.terminal).catch(() => undefined))?.plain ?? "";
@@ -893,6 +926,7 @@ export class Daemon {
       .sort((a, b) => b.launchedAt - a.launchedAt)
       .find(
         (m) =>
+          !m.hibernated &&
           Date.now() - m.launchedAt > PROBE_MIN_AGE_MS &&
           this.tracked.get(m.sessionId)?.info.status === "idle" &&
           this.managed.pending(m.sessionId) === 0 &&
@@ -1030,7 +1064,8 @@ export class Daemon {
    */
   private async nameAfterTitle(t: Tracked): Promise<boolean> {
     const id = t.info.sessionId;
-    if (!this.managed.get(id)?.autoName || !t.meta.title) return false;
+    const named = this.managed.get(id);
+    if (!named?.autoName || named.hibernated || !t.meta.title) return false;
     if (t.meta.customTitle) {
       // Named in Claude Code already (seen when the transcript is read anew, as after a restart of gasho-daemon).
       if (this.managed.named(id)) await this.managed.save().catch((e) => log("could not save the managed sessions", e));
@@ -1098,6 +1133,7 @@ export class Daemon {
       case "session.history":
       case "session.skills":
       case "session.resume":
+      case "session.wake":
       case "session.end":
       case "permission.answer":
       case "folder.create":
@@ -1139,6 +1175,9 @@ export class Daemon {
               break;
             case "session.resume":
               result = await this.resume(m.sessionId);
+              break;
+            case "session.wake":
+              result = this.wakeAsked(m.sessionId);
               break;
             case "session.end":
               result = await this.end(m.sessionIds);
@@ -1638,6 +1677,7 @@ export class Daemon {
    * conversationFacts); without one, it is named after its next message, as a new session is.
    */
   private async resume(sessionId: string): Promise<CommandResult> {
+    if (this.managed.get(sessionId)?.hibernated) return this.wakeAsked(sessionId);
     if (!this.canLaunch) return { ok: false, error: NO_TERMINAL };
     // Open in two processes, the conversation would be written by both.
     if (this.tracked.has(sessionId)) return { ok: false, error: "この会話は、いま別の Claude Code が開いています。" };
@@ -1726,6 +1766,17 @@ export class Daemon {
     }
     const checked = sessionName(name);
     if ("error" in checked) return { ok: false, error: checked.error };
+    const asleep = this.managed.get(sessionId)?.hibernated;
+    if (asleep) {
+      // Told to Claude Code once it runs again (see wake); renaming is no reason to bring it back.
+      this.managed.named(sessionId);
+      this.managed.setName(sessionId, checked.name);
+      asleep.renamed = true;
+      await this.managed.save();
+      log(`renaming hibernated ${sessionId} to "${checked.name}"`);
+      this.emitSessions();
+      return { ok: true, queued: false };
+    }
     // Also a name from the first message still waiting: the one asked for now wins, and the first message names it no more.
     this.managed.drop(sessionId, (input) => isRename(input.text));
     const named = this.managed.named(sessionId);
@@ -1758,12 +1809,31 @@ export class Daemon {
   private async remove(sessionId: string): Promise<CommandResult> {
     const m = this.managed.get(sessionId);
     if (!m) return { ok: false, error: "このセッションは削除できません。削除できるのは、Gasho が起動したセッションだけです。" };
+    // One going to sleep or coming back is removed as what it turns out to be.
+    await this.hibernating.get(sessionId);
+    await this.waking.get(sessionId);
+    // Its Claude Code and terminal have ended already; its PID may be another process's by now.
+    const asleep = m.hibernated !== undefined;
     // From here on nothing is typed into it, and Gasho no longer shows it.
-    this.ownPids.add(m.pid);
+    if (!asleep) this.ownPids.add(m.pid);
     this.managed.remove(sessionId);
+    if (asleep) this.tracked.delete(sessionId);
     for (const map of [this.settleUntil, this.lastStop, this.latePicker, this.prompts, this.titleSent]) map.delete(sessionId);
     await this.managed.save();
     this.emitSessions();
+    if (!asleep) await this.endClaude(m, sessionId);
+    await fsp.rm(this.attachmentsOf(sessionId), { recursive: true, force: true });
+    log(`removed session ${m.name} (${sessionId}); closed its terminal ${m.terminal}`);
+    await this.refresh();
+    return { ok: true };
+  }
+
+  /**
+   * Ends a session's Claude Code with SIGTERM, which keeps its conversation, and closes its terminal, which ends whatever
+   * still runs in it. Only a process that `claude agents` lists with this session's id is signalled, so a PID used again
+   * by another process is never hit. One that does not end in time is killed with its terminal.
+   */
+  private async endClaude(m: ManagedSession, sessionId: string): Promise<void> {
     const row = (await listAgents(this.cfg.claudeBin).catch(() => [] as AgentRow[])).find((r) => r.pid === m.pid);
     const ours = row?.sessionId === sessionId;
     if (!ours) this.ownPids.delete(m.pid);
@@ -1784,10 +1854,244 @@ export class Daemon {
         // ended meanwhile
       }
     }
-    await fsp.rm(this.attachmentsOf(sessionId), { recursive: true, force: true });
-    log(`removed session ${m.name} (${sessionId}); closed its terminal ${m.terminal}`);
+  }
+
+  // ---- hibernated sessions (hibernate.ts) ----
+
+  /** What a hibernated session shows, over what was last known of it while it ran. */
+  private hibernatedInfo(m: ManagedSession, h: Hibernated, info: SessionInfo): Partial<SessionInfo> {
+    return {
+      status: "idle",
+      waitingFor: undefined,
+      pid: undefined,
+      rcMode: "none",
+      model: h.model ?? info.model,
+      effort: h.effort ?? info.effort,
+      ultracode: h.ultracode ?? info.ultracode,
+      hibernation: this.waking.has(m.sessionId) ? "resuming" : "hibernated",
+      ...(h.resumeError ? { resumeError: h.resumeError } : {}),
+    };
+  }
+
+  /** After a restart of gasho-daemon: a hibernated session is followed again, from its transcript. */
+  private async trackHibernated(m: ManagedSession): Promise<void> {
+    const t: Tracked = {
+      meta: emptyMeta(),
+      info: { sessionId: m.sessionId, cwd: m.cwd, name: m.name, status: "idle", rcMode: "none", prLinks: [] },
+    };
+    this.tracked.set(m.sessionId, t);
+    const found = await findTranscript(this.cfg.claudeDir, m.sessionId);
+    if (found) {
+      await followTranscript(found).then(
+        ({ tail, meta }) => {
+          t.transcript = found;
+          t.meta = meta;
+          t.tail = tail;
+        },
+        (e: unknown) => log(`cannot read ${found}`, e),
+      );
+    }
+    t.info.bridgeSessionId = t.meta.bridgeSessionId;
+    this.applyMeta(t);
+    t.info.github = await this.githubOf(m.cwd).catch(() => undefined);
+    t.info.repos = await this.reposOf(m.cwd);
+    t.info.worktree = await this.worktreeAt(m.cwd).catch(() => undefined);
+  }
+
+  /**
+   * A line of `claude agents` with the id of a hibernated session. The Claude Code that was ended may still be listed
+   * (the list can take seconds to read), and one coming back is Gasho's own. Any other has the conversation open outside
+   * Gasho: two processes must not write one conversation, so Gasho lets go of the session, which goes on as one started
+   * outside Gasho. Returns whether the line is to be passed over.
+   */
+  private async hibernatedRow(row: AgentRow): Promise<boolean> {
+    const id = row.sessionId ?? "";
+    const m = this.managed.get(id);
+    if (!m?.hibernated) return false;
+    if (this.hibernating.has(id) || row.pid === m.pid) return true;
+    if (this.waking.has(id)) return false;
+    // One that failed to come back, or has ended since the list was read.
+    if (row.pid === undefined || this.isOwn(row.pid) || !isAlive(row.pid)) return true;
+    log(`hibernated session ${m.name} (${id}) was opened outside Gasho; it is no longer one of Gasho's sessions`);
+    this.managed.remove(id);
+    await this.managed.save();
+    return false;
+  }
+
+  /** Whether a session started from Gasho has been left alone long enough, and can be stopped without losing anything. */
+  private async readyToHibernate(m: ManagedSession, afterMs: number): Promise<boolean> {
+    const t = this.tracked.get(m.sessionId);
+    if (!t || m.hibernated || this.waking.has(m.sessionId)) return false;
+    // Read again after each wait: an input may come in meanwhile.
+    const facts = () => ({
+      zellij: m.zellij === true,
+      resumable: this.canLaunch && t.transcript !== undefined,
+      status: t.info.status,
+      claudeStatus: t.claude?.status,
+      background: t.info.background?.length ?? 0,
+      pendingInputs: this.managed.pending(m.sessionId),
+      permissionRequests: (this.permissions.of(m.sessionId) ?? this.openQuestion(t) ?? this.openPermission(t))?.length ?? 0,
+      operating: this.flushing.has(m.sessionId) || this.settleUntil.has(m.sessionId) || this.latePicker.has(m.sessionId),
+      scheduled: t.meta.scheduledAt !== undefined && t.meta.scheduledAt >= (t.info.startedAt ?? 0),
+      activity: [t.info.lastActivityAt, t.info.startedAt, m.launchedAt, t.claude?.at],
+    });
+    const now = Date.now();
+    // The terminal is asked only about a session that all the rest allows.
+    if (!mayHibernate({ ...facts(), typed: "", attached: false }, now, afterMs)) return false;
+    if (!(await fsp.stat(m.cwd).then((s) => s.isDirectory(), () => false))) return false;
+    if ((await this.currentStatus(m.pid)) !== "idle") return false;
+    const screen = await this.terminals.screen(m.terminal).catch(() => undefined);
+    const hello = await this.terminals.builtIn.hello(m.terminal).catch(() => undefined);
+    if (!screen || !hello) return false;
+    return mayHibernate({ ...facts(), typed: typedInBox(screen), attached: (hello.viewers ?? 0) > 0 }, now, afterMs);
+  }
+
+  /** Hibernates the sessions that nobody uses, one at a time. */
+  private async hibernateIdle(): Promise<void> {
+    const afterMs = this.cfg.hibernateAfterMs;
+    if (afterMs === undefined || this.sweepingIdle || this.exiting) return;
+    this.sweepingIdle = true;
+    try {
+      for (const m of this.managed.all()) {
+        if (await this.readyToHibernate(m, afterMs)) await this.hibernate(m);
+      }
+    } catch (e) {
+      log("could not hibernate the sessions left alone", e);
+    } finally {
+      this.sweepingIdle = false;
+    }
+  }
+
+  /**
+   * Ends a session's Claude Code and terminal as a removal does, and keeps the session: what it goes on with is saved
+   * first. Its temporary folder and attachments stay, for when it comes back.
+   */
+  private hibernate(m: ManagedSession): Promise<void> {
+    const id = m.sessionId;
+    const t = this.tracked.get(id);
+    if (!t) return Promise.resolve();
+    // From here on inputs wait for it to come back, and nothing is typed into it.
+    m.hibernated = {
+      at: Date.now(),
+      ...(t.info.model ? { model: t.info.model } : {}),
+      ...(t.info.effort ? { effort: t.info.effort } : {}),
+      ...(t.info.ultracode ? { ultracode: true } : {}),
+    };
+    const ended = (async () => {
+      await this.managed.save();
+      this.emitSessions();
+      await this.endClaude(m, id);
+      for (const map of [this.settleUntil, this.lastStop, this.latePicker]) map.delete(id);
+      t.info.pid = undefined;
+      log(`hibernated ${m.name} (${id})`);
+    })().finally(() => {
+      this.hibernating.delete(id);
+      this.emitSessions();
+    });
+    this.hibernating.set(id, ended);
+    return ended;
+  }
+
+  /** `session.wake`: brings a hibernated session back; the screen follows how that goes with the session's state. */
+  private wakeAsked(sessionId: string): CommandResult {
+    const m = this.managed.get(sessionId);
+    if (!m) return { ok: false, error: "このセッションは見つかりません。" };
+    if (m.hibernated) void this.wake(sessionId);
+    return { ok: true, sessionId };
+  }
+
+  /** Brings a hibernated session back, once however often it is asked for. */
+  private wake(sessionId: string): Promise<CommandResult> {
+    const running = this.waking.get(sessionId);
+    if (running) return running;
+    const woken = this.startHibernated(sessionId)
+      .catch(async (e: unknown): Promise<CommandResult> => {
+        log(`could not bring ${sessionId} back`, e);
+        return this.wakeFailed(sessionId, "Claude Code を再開できませんでした。");
+      })
+      .finally(() => {
+        this.waking.delete(sessionId);
+        this.emitSessions();
+      });
+    this.waking.set(sessionId, woken);
+    this.emitSessions();
+    return woken;
+  }
+
+  /** The session stays hibernated and keeps the inputs sent to it; the screen says why, and can try again. */
+  private async wakeFailed(sessionId: string, error: string): Promise<CommandResult> {
+    const h = this.managed.get(sessionId)?.hibernated;
+    if (h) {
+      h.resumeError = error;
+      await this.managed.save();
+    }
+    log(`could not bring ${sessionId} back: ${error}`);
+    return { ok: false, error };
+  }
+
+  /**
+   * `claude --remote-control <name> --resume <id>` with the model and effort level the session had, in a new terminal.
+   * Once its prompt box is shown, ultracode is turned on again and the session is Gasho's to type into: the inputs sent
+   * meanwhile follow.
+   */
+  private async startHibernated(sessionId: string): Promise<CommandResult> {
+    const m = this.managed.get(sessionId);
+    const h = m?.hibernated;
+    if (!m || !h) return { ok: true, sessionId };
+    delete h.resumeError;
+    // An input can come in while its Claude Code is still ending: two must never have the conversation open.
+    await this.hibernating.get(sessionId)?.catch(() => undefined);
+    if (!this.canLaunch) return this.wakeFailed(sessionId, NO_TERMINAL);
+    const stat = await fsp.stat(m.cwd).catch(() => undefined);
+    if (!stat?.isDirectory()) return this.wakeFailed(sessionId, `会話のフォルダーがありません：${m.cwd}`);
+    const started = await this.startClaude(m.cwd, m.name, {
+      claudeArgs: resumeArgs(sessionId, h),
+      accept: (row) => row.sessionId === sessionId,
+      resuming: true,
+    });
+    if ("error" in started) {
+      return this.wakeFailed(
+        sessionId,
+        started.needsTrust
+          ? "このフォルダーは、もう Claude Code に信頼されていません。「新しいセッション」でこのフォルダーを選んで信頼してから、もう一度再開してください。"
+          : started.error,
+      );
+    }
+    const { terminal, pid } = started;
+    if (!(await this.promptShown(terminal))) {
+      await this.terminals.kill(terminal);
+      return this.wakeFailed(sessionId, "Claude Code を再開できませんでした（入力欄が時間内に出ませんでした）。");
+    }
+    if (h.ultracode) {
+      const out: InputOutcome = { warnings: [], unapplied: [] };
+      await this.setUltracode(terminal, true, out).catch((e: unknown) => log(`${m.name}: could not turn ultracode on again`, e));
+      for (const warning of out.warnings) log(`${m.name}: ${warning}`);
+    }
+    m.terminal = terminal;
+    m.pid = pid;
+    m.launchedAt = Date.now();
+    delete m.hibernated;
+    if (h.renamed) this.managed.unshift(sessionId, { text: renameCommand(m.name), auto: true });
+    await this.managed.save();
+    log(`brought ${m.name} (${sessionId}) back`);
     await this.refresh();
-    return { ok: true };
+    this.flushWaitingInputs();
+    return { ok: true, sessionId };
+  }
+
+  /** Waits for Claude Code's prompt box, answering the question about resuming an old, long session on the way. */
+  private async promptShown(terminal: string): Promise<boolean> {
+    for (let waited = 0; waited < FORK_READY_MS; waited += 300) {
+      await sleep(300);
+      const s = await this.terminals.screen(terminal).catch(() => undefined);
+      if (!s) continue;
+      if (resumeQuestionOpen(s.plain)) {
+        await this.answerResumeQuestion(terminal).catch((e) => log(`${terminal}: could not answer the question about resuming`, e));
+        continue;
+      }
+      if (typedInBox(s) !== undefined) return true;
+    }
+    return false;
   }
 
   /**
@@ -1873,6 +2177,13 @@ export class Daemon {
       ...(effort ? { effort } : {}),
       ...(ultracode !== undefined ? { ultracode } : {}),
     });
+    if (this.managed.get(sessionId)?.hibernated) {
+      // Saved with the session, and typed once it is back; the screen shows that it is coming back.
+      await this.managed.save();
+      void this.wake(sessionId);
+      this.emitSessions();
+      return { ok: true, queued: true };
+    }
     let outcome: InputOutcome | undefined;
     let failed: string | undefined;
     try {
@@ -1939,7 +2250,7 @@ export class Daemon {
     this.flushing.add(sessionId);
     try {
       const m = this.managed.get(sessionId);
-      if (!m || this.managed.pending(sessionId) === 0) return;
+      if (!m || m.hibernated || this.managed.pending(sessionId) === 0) return;
       const wait = (this.settleUntil.get(sessionId) ?? 0) - Date.now();
       if (wait > 0) {
         this.scheduleRefresh(wait + 100);
@@ -2314,6 +2625,7 @@ export class Daemon {
   private async interrupt(sessionId: string): Promise<CommandResult> {
     const m = this.managed.get(sessionId);
     if (!m) return { ok: false, error: "このセッションは Gasho から止められません。公式アプリで止めてください。" };
+    if (m.hibernated) return { ok: false, error: "作業中ではありません。" };
     if (Date.now() - (this.lastStop.get(sessionId) ?? 0) < INTERRUPT_REPEAT_MS) return { ok: true };
     const status = await this.currentStatus(m.pid);
     if (status !== "busy") {
@@ -2351,6 +2663,7 @@ export class Daemon {
   private async stopTasks(sessionId: string, taskId?: string, which?: (kind: BackgroundTaskKind) => boolean): Promise<CommandResult> {
     const m = this.managed.get(sessionId);
     if (!m) return { ok: false, error: "このセッションは Gasho から起動したものではないため、止められません。" };
+    if (m.hibernated) return { ok: false, error: "このタスクは、もう終わっています。" };
     const known = this.tracked.get(sessionId)?.info.background ?? [];
     const target = taskId === undefined ? undefined : known.find((x) => x.id === taskId);
     if (taskId !== undefined && !target) return { ok: false, error: "このタスクは、もう終わっています。" };

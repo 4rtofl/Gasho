@@ -700,6 +700,26 @@ export interface ManagedSession {
    * a /rename lost with a restart of gasho-daemon (waiting inputs are not saved) is sent again.
    */
   autoName?: boolean;
+  /**
+   * The session is hibernated: its Claude Code and terminal have ended (`pid` and `terminal` are those it had), and
+   * `claude --resume` brings it back when it is used (hibernate.ts).
+   */
+  hibernated?: Hibernated;
+}
+
+/** A hibernated session: what it goes on with once it is brought back. */
+export interface Hibernated {
+  at: number;
+  /** The model and effort level it used, as Gasho shows them; `claude --resume` does not keep them (see resumeArgs). */
+  model?: string;
+  effort?: EffortLevel;
+  ultracode?: boolean;
+  /** Renamed while hibernated: Claude Code is told with /rename once it runs again. */
+  renamed?: boolean;
+  /** Why it could not be brought back the last time. */
+  resumeError?: string;
+  /** Saved only: the inputs waiting for it, kept over a restart of gasho-daemon. */
+  inputs?: QueuedInput[];
 }
 
 /** Names of sessions started from Gasho: at most this many characters. */
@@ -882,7 +902,10 @@ export class ManagedSessions {
       // Saved by gasho-daemon 0.10 or before, or saved for a session in zellij (see save).
       const { zellijSession, ...rest } = saved;
       const m: ManagedSession = zellijSession !== undefined ? { ...rest, terminal: zellijSession, zellij: true } : rest;
-      if (await keep(m)) this.sessions.set(m.sessionId, m);
+      if (!(await keep(m))) continue;
+      this.sessions.set(m.sessionId, m);
+      if (m.hibernated?.inputs?.length) this.queues.set(m.sessionId, m.hibernated.inputs);
+      delete m.hibernated?.inputs;
     }
     await this.save();
   }
@@ -897,9 +920,12 @@ export class ManagedSessions {
       .then(async () => {
         await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
         // A session in zellij is saved the way gasho-daemon 0.10 and before saved it (see ManagedSession.zellij).
-        const list = [...this.sessions.values()].map(({ terminal, zellij, ...rest }) =>
-          zellij ? { ...rest, zellijSession: terminal } : { ...rest, terminal },
-        );
+        const list = [...this.sessions.values()].map(({ terminal, zellij, ...rest }) => {
+          // Other sessions' inputs are not kept: they are typed within moments. A hibernated one's wait for it to come back.
+          const inputs = rest.hibernated && this.queues.get(rest.sessionId)?.filter((input) => !input.auto);
+          const saved = inputs?.length ? { ...rest, hibernated: { ...rest.hibernated!, inputs } } : rest;
+          return zellij ? { ...saved, zellijSession: terminal } : { ...saved, terminal };
+        });
         const tmp = `${this.file}.${process.pid}.tmp`;
         await fs.writeFile(tmp, `${JSON.stringify(list, null, 2)}\n`, { mode: 0o600 });
         await fs.rename(tmp, this.file);

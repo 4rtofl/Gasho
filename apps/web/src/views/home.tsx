@@ -672,7 +672,7 @@ function SessionCard({ row: { machine, s }, now }: { row: Row; now: number }) {
       )}
     >
       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-        {machine.connected ? <StatusBadge status={s.status} /> : <span>オフライン</span>}
+        {machine.connected ? <StatusBadge status={s.status} hibernation={s.hibernation} /> : <span>オフライン</span>}
         <span className="shrink-0">{relativeTime(s.lastActivityAt, now)}</span>
       </div>
       <div className="min-w-0">

@@ -406,6 +406,7 @@ export function validateCommand(cmd: SessionCommand): string | undefined {
       return undefined;
     case "session.interrupt":
     case "session.resume":
+    case "session.wake":
     case "session.skills":
       return undefined;
     case "session.end":
@@ -939,6 +940,7 @@ export class Hub {
       case "session.history":
       case "session.skills":
       case "session.resume":
+      case "session.wake":
       case "session.end":
       case "permission.answer":
       case "folder.create":
@@ -988,6 +990,8 @@ export class Hub {
       "session.history": REQUEST_TIMEOUT_MS,
       "session.skills": REQUEST_TIMEOUT_MS,
       "session.resume": LAUNCH_TIMEOUT_MS,
+      // Answered at once; the session's state tells how it goes.
+      "session.wake": REQUEST_TIMEOUT_MS,
       "session.end": REMOVE_TIMEOUT_MS,
       "permission.answer": REQUEST_TIMEOUT_MS,
       "folder.create": REQUEST_TIMEOUT_MS,
@@ -1052,6 +1056,7 @@ export class Hub {
         // What was asked, as the request said: it is gone once answered.
         return answerSummary(cmd, this.request(machine, cmd.sessionId, cmd.permissionId));
       case "session.resume":
+      case "session.wake":
         return cmd.sessionId;
       case "session.end": {
         // Once ended, the sessions are gone from the list: the record keeps their names, as the screen showed them (the

@@ -247,5 +247,7 @@ gasho-daemon の設定は環境変数で変える。gasho-daemon のコマンド
 | `GASHO_GH_BIN` | GitHub CLI のコマンド | `gh` |
 | `GASHO_POLL_MS` | セッションの一覧を読み直す間隔（ミリ秒） | `3000` |
 | `GASHO_PLUGINS` | `none` にすると、この working server ではプラグインの daemon の部分を動かさない | なし |
+| `GASHO_HIBERNATE` | `off` にすると、使っていないセッションを休止しない | なし |
+| `GASHO_HIBERNATE_AFTER_MINUTES` | 最後の活動から休止までの時間（分）。60 より小さい値は 60 として扱う | `90` |
 | `GASHO_DAEMON_HOME` | `service install` と更新が、gasho-daemon を版ごとに入れるフォルダー | `~/.local/share/gasho/daemon` |
 | `GASHO_NPM_BIN` | 更新で版を入れる npm | Node.js と同じフォルダーの `npm` |

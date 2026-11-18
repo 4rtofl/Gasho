@@ -1,6 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { credentialsPath, daemonUrl, type Credentials } from "./credentials.ts";
+import { hibernateAfterMs } from "./hibernate.ts";
 
 export interface DaemonConfig {
   hubUrl: string;
@@ -23,6 +24,8 @@ export interface DaemonConfig {
   pluginDataDir: string;
   /** False when GASHO_PLUGINS=none: no plugin's daemon part runs on this working server. */
   runPlugins: boolean;
+  /** After how long without activity sessions started from Gasho are hibernated; never without it (hibernate.ts). */
+  hibernateAfterMs?: number;
 }
 
 export function loadConfig(creds: Credentials, env: NodeJS.ProcessEnv = process.env): DaemonConfig {
@@ -41,5 +44,6 @@ export function loadConfig(creds: Credentials, env: NodeJS.ProcessEnv = process.
     pluginCacheDir: path.join(env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "gasho", "daemon-plugins"),
     pluginDataDir: path.join(env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "gasho", "plugin-data"),
     runPlugins: env.GASHO_PLUGINS !== "none",
+    hibernateAfterMs: hibernateAfterMs(env),
   };
 }

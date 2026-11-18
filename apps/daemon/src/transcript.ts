@@ -120,6 +120,8 @@ export interface TranscriptMeta {
   /** The effort level of the latest reply or effort change, and ultracode after /effort ultracode on|off. */
   effort?: EffortLevel;
   ultracode?: boolean;
+  /** When Claude last scheduled work to run later in its process (CronCreate, ScheduleWakeup). */
+  scheduledAt?: number;
   /** How many times the transcript says the model was switched for this session only. */
   sessionSwitches?: number;
   /**
@@ -492,6 +494,7 @@ export function parseRecord(rec: Record<string, unknown>, meta: TranscriptMeta):
           meta.question = { toolUseId: id, input: b.input as Record<string, unknown>, ...(at === undefined ? {} : { at }) };
         }
         if (role === "assistant" && !isSidechain) tasksOf(meta).call(id, str(b.name) ?? "", b.input, at);
+        if (role === "assistant" && at !== undefined && (b.name === "CronCreate" || b.name === "ScheduleWakeup")) meta.scheduledAt = at;
         if (role === "assistant" && !isSidechain && id) {
           const input = b.input && typeof b.input === "object" && !Array.isArray(b.input) ? (b.input as Record<string, unknown>) : {};
           const calls = (meta.openCalls ??= []);

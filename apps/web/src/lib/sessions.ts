@@ -7,8 +7,23 @@ export function shownSessions(m: MachineInfo): SessionInfo[] {
   return m.sessions.filter((s) => s.managed);
 }
 
-/** What a dot shows: a session's state, or "none" for a worktree without sessions. */
-export type DotStatus = SessionStatus | "none";
+/** What a dot shows: a session's state, "hibernated" for one asleep, or "none" for a worktree without sessions. */
+export type DotStatus = SessionStatus | "hibernated" | "none";
+
+/** A session's state for its dot: one coming back counts as working. */
+export function sessionDotStatus(s: SessionInfo): DotStatus {
+  if (s.hibernation === "resuming") return "busy";
+  return s.hibernation === "hibernated" ? "hibernated" : s.status;
+}
+
+/** What the chat box says about a hibernated session. Undefined while the session runs. */
+export function hibernationNote(s: SessionInfo): string | undefined {
+  const waiting = s.pendingInputs ? `送信待ち ${s.pendingInputs} 件は、再開してから送ります。` : "";
+  if (s.hibernation === "resuming") return `Claude Code を再開しています。${waiting}`;
+  if (s.hibernation !== "hibernated") return undefined;
+  if (s.resumeError) return `再開できませんでした：${s.resumeError}${s.pendingInputs ? ` 送信待ち ${s.pendingInputs} 件は預かっています。` : ""}`;
+  return "休止中です。発言すると再開します。";
+}
 
 /** A dot, or a bell in its place while its session (one of its worktree's) has a notification not read yet. */
 export interface Dot {
@@ -25,7 +40,7 @@ export function unreadSessions(notifications: GashoNotification[]): ReadonlySet<
 
 /** A session's dot. The bell shows also while its working server is offline: what was not read stays so. */
 export function sessionDot(m: MachineInfo, s: SessionInfo, unread: ReadonlySet<string>): Dot {
-  return { status: m.connected ? s.status : "unknown", unread: unread.has(unreadKey(m.id, s.sessionId)) };
+  return { status: m.connected ? sessionDotStatus(s) : "unknown", unread: unread.has(unreadKey(m.id, s.sessionId)) };
 }
 
 /** A worktree's dot in the sidebar: that of its most pressing session, and a bell if any of them has one. */
@@ -33,7 +48,9 @@ export function worktreeDot(w: WorktreeSessions, unread: ReadonlySet<string>): D
   const unreadOne = w.sessions.some((s) => unread.has(unreadKey(w.machine.id, s.sessionId)));
   if (!w.machine.connected) return { status: "unknown", unread: unreadOne };
   if (w.sessions.length === 0) return { status: "none", unread: false };
-  return { status: worktreeStatus(w), unread: unreadOne };
+  // Asleep only when all of its sessions are: one that runs says more.
+  const asleep = w.sessions.every((s) => s.hibernation === "hibernated");
+  return { status: asleep ? "hibernated" : worktreeStatus(w), unread: unreadOne };
 }
 
 const byStart = (a: SessionInfo, b: SessionInfo) => (a.startedAt ?? 0) - (b.startedAt ?? 0) || a.sessionId.localeCompare(b.sessionId);

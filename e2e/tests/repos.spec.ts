@@ -8,6 +8,7 @@ import type { RegisteredRepo } from "@gasho/protocol";
 import { commandResult, fakeSession } from "../harness/index.ts";
 import { expect, test } from "./fixtures.ts";
 import { confirmConversion, deferred, openHome, sidebar } from "./launch-helpers.ts";
+import { showHeader } from "./plugin-helpers.ts";
 
 const APP: RegisteredRepo = { path: "/work/app", worktrees: [{ path: "/work/app", branch: "main" }, { path: "/work/app-feat", branch: "feat" }] };
 const LIB: RegisteredRepo = { path: "/work/lib", worktrees: [{ path: "/work/lib", branch: "trunk" }] };
@@ -215,8 +216,7 @@ test("フォルダーの中に複数のリポジトリがあるセッション�
   await page.goto(`/#/s/${encodeURIComponent(daemon.machineId)}/${sessionId}`);
   await expect(page.getByPlaceholder("Agent への指示を入力…")).toBeVisible();
   // A phone opens a session with its header closed.
-  const show = page.getByRole("button", { name: "ヘッダーを表示" });
-  if (await show.isVisible()) await show.click();
+  await showHeader(page);
 
   await page.getByRole("button", { name: "複数のリポジトリ…" }).click();
   const popup = page.getByRole("dialog").filter({ hasText: "リポジトリ（2）" });

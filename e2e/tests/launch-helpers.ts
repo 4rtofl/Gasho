@@ -7,6 +7,7 @@ import type { Locator, Page } from "@playwright/test";
 import type { CommandResult, HubToDaemon, SessionInfo } from "@gasho/protocol";
 import { commandResult, type FakeDaemon, fakeSession, GASHO_DIR } from "../harness/index.ts";
 import { expect } from "./fixtures.ts";
+import { onPhone } from "./screen.ts";
 
 /** A plugin whose session list has a category, with a "＋", for each worktree, and hides the tabs above a session. */
 export const CATEGORIES_PLUGIN = path.join(GASHO_DIR, "e2e/plugins/session-categories");
@@ -42,15 +43,12 @@ export async function expectSessionOpen(page: Page, daemon: FakeDaemon, cwd: str
   await expect(page.getByPlaceholder("Agent への指示を入力…")).toBeVisible();
 }
 
-/** Below md (768px), the sidebar is a drawer opened from the top bar. */
-const isPhone = (page: Page) => (page.viewportSize()?.width ?? 1280) < 768;
-
 /**
  * The sidebar: on a phone, the drawer, opened first. Not while the drawer closes: it shows until it has slid out (see
  * pressInSidebar).
  */
 export async function sidebar(page: Page): Promise<Locator> {
-  if (!isPhone(page)) return page.getByRole("navigation", { name: "メニュー" });
+  if (!onPhone(page)) return page.getByRole("navigation", { name: "メニュー" });
   const drawer = page.getByRole("dialog", { name: "サイドバー" });
   if (!(await drawer.isVisible())) await page.getByRole("button", { name: "サイドバーを開く" }).click();
   await expect(drawer).toBeVisible();
@@ -60,7 +58,7 @@ export async function sidebar(page: Page): Promise<Locator> {
 /** Presses a row or the title's action of the sidebar, which close the drawer, and waits until the drawer has gone. */
 export async function pressInSidebar(page: Page, name: string | RegExp): Promise<void> {
   await (await sidebar(page)).getByRole("button", typeof name === "string" ? { name, exact: true } : { name }).click();
-  if (isPhone(page)) await expect(page.getByRole("dialog", { name: "サイドバー" })).toBeHidden();
+  if (onPhone(page)) await expect(page.getByRole("dialog", { name: "サイドバー" })).toBeHidden();
 }
 
 /** Waits until the home screen tells how many working servers there are (the form is then made with them). */

@@ -6,6 +6,7 @@ import type { Page } from "@playwright/test";
 import { commandResult, type FakeDaemon, fakeSession } from "../harness/index.ts";
 import { expect, test } from "./fixtures.ts";
 import { CATEGORIES_PLUGIN, deferred, expectSessionOpen, openHome, pressInSidebar, sidebar, started } from "./launch-helpers.ts";
+import { closeSidebar } from "./screen.ts";
 
 const LAUNCH_HERE = "この worktree で新しいセッションを起動";
 const APP = { path: "/work/app", worktrees: [{ path: "/work/app", branch: "main" }] };
@@ -139,10 +140,7 @@ test.describe("プラグインがセッションのタブを隠すとき", () =>
     await openHome(page, 1);
     // The categories have taken the place of the worktrees' rows.
     await expect((await sidebar(page)).getByRole("button", { name: "main で新しいセッションを起動" })).toBeVisible();
-    if ((page.viewportSize()?.width ?? 1280) < 768) {
-      await page.keyboard.press("Escape");
-      await expect(page.getByRole("dialog", { name: "サイドバー" })).toBeHidden();
-    }
+    await closeSidebar(page);
     await openWorktree(page, daemon, "/work/app");
 
     const main = page.getByRole("main");

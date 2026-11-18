@@ -225,7 +225,7 @@ test.describe("操作", () => {
 
     await test.step("「設定」を押すと、設定の画面に移り、そのプラグインの欄がある", async () => {
       await parts.getByRole("button", { name: "設定" }).click();
-      await expect(page).toHaveURL(/#\/settings$/);
+      await expect(page).toHaveURL(/#\/settings\/p\/e2e-parts$/);
       await expect(page.getByRole("region", { name: "E2E 部品" })).toBeVisible();
       await page.goBack();
     });
@@ -259,9 +259,7 @@ test.describe("操作", () => {
     });
   });
 
-  test("「設定」を押すと、設定の画面のそのプラグインの欄が見える位置で開く", async ({ page, browserName }) => {
-    // In WebKit it scrolls there; in Chromium the scrolling comes before the settings screen is drawn.
-    test.fail(browserName === "chromium", "#164: the button goes to the top of the settings screen");
+  test("「設定」を押すと、設定の画面のそのプラグインの欄が見える位置で開く", async ({ page }) => {
     await page.goto("/#/plugins");
     await card(page.getByRole("region", { name: "入れたもの" }), "E2E 部品").getByRole("button", { name: "設定" }).click();
     await expect(page.getByRole("heading", { name: "E2E 部品" })).toBeInViewport();

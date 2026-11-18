@@ -23,7 +23,7 @@ import {
 import { promptDraft, usePicks, useUnsent } from "@/lib/drafts";
 import { addPending, noneWaiting, pendingShown, recordedAsSent, removePending, sessionWorking, settlePending, usePending } from "@/lib/pending";
 import { go, type SessionPanel } from "@/lib/route";
-import { closeSessionHeaderOnPhone, useSessionHeaderShown } from "@/lib/session-header";
+import { closeSmallSessionHeader, useSessionHeaderShown } from "@/lib/session-header";
 import { daemonAtLeast, rememberOpened, worktreeId, worktreesByLastUse } from "@/lib/sessions";
 import { loadSkills, useSkills } from "@/lib/skills";
 import { loadTranscript, sendCommand, type SentResult, transcriptKey, type TranscriptState, useAppState } from "@/lib/store";
@@ -60,7 +60,7 @@ export function SessionView({
   useEffect(() => {
     if (m?.connected && shown) loadTranscript(machine, sessionId);
   }, [machine, sessionId, m?.connected, shown]);
-  useEffect(() => closeSessionHeaderOnPhone(), [machine, sessionId]);
+  useEffect(() => closeSmallSessionHeader(), [machine, sessionId]);
   const worktree = s && worktreeId(machine, s);
   useEffect(() => {
     if (worktree && shown) rememberOpened(worktree, sessionId);

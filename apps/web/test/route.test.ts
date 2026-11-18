@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { hrefOf, isOldGitHubLink, parseHash, type Route } from "../src/lib/route.ts";
+import { hrefOf, isOldGitHubLink, pageOf, parseHash, type Route } from "../src/lib/route.ts";
 
 test("routes survive a round trip through the URL, including a session's panel and a repository path with slashes", () => {
   const routes: Route[] = [
@@ -88,4 +88,15 @@ test("the files panel keeps a folder's or a file's path in the URL, slashes and 
   }
   // An encoded slash is just another way of writing the path.
   assert.deepEqual(parseHash("#/s/m/s/file/src%2Fapp.ts"), { name: "session", machine: "m", sessionId: "s", panel: { kind: "file", path: "src/app.ts" } });
+});
+
+test("a panel opened or closed, or a section scrolled to, stays on the page; another session or plugin page is another page", () => {
+  const session: Route = { name: "session", machine: "m", sessionId: "s" };
+  assert.equal(pageOf({ ...session, panel: { kind: "files", path: "src" } }), pageOf(session));
+  assert.notEqual(pageOf({ ...session, sessionId: "t" }), pageOf(session));
+  const page: Route = { name: "plugin", plugin: "kanban", page: "board", params: { repo: "a" } };
+  assert.equal(pageOf({ ...page, panel: { id: "card", params: { n: "1" } } }), pageOf(page));
+  assert.notEqual(pageOf({ ...page, params: { repo: "b" } }), pageOf(page));
+  assert.equal(pageOf({ name: "devices", section: "updates" }), pageOf({ name: "devices" }));
+  assert.notEqual(pageOf({ name: "settings" }), pageOf({ name: "plugins" }));
 });

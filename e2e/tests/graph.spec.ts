@@ -109,14 +109,17 @@ test("HEAD のブランチ・未コミットの変更・読み込んだ時刻・
 
   await test.step("長い件名は 1 行のまま、その行だけが横にスクロールする", async () => {
     const subject = commits.getByText(LONG);
-    // The nearest box around the subject that scrolls sideways.
+    // The nearest box around the subject that scrolls sideways, inside the list of commits.
     const row = (
-      await subject.evaluateHandle((el) => {
-        const w = globalThis as unknown as { getComputedStyle(e: unknown): { overflowX: string } };
-        let box = el.parentElement;
-        while (box && w.getComputedStyle(box).overflowX !== "auto") box = box.parentElement;
-        return box;
-      })
+      await subject.evaluateHandle(
+        (el, list) => {
+          const w = globalThis as unknown as { getComputedStyle(e: unknown): { overflowX: string } };
+          let box = el.parentElement;
+          while (box && box !== list && w.getComputedStyle(box).overflowX !== "auto") box = box.parentElement;
+          return box === list ? null : box;
+        },
+        await commits.elementHandle(),
+      )
     ).asElement() as ElementHandle | null;
     if (!row) throw new Error("件名を囲む要素に、横にスクロールするものがありません");
     const size = await row.evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }));

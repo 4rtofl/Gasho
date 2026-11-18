@@ -13,12 +13,12 @@ test.describe.configure({ mode: "parallel" });
 /** The sidebar's list: on a phone, in the drawer, which is opened for it (once one closing is gone). */
 async function sidebar(page: Page, isMobile: boolean): Promise<Locator> {
   if (isMobile) {
-    const drawer = page.getByRole("dialog", { name: "Navigation" });
+    const drawer = page.getByRole("dialog", { name: "サイドバー" });
     await expect(drawer).toHaveCount(0);
-    await page.getByRole("button", { name: "Open navigation" }).click();
+    await page.getByRole("button", { name: "サイドバーを開く" }).click();
     await expect(drawer).toBeVisible();
   }
-  return page.getByRole("navigation", { name: "Main" });
+  return page.getByRole("navigation", { name: "メニュー" });
 }
 
 /** The worktrees' rows, which are the items of the list that can be put in another order. */
@@ -151,7 +151,7 @@ test.describe("並べ替え", () => {
     await expect.poll(() => rowLabels(nav)).toEqual(["feat/a", "feat/b", "feat/c"]);
     await d.drop();
     await expect(home).toBeVisible();
-    if (isMobile) await expect(page.getByRole("dialog", { name: "Navigation" })).toBeVisible();
+    if (isMobile) await expect(page.getByRole("dialog", { name: "サイドバー" })).toBeVisible();
 
     d = await startDrag(page, isMobile, grip("feat/c"));
     await d.to(await above("feat/a"));
@@ -161,7 +161,7 @@ test.describe("並べ替え", () => {
     expect(await rowLabels(nav)).toEqual(["feat/c", "feat/a", "feat/b"]);
     // A drop opens nothing.
     await expect(home).toBeVisible();
-    if (isMobile) await expect(page.getByRole("dialog", { name: "Navigation" })).toBeVisible();
+    if (isMobile) await expect(page.getByRole("dialog", { name: "サイドバー" })).toBeVisible();
 
     await row(nav, "feat/b").getByRole("button").first().focus();
     await page.keyboard.press("Alt+ArrowUp");
@@ -203,7 +203,7 @@ test.describe("絞り込み", () => {
   /** Closes the menu: Esc on a computer; on a phone, a tap on the drawer beside it (Esc is tried on its own below). */
   async function closeMenu(page: Page, isMobile: boolean) {
     if (isMobile) {
-      const box = (await page.getByRole("dialog", { name: "Navigation" }).boundingBox())!;
+      const box = (await page.getByRole("dialog", { name: "サイドバー" }).boundingBox())!;
       await page.touchscreen.tap(box.x + 20, box.y + box.height - 20);
     } else await page.keyboard.press("Escape");
     await expect(page.getByRole("menu")).toHaveCount(0);
@@ -340,7 +340,7 @@ test.describe("畳む・開く", () => {
     test.skip(isMobile, "畳めるのは PC の幅のサイドバーだけ（スマホはドロワーの試験で試す）");
     await page.goto("/");
     const toggle = (name: string) => page.getByRole("button", { name });
-    const aside = page.getByRole("navigation", { name: "Main" }).locator("xpath=../..");
+    const aside = page.getByRole("navigation", { name: "メニュー" }).locator("xpath=../..");
     const tip = page.getByRole("tooltip");
     await expect(toggle("サイドバーを畳む")).toContainText("⌘B");
 
@@ -365,11 +365,11 @@ test.describe("畳む・開く", () => {
 });
 
 test.describe("ドロワー（スマホ）", () => {
-  test("「Open navigation」と ⌘B・Ctrl+B で開き、Esc・背景のタップ・左へのスワイプ・項目で閉じる。開いているあいだ本文はスクロールしない", async ({ page, isMobile }) => {
+  test("「サイドバーを開く」と ⌘B・Ctrl+B で開き、Esc・背景のタップ・左へのスワイプ・項目で閉じる。開いているあいだ本文はスクロールしない", async ({ page, isMobile }) => {
     test.skip(!isMobile, "ドロワーはスマホの幅のもの");
     await page.goto("/");
-    const drawer = page.getByRole("dialog", { name: "Navigation" });
-    const open = () => page.getByRole("button", { name: "Open navigation" }).click();
+    const drawer = page.getByRole("dialog", { name: "サイドバー" });
+    const open = () => page.getByRole("button", { name: "サイドバーを開く" }).click();
     const overflow = () => page.evaluate<string>("document.body.style.overflow");
 
     await open();

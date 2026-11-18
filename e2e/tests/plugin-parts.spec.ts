@@ -187,8 +187,7 @@ test.describe("使えないとき", () => {
     });
   });
 
-  // #164: until the plugins arrive, the page says the plugin is not installed.
-  test.fail("入っているプラグインのページを開くと、読み込むまで「入っていません」と出さない", async ({ page }) => {
+  test("入っているプラグインのページを開くと、読み込むまで「入っていません」と出さない", async ({ page }) => {
     // Browser code as text: e2e/tsconfig.json has no DOM types.
     await page.addInitScript({
       content: `new MutationObserver(() => {
@@ -196,7 +195,7 @@ test.describe("使えないとき", () => {
       }).observe(document, { subtree: true, childList: true, characterData: true });`,
     });
     await page.goto("/#/p/e2e-parts/notes");
-    await expect(page.getByText("ページの引数 横")).toBeVisible();
+    await expect(page.getByText("ページの引数 なし")).toBeVisible();
     expect(await page.evaluate("window.e2eNotInstalled ?? false")).toBe(false);
   });
 

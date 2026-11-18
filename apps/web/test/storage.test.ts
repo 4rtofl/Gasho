@@ -1,6 +1,7 @@
 // What this browser keeps in localStorage beside the hooks that read it: the worktrees kept in the sidebar
 // (lib/remembered-worktrees), the grouping of the worktrees picked and the plugin list shown last (lib/session-list-prefs).
-// Each module reads the storage once, so each case loads it afresh over a storage of its own.
+// Each module reads the storage once, so each case loads it afresh over a storage of its own. npm run test:coverage
+// counts only one of these loads of a file, so it shows the two modules less covered than they are.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { RememberedWorktree } from "../src/lib/sessions.ts";

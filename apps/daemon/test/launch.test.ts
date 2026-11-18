@@ -182,6 +182,7 @@ async function setup(o: { mcp?: boolean; warnings?: string[]; emptyList?: boolea
     pollIntervalMs: 60_000,
     stateDir: dir,
     attachmentsDir: path.join(dir, "attachments"),
+    claudeTmpDir: path.join(dir, "claude-tmp"),
   } as ConstructorParameters<typeof Daemon>[0]) as unknown as Record<string, any>;
   d.canLaunch = true;
   const started: TerminalStart[] = [];
@@ -571,6 +572,220 @@ test("the conversation from before /clear, opened again while a refresh runs, is
     assert.deepEqual(sent.at(-1)?.map((s) => [s.sessionId, s.previousSessionIds]), [[NEW, undefined]]);
   } finally {
     claude.kill("SIGKILL");
+    await done();
+  }
+});
+
+/** A session's temporary folder as Claude Code leaves it, last changed long ago. */
+async function oldTmpFolder(root: string, sessionId: string): Promise<string> {
+  const dir = path.join(root, `claude-${process.getuid!()}`, "-home-rg-repo", sessionId);
+  await fs.mkdir(path.join(dir, "scratchpad"), { recursive: true });
+  const long = new Date(Date.now() - 30 * 24 * 60 * 60_000);
+  await fs.utimes(path.join(dir, "scratchpad"), long, long);
+  await fs.utimes(dir, long, long);
+  return dir;
+}
+
+const present = (file: string) => fs.lstat(file).then(() => true, () => false);
+
+test("a new session, one opened again and a fork are all given the same temporary folder", async () => {
+  const { d, fake, folder, started, agentsFile, done } = await setup();
+  try {
+    fake.state = "repl";
+    await fs.writeFile(agentsFile, JSON.stringify([{ pid: process.pid, sessionId: SID, status: "idle" }]));
+    for (const claudeArgs of [[], ["--resume", SID], ["--resume", SID, "--fork-session"]]) {
+      assert.equal((await d.startClaude(folder, "s", { claudeArgs })).sessionId, SID);
+    }
+    assert.deepEqual(started.map((s) => s.env?.CLAUDE_CODE_TMPDIR), Array(3).fill(d.cfg.claudeTmpDir));
+    assert.equal(await present(d.cfg.claudeTmpDir), true);
+  } finally {
+    await done();
+  }
+});
+
+test("with a temporary folder that cannot be used, Claude Code starts with its default one", async () => {
+  const { d, fake, folder, started, agentsFile, done } = await setup();
+  const readOnly = path.join(folder, "read-only");
+  try {
+    fake.state = "repl";
+    await fs.writeFile(agentsFile, JSON.stringify([{ pid: process.pid, sessionId: SID, status: "idle" }]));
+    await fs.mkdir(readOnly, { mode: 0o555 });
+    for (const dir of [readOnly, path.join(readOnly, "below")]) {
+      d.cfg.claudeTmpDir = dir;
+      for (const claudeArgs of [[], ["--resume", SID], ["--resume", SID, "--fork-session"]]) {
+        assert.equal((await d.startClaude(folder, "s", { claudeArgs })).sessionId, SID);
+      }
+    }
+    assert.equal(started.length, 6);
+    for (const s of started) assert.equal("CLAUDE_CODE_TMPDIR" in (s.env ?? {}), false);
+  } finally {
+    await fs.chmod(readOnly, 0o755);
+    await done();
+  }
+});
+
+test("removing a session removes its temporary folder once its Claude Code has ended, and only then", async () => {
+  const { d, folder, agentsFile, done } = await setup();
+  const other = "11111111-2222-3333-4444-777777777777";
+  try {
+    const mine = await oldTmpFolder(d.cfg.claudeTmpDir, SID);
+    const kept = await oldTmpFolder(d.cfg.claudeTmpDir, other);
+    const claude = await child('process.on("SIGTERM", () => process.exit(0))');
+    await fs.writeFile(agentsFile, JSON.stringify([{ pid: claude.pid, sessionId: SID, cwd: folder, status: "idle" }]));
+    d.managed.add({ sessionId: SID, terminal: "t", pid: claude.pid!, cwd: folder, name: "s", launchedAt: Date.now() });
+    assert.equal((await d.remove(SID)).ok, true);
+    for (let i = 0; i < 40 && (await present(mine)); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(await present(mine), false);
+    assert.equal(await present(kept), true);
+
+    // A process that is still there, and a conversation being opened again: the regular clean-up decides later.
+    await d.removeClaudeTmp(other, process.pid);
+    assert.equal(await present(kept), true);
+    d.claudeTmpOpening.set(other, Date.now() + 60_000);
+    await d.removeClaudeTmp(other, 0x7ffffff0);
+    assert.equal(await present(kept), true);
+  } finally {
+    await done();
+  }
+});
+
+test("a temporary folder that cannot be removed does not fail the removal of the session", async () => {
+  const { d, folder, done } = await setup();
+  const dir = await oldTmpFolder(d.cfg.claudeTmpDir, SID);
+  try {
+    await fs.chmod(path.dirname(dir), 0o555);
+    d.managed.add({ sessionId: SID, terminal: "t", pid: 0x7ffffff0, cwd: folder, name: "s", launchedAt: Date.now() });
+    assert.deepEqual(await d.remove(SID), { ok: true });
+    await d.removeClaudeTmp(SID, 0x7ffffff0);
+  } finally {
+    await fs.chmod(path.dirname(dir), 0o755);
+    await done();
+  }
+});
+
+test("the clean-up keeps the folders of the ids a running session had before /clear, until that session is gone", async () => {
+  const { d, folder, agentsFile, done } = await setup();
+  const id = (n: number) => `11111111-2222-3333-4444-${String(n).padStart(12, "0")}`;
+  const list = (rows: object[]) => fs.writeFile(agentsFile, JSON.stringify(rows));
+  try {
+    const [first, cleared, , another] = await Promise.all([1, 2, 3, 4].map((n) => oldTmpFolder(d.cfg.claudeTmpDir, id(n))));
+    d.managed.add({ sessionId: id(1), terminal: "t", pid: process.pid, cwd: folder, name: "s", launchedAt: Date.now() });
+    delete d.refresh; // the real one, which setup replaces
+    d.sessionsRead = true; // no clean-up of its own after the first refresh: this test runs them
+
+    // Started as 1, then /clear made it 2 and 3. Another Claude Code's id is not this session's.
+    await list([{ pid: process.pid, sessionId: id(2), cwd: folder, status: "idle" }, { pid: 0x7ffffff0, sessionId: id(4), cwd: folder, status: "idle" }]);
+    await d.refresh();
+    await list([{ pid: process.pid, sessionId: id(3), cwd: folder, status: "idle" }]);
+    await d.refresh();
+    assert.deepEqual(d.managed.get(id(3)).previousIds, [id(1), id(2)]);
+
+    await d.sweepClaudeTmp();
+    assert.equal(await present(first!), true);
+    assert.equal(await present(cleared!), true);
+    assert.equal(await present(another!), false);
+
+    d.managed.remove(id(3));
+    await d.sweepClaudeTmp();
+    assert.equal(await present(first!), false);
+    assert.equal(await present(cleared!), false);
+  } finally {
+    await done();
+  }
+});
+
+test("a folder stays while a running session shows a file from it or was forked from it, but a session's own files do not keep it", async () => {
+  const { d, folder, done } = await setup();
+  const id = (n: number) => `11111111-2222-3333-4444-${String(n).padStart(12, "0")}`;
+  const ended = 0x7ffffff0;
+  try {
+    const [shown, forked, own] = await Promise.all([1, 2, 3].map((n) => oldTmpFolder(d.cfg.claudeTmpDir, id(n))));
+    d.tracked.set(id(5), { info: {}, meta: { sentFiles: new Set([path.join(shown!, "scratchpad", "a.png")]) } });
+    d.managed.add({ sessionId: id(6), terminal: "t", pid: ended, cwd: folder, name: "fork", launchedAt: Date.now(), forkOf: id(2) });
+    d.tracked.set(id(3), { info: {}, meta: { sentFiles: new Set([path.join(own!, "scratchpad", "b.png")]) } });
+
+    await d.removeClaudeTmp(id(1), ended);
+    await d.removeClaudeTmp(id(2), ended);
+    await d.removeClaudeTmp(id(3), ended);
+    await d.sweepClaudeTmp();
+    assert.equal(await present(shown!), true);
+    assert.equal(await present(forked!), true);
+    assert.equal(await present(own!), false);
+
+    d.tracked.delete(id(5));
+    d.managed.remove(id(6));
+    await d.sweepClaudeTmp();
+    assert.equal(await present(shown!), false);
+    assert.equal(await present(forked!), false);
+  } finally {
+    await done();
+  }
+});
+
+test("a session that opens an earlier id of a running one again does not take that id's folder with it when removed", async () => {
+  const { d, folder, done } = await setup();
+  const id = (n: number) => `11111111-2222-3333-4444-${String(n).padStart(12, "0")}`;
+  const ended = 0x7ffffff0;
+  try {
+    const dir = await oldTmpFolder(d.cfg.claudeTmpDir, id(1));
+    d.managed.add({ sessionId: id(2), terminal: "a", pid: ended, cwd: folder, name: "a", launchedAt: Date.now(), previousIds: [id(1)] });
+    d.managed.add({ sessionId: id(1), terminal: "b", pid: ended - 1, cwd: folder, name: "b", launchedAt: Date.now() });
+    assert.equal(d.managed.get(id(2)).previousIds, undefined);
+
+    d.managed.remove(id(1));
+    await d.managed.save();
+    const saved = JSON.parse(await fs.readFile(path.join(d.cfg.stateDir, "managed.json"), "utf8"));
+    assert.deepEqual(saved[0].releasedIds, [id(1)]);
+    await d.removeClaudeTmp(id(1), ended);
+    await d.sweepClaudeTmp();
+    assert.equal(await present(dir), true);
+
+    d.managed.remove(id(2));
+    await d.sweepClaudeTmp();
+    assert.equal(await present(dir), false);
+  } finally {
+    await done();
+  }
+});
+
+test("the first clean-up waits for the first refresh that reads the sessions", async () => {
+  const { d, folder, done } = await setup();
+  let sweeps = 0;
+  try {
+    d.sweepClaudeTmp = async () => void sweeps++;
+    delete d.refresh; // the real one, which setup replaces
+    const claudeBin = d.cfg.claudeBin;
+    d.cfg.claudeBin = path.join(folder, "no-such-claude");
+    await d.refresh();
+    assert.equal(sweeps, 0);
+    d.cfg.claudeBin = claudeBin;
+    await d.refresh();
+    await d.refresh();
+    assert.equal(sweeps, 1);
+  } finally {
+    await done();
+  }
+});
+
+test("the clean-up keeps what runs, what Gasho keeps and what is being opened, and removes nothing without the list of what runs", async () => {
+  const { d, folder, agentsFile, done } = await setup();
+  const id = (n: number) => `11111111-2222-3333-4444-${String(n).padStart(12, "0")}`;
+  try {
+    const [listed, managed, opening, left] = await Promise.all([1, 2, 3, 4].map((n) => oldTmpFolder(d.cfg.claudeTmpDir, id(n))));
+    d.managed.add({ sessionId: id(2), terminal: "t", pid: 0x7ffffff0, cwd: folder, name: "s", launchedAt: Date.now() });
+    d.claudeTmpOpening.set(id(3), Date.now() + 60_000);
+    await fs.writeFile(agentsFile, JSON.stringify([{ pid: process.pid, sessionId: id(1), status: "idle" }]));
+
+    const claudeBin = d.cfg.claudeBin;
+    d.cfg.claudeBin = path.join(folder, "no-such-claude");
+    await d.sweepClaudeTmp();
+    assert.equal(await present(left!), true);
+
+    d.cfg.claudeBin = claudeBin;
+    await d.sweepClaudeTmp();
+    assert.equal(await present(left!), false);
+    for (const dir of [listed!, managed!, opening!]) assert.equal(await present(dir), true, dir);
+  } finally {
     await done();
   }
 });

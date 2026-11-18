@@ -329,6 +329,7 @@ test("through the socket, a launch is Daemon.launch, and the rename and the prom
     pollIntervalMs: 60_000,
     stateDir: dir,
     attachmentsDir: path.join(dir, "attachments"),
+    claudeTmpDir: path.join(dir, "claude-tmp"),
     pluginDataDir: path.join(dir, "plugin-data"),
   } as ConstructorParameters<typeof Daemon>[0]) as unknown as Record<string, any>;
   d.canLaunch = true;

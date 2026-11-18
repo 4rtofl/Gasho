@@ -127,8 +127,9 @@ import type { SessionWire } from "./plugin-ipc.ts";
 import { PluginRunner } from "./plugins.ts";
 import { npmOf, Updater } from "./self-update.ts";
 import { log, str } from "./util.ts";
+import { CLAUDE_TMP_SWEEP_MS, prepareClaudeTmp, removeSessionTmp, sessionOfTmpFile, sweepClaudeTmp } from "./claude-tmp.ts";
 
-export const DAEMON_VERSION = "0.28.2";
+export const DAEMON_VERSION = "0.29.0";
 const GITHUB_CACHE_MS = 5 * 60_000;
 /** How long the worktree a folder is in, or the repositories inside it, and their branches are reused. */
 const REPOS_CACHE_MS = 60_000;
@@ -145,6 +146,8 @@ const FORK_TRANSCRIPT_MS = 5000;
 const REMOVE_WAIT_MS = 8000;
 /** How often the sessions are looked at for one to hibernate (see hibernateIdle). */
 const HIBERNATE_CHECK_MS = 60_000;
+/** Removing a session: how long a Claude Code that was stopped may take to be gone, before its temporary folder is removed. */
+const CLAUDE_END_WAIT_MS = 2000;
 const MAX_INPUT = 20_000;
 const INTERRUPT_SETTLE_MS = 1500;
 /**
@@ -302,6 +305,11 @@ export class Daemon {
   /** Permission requests held until they are answered (in Gasho, or elsewhere). */
   private permissions = new PermissionRequests(() => this.emitSessions());
   private canLaunch = false;
+  /** The conversations being opened again, and until when that may take (see openingClaudeTmp). */
+  private readonly claudeTmpOpening = new Map<string, number>();
+  private sweepingClaudeTmp = false;
+  /** The running sessions and their conversations have been read: until then, nothing says which files they show. */
+  private sessionsRead = false;
   private folders: string[] = [];
   private folderRepos: FolderRepo[] = [];
   /** Counts the reads of the folders' repositories: a read that a later one overtook is not sent. */
@@ -471,6 +479,10 @@ export class Daemon {
     if (!this.canLaunch) log("no pseudo-terminal on this machine (node-pty did not load); sessions cannot be started from Gasho");
     await this.loadManaged();
     await this.pruneAttachments();
+    // The first clean-up follows the first refresh that succeeds.
+    setInterval(() => {
+      if (this.sessionsRead) void this.sweepClaudeTmp();
+    }, CLAUDE_TMP_SWEEP_MS).unref();
     this.models = await fsp
       .readFile(this.modelsFile(), "utf8")
       .then((t) => JSON.parse(t) as { at: number; options: ModelOption[] })
@@ -712,6 +724,10 @@ export class Daemon {
       await this.countTokens();
       this.emitSessions();
       this.flushWaitingInputs();
+      if (!this.sessionsRead) {
+        this.sessionsRead = true;
+        void this.sweepClaudeTmp();
+      }
     } catch (e) {
       log("refresh failed", e);
     } finally {
@@ -1615,6 +1631,17 @@ export class Daemon {
       terminal = terminalName(rcName),
     }: ClaudeStart & { claudeArgs?: string[]; terminal?: string } = {},
   ): Promise<ClaudeStarted> {
+    // Until `claude agents` lists it, nothing says that the folder of a conversation being opened again is in use.
+    const resumed = claudeArgs.indexOf("--resume");
+    if (resumed >= 0) this.claudeTmpOpening.set(claudeArgs[resumed + 1]!, Date.now() + LAUNCH_TIMEOUT_MS);
+    // Claude Code does not start with a folder it cannot use: it then uses its default one.
+    const claudeTmp = await prepareClaudeTmp(this.cfg.claudeTmpDir).then(
+      () => ({ CLAUDE_CODE_TMPDIR: this.cfg.claudeTmpDir }),
+      (e: unknown) => {
+        log(`cannot use ${this.cfg.claudeTmpDir} for Claude Code's temporary files; starting it with its default folder`, e);
+        return {};
+      },
+    );
     // Its status line reports the context window and the plan's usage limits to gasho-daemon (statusline.ts).
     const statusLine = statusLineLaunch({
       port: this.cfg.hookPort,
@@ -1629,7 +1656,7 @@ export class Daemon {
         file: this.cfg.claudeBin,
         // One argument: a name starting with "-" (say "-wip") given on its own would be read as Claude Code's options.
         args: [`--remote-control=${rcName}`, ...claudeArgs, ...statusLine.args],
-        env: { ...cleanEnv(), ...statusLine.env },
+        env: { ...cleanEnv(), ...claudeTmp, ...statusLine.env },
       });
     } catch (e) {
       log(`could not start a terminal for "${rcName}"`, e);
@@ -2011,6 +2038,8 @@ export class Daemon {
     if (!asleep) await this.endClaude(m, sessionId);
     for (const dir of this.attachmentsOfSession(m)) await fsp.rm(dir, { recursive: true, force: true });
     log(`removed session ${m.name} (${sessionId}); closed its terminal ${m.terminal}`);
+    // Not waited for: a large folder takes a while, and the session is removed whether or not this works.
+    void this.removeClaudeTmp(sessionId, m.pid);
     await this.refresh();
     return { ok: true };
   }
@@ -2356,6 +2385,59 @@ export class Daemon {
       if (typedInBox(s) !== undefined) return true;
     }
     return false;
+  }
+
+  /**
+   * Removes the temporary folder of a session just removed, once its Claude Code has ended. If it has not, or if the
+   * folder is still needed (claudeTmpNeeded), it stays, and sweepClaudeTmp removes it when it is no longer used.
+   */
+  private async removeClaudeTmp(sessionId: string, pid: number): Promise<void> {
+    for (let waited = 0; waited < CLAUDE_END_WAIT_MS && isAlive(pid); waited += 100) await sleep(100);
+    if (isAlive(pid) || this.claudeTmpNeeded(sessionId)) {
+      log(`the temporary folder of ${sessionId} is left for the regular clean-up`);
+      return;
+    }
+    await removeSessionTmp(this.cfg.claudeTmpDir, sessionId).catch((e: unknown) => log(`could not remove the temporary folder of ${sessionId}`, e));
+  }
+
+  /**
+   * Whether the temporary folder of `id` is needed by another session: one Gasho keeps that may write to it or was forked
+   * from it, a conversation being opened again, or a running session whose conversation shows an image or video from it.
+   */
+  private claudeTmpNeeded(id: string): boolean {
+    if (this.managed.needsTmpOf(id) || this.openingClaudeTmp(id)) return true;
+    for (const [sessionId, t] of this.tracked) {
+      if (sessionId === id) continue;
+      for (const file of t.meta.sentFiles ?? []) if (sessionOfTmpFile(file) === id) return true;
+    }
+    return false;
+  }
+
+  /** Whether a Claude Code is being started on this conversation, and may not be listed yet. */
+  private openingClaudeTmp(sessionId: string): boolean {
+    const until = this.claudeTmpOpening.get(sessionId);
+    if (until !== undefined && until <= Date.now()) this.claudeTmpOpening.delete(sessionId);
+    return until !== undefined && until > Date.now();
+  }
+
+  /**
+   * Removes the temporary folders left behind by sessions that no longer run (Claude Code crashed, or ended while
+   * gasho-daemon was stopped). Without the list of what runs, nothing is removed.
+   */
+  private async sweepClaudeTmp(): Promise<void> {
+    if (this.sweepingClaudeTmp) return;
+    this.sweepingClaudeTmp = true;
+    try {
+      const running = new Set((await listAgents(this.cfg.claudeBin)).map((r) => r.sessionId));
+      const keep = (id: string) => running.has(id) || this.tracked.has(id) || this.claudeTmpNeeded(id);
+      const { removed, failed } = await sweepClaudeTmp(this.cfg.claudeTmpDir, { keep });
+      if (removed.length > 0) log(`removed ${removed.length} temporary folder(s) of sessions that no longer run`);
+      for (const { dir, error } of failed) log(`could not remove the temporary folder ${dir}`, error);
+    } catch (e) {
+      log("could not clean up the temporary folders of Claude Code", e);
+    } finally {
+      this.sweepingClaudeTmp = false;
+    }
   }
 
   /**

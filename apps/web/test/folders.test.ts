@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as daemon from "../../daemon/src/folders.ts";
-import { childPath, folderChoices, folderNameProblem, repoFolderName, repoProblem } from "../src/lib/folders.ts";
+import { childPath, clonePath, cloneProblem, folderChoices, folderNameProblem, repoFolderName, repoProblem } from "../src/lib/folders.ts";
 
 test("the launcher takes the folder names and repositories gasho-daemon takes, and names a clone's folder as it does", () => {
   for (const name of ["ws", "", " ws", ".", "..", "a/b", "-x", "a\nb", "日本語", ".config", "x".repeat(255), "x".repeat(256), "あ".repeat(85), "あ".repeat(86)]) {
@@ -43,4 +43,27 @@ test("the folders offered: the trusted ones, the folders holding them (never a h
   assert.deepEqual(folderChoices(["/srv/x", "/x"]), ["/srv/x", "/x"]);
   assert.equal(childPath("/home/rg/repos/", "ws"), "/home/rg/repos/ws");
   assert.equal(childPath("/", "ws"), "/ws");
+});
+
+test("a clone needs a repository, an absolute folder and a name that can be a folder", () => {
+  assert.equal(cloneProblem("/srv", "cli/cli", ""), undefined);
+  assert.equal(cloneProblem("/srv", "cli/cli", "gh"), undefined);
+  assert.equal(cloneProblem("/srv", "", ""), repoProblem(""));
+  assert.equal(cloneProblem("/srv", "not a repo", ""), repoProblem("not a repo"));
+  assert.equal(cloneProblem("", "cli/cli", ""), "clone 先のフォルダーを入れてください。");
+  assert.equal(cloneProblem("srv/code", "cli/cli", ""), "clone 先のフォルダーを絶対パスで入れてください。");
+  assert.equal(cloneProblem("/srv", "cli/cli", "a/b"), folderNameProblem("a/b"));
+  // ".git" alone leaves no name to take from the repository.
+  assert.equal(cloneProblem("/srv", "owner/.git", ""), "フォルダーの名前を入れてください。");
+  assert.equal(cloneProblem("/srv", "owner/.git", "named"), undefined);
+});
+
+test("where a clone goes: the name given, else the repository's", () => {
+  assert.equal(clonePath("/srv/code", "cli/go-gh", ""), "/srv/code/go-gh");
+  assert.equal(clonePath("/srv/code/", "https://github.com/cli/go-gh.git", ""), "/srv/code/go-gh");
+  assert.equal(clonePath("/srv/code", "cli/go-gh", "gh"), "/srv/code/gh");
+  assert.equal(clonePath("/", "cli/go-gh", ""), "/go-gh");
+  assert.equal(clonePath("/srv/code", "", ""), "/srv/code/…");
+  assert.equal(clonePath("srv/code", "cli/go-gh", ""), undefined);
+  assert.equal(clonePath("", "cli/go-gh", ""), undefined);
 });

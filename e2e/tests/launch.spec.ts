@@ -372,6 +372,8 @@ test.describe("サイドバーのダイアログだけ", () => {
     await pressInSidebar(page, "新しいセッション");
     await dialog.getByRole("button", LAUNCH).click();
     await expect(dialog.getByRole("button", { name: "起動しています…（最大30秒）" })).toBeVisible();
+    // The dialog is told the form is waiting (onBusyChange) a render after the form shows it: an Esc before then closes it.
+    await expect(dialog.getByRole("button", { name: "閉じる" })).toBeDisabled();
     await page.keyboard.press("Escape");
     await expect(dialog.getByRole("button", { name: "閉じる" })).toBeDisabled();
     await expect(dialog).toBeVisible();

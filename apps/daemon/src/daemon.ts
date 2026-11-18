@@ -763,6 +763,7 @@ export class Daemon {
       if (!to || to === m.sessionId || this.managed.has(to)) continue;
       if (row.startedAt !== undefined && row.startedAt > m.launchedAt) continue;
       const from = m.sessionId;
+      if (!this.tracked.has(from)) await this.readLeftBehind(m, from);
       this.managed.rekey(from, to);
       this.followingNewIds = true;
       const move = <V>(map: Map<string, V>) => {
@@ -874,7 +875,28 @@ export class Daemon {
     info.model = meta.model ?? t.bannerModel;
     info.effort = meta.effort;
     info.ultracode = meta.ultracode;
-    if (meta.effort) this.rememberEffort(info.sessionId, meta.effort);
+    this.remember(info.sessionId, meta);
+  }
+
+  /** Keeps what a running session goes on with after /clear, which its new transcript does not say. */
+  private remember(sessionId: string, meta: TranscriptMeta): void {
+    if (meta.effort) this.rememberEffort(sessionId, meta.effort);
+    const m = this.managed.get(sessionId);
+    const at = meta.scheduledAt;
+    // From before this Claude Code started, its transcript can still say so: that work ended with the process then.
+    if (!m || m.hibernated || at === undefined || at < m.launchedAt || at <= (m.scheduledAt ?? 0)) return;
+    m.scheduledAt = at;
+    void this.managed.save().catch((e: unknown) => log(`could not save the work scheduled in ${m.name}`, e));
+  }
+
+  /** gasho-daemon was not running when a session went on under a new id: what its earlier conversation says is read now. */
+  private async readLeftBehind(m: ManagedSession, from: string): Promise<void> {
+    const found = await findTranscript(this.cfg.claudeDir, from).catch(() => undefined);
+    if (!found) return;
+    await followTranscript(found).then(
+      ({ meta }) => this.remember(from, meta),
+      (e: unknown) => log(`${m.name}: cannot read ${found}`, e),
+    );
   }
 
   /** Keeps a running session's effort level, which it goes on with after /clear without anything saying so. */
@@ -2198,6 +2220,7 @@ export class Daemon {
   private async readyToHibernate(m: ManagedSession, afterMs: number): Promise<boolean> {
     const t = this.tracked.get(m.sessionId);
     if (!t || m.hibernated || this.waking.has(m.sessionId)) return false;
+    const scheduledAt = Math.max(t.meta.scheduledAt ?? 0, m.scheduledAt ?? 0);
     // Read again after each wait: an input may come in meanwhile.
     const facts = () => ({
       zellij: m.zellij === true,
@@ -2209,7 +2232,7 @@ export class Daemon {
       permissionRequests: (this.permissions.of(m.sessionId) ?? this.openQuestion(t) ?? this.openPermission(t))?.length ?? 0,
       // settleUntil keeps its time until the next input: only a time still to come means anything.
       operating: this.flushing.has(m.terminal) || (this.settleUntil.get(m.sessionId) ?? 0) > Date.now() || this.latePicker.has(m.sessionId),
-      scheduled: t.meta.scheduledAt !== undefined && t.meta.scheduledAt >= (t.info.startedAt ?? 0),
+      scheduled: scheduledAt > 0 && scheduledAt >= (t.info.startedAt ?? 0),
       activity: [t.info.lastActivityAt, t.info.startedAt, m.launchedAt, t.claude?.at],
     });
     const now = Date.now();
@@ -2374,6 +2397,8 @@ export class Daemon {
     m.terminal = terminal;
     m.pid = pid;
     m.launchedAt = Date.now();
+    // What was scheduled ended with the Claude Code before this one.
+    delete m.scheduledAt;
     delete m.hibernated;
     if (h.renamed) this.managed.unshift(sessionId, { text: renameCommand(m.name), auto: true });
     await this.managed.save();

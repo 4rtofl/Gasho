@@ -387,6 +387,89 @@ test("the effort level known before /clear is the one a session comes back with"
   }
 });
 
+/** Claude scheduled work four hours ago, and /clear is about to give the session the id NEXT. */
+const NEXT = "33333333-2222-3333-4444-777777777777";
+async function scheduledThenCleared(s: Awaited<ReturnType<typeof setup>>) {
+  const { d, folder } = s;
+  const projects = path.join(d.cfg.claudeDir, "projects", "p");
+  const at = Date.now() - 4 * HOUR;
+  d.managed.get(SID).launchedAt = at - HOUR / 2;
+  await fs.appendFile(
+    path.join(projects, `${SID}.jsonl`),
+    `${JSON.stringify({ type: "assistant", uuid: "c1", timestamp: new Date(at).toISOString(), cwd: folder, message: { role: "assistant", content: [{ type: "tool_use", id: "c1", name: "CronCreate", input: {} }] } })}\n`,
+  );
+  await fs.writeFile(
+    path.join(projects, `${NEXT}.jsonl`),
+    `${JSON.stringify({ type: "assistant", uuid: "n1", timestamp: new Date(at).toISOString(), cwd: folder, message: { role: "assistant", model: "claude-haiku-5-5", content: [{ type: "text", text: "はい" }] } })}\n`,
+  );
+  return at;
+}
+
+test("work scheduled before /clear keeps the session running, for it stays in the process", async () => {
+  const s = await setup();
+  const { d, make, agents, row, procs, done } = s;
+  try {
+    const at = await scheduledThenCleared(s);
+    await d.pollTails();
+    assert.equal(d.managed.get(SID).scheduledAt, at);
+    await d.managed.save();
+    const restarted = make();
+    await restarted.managed.load(async () => true);
+    assert.equal(restarted.managed.get(SID).scheduledAt, at);
+
+    agents([{ ...row(procs[0]!.pid!), sessionId: NEXT }]);
+    await d.refresh();
+    assert.equal(d.tracked.get(NEXT).meta.scheduledAt, undefined);
+    await d.hibernateIdle();
+    assert.equal(procs[0]!.signalCode, null);
+    assert.equal(d.managed.get(NEXT).hibernated, undefined);
+  } finally {
+    await done();
+  }
+});
+
+test("work scheduled before a /clear that gasho-daemon did not see keeps the session running too", async () => {
+  const s = await setup();
+  const { d, make, term, agents, row, procs, done } = s;
+  try {
+    const at = await scheduledThenCleared(s);
+    await d.managed.save();
+    term.live.set("t1", { pid: procs[0]!.pid! });
+    agents([{ ...row(procs[0]!.pid!), sessionId: NEXT }]);
+
+    const again = make();
+    await again.loadManaged();
+    await again.refresh();
+    assert.equal(again.managed.get(NEXT).scheduledAt, at);
+    await again.hibernateIdle();
+    assert.equal(procs[0]!.signalCode, null);
+    assert.equal(again.managed.get(NEXT).hibernated, undefined);
+  } finally {
+    await done();
+  }
+});
+
+test("what was scheduled is forgotten when the session comes back, for its process has ended", async () => {
+  const { d, agents, done } = await setup();
+  try {
+    const at = Date.now() - 4 * HOUR;
+    d.managed.get(SID).scheduledAt = at;
+    d.managed.get(SID).hibernated = { at: Date.now() };
+    agents([]);
+    await d.wake(SID);
+    assert.equal(d.managed.get(SID).hibernated, undefined);
+    assert.equal(d.managed.get(SID).scheduledAt, undefined);
+
+    // The old transcript still says so, about a process that is gone.
+    const t = d.tracked.get(SID);
+    t.meta.scheduledAt = at;
+    d.applyMeta(t);
+    assert.equal(d.managed.get(SID).scheduledAt, undefined);
+  } finally {
+    await done();
+  }
+});
+
 test("a session that used the 1M context window comes back with it", async () => {
   const { d, started, agents, done } = await setup();
   try {

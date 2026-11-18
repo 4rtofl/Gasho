@@ -744,6 +744,11 @@ export interface ManagedSession {
   /** The effort level last known of it. After /clear, neither the new transcript nor the screen says it (see Daemon.hibernate). */
   effort?: EffortLevel;
   /**
+   * When Claude last scheduled work in this Claude Code (CronCreate, ScheduleWakeup). The work stays in the process after
+   * /clear, while the new transcript does not mention it; it is lost when the process ends.
+   */
+  scheduledAt?: number;
+  /**
    * The session is hibernated: its Claude Code and terminal have ended (`pid` and `terminal` are those it had), and
    * `claude --resume` brings it back when it is used (hibernate.ts).
    */

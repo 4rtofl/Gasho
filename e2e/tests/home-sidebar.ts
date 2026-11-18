@@ -79,8 +79,8 @@ export interface Drag {
   drop(): Promise<void>;
 }
 
-/** The pointer events of one finger, of pointerType "touch", sent where the finger is. */
-function finger(page: Page, from: Point): Drag {
+/** A finger pressed at `from`: pointer events of pointerType "touch", sent where the finger is. */
+async function finger(page: Page, from: Point): Promise<Drag> {
   let at = from;
   const send = (type: string, p: Point, buttons: number) =>
     page.evaluate(
@@ -102,6 +102,7 @@ function finger(page: Page, from: Point): Drag {
       },
       { type, p, buttons },
     );
+  await send("pointerdown", from, 1);
   return {
     async to(p, steps = 12) {
       const start = at;
@@ -121,16 +122,7 @@ function finger(page: Page, from: Point): Drag {
 /** Presses `from` at its middle, with a finger on a phone, with the mouse on a computer, to drag it. */
 export async function startDrag(page: Page, isMobile: boolean, from: Locator): Promise<Drag> {
   const start = await middleOf(from);
-  if (isMobile) {
-    const f = finger(page, start);
-    await page.evaluate((p) => {
-      const w = globalThis as unknown as PageWindow;
-      (w.document.elementFromPoint(p.x, p.y) ?? w.document.body).dispatchEvent(
-        new w.PointerEvent("pointerdown", { pointerId: 41, pointerType: "touch", isPrimary: true, button: 0, buttons: 1, clientX: p.x, clientY: p.y, bubbles: true, cancelable: true, composed: true }),
-      );
-    }, start);
-    return f;
-  }
+  if (isMobile) return finger(page, start);
   await page.mouse.move(start.x, start.y);
   await page.mouse.down();
   return {

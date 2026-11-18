@@ -481,6 +481,30 @@ function Panel({
   }, []);
   const nav = React.useRef<HTMLElement>(null);
 
+  // Gasho: the mouse is over the list, and the last mouse event that reached the list through React's tree (a row's
+  // menu, drawn outside the list, is in it). The list's onMouseLeave did not come once a category's "＋" failed to
+  // start a session and the dialog it opened was closed, and the list stayed held with the mouse outside it: a
+  // mouseover outside the list ends it too.
+  const inside = React.useRef(false);
+  const reached = React.useRef<Event | null>(null);
+  const pointerInside = React.useRef(onPointerInside);
+  React.useEffect(() => {
+    pointerInside.current = onPointerInside;
+  });
+  const leave = React.useCallback(() => {
+    inside.current = false;
+    setHovering(false);
+    setTip(null);
+    pointerInside.current?.(false);
+  }, []);
+  React.useEffect(() => {
+    const over = (e: MouseEvent) => {
+      if (inside.current && reached.current !== e) leave();
+    };
+    document.addEventListener("mouseover", over);
+    return () => document.removeEventListener("mouseover", over);
+  }, [leave]);
+
   const enter = (e: React.MouseEvent<HTMLElement> | React.FocusEvent<HTMLElement>, label: string) => {
     if (sorting.current.size > 0) return;
     const el = e.currentTarget;
@@ -833,12 +857,13 @@ function Panel({
           ref={nav}
           layoutScroll
           aria-label="Main"
-          onMouseEnter={() => onPointerInside?.(true)}
-          onMouseLeave={() => {
-            setHovering(false);
-            setTip(null);
-            onPointerInside?.(false);
+          onMouseOver={(e) => {
+            reached.current = e.nativeEvent;
+            if (inside.current) return;
+            inside.current = true;
+            onPointerInside?.(true);
           }}
+          onMouseLeave={leave}
           className="relative flex-1 space-y-1 overflow-y-auto overflow-x-hidden p-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {hoverBox && (

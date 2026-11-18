@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { Daemon } from "../src/daemon.ts";
-import { DEFAULT_HIBERNATE_MINUTES, type HibernateFacts, hibernateAfterMs, mayHibernate, modelFlag, resumeArgs } from "../src/hibernate.ts";
+import { DEFAULT_HIBERNATE_MINUTES, type HibernateFacts, hibernateAfterMs, mayHibernate, modelFlag, resumeArgs, resumeModel } from "../src/hibernate.ts";
 import { ManagedSessions, plainScreen } from "../src/managed.ts";
 import type { TerminalStart } from "../src/terminal.ts";
 import { emptyMeta, TranscriptTail } from "../src/transcript.ts";
@@ -80,6 +80,38 @@ test("a resume names the model and effort level the session had, for Claude Code
   assert.equal(modelFlag(undefined), undefined);
   assert.deepEqual(resumeArgs("id", { model: "Sonnet 5.5", effort: "xhigh" }), ["--resume", "id", "--model", "claude-sonnet-5-5", "--effort", "xhigh"]);
   assert.deepEqual(resumeArgs("id", {}), ["--resume", "id"]);
+});
+
+test("a resume keeps the 1M context window that a reply's record does not mention", () => {
+  assert.equal(modelFlag(resumeModel("Opus 4.6", "Opus 4.6 (1M context)")), "claude-opus-4-6[1m]");
+  assert.equal(modelFlag(resumeModel("Opus 4.6", undefined, "Opus 4.6 (1M context)")), "claude-opus-4-6[1m]");
+  // The latest full name wins over the banner from when it started.
+  assert.equal(modelFlag(resumeModel("Opus 4.6", "Opus 4.6", "Opus 4.6 (1M context)")), "claude-opus-4-6");
+  // Named for another model: nothing to go by.
+  assert.equal(modelFlag(resumeModel("Sonnet 5.5", "Opus 4.6 (1M context)")), "claude-sonnet-5-5");
+  assert.equal(resumeModel(undefined, "Opus 4.6 (1M context)"), undefined);
+});
+
+test("the transcript keeps the model's full name past its replies, until another model replies", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-hibernate-"));
+  try {
+    const file = path.join(dir, "t.jsonl");
+    const named = JSON.stringify({ type: "attachment", attachment: { type: "model", identity: { modelId: "claude-opus-4-6", marketingName: "Opus 4.6 (1M context)" } } });
+    const reply = (uuid: string, model: string) => JSON.stringify({ type: "assistant", uuid, timestamp: "2026-11-18T01:00:00.000Z", message: { role: "assistant", model, content: [{ type: "text", text: "はい" }] } });
+    await fs.writeFile(file, `${named}\n${reply("a1", "claude-opus-4-6")}\n`);
+    const meta = emptyMeta();
+    const tail = new TranscriptTail(file);
+    for await (const _ of tail.read(meta)) void _;
+    assert.equal(meta.model, "Opus 4.6");
+    assert.equal(meta.namedModel, "Opus 4.6 (1M context)");
+
+    await fs.appendFile(file, `${reply("a2", "claude-sonnet-5-5")}\n`);
+    for await (const _ of tail.read(meta)) void _;
+    assert.equal(meta.model, "Sonnet 5.5");
+    assert.equal(meta.namedModel, undefined);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("what waits for a hibernated session is saved with it, and nothing else that waits is", async () => {
@@ -294,6 +326,19 @@ test("an input brings the session back as it was, and is typed once it runs", as
     assert.equal(m.terminal, started[0]!.name);
     await d.refresh();
     assert.equal(shown().hibernation, undefined);
+  } finally {
+    await done();
+  }
+});
+
+test("a session that used the 1M context window comes back with it", async () => {
+  const { d, started, agents, done } = await setup();
+  try {
+    d.tracked.get(SID).meta.namedModel = "Haiku 5.5 (1M context)";
+    await d.hibernateIdle();
+    agents([]);
+    await d.wake(SID);
+    assert.equal(started[0]!.args[started[0]!.args.indexOf("--model") + 1], "claude-haiku-5-5[1m]");
   } finally {
     await done();
   }
@@ -601,6 +646,31 @@ test("a session whose hibernation cannot be saved goes on running, and takes wha
     await d.refresh();
     assert.equal(shown().hibernation, undefined);
     await until(() => term.entered.includes("保存できなかったときの発言"), "the input was typed");
+  } finally {
+    await done();
+  }
+});
+
+test("opening a conversation from before /clear opens that one, and leaves the hibernated session asleep", async () => {
+  const OLD = "00000000-2222-3333-4444-777777777777";
+  const { d, agents, folder, done } = await setup();
+  try {
+    d.managed.get(SID).previousIds = [OLD];
+    await fs.writeFile(
+      path.join(d.cfg.claudeDir, "projects", "p", `${OLD}.jsonl`),
+      `${JSON.stringify({ type: "user", uuid: "u1", timestamp: new Date().toISOString(), cwd: folder, message: { role: "user", content: "前の会話" } })}\n`,
+    );
+    await d.hibernateIdle();
+    agents([]);
+    const asked: string[][] = [];
+    d.terminals.start = async (o: TerminalStart) => {
+      asked.push(o.args);
+      throw new Error("no need to go on");
+    };
+    await d.resume(OLD);
+    assert.equal(asked[0]?.[asked[0].indexOf("--resume") + 1], OLD);
+    assert.equal(d.waking.has(SID), false);
+    assert.ok(d.managed.get(SID).hibernated);
   } finally {
     await done();
   }

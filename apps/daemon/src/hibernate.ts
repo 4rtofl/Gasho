@@ -67,6 +67,21 @@ export interface ResumeState {
   effort?: EffortLevel;
 }
 
+/** A model's name without what is said after it: "Opus 4.6" for "Opus 4.6 (1M context)". */
+export function baseModel(name: string): string {
+  return name.replace(/\s*\(.*\)\s*$/, "");
+}
+
+/**
+ * The name to resume a session's model by. A reply records only the model ("Opus 4.6"), and `--model` without `[1m]`
+ * would bring a session that used the 1M context window back with 200K: `named` are the names Claude Code gave that
+ * model in full, the most reliable first. One of another model says nothing about this one.
+ */
+export function resumeModel(current: string | undefined, ...named: (string | undefined)[]): string | undefined {
+  if (current === undefined) return undefined;
+  return named.find((n) => n !== undefined && baseModel(n) === baseModel(current)) ?? current;
+}
+
 /**
  * The value of `--model` for a model as Gasho names it: "Opus 5.5" is claude-opus-5-5, "Opus 4.6 (1M context)"
  * claude-opus-4-6[1m]. Undefined for a name that says no such model: Claude Code then goes on with that of the last reply.

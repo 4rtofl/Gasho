@@ -30,7 +30,7 @@ import { listDir, readFileAt, writeFileAt } from "./files.ts";
 import { cloneRepo, createFolder } from "./folders.ts";
 import { githubRepoOf, nestedRepos, readGitGraph, worktreeOf } from "./git.ts";
 import { GitHubProxy } from "./github.ts";
-import { mayHibernate, resumeArgs } from "./hibernate.ts";
+import { mayHibernate, resumeArgs, resumeModel } from "./hibernate.ts";
 import { TokenCounter } from "./tokens.ts";
 import { startHookServer, summarizeHook } from "./hooks.ts";
 import { isInside, statusLineLaunch, statusLineOf, userStatusLine } from "./statusline.ts";
@@ -1857,7 +1857,8 @@ export class Daemon {
    * conversationFacts); without one, it is named after its next message, as a new session is.
    */
   private async resume(sessionId: string): Promise<CommandResult> {
-    if (this.managed.find(sessionId)?.hibernated) return this.wakeAsked(sessionId);
+    // Not by an id it had before /clear: that is another conversation, which is opened here.
+    if (this.managed.get(sessionId)?.hibernated) return this.wakeAsked(sessionId);
     if (!this.canLaunch) return { ok: false, error: NO_TERMINAL };
     // Open in two processes, the conversation would be written by both.
     if (this.tracked.has(sessionId)) return { ok: false, error: "この会話は、いま別の Claude Code が開いています。" };
@@ -2208,9 +2209,10 @@ export class Daemon {
     const t = this.tracked.get(id);
     if (!t) return Promise.resolve();
     // From here on inputs wait for it to come back, and nothing is typed into it.
+    const model = resumeModel(t.info.model, t.meta.namedModel, t.bannerModel);
     const h: Hibernated = {
       at: Date.now(),
-      ...(t.info.model ? { model: t.info.model } : {}),
+      ...(model ? { model } : {}),
       ...(t.info.effort ? { effort: t.info.effort } : {}),
       ...(t.info.ultracode ? { ultracode: true } : {}),
     };

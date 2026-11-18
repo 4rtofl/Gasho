@@ -13,6 +13,7 @@ import type {
   TranscriptEntry,
   TranscriptPage,
 } from "@gasho/protocol";
+import { baseModel } from "./hibernate.ts";
 import { SEND_FILE_TOOL, sentFiles } from "./media.ts";
 import { clip, inputSummary, str } from "./util.ts";
 
@@ -71,7 +72,7 @@ function commandNote(content: string, meta: TranscriptMeta): string | undefined 
   const text = (output[2] ?? "").trim();
   if (RENAMED_RE.test(text)) return "";
   const model = MODEL_SET_RE.exec(text)?.[1];
-  if (model) meta.model = model.trim();
+  if (model) meta.model = meta.namedModel = model.trim();
   if (model && /for this session only/.test(text)) meta.sessionSwitches = (meta.sessionSwitches ?? 0) + 1;
   const effort = EFFORT_SET_RE.exec(text)?.[1]?.toLowerCase();
   if (effort) meta.effort = effort as EffortLevel;
@@ -117,6 +118,11 @@ export interface TranscriptMeta {
   lastActivityAt?: number;
   /** "Opus 5.5": the model of the latest reply or model switch. */
   model?: string;
+  /**
+   * The model as Claude Code last named it in full ("Opus 4.6 (1M context)"), which a reply's record does not (see
+   * resumeModel). Dropped once a reply comes from another model.
+   */
+  namedModel?: string;
   /** The effort level of the latest reply or effort change, and ultracode after /effort ultracode on|off. */
   effort?: EffortLevel;
   ultracode?: boolean;
@@ -397,7 +403,7 @@ export function parseRecord(rec: Record<string, unknown>, meta: TranscriptMeta):
       const a = rec.attachment as { type?: unknown; identity?: { marketingName?: unknown; modelId?: unknown }; prompt?: unknown } | undefined;
       if (a?.type === "model" && rec.isSidechain !== true) {
         const name = str(a.identity?.marketingName) ?? (typeof a.identity?.modelId === "string" ? modelLabel(a.identity.modelId) : undefined);
-        if (name) meta.model = name;
+        if (name) meta.model = meta.namedModel = name;
       }
       // A notice queued for Claude, such as one that background work has ended.
       if (typeof a?.prompt === "string" && rec.isSidechain !== true) tasksOf(meta).notices(a.prompt);
@@ -446,6 +452,7 @@ export function parseRecord(rec: Record<string, unknown>, meta: TranscriptMeta):
   const content = message?.content;
   if (role === "assistant" && !isSidechain && typeof message?.model === "string" && !message.model.startsWith("<")) {
     meta.model = modelLabel(message.model);
+    if (meta.namedModel && baseModel(meta.namedModel) !== meta.model) delete meta.namedModel;
     // Each reply records the effort level it was made with.
     if (typeof rec.effort === "string" && EFFORTS.has(rec.effort)) meta.effort = rec.effort as EffortLevel;
   }

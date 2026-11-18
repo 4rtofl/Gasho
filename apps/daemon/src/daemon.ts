@@ -175,6 +175,11 @@ const MODELS_MAX_AGE_MS = 24 * 3600_000;
 const MODELS_PROBE_INTERVAL_MS = 10 * 60_000;
 /** How long after starting the folders of versions no longer used are removed (see Updater.prune). */
 const PRUNE_VERSIONS_MS = 2 * 60_000;
+/**
+ * How long a version on trial may take to start: past it, the start is taken to hang. A start may be slow without being
+ * a failure, as each terminal that does not answer is waited for (Terminals.live).
+ */
+export const TRIAL_START_LIMIT_MS = 5 * 60_000;
 
 /** How this gasho-daemon was installed and runs, for updates from Gasho (see self-update.ts). */
 export interface UpdateSetup {
@@ -374,9 +379,7 @@ export class Daemon {
       setTimeout(() => void this.updater.prune().catch((e: unknown) => log("could not remove the versions no longer used", e)), PRUNE_VERSIONS_MS).unref();
       return this.serve();
     }
-    const fail = this.watchTrial();
-    // Not left to the hook server's check at the end of the trial, which would go back without the real reason.
-    await this.serve().catch(fail);
+    await this.serveOnTrial();
   }
 
   private async serve(): Promise<void> {
@@ -456,19 +459,30 @@ export class Daemon {
 
   /**
    * This version on trial, just started by an update (self-update.ts): it is confirmed once it has been up for a while
-   * and its hook server answers. Until then an exception ends it with why (a failure to start too, by what this
-   * returns), and its next start goes back to the version before; a stop (SIGTERM, a restart of the machine) is not a
-   * failure (cli.ts), and the next start tries it again.
+   * after its start, and its hook server answers. Until then an exception, a failure to start or a start that does not
+   * end in TRIAL_START_LIMIT_MS ends it with why, and its next start goes back to the version before; a stop (SIGTERM,
+   * a restart of the machine) is not a failure (cli.ts), and the next start tries it again.
    */
-  private watchTrial(): (e: unknown) => void {
+  private async serveOnTrial(): Promise<void> {
+    let failed = false;
     const fail = (e: unknown) => {
+      if (failed) return;
+      failed = true;
       this.updater.recordFailure(e instanceof Error ? e.message : String(e));
       console.error(new Date().toISOString(), "[gasho-daemon] stopped on trial:", e);
       void this.exit(1);
     };
     process.on("uncaughtException", fail);
     const ms = this.updater.trialMs();
-    log(`on trial: confirmed in ${Math.round(ms / 1000)} s if all is well`);
+    log(`on trial: confirmed ${Math.round(ms / 1000)} s after it has started, if all is well`);
+    const limit = setTimeout(
+      () => fail(new Error(`起動が${TRIAL_START_LIMIT_MS / 60_000}分のうちに終わりませんでした。`)),
+      TRIAL_START_LIMIT_MS,
+    );
+    // Not left to the hook server's check at the end of the trial, which would go back without the real reason.
+    await this.serve().catch(fail);
+    clearTimeout(limit);
+    if (failed) return;
     setTimeout(() => {
       void (async () => {
         const problem = await this.trialProblem();
@@ -477,7 +491,6 @@ export class Daemon {
         process.off("uncaughtException", fail);
       })().catch(fail);
     }, ms);
-    return fail;
   }
 
   /** What keeps this version on trial from being confirmed: its hook server does not answer (any answer counts). */

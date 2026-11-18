@@ -5,10 +5,10 @@ import fs from "node:fs/promises";
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import type { DaemonUpdateInfo, HubToDaemon } from "@gasho/protocol";
 import { loadConfig } from "../src/config.ts";
-import { DAEMON_VERSION, Daemon } from "../src/daemon.ts";
+import { DAEMON_VERSION, Daemon, TRIAL_START_LIMIT_MS } from "../src/daemon.ts";
 import { cliIn, type Install, layoutOf, type Layout } from "../src/install.ts";
 import {
   beginTrial,
@@ -250,13 +250,16 @@ test("a version on trial is confirmed even when the versions no longer used cann
   assert.ok(existsSync(path.join(layout.versions, "0.13.0")));
 });
 
-test("a version on trial that fails to start ends at once, and the version before says why", async (t) => {
+/**
+ * This version of gasho-daemon, just started by an update from 0.14.0 and on trial, with its timers moved by the test.
+ * How it would end is recorded in `exits`; what it serves is the test's to set.
+ */
+async function daemonOnTrial(t: TestContext): Promise<{ d: Record<string, any>; exits: number[]; layout: Layout; npm: string }> {
   const { dir, layout, npm } = await setup();
   for (const v of ["0.14.0", DAEMON_VERSION]) await installed(layout, v);
   await switchTo(layout, "0.14.0");
   await beginTrial(layout, "0.14.0", DAEMON_VERSION, 5);
   await startOnTrial(layout, DAEMON_VERSION, () => undefined);
-  // The end of the trial is not reached: the reason must be the start's own, not that the hook server did not answer.
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const before = process.listeners("uncaughtException");
   t.after(() => {
@@ -280,15 +283,73 @@ test("a version on trial that fails to start ends at once, and the version befor
   ) as unknown as Record<string, any>;
   const exits: number[] = [];
   d.exit = async (code: number) => void exits.push(code);
+  return { d, exits, layout, npm };
+}
+
+/** Why 0.14.0, gone back to at the next start, says the version on trial did not start well. */
+async function wentBackFor(layout: Layout, npm: string): Promise<string | undefined> {
+  assert.equal(await startOnTrial(layout, DAEMON_VERSION, () => undefined), "0.14.0");
+  const back = updater({ layout, npm, version: "0.14.0" });
+  await back.updater.load();
+  return back.updater.info().rolledBack?.error;
+}
+
+/** Lets what is under way run until `done`, as timers do not move by themselves. */
+async function until(done: () => boolean): Promise<void> {
+  while (!done()) await new Promise((resolve) => setImmediate(resolve));
+}
+
+test("a version on trial that fails to start ends at once, and the version before says why", async (t) => {
+  const { d, exits, layout, npm } = await daemonOnTrial(t);
+  // The end of the trial is not reached: the reason must be the start's own, not that the hook server did not answer.
   d.serve = async () => {
     throw new Error("repos.json を読めませんでした");
   };
   await d.start();
   assert.deepEqual(exits, [1]);
-  assert.equal(await startOnTrial(layout, DAEMON_VERSION, () => undefined), "0.14.0");
-  const back = updater({ layout, npm, version: "0.14.0" });
-  await back.updater.load();
-  assert.equal(back.updater.info().rolledBack?.error, "repos.json を読めませんでした");
+  assert.equal(await wentBackFor(layout, npm), "repos.json を読めませんでした");
+});
+
+test("a version on trial whose start takes longer than the trial is confirmed once it has been up for the trial", async (t) => {
+  const { d, exits, layout } = await daemonOnTrial(t);
+  // As a start that waits for terminals that do not answer: the hook server answers only once it is over.
+  let up = false;
+  let finish: (() => void) | undefined;
+  d.serve = () => new Promise<void>((resolve) => (finish = resolve));
+  d.trialProblem = async () => (up ? undefined : "hooks の待ち受けが答えませんでした");
+  const confirm = d.updater.confirm.bind(d.updater);
+  let confirmed = false;
+  d.updater.confirm = async () => {
+    await confirm(async () => "");
+    confirmed = true;
+  };
+  const starting = d.start();
+  await until(() => finish !== undefined);
+  // Past the trial, still starting: a check of the hook server now would end it.
+  t.mock.timers.tick(2 * 60_000);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(exits, []);
+  up = true;
+  finish?.();
+  await starting;
+  t.mock.timers.tick(60_000);
+  await until(() => confirmed || exits.length > 0);
+  assert.deepEqual(exits, []);
+  assert.ok(!existsSync(layout.trialFile));
+});
+
+test("a version on trial whose start does not end in the limit ends, and the version before says why", async (t) => {
+  const { d, exits, layout, npm } = await daemonOnTrial(t);
+  let called = false;
+  d.serve = () => {
+    called = true;
+    return new Promise<void>(() => undefined);
+  };
+  void d.start();
+  await until(() => called);
+  t.mock.timers.tick(TRIAL_START_LIMIT_MS);
+  assert.deepEqual(exits, [1]);
+  assert.equal(await wentBackFor(layout, npm), "起動が5分のうちに終わりませんでした。");
 });
 
 test("a version on trial that ended before it was confirmed goes back at its next start, and the version before says why for a week", async () => {

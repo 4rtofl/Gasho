@@ -53,6 +53,8 @@ test("HEAD のブランチ・未コミットの変更・読み込んだ時刻・
   const panel = page.getByRole("region", { name: "ブランチグラフ" });
   const commits = panel.getByRole("list", { name: "コミットの履歴" });
   const branch = (name: string) => panel.getByRole("listitem").filter({ has: page.getByTitle(name, { exact: true }) });
+  // The line above the branches, without them.
+  const summary = panel.locator("div").filter({ hasText: "に読み込み" }).filter({ hasNot: page.getByRole("listitem") });
 
   await test.step("ヘッダーのブランチ名からブランチグラフを開く", async () => {
     await showSessionHeader(page, isMobile);
@@ -61,9 +63,9 @@ test("HEAD のブランチ・未コミットの変更・読み込んだ時刻・
   });
 
   await test.step("HEAD のブランチ、未コミットの変更の件数、読み込んだ時刻が出る", async () => {
-    await expect(panel.getByText("未コミットの変更：ステージ済み 1・未ステージ 2・未追跡 3")).toBeVisible();
-    await expect(panel.getByText("09:30 に読み込み")).toBeVisible();
-    await expect(panel.getByText("feat/x", { exact: true }).first()).toBeVisible();
+    await expect(summary.getByText("feat/x", { exact: true })).toBeVisible();
+    await expect(summary.getByText("未コミットの変更：ステージ済み 1・未ステージ 2・未追跡 3")).toBeVisible();
+    await expect(summary.getByText("09:30 に読み込み")).toBeVisible();
   });
 
   await test.step("ブランチの一覧は、チェックアウト中のブランチを先頭に、追跡されていないリモートのブランチまで並ぶ", async () => {

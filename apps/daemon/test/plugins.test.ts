@@ -412,6 +412,7 @@ test("gasho-daemon ends (an update, a signal) only once its plugins' daemon part
     hookSecret: undefined,
     claudeDir: path.join(dir, "claude-dir"),
     claudeBin: "claude",
+    codexBin: "codex",
     ghBin: "gh",
     pollIntervalMs: 60_000,
     stateDir: dir,

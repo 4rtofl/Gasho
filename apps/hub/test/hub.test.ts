@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { HubToClient, HubToDaemon, MachineHookEvent, ServerInfo, SessionInfo } from "@gasho/protocol";
 import {
+  agentsOf,
   CLOSE_INVALID_CREDENTIALS,
   CLOSE_UNAUTHORIZED,
   Hub,
@@ -520,6 +521,35 @@ test("effort and ultracode of inputs are checked, and machines carry the model n
   hub.onClientMessage(c, { type: "session.input", requestId: "e", machine: machineId, sessionId: "s1", text: "考えて", effort: "high", ultracode: false });
   const relayed = d.sent.at(-1);
   assert.ok(relayed?.type === "session.input" && relayed.effort === "high" && relayed.ultracode === false);
+});
+
+test("the agents a gasho-daemon found reach the browsers, kept to what is expected", () => {
+  const { hub, machineId, machineToken, browserId } = setup();
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.30.0" });
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const agents = () => {
+    const got = c.sent.filter((m) => m.type === "machine").at(-1);
+    assert.ok(got?.type === "machine");
+    return got.machine.agents;
+  };
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: [], agents: { codex: { status: "loginRequired", version: "0.170.0" } } });
+  assert.deepEqual(agents(), { codex: { status: "loginRequired", version: "0.170.0" } });
+  // One that no longer finds it, and one that does not look for it.
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: [], agents: {} });
+  assert.deepEqual(agents(), {});
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: [] });
+  assert.equal(agents(), undefined);
+});
+
+test("what a gasho-daemon says about its agents is dropped when it is not what is expected", () => {
+  assert.equal(agentsOf(undefined), undefined);
+  assert.equal(agentsOf("codex"), undefined);
+  assert.deepEqual(agentsOf({ codex: { status: "broken" } }), {});
+  assert.deepEqual(agentsOf({ codex: null, other: { status: "available" } }), {});
+  assert.deepEqual(agentsOf({ codex: { status: "available", version: "<b>1</b>", extra: "x" } }), { codex: { status: "available" } });
+  assert.deepEqual(agentsOf({ codex: { status: "unknown", version: "0.171.0-alpha.2" } }), { codex: { status: "unknown", version: "0.171.0-alpha.2" } });
 });
 
 test("a gasho-daemon that does not list its features gets no effort or ultracode switch, with a clear error", () => {

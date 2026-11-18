@@ -407,6 +407,25 @@ export interface MachineMemory {
   used: number;
 }
 
+/** The coding agents Gasho knows. */
+export type AgentKind = "claude" | "codex";
+
+/**
+ * Whether an agent can be used on a working server. available: it is logged in. loginRequired: it is installed but not
+ * logged in. unknown: it is installed, but it could not tell (its settings cannot be read, or it did not answer).
+ */
+export type AgentStatus = "available" | "loginRequired" | "unknown";
+
+/** An agent installed on a working server. */
+export interface AgentInfo {
+  status: AgentStatus;
+  /** Its version (x.y.z), when it told it. */
+  version?: string;
+}
+
+/** The agents gasho-daemon looked for and found on its working server: one that is not installed is not listed. */
+export type MachineAgents = Partial<Record<AgentKind, AgentInfo>>;
+
 /** A working server: a machine that runs Claude Code and gasho-daemon. */
 export interface MachineInfo {
   /** Id issued when the machine was registered. */
@@ -445,6 +464,8 @@ export interface MachineInfo {
   canRemoveWorktree?: boolean;
   /** Whether gasho-daemon lists the skills and custom commands a session's Claude Code reads (session.skills). */
   canListSkills?: boolean;
+  /** The agents found on this working server besides Claude Code (absent from a gasho-daemon that does not look for them). */
+  agents?: MachineAgents;
   /** Whether Gasho can update this gasho-daemon, and how an update goes (absent from one older than updates from Gasho). */
   update?: DaemonUpdateInfo;
   /**
@@ -944,6 +965,8 @@ export type DaemonToHub =
       canRemoveWorktree?: boolean;
       /** Answers session.skills. */
       canListSkills?: boolean;
+      /** The agents found on the working server besides Claude Code (sent again when they change). */
+      agents?: MachineAgents;
       /** Whether Gasho can update it, and the update under way (sent again at each step). */
       update?: DaemonUpdateInfo;
     }

@@ -448,7 +448,7 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
             throw e;
           }
           if (r.unknown) {
-            // It may have been typed into the session: put back in the box, it could be sent twice.
+            // Not put back in the box: it may have been typed into the session, and could be sent twice.
             removePending(key, pending);
             setWarning("Gasho サーバーとの接続が切れたので、送れたか分かりません。会話に出ていなければ、もう一度送ってください。");
             return;

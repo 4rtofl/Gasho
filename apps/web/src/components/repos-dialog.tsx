@@ -8,6 +8,7 @@ import { BUTTON_PRIMARY, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG_PANEL } from "
 import { ComboboxList, type ComboboxListOption } from "@/components/ui/combobox-list";
 import { folderRepoName, registeredRepoName } from "@/lib/sessions";
 import { sendCommand, useAppState } from "@/lib/store";
+import { keepOpenWhileComposing } from "@/lib/text-input";
 import { cn } from "@/lib/utils";
 
 /** A little longer than the Gasho server waits. */
@@ -46,7 +47,10 @@ export function ReposDialog({ open, onClose }: { open: boolean; onClose: () => v
     >
       <Dialog.Portal>
         <Dialog.Overlay className={DIALOG_OVERLAY} />
-        <Dialog.Content className={cn(DIALOG_PANEL, "w-[min(36rem,calc(100vw-2rem))] space-y-5")}>
+        <Dialog.Content
+          className={cn(DIALOG_PANEL, "w-[min(36rem,calc(100vw-2rem))] space-y-5")}
+          onEscapeKeyDown={keepOpenWhileComposing}
+        >
           <div className="flex items-start justify-between gap-3">
             <div className="space-y-1">
               <Dialog.Title className="text-base font-semibold tracking-tight">リポジトリの登録</Dialog.Title>

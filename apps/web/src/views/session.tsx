@@ -20,7 +20,7 @@ import {
   sessionLabel,
   waitingLabel,
 } from "@/lib/format";
-import { promptDraft, usePicks, useUnsent } from "@/lib/drafts";
+import { promptDraft, useDraftBox, usePicks, useUnsent } from "@/lib/drafts";
 import { addPending, noneWaiting, pendingShown, recordedAsSent, removePending, sessionWorking, settlePending, usePending } from "@/lib/pending";
 import { go, type SessionPanel } from "@/lib/route";
 import { closeSmallSessionHeader, useSessionHeaderShown } from "@/lib/session-header";
@@ -349,9 +349,11 @@ function toBase64(file: File): Promise<string> {
 function Composer({ machine, session: s, transcript }: { machine: MachineInfo; session: SessionInfo; transcript?: TranscriptState }) {
   const key = transcriptKey(machine.id, s.sessionId);
   const entries = transcript?.total ?? 0;
+  const box = useRef<HTMLDivElement>(null);
+  useDraftBox(key, box);
   const [error, setError] = useState<string>();
   const [warning, setWarning] = useState<string>();
-  const box = useRef<PromptInputHandle>(null);
+  const input = useRef<PromptInputHandle>(null);
   // Sent when the connection closed before their results came: put back in the box only when asked (see UNKNOWN_SENT).
   const [unsent, setUnsent] = useUnsent(key);
   // One the conversation shows as it was sent was typed into the session after all.
@@ -370,9 +372,9 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
     if (first.text) {
       // What was typed since stays, before it.
       const typed = draft.get().text.trimEnd();
-      box.current?.setValue(typed ? `${typed}\n${first.text}` : first.text);
+      input.current?.setValue(typed ? `${typed}\n${first.text}` : first.text);
     }
-    box.current?.attach(first.files);
+    input.current?.attach(first.files);
     // The box takes no files while the working server is offline, nor more than it holds: those stay to put back.
     const taken = draft.get().attachments;
     const left = first.files.filter(
@@ -383,7 +385,7 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
         ? list.map((u) => (u.id === first.id ? { ...u, text: "", files: left } : u))
         : list.filter((u) => u.id !== first.id),
     );
-    box.current?.focus();
+    input.current?.focus();
   };
   const [picks, setPicks] = usePicks(key);
   const { model: picked, effort: pickedEffort, ultracode: pickedUltracode } = picks;
@@ -449,7 +451,7 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
   };
 
   return (
-    <div className="flex min-h-0 flex-col">
+    <div ref={box} className="flex min-h-0 flex-col">
       <PermissionRequests machine={machine} session={s} />
       <BackgroundTasks machine={machine} session={s} />
       <PromptInput
@@ -558,7 +560,7 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
         showCount
         shell
         footer={<PluginComposerFooter machine={machine} session={s} />}
-        ref={box}
+        ref={input}
       />
       {(status || error || warning) && (
         <p className={cn("mt-1.5 px-3 text-xs", error ? "text-red-400" : warning ? "text-amber-400" : "text-muted-foreground")}>

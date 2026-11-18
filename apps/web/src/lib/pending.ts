@@ -131,6 +131,16 @@ function set(key: string, list: PendingMessage[]): void {
   for (const l of listeners) l();
 }
 
+/**
+ * Where a message is kept: under the key it was sent with, or under the one its session went on under after /clear
+ * (see movePending), when the working server answers after that.
+ */
+function holder(key: string, id: string): string | undefined {
+  if (lists.get(key)?.some((p) => p.id === id)) return key;
+  for (const [k, list] of lists) if (list.some((p) => p.id === id)) return k;
+  return undefined;
+}
+
 /** Shows a message just sent from here. Returns its id. */
 export function addPending(key: string, message: { text: string; files: string[]; after: number }): string {
   const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -141,8 +151,8 @@ export function addPending(key: string, message: { text: string; files: string[]
 export function removePending(key: string, id: string): void {
   clearTimeout(timers.get(id));
   timers.delete(id);
-  const list = lists.get(key) ?? [];
-  if (list.some((p) => p.id === id)) set(key, list.filter((p) => p.id !== id));
+  const at = holder(key, id);
+  if (at) set(at, (lists.get(at) ?? []).filter((p) => p.id !== id));
 }
 
 /**
@@ -150,15 +160,16 @@ export function removePending(key: string, id: string): void {
  * later, by when the conversation shows it), or kept it waiting until the session has finished its work ("queued").
  */
 export function settlePending(key: string, id: string, state: "queued" | "sent"): void {
-  const list = lists.get(key) ?? [];
-  if (!list.some((p) => p.id === id)) return;
-  set(key, list.map((p) => (p.id === id ? { ...p, state, at: Date.now() } : p)));
+  const at = holder(key, id);
+  if (!at) return;
+  const list = lists.get(at) ?? [];
+  set(at, list.map((p) => (p.id === id ? { ...p, state, at: Date.now() } : p)));
   if (state === "sent") {
     clearTimeout(timers.get(id));
     timers.delete(id);
     // A shell command runs as long as the session works (see sessionWorking).
     const shell = isShellInput(list.find((p) => p.id === id)?.text ?? "");
-    if (!shell || !working.get(key)) timers.set(id, setTimeout(() => removePending(key, id), SENT_GRACE_MS));
+    if (!shell || !working.get(at)) timers.set(id, setTimeout(() => removePending(at, id), SENT_GRACE_MS));
   }
 }
 
@@ -180,6 +191,25 @@ export function sessionWorking(key: string, now: boolean): void {
 /** The session has no messages waiting on the working server any more: the ones that waited there were typed. */
 export function noneWaiting(key: string): void {
   for (const p of lists.get(key) ?? []) if (p.state === "queued") settlePending(key, p.id, "sent");
+}
+
+/**
+ * After /clear the session goes on under a new id (see lib/drafts' moveDraft). The messages not yet typed into it
+ * ("sending", "queued") are typed into the new conversation, so they go with it, to be looked for from its first entry.
+ * One typed already shows in the conversation it was typed into: moved, one typed before /clear would show at the end
+ * of the new conversation until SENT_GRACE_MS is over.
+ */
+export function movePending(from: string, to: string): void {
+  const list = lists.get(from);
+  if (!list) return;
+  for (const p of list) {
+    if (p.state !== "sent") continue;
+    clearTimeout(timers.get(p.id));
+    timers.delete(p.id);
+  }
+  lists.delete(from);
+  const moving = list.filter((p) => p.state !== "sent").map((p) => ({ ...p, after: 0 }));
+  set(to, [...(lists.get(to) ?? []), ...moving]);
 }
 
 /** The messages sent from here to a session that are not over yet (see pendingShown for which to show). */

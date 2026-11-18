@@ -30,15 +30,15 @@ const narrow = (page: Page) => (page.viewportSize()?.width ?? 0) < 768;
 
 /** The sidebar's 端末 item; on an iPhone, the sidebar is a drawer, opened first. */
 async function devicesItem(page: Page): Promise<Locator> {
-  if (!narrow(page)) return page.getByRole("navigation", { name: "Main" }).getByRole("button", { name: /^端末/ });
-  await page.getByRole("button", { name: "Open navigation" }).click();
-  return page.getByRole("dialog", { name: "Navigation" }).getByRole("button", { name: /^端末/ });
+  if (!narrow(page)) return page.getByRole("navigation", { name: "メニュー" }).getByRole("button", { name: /^端末/ });
+  await page.getByRole("button", { name: "サイドバーを開く" }).click();
+  return page.getByRole("dialog", { name: "サイドバー" }).getByRole("button", { name: /^端末/ });
 }
 
 /** Chooses the 端末 item, which opens the 端末 screen; on an iPhone, once the drawer has closed. */
 async function openDevices(page: Page, item: Locator): Promise<void> {
   await item.click();
-  if (narrow(page)) await expect(page.getByRole("dialog", { name: "Navigation" })).toBeHidden();
+  if (narrow(page)) await expect(page.getByRole("dialog", { name: "サイドバー" })).toBeHidden();
 }
 
 /**

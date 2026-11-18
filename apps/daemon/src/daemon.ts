@@ -126,7 +126,7 @@ import { PluginRunner } from "./plugins.ts";
 import { npmOf, Updater } from "./self-update.ts";
 import { log, str } from "./util.ts";
 
-export const DAEMON_VERSION = "0.28.1";
+export const DAEMON_VERSION = "0.28.2";
 const GITHUB_CACHE_MS = 5 * 60_000;
 /** How long the worktree a folder is in, or the repositories inside it, and their branches are reused. */
 const REPOS_CACHE_MS = 60_000;
@@ -265,6 +265,11 @@ export class Daemon {
    * Gasho server would drop the sessions it kept from before the restart (open ones would show as gone).
    */
   private refreshed = false;
+  /**
+   * Set from when followNewIds gives a session its new id until the refresh has it in `tracked`. A list sent meanwhile
+   * would have neither of its ids, and its page would say it is gone.
+   */
+  private followingNewIds = false;
   private refreshing = false;
   private refreshAgain = false;
   private refreshTimer: NodeJS.Timeout | undefined;
@@ -289,6 +294,10 @@ export class Daemon {
   private reposSent = "";
   /** Counts the reads of the registered repositories: a read that a later one overtook is not sent. */
   private reposRead = 0;
+  /**
+   * The terminals that something types into now (an input, a look at the /model picker, stopping background work):
+   * one at a time. By terminal, not by id: /clear gives the session a new id meanwhile (see followNewIds).
+   */
   private flushing = new Set<string>();
   /** Sessions whose /rename to the name from the first message was sent, until Claude Code records it (nameAfterTitle). */
   private titleSent = new Set<string>();
@@ -630,6 +639,7 @@ export class Daemon {
     this.refreshing = true;
     try {
       const rows = await listAgents(this.cfg.claudeBin);
+      await this.followNewIds(rows);
       const seen = new Set<string>();
       for (const row of rows) {
         // A Claude Code that a plugin runs in its own folder is no session (see fromPlugin).
@@ -644,6 +654,7 @@ export class Daemon {
         this.tracked.delete(id);
         this.permissions.settleSession(id);
       }
+      this.followingNewIds = false;
       // One that ended while `claude agents` was read is still in rows.
       for (const pid of this.ownPids) if (!isAlive(pid) && !rows.some((r) => r.pid === pid)) this.ownPids.delete(pid);
       await this.forgetEndedSessions(seen);
@@ -655,6 +666,10 @@ export class Daemon {
       log("refresh failed", e);
     } finally {
       this.refreshing = false;
+      if (this.followingNewIds) {
+        this.followingNewIds = false;
+        this.emitSessions();
+      }
       // Also after a failed one: the sessions from before the restart would otherwise show on as if they still ran.
       if (!this.refreshed) {
         this.refreshed = true;
@@ -667,6 +682,43 @@ export class Daemon {
     }
   }
 
+  /**
+   * Sessions started from Gasho whose Claude Code `claude agents` lists under another id: /clear (or /resume) made it go
+   * on in the same process with another conversation. The session stays Gasho's under the new id, with what is kept
+   * for it. A process that started after the session was recorded is another Claude Code that got the same PID.
+   */
+  private async followNewIds(rows: AgentRow[]): Promise<void> {
+    let changed = false;
+    for (const m of this.managed.all()) {
+      const row = rows.find((r) => r.pid === m.pid && r.sessionId);
+      const to = row?.sessionId;
+      if (!to || to === m.sessionId || this.managed.has(to)) continue;
+      if (row.startedAt !== undefined && row.startedAt > m.launchedAt) continue;
+      const from = m.sessionId;
+      this.managed.rekey(from, to);
+      this.followingNewIds = true;
+      const move = <V>(map: Map<string, V>) => {
+        const v = map.get(from);
+        if (v === undefined) return;
+        map.delete(from);
+        map.set(to, v);
+      };
+      move(this.settleUntil);
+      move(this.lastStop);
+      move(this.latePicker);
+      move(this.prompts);
+      if (this.titleSent.delete(from)) this.titleSent.add(to);
+      log(`${m.name}: Claude Code went on with another conversation (${to}) in place of ${from}`);
+      changed = true;
+    }
+    if (changed) await this.managed.save();
+  }
+
+  /** The attachment folders of a session started from Gasho: of its id, and of the ids it had before /clear. */
+  private attachmentsOfSession(m: ManagedSession): string[] {
+    return [m.sessionId, ...(m.previousIds ?? [])].map((id) => this.attachmentsOf(id));
+  }
+
   /** Managed sessions whose Claude Code has exited: drop them and close their terminal. */
   private async forgetEndedSessions(seen: Set<string>): Promise<void> {
     let changed = false;
@@ -675,7 +727,7 @@ export class Daemon {
       this.managed.remove(m.sessionId);
       for (const map of [this.settleUntil, this.lastStop, this.latePicker, this.prompts, this.titleSent]) map.delete(m.sessionId);
       await this.terminals.kill(m.terminal);
-      await fsp.rm(this.attachmentsOf(m.sessionId), { recursive: true, force: true });
+      for (const dir of this.attachmentsOfSession(m)) await fsp.rm(dir, { recursive: true, force: true });
       log(`session ${m.name} ended; closed its terminal ${m.terminal}`);
       changed = true;
     }
@@ -806,7 +858,7 @@ export class Daemon {
   }
 
   private emitSessions(): void {
-    if (!this.refreshed) return;
+    if (!this.refreshed || this.followingNewIds) return;
     const sessions = [...this.tracked.values()]
       // Not yet, or no longer, among Gasho's sessions: sent, it would show as one opened outside Gasho.
       .filter((t) => this.managed.has(t.info.sessionId) || !this.isOwn(t.info.pid))
@@ -820,6 +872,7 @@ export class Daemon {
           name: m?.name ?? t.info.name,
           managed: m ? true : undefined,
           pendingInputs: pending || undefined,
+          previousSessionIds: m?.previousIds,
           permissionRequests: this.permissions.of(t.info.sessionId) ?? this.openQuestion(t) ?? this.openPermission(t),
         };
       })
@@ -946,7 +999,7 @@ export class Daemon {
   private async readManagedScreens(): Promise<void> {
     for (const m of this.managed.all()) {
       const t = this.tracked.get(m.sessionId);
-      if (!t || this.flushing.has(m.sessionId)) continue;
+      if (!t || this.flushing.has(m.terminal)) continue;
       // What the screen shows now wins over the transcript: the line above the prompt box ("◐ medium · ultracode ·
       // /effort", shown for a while after a change) and the "ultracode" in the rule above the box (while it is on).
       const screen = (await this.terminals.screen(m.terminal).catch(() => undefined))?.plain ?? "";
@@ -977,7 +1030,7 @@ export class Daemon {
           Date.now() - m.launchedAt > PROBE_MIN_AGE_MS &&
           this.tracked.get(m.sessionId)?.info.status === "idle" &&
           this.managed.pending(m.sessionId) === 0 &&
-          !this.flushing.has(m.sessionId),
+          !this.flushing.has(m.terminal),
       );
     if (idle) await this.probeModelsIn(idle);
   }
@@ -1015,13 +1068,13 @@ export class Daemon {
     }
     if (modelPickerOptions(screen).length === 0 && !switchQuestion(screen)) return;
     this.latePicker.delete(m.sessionId);
-    this.flushing.add(m.sessionId);
+    this.flushing.add(m.terminal);
     try {
       await this.closePicker(m.terminal);
     } catch (e) {
       log(`could not close the /model picker in ${m.name}`, e);
     } finally {
-      this.flushing.delete(m.sessionId);
+      this.flushing.delete(m.terminal);
     }
   }
 
@@ -1031,8 +1084,8 @@ export class Daemon {
    * waits as long as the names are trusted: a picker that could not be read once is likely to stay so.
    */
   private async probeModelsIn(m: ManagedSession): Promise<void> {
-    if (this.flushing.has(m.sessionId)) return;
-    this.flushing.add(m.sessionId);
+    if (this.flushing.has(m.terminal)) return;
+    this.flushing.add(m.terminal);
     this.nextModelsProbe = Date.now() + MODELS_PROBE_INTERVAL_MS;
     try {
       if ((await this.currentStatus(m.pid)) !== "idle") return;
@@ -1047,7 +1100,7 @@ export class Daemon {
       this.nextModelsProbe = Date.now() + MODELS_MAX_AGE_MS;
       log(`could not read the model names in ${m.name}`, e);
     } finally {
-      this.flushing.delete(m.sessionId);
+      this.flushing.delete(m.terminal);
     }
   }
 
@@ -1324,6 +1377,7 @@ export class Daemon {
       const pending = this.managed.waiting(m.sessionId).filter((input) => !input.auto).length;
       return {
         sessionId: m.sessionId,
+        ...(m.previousIds?.length ? { previousSessionIds: [...m.previousIds] } : {}),
         name,
         ...(name !== m.name ? { gashoName: m.name } : {}),
         cwd: m.cwd,
@@ -1479,7 +1533,7 @@ export class Daemon {
   }
 
   /**
-   * Starts `claude --remote-control <rcName> [claudeArgs…]` in `dir` in a new terminal, and waits until
+   * Starts `claude --remote-control=<rcName> [claudeArgs…]` in `dir` in a new terminal, and waits until
    * `claude agents` lists it with a session id (one that `accept` takes). With `resuming`, Claude Code's question about
    * resuming an old, long session is answered with Esc (the full session, as it is; see resumeQuestionOpen), and
    * `resumeAsked` says so. Claude Code's question whether to trust the folder is answered with yes only when `trust`
@@ -1513,7 +1567,8 @@ export class Daemon {
         name: terminal,
         cwd: dir,
         file: this.cfg.claudeBin,
-        args: ["--remote-control", rcName, ...claudeArgs, ...statusLine.args],
+        // One argument: a name starting with "-" (say "-wip") given on its own would be read as Claude Code's options.
+        args: [`--remote-control=${rcName}`, ...claudeArgs, ...statusLine.args],
         env: { ...cleanEnv(), ...statusLine.env },
       });
     } catch (e) {
@@ -1626,7 +1681,7 @@ export class Daemon {
   }
 
   /**
-   * Forks a session started from Gasho: `claude --remote-control <name> --resume <id> --fork-session` in its folder, in
+   * Forks a session started from Gasho: `claude --remote-control=<name> --resume <id> --fork-session` in its folder, in
    * a new terminal. The copy starts with the conversation so far; the session itself goes on as it was. Claude
    * Code writes a fork's transcript only once something is recorded, so the copy is named with /rename right away:
    * that names it in Claude Code too (the Remote Control name is set already), and its conversation can be read at once.
@@ -1728,7 +1783,7 @@ export class Daemon {
 
   /**
    * Opens a conversation that no Claude Code has open again, in its folder, as a session started from Gasho:
-   * `claude --remote-control <name> --resume <id>` in a new terminal. Its name is the conversation's (see
+   * `claude --remote-control=<name> --resume <id>` in a new terminal. Its name is the conversation's (see
    * conversationFacts); without one, it is named after its next message, as a new session is.
    */
   private async resume(sessionId: string): Promise<CommandResult> {
@@ -1761,6 +1816,10 @@ export class Daemon {
       );
     }
     await this.refresh();
+    // Before the answer, also when that refresh only asked the one running to go again: a session /clear took away from
+    // this conversation has it among its earlier ids no longer (see ManagedSessions.add), and a page still told it does
+    // goes on to that session instead (see the web's movedSession).
+    this.emitSessions();
     return { ok: true, sessionId: id, ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}) };
   }
 
@@ -1815,32 +1874,35 @@ export class Daemon {
    * is idle: it waits while the session works. A /rename still waiting is replaced, not sent too.
    */
   private async rename(sessionId: string, name: string, requestId: string): Promise<CommandResult> {
-    if (!this.managed.has(sessionId)) {
+    // By session.sessionId from here on: `sessionId` can be one the session had before /clear (see ManagedSessions.find),
+    // and /clear can give it a new id while the name is saved (see followNewIds).
+    const session = this.managed.find(sessionId);
+    if (!session) {
       return { ok: false, error: "このセッションの名前は変えられません。変えられるのは、Gasho が起動したセッションだけです。" };
     }
     const checked = sessionName(name);
     if ("error" in checked) return { ok: false, error: checked.error };
     // Also a name from the first message still waiting: the one asked for now wins, and the first message names it no more.
-    this.managed.drop(sessionId, (input) => isRename(input.text));
-    const named = this.managed.named(sessionId);
-    if (this.managed.setName(sessionId, checked.name) || named) await this.managed.save();
+    this.managed.drop(session.sessionId, (input) => isRename(input.text));
+    const named = this.managed.named(session.sessionId);
+    if (this.managed.setName(session.sessionId, checked.name) || named) await this.managed.save();
     // Other inputs waiting go first, and typing them can take long (a model switch): the answer does not wait for them.
-    const ahead = this.managed.pending(sessionId) > 0;
-    this.managed.enqueue(sessionId, { id: requestId, text: renameCommand(checked.name) });
-    log(`renaming ${sessionId} to "${checked.name}"`);
+    const ahead = this.managed.pending(session.sessionId) > 0;
+    this.managed.enqueue(session.sessionId, { id: requestId, text: renameCommand(checked.name) });
+    log(`renaming ${session.sessionId} to "${checked.name}"`);
     this.emitSessions();
     if (ahead) return { ok: true, queued: true };
     let warnings: string[] = [];
     try {
-      const flushed = await this.flushInput(sessionId);
+      const flushed = await this.flushInput(session.sessionId);
       // The queue may have held earlier inputs: what happened to those is not this request's to report.
       if (flushed?.id === requestId) warnings = flushed.warnings;
     } catch (e) {
-      log(`could not send /rename to ${sessionId} yet`, e);
+      log(`could not send /rename to ${session.sessionId} yet`, e);
       warnings.push("Claude Code の画面を操作できませんでした。名前の変更は待たせてあり、あとで送ります。");
     }
     this.emitSessions();
-    return { ok: true, queued: this.managed.pending(sessionId) > 0, ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}) };
+    return { ok: true, queued: this.managed.pending(session.sessionId) > 0, ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}) };
   }
 
   /**
@@ -1878,7 +1940,7 @@ export class Daemon {
         // ended meanwhile
       }
     }
-    await fsp.rm(this.attachmentsOf(sessionId), { recursive: true, force: true });
+    for (const dir of this.attachmentsOfSession(m)) await fsp.rm(dir, { recursive: true, force: true });
     log(`removed session ${m.name} (${sessionId}); closed its terminal ${m.terminal}`);
     await this.refresh();
     return { ok: true };
@@ -1946,7 +2008,10 @@ export class Daemon {
 
   private async input(m: Extract<HubToDaemon, { type: "session.input" }>): Promise<CommandResult> {
     const { sessionId, text, model, effort, ultracode, files } = m;
-    if (!this.managed.has(sessionId)) {
+    // By session.sessionId from here on: `sessionId` can be one the session had before /clear (see ManagedSessions.find),
+    // and /clear can give it a new id while the files are written (see followNewIds).
+    const session = this.managed.find(sessionId);
+    if (!session) {
       return { ok: false, error: "このセッションには Gasho から入力できません。入力できるのは、Gasho が起動したセッションだけです。" };
     }
     const body = text.trim();
@@ -1957,10 +2022,10 @@ export class Daemon {
     let message = body;
     if (files?.length) {
       // Claude Code reads the files mentioned as @path when the message is sent.
-      const paths = await this.saveAttachments(sessionId, files);
+      const paths = await this.saveAttachments(session.sessionId, files);
       message = [body, paths.map((p) => `@${p}`).join("\n")].filter(Boolean).join("\n\n");
     }
-    this.managed.enqueue(sessionId, {
+    this.managed.enqueue(session.sessionId, {
       id: m.requestId,
       text: message,
       ...(model ? { model } : {}),
@@ -1971,14 +2036,14 @@ export class Daemon {
     let failed: string | undefined;
     try {
       // The queue may have held earlier inputs: what happened to those is not this request's to report.
-      const flushed = await this.flushInput(sessionId);
+      const flushed = await this.flushInput(session.sessionId);
       if (flushed?.id === m.requestId) outcome = flushed;
     } catch (e) {
       // The input is back on the queue and is sent later: saying that it failed would invite sending it again.
-      log(`could not send the input to ${sessionId} yet`, e);
+      log(`could not send the input to ${session.sessionId} yet`, e);
       failed = "Claude Code の画面を操作できませんでした。入力は待たせてあり、あとで送ります。";
     }
-    const queued = this.managed.pending(sessionId) > 0;
+    const queued = this.managed.pending(session.sessionId) > 0;
     this.emitSessions();
     const warning = [...(outcome?.warnings ?? []), failed].filter(Boolean).join(" ");
     const unapplied = [...new Set(outcome?.unapplied ?? [])];
@@ -2006,8 +2071,9 @@ export class Daemon {
   /** Removes attachment folders of sessions that are no longer running from Gasho. */
   private async pruneAttachments(): Promise<void> {
     const dirs = await fsp.readdir(this.cfg.attachmentsDir).catch(() => [] as string[]);
+    const kept = new Set(this.managed.all().flatMap((m) => [m.sessionId, ...(m.previousIds ?? [])]));
     for (const d of dirs) {
-      if (SESSION_ID_RE.test(d) && !this.managed.has(d)) await fsp.rm(this.attachmentsOf(d), { recursive: true, force: true });
+      if (SESSION_ID_RE.test(d) && !kept.has(d)) await fsp.rm(this.attachmentsOf(d), { recursive: true, force: true });
     }
   }
 
@@ -2029,20 +2095,21 @@ export class Daemon {
    * cannot be closed; the input is then back on the queue.
    */
   private async flushInput(sessionId: string): Promise<InputOutcome | undefined> {
-    if (this.flushing.has(sessionId)) return;
-    this.flushing.add(sessionId);
+    const m = this.managed.get(sessionId);
+    if (!m || this.flushing.has(m.terminal)) return;
+    this.flushing.add(m.terminal);
     try {
-      const m = this.managed.get(sessionId);
-      if (!m || this.managed.pending(sessionId) === 0) return;
-      const wait = (this.settleUntil.get(sessionId) ?? 0) - Date.now();
+      // From here on by m.sessionId: /clear can give the session a new id while the input is typed (see followNewIds).
+      if (this.managed.pending(m.sessionId) === 0) return;
+      const wait = (this.settleUntil.get(m.sessionId) ?? 0) - Date.now();
       if (wait > 0) {
         this.scheduleRefresh(wait + 100);
         return;
       }
-      this.settleUntil.delete(sessionId);
+      this.settleUntil.delete(m.sessionId);
       if ((await this.currentStatus(m.pid)) !== "idle") {
         // Busy after an Enter that came back "unsure": Claude Code took it.
-        const head = this.managed.peek(sessionId);
+        const head = this.managed.peek(m.sessionId);
         if (head?.entered) head.seenBusy = true;
         return;
       }
@@ -2051,22 +2118,22 @@ export class Daemon {
       // (Esc changes nothing there). Any other dialog, such as a permission request, is the person's to answer.
       if (modelPickerOptions(screen).length > 0 || switchQuestion(screen)) await this.closePicker(m.terminal);
       else if (dialogOpen(screen)) return;
-      const item = this.managed.next(sessionId);
+      const item = this.managed.next(m.sessionId);
       if (item === undefined) return;
       const out: InputOutcome = { ...(item.id ? { id: item.id } : {}), warnings: [], unapplied: [] };
       const later = (ms: number, why: string) => {
-        this.settleUntil.set(sessionId, Date.now() + ms);
+        this.settleUntil.set(m.sessionId, Date.now() + ms);
         this.scheduleRefresh(ms + 100);
         log(`${m.name}: ${why}`);
       };
-      const t = this.tracked.get(sessionId);
+      const t = this.tracked.get(m.sessionId);
       if (item.entered) {
         // Taken since the Enter: by its transcript when it is followed (the box can hold the text again after a stop),
         // or else by the session having been busy.
         if (t?.tail) await this.pollTails();
-        if (t?.tail ? this.promptTaken(sessionId, item.text, item.enteredAt ?? 0) : item.seenBusy) {
+        if (t?.tail ? this.promptTaken(m.sessionId, item.text, item.enteredAt ?? 0) : item.seenBusy) {
           log(`${m.name}: the input whose Enter was late has been taken`);
-          if (item.auto) this.titleSent.add(sessionId);
+          if (item.auto) this.titleSent.add(m.sessionId);
           this.emitSessions();
           return out;
         }
@@ -2085,7 +2152,7 @@ export class Daemon {
         }
         typed = await this.typeInput(m.terminal, item.text, item.entered, item.auto);
       } catch (e) {
-        this.managed.unshift(sessionId, item);
+        this.managed.unshift(m.sessionId, item);
         if (!(e instanceof EnterNotTaken)) throw e;
         later(UNSURE_RETRY_MS, `${e.message}; trying the input again in ${UNSURE_RETRY_MS / 1000}s`);
         out.warnings.push(`Claude Code がすぐに反応しなかったので、${UNSURE_RETRY_MS / 1000} 秒後にやり直します。`);
@@ -2098,23 +2165,23 @@ export class Daemon {
       if (typed === "not-typed") {
         // Model, effort and ultracode are switched already; only the text waits for the next try. A text whose Enter
         // was pressed before stays marked so: it must never be pasted again.
-        this.managed.unshift(sessionId, { ...base, ...entered });
+        this.managed.unshift(m.sessionId, { ...base, ...entered });
         later(item.auto ? AUTO_RETRY_MS : RETRY_MS, "could not type the input; trying again later");
         out.warnings.push("入力欄に入れられませんでした。少ししてから送り直します。");
       } else if (typed === "unsure") {
         // Enter was pressed, but the box still held the text: Claude Code may take it late. It is never typed again;
         // a later look drops it if it was taken, and presses Enter only if the box still holds it.
-        this.managed.unshift(sessionId, { ...base, entered: true, enteredAt: item.enteredAt ?? enteredAt });
+        this.managed.unshift(m.sessionId, { ...base, entered: true, enteredAt: item.enteredAt ?? enteredAt });
         later(UNSURE_RETRY_MS, `the input was not taken yet; looking again in ${UNSURE_RETRY_MS / 1000}s`);
         out.warnings.push(`送ったことを画面で確かめられませんでした。${UNSURE_RETRY_MS / 1000} 秒後に入力欄を見て、まだ残っていれば送ります。`);
       } else {
-        if (item.auto) this.titleSent.add(sessionId);
+        if (item.auto) this.titleSent.add(m.sessionId);
         this.scheduleRefresh(500);
       }
       this.emitSessions();
       return out;
     } finally {
-      this.flushing.delete(sessionId);
+      this.flushing.delete(m.terminal);
     }
   }
 
@@ -2448,8 +2515,8 @@ export class Daemon {
     const known = this.tracked.get(sessionId)?.info.background ?? [];
     const target = taskId === undefined ? undefined : known.find((x) => x.id === taskId);
     if (taskId !== undefined && !target) return { ok: false, error: "このタスクは、もう終わっています。" };
-    if (this.flushing.has(sessionId)) return { ok: false, error: STOP_BUSY_TYPING };
-    this.flushing.add(sessionId);
+    if (this.flushing.has(m.terminal)) return { ok: false, error: STOP_BUSY_TYPING };
+    this.flushing.add(m.terminal);
     try {
       const opened = await this.openTasks(m);
       if (typeof opened === "string") return { ok: false, error: opened };
@@ -2496,7 +2563,7 @@ export class Daemon {
       log(`${m.name}: could not stop background work`, e);
       return { ok: false, error: "端末を操作できなかったため、止められませんでした。" };
     } finally {
-      this.flushing.delete(sessionId);
+      this.flushing.delete(m.terminal);
       this.scheduleRefresh(500);
     }
   }

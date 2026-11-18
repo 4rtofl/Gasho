@@ -22,10 +22,12 @@ import type {
   TranscriptEntry,
 } from "@gasho/protocol";
 import { fetchMe } from "./api";
-import { hasDrafts } from "./drafts";
-import { hasUnsavedFiles } from "./file-drafts";
+import { hasDrafts, moveDraft } from "./drafts";
+import { hasUnsavedFiles, moveFileDrafts } from "./file-drafts";
 import { usePageVisible } from "./media";
+import { movePending } from "./pending";
 import { type AutoReload, onOutOfDate, outOfDate } from "./server-update";
+import { movedSession, unreadOfSession } from "./sessions";
 import { sameEntry, takePage } from "./transcript-page";
 
 /** Close code the Gasho server uses when this browser is not (or no longer) registered. */
@@ -520,6 +522,23 @@ export function sendCommand(machine: string, cmd: SessionCommand, timeoutMs = 60
   });
 }
 
+/**
+ * After /clear a session goes on under a new id (see movedSession): what its chat box holds, the messages sent from it
+ * that are not typed yet, and the files being written in its panel go with it, also for a session not on screen, before
+ * a page goes to the new id.
+ */
+function moveDrafts(machines: MachineInfo[]): void {
+  for (const m of machines) {
+    for (const id of new Set(m.sessions.flatMap((s) => s.previousSessionIds ?? []))) {
+      const to = movedSession(m, id);
+      if (!to) continue;
+      moveDraft(transcriptKey(m.id, id), transcriptKey(m.id, to.sessionId));
+      movePending(transcriptKey(m.id, id), transcriptKey(m.id, to.sessionId));
+      moveFileDrafts(fileKey(m.id, id, ""), fileKey(m.id, to.sessionId, ""));
+    }
+  }
+}
+
 function handle(m: HubToClient): void {
   for (const l of messageListeners) l(m);
   switch (m.type) {
@@ -547,6 +566,7 @@ function handle(m: HubToClient): void {
       break;
     case "snapshot":
       heartbeat = m.heartbeat === true;
+      moveDrafts(m.machines);
       update({
         push: m.push,
         machines: m.machines,
@@ -569,6 +589,7 @@ function handle(m: HubToClient): void {
       const machines = state.machines.filter((x) => x.id !== m.machine.id);
       machines.push(m.machine);
       machines.sort((a, b) => a.name.localeCompare(b.name));
+      moveDrafts([m.machine]);
       update({ machines });
       break;
     }
@@ -751,12 +772,12 @@ export function markRead(ids: string[]): void {
  * and those that could not be sent while disconnected once the Gasho server's snapshot brings them back.
  */
 export function useReadWhileOpen(machine: string | undefined, sessionId: string | undefined): void {
-  const { notifications } = useAppState();
+  const { notifications, machines } = useAppState();
   const visible = usePageVisible();
   useEffect(() => {
     if (!visible || !machine || !sessionId) return;
-    markRead(notifications.filter((n) => !n.read && n.machine === machine && n.sessionId === sessionId).map((n) => n.id));
-  }, [visible, machine, sessionId, notifications]);
+    markRead(unreadOfSession(notifications, machines, machine, sessionId).map((n) => n.id));
+  }, [visible, machine, sessionId, notifications, machines]);
 }
 
 /** The state now, outside React (the plugins' loader follows it). */

@@ -73,3 +73,4 @@ $GD session launch --cwd /home/rg/repos/<Repo>-worktrees/<issue>-<slug> --name <
 - 連絡は、返ってきた `name` で SendMessage する（ListAgents に出る名前と同じ）。指示を足すときは `$GD session send <name> --text "…"`（または `--file FILE`、`-`）でも入力欄に送れる。セッションが作業中なら、終わるまで待ってから入力される
 - 様子を見るには `$GD session list`（名前・状態・作業フォルダー・ID）。端末をそのまま見るには `$GD attach <terminal>`（Ctrl+] で抜ける）
 - 利用者には、起動したセッションの名前、ワークツリーのパス、ブランチ、送った指示の要点を報告する
+- 作業が終わったあとの片付け（ワークツリーとセッションを消す）は、Skill `remove-gasho-worktree` を使う。`git worktree remove` で消すと、中のセッションが「リポジトリ外」に残る

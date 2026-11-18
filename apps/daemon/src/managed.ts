@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { BackgroundTaskKind, EffortLevel, ModelOption, SessionModel } from "@gasho/protocol";
+import { log } from "./util.ts";
 
 const execFileP = promisify(execFile);
 
@@ -890,16 +891,21 @@ export class ManagedSessions {
   private file: string;
   private sessions = new Map<string, ManagedSession>();
   private queues = new Map<string, QueuedInput[]>();
+  private saving: Promise<void> = Promise.resolve();
 
   constructor(file: string) {
     this.file = file;
   }
 
   async load(keep: (m: ManagedSession) => Promise<boolean>): Promise<void> {
-    let list: (ManagedSession & { zellijSession?: string })[] = [];
+    let list: (ManagedSession & { zellijSession?: string })[];
     try {
-      list = JSON.parse(await fs.readFile(this.file, "utf8")) as typeof list;
-    } catch {
+      const saved = JSON.parse(await fs.readFile(this.file, "utf8")) as unknown;
+      if (!Array.isArray(saved)) throw new Error("not a list");
+      list = saved as typeof list;
+    } catch (e) {
+      // No file yet is the first start. Otherwise the sessions it named are taken as ones started outside Gasho.
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") log(`cannot read ${this.file}; starting without the sessions it kept`, e);
       return;
     }
     for (const saved of list) {
@@ -911,13 +917,24 @@ export class ManagedSessions {
     await this.save();
   }
 
-  async save(): Promise<void> {
-    await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
-    // A session in zellij is saved the way gasho-daemon 0.10 and before saved it (see ManagedSession.zellij).
-    const list = [...this.sessions.values()].map(({ terminal, zellij, ...rest }) =>
-      zellij ? { ...rest, zellijSession: terminal } : { ...rest, terminal },
-    );
-    await fs.writeFile(this.file, `${JSON.stringify(list, null, 2)}\n`, { mode: 0o600 });
+  /**
+   * One write at a time, each of the sessions as they are when it runs, so that two changes close together are both
+   * kept. Written next to the file and renamed over it, so that an exit while writing (an update) leaves the last one.
+   */
+  save(): Promise<void> {
+    this.saving = this.saving
+      .catch(() => undefined)
+      .then(async () => {
+        await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
+        // A session in zellij is saved the way gasho-daemon 0.10 and before saved it (see ManagedSession.zellij).
+        const list = [...this.sessions.values()].map(({ terminal, zellij, ...rest }) =>
+          zellij ? { ...rest, zellijSession: terminal } : { ...rest, terminal },
+        );
+        const tmp = `${this.file}.${process.pid}.tmp`;
+        await fs.writeFile(tmp, `${JSON.stringify(list, null, 2)}\n`, { mode: 0o600 });
+        await fs.rename(tmp, this.file);
+      });
+    return this.saving;
   }
 
   has(sessionId: string): boolean {

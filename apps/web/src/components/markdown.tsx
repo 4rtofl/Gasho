@@ -2,11 +2,13 @@
 // A single newline is a line break, as in chat apps and GitHub comments; Claude often writes one item per line.
 // Raw HTML is never rendered. Links go through easyui.site's safeHref; images are shown as links so that
 // opening a conversation never loads anything from other servers.
-import { Children, isValidElement, type ReactNode } from "react";
+// GitHubMarkdown, which plugins draw GitHub's bodies with, also renders the HTML GitHub shows and loads images.
+import { Children, isValidElement, useState, type ComponentProps, type ReactNode } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { CodeBlock, safeHref } from "@/components/ui/ai-response";
+import { GITHUB_HTML, webImageSrc } from "@/lib/github-html";
 
 function Pre({ children }: { children?: ReactNode }) {
   const child = Children.toArray(children)[0];
@@ -16,6 +18,37 @@ function Pre({ children }: { children?: ReactNode }) {
     return <CodeBlock language={lang} code={code} className="my-3" />;
   }
   return <pre className="my-3 overflow-x-auto">{children}</pre>;
+}
+
+function ImageLink({ src, alt }: ComponentProps<"img">) {
+  const safe = safeHref(typeof src === "string" ? src : undefined);
+  const label = `画像：${alt || safe || ""}`;
+  return safe ? (
+    <a href={safe} target="_blank" rel="noopener noreferrer nofollow" className="underline underline-offset-2">
+      {label}
+    </a>
+  ) : (
+    <span>{label}</span>
+  );
+}
+
+/** An image of a GitHub body; a link to it, as in the conversation, when it is not on the web or does not load. */
+function WebImage({ src, alt, width, height }: ComponentProps<"img">) {
+  const [failed, setFailed] = useState<string>();
+  const url = webImageSrc(src);
+  if (!url || failed === url) return <ImageLink src={src} alt={alt} />;
+  return (
+    <img
+      src={url}
+      alt={alt ?? ""}
+      width={width}
+      height={height}
+      loading="lazy"
+      referrerPolicy="no-referrer"
+      onError={() => setFailed(url)}
+      className="inline-block h-auto max-w-full rounded-md align-middle"
+    />
+  );
 }
 
 const components: Components = {
@@ -37,17 +70,7 @@ const components: Components = {
       </a>
     );
   },
-  img: ({ src, alt }) => {
-    const safe = safeHref(typeof src === "string" ? src : undefined);
-    const label = `画像：${alt || safe || ""}`;
-    return safe ? (
-      <a href={safe} target="_blank" rel="noopener noreferrer nofollow" className="underline underline-offset-2">
-        {label}
-      </a>
-    ) : (
-      <span>{label}</span>
-    );
-  },
+  img: ImageLink,
   h1: ({ children }) => <h1 className="mt-5 mb-2 text-lg font-semibold">{children}</h1>,
   h2: ({ children }) => <h2 className="mt-5 mb-2 text-base font-semibold">{children}</h2>,
   h3: ({ children }) => <h3 className="mt-4 mb-1.5 text-sm font-semibold">{children}</h3>,
@@ -88,10 +111,34 @@ const components: Components = {
   ),
 };
 
+const githubComponents: Components = {
+  ...components,
+  img: WebImage,
+  details: ({ children, open }) => <details open={open} className="my-2 rounded-lg border border-border px-3 py-1.5">{children}</details>,
+  summary: ({ children }) => <summary className="cursor-pointer font-medium marker:text-muted-foreground">{children}</summary>,
+  kbd: ({ children }) => (
+    <kbd className="rounded border border-border bg-surface-raised px-1 py-0.5 font-mono text-[0.8em]">{children}</kbd>
+  ),
+};
+
+const BODY = "min-w-0 break-words text-sm leading-relaxed [&>*:first-child]:mt-0 [&>*:last-child]:mb-0";
+
 export function MarkdownText({ text }: { text: string }) {
   return (
-    <div className="min-w-0 break-words text-sm leading-relaxed [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+    <div className={BODY}>
       <Markdown remarkPlugins={[remarkGfm, remarkBreaks]} components={components} skipHtml>
+        {text}
+      </Markdown>
+    </div>
+  );
+}
+
+/** The body of an issue, a pull request or a comment on GitHub (plugins' Markdown). */
+export function GitHubMarkdown({ text }: { text: string }) {
+  return (
+    // An <img> on a line of its own is not in a paragraph; the margin keeps screenshots one under another apart.
+    <div className={`${BODY} [&>img]:my-2`}>
+      <Markdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={GITHUB_HTML} components={githubComponents}>
         {text}
       </Markdown>
     </div>

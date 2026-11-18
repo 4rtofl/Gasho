@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { type ControlRequest, controlRequest, controlSocketOf, sessionCommand, startControlServer, worktreeCommand } from "../src/control.ts";
 import { Daemon } from "../src/daemon.ts";
 import { changesProblem, removableWorktree, removeWorktree, worktreeChanges } from "../src/worktrees.ts";
 
@@ -176,8 +177,8 @@ function daemonFor(t: ReturnType<typeof setup>) {
     d.managed.remove(id);
     return { ok: true };
   };
-  const session = (sessionId: string, cwd: string, own: boolean) => {
-    d.tracked.set(sessionId, { info: { sessionId, cwd, status: "idle", rcMode: "none", prLinks: [] }, meta: {} });
+  const session = (sessionId: string, cwd: string, own: boolean, name?: string) => {
+    d.tracked.set(sessionId, { info: { sessionId, cwd, status: "idle", rcMode: "none", prLinks: [], ...(name ? { name } : {}) }, meta: {} });
     if (own) d.managed.add({ sessionId, terminal: `t-${sessionId}`, pid: 1, cwd, name: sessionId, launchedAt: Date.now() });
   };
   const run = (cmd: Record<string, unknown>) => d.removeWorktree({ type: "worktree.remove", requestId: "r", ...cmd });
@@ -247,6 +248,54 @@ test("with force, gasho-daemon removes a worktree with changes", async () => {
     assert.equal(fs.existsSync(t.wip), false);
     assert.deepEqual(t.branches(), ["feat/done", "main"]);
   } finally {
+    t.cleanup();
+  }
+});
+
+test("through the control socket, worktree remove is the screen's removal and session remove takes away one whose folder is gone", async () => {
+  const t = setup();
+  const { d, calls, session } = daemonFor(t);
+  fs.mkdirSync(path.join(t.dir, "state"));
+  const file = controlSocketOf(path.join(t.dir, "state"));
+  const server = await startControlServer(file, (req: ControlRequest) => d.onControl(req));
+  const request = (req: ControlRequest, ms?: number) => controlRequest(file, req, ms);
+  const out: string[] = [];
+  const cli = { request, out: (s: string) => out.push(s) };
+  const sessions = { request, readFile: async () => "", readStdin: async () => "", out: (s: string) => out.push(s), note: () => undefined };
+  try {
+    session("mine", t.wip, true, "wip-impl");
+    session("orca", t.wip, false, "orca-review");
+    fs.writeFileSync(path.join(t.wip, "new.txt"), "x");
+    await assert.rejects(worktreeCommand(["remove", t.wip], cli), /未コミットの変更が 1 件あるため、削除していません/);
+    assert.deepEqual(calls, []);
+    assert.equal(fs.existsSync(t.wip), true);
+    fs.rmSync(path.join(t.wip, "new.txt"));
+
+    await worktreeCommand(["remove", t.wip], cli);
+    assert.deepEqual(JSON.parse(out.pop()!), {
+      path: t.wip,
+      branch: "feat/wip",
+      ended: [
+        { sessionId: "orca", name: "orca-review" },
+        { sessionId: "mine", name: "wip-impl" },
+      ],
+    });
+    assert.deepEqual(calls, ["end orca", "remove mine", "repos"]);
+    assert.equal(fs.existsSync(t.wip), false);
+    // The branch stays, as from the screen.
+    assert.deepEqual(t.branches(), ["feat/done", "feat/wip", "main"]);
+
+    // A worktree removed with git: its session stays, and the list says its folder is gone.
+    session("left", t.done, true, "done-impl");
+    t.run(t.repo, "worktree", "remove", t.done);
+    await assert.rejects(worktreeCommand(["remove", t.done], cli), /フォルダーがありません/);
+    await sessionCommand(["list", "--json"], sessions);
+    assert.deepEqual(JSON.parse(out.pop()!).map((s: { sessionId: string; cwdMissing?: boolean }) => [s.sessionId, s.cwdMissing]), [["left", true]]);
+    await sessionCommand(["remove", "done-impl"], sessions);
+    assert.deepEqual(JSON.parse(out.pop()!), { sessionId: "left", name: "done-impl", cwd: t.done });
+    assert.equal(calls.at(-1), "remove left");
+  } finally {
+    server.close();
     t.cleanup();
   }
 });

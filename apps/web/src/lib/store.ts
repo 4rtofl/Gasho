@@ -12,6 +12,7 @@ import type {
   LatestVersions,
   MachineHookEvent,
   MachineInfo,
+  MachineMemory,
   PluginCatalog,
   PluginCommand,
   PluginInfo,
@@ -70,8 +71,15 @@ export interface State {
   me?: DeviceInfo;
   connected: boolean;
   machines: MachineInfo[];
+  /** The latest memory of the working servers that tell it, by machine id. */
+  memory: Record<string, MachineMemory>;
   notifications: GashoNotification[];
   events: MachineHookEvent[];
+  /**
+   * The Gasho server's records of what it was asked to do (the events named Gasho:…), oldest first: of the last 48
+   * hours at least. Kept apart from `events`, where the hooks of tools outnumber them.
+   */
+  operations: MachineHookEvent[];
   transcripts: Record<string, TranscriptState>;
   /** Keyed by graphKey(machine, sessionId, repo). */
   graphs: Record<string, GraphState>;
@@ -99,7 +107,11 @@ export interface State {
 
 const PAGE_SIZE = 80;
 const MAX_EVENTS = 300;
+/** As many as the Gasho server sends at most (Store.recentOperations). */
+export const MAX_OPERATIONS = 2000;
 const MAX_NOTIFICATIONS = 200;
+
+const isOperation = (e: MachineHookEvent): boolean => e.event.startsWith("Gasho:");
 
 export const transcriptKey = (machine: string, sessionId: string): string => `${machine}\u0000${sessionId}`;
 /** A branch graph per session and, in a folder of several repositories, per repository. */
@@ -110,8 +122,10 @@ export const fileKey = (machine: string, sessionId: string, path: string): strin
 const EMPTY: Omit<State, "auth"> = {
   connected: false,
   machines: [],
+  memory: {},
   notifications: [],
   events: [],
+  operations: [],
   transcripts: {},
   graphs: {},
   dirs: {},
@@ -520,8 +534,10 @@ function handle(m: HubToClient): void {
       update({
         push: m.push,
         machines: m.machines,
+        memory: m.memory ?? {},
         notifications: m.notifications,
         events: m.events.slice(-MAX_EVENTS),
+        operations: (m.operations ?? m.events.filter(isOperation)).slice(-MAX_OPERATIONS),
         plugins: m.plugins ?? [],
         catalog: m.catalog,
         latest: m.latest,
@@ -540,13 +556,19 @@ function handle(m: HubToClient): void {
       update({ machines });
       break;
     }
+    case "machine.memory": {
+      const { [m.machine]: _old, ...memory } = state.memory;
+      update({ memory: m.memory ? { ...memory, [m.machine]: m.memory } : memory });
+      break;
+    }
     case "machine.removed": {
+      const { [m.id]: _gone, ...memory } = state.memory;
       const prefix = transcriptKey(m.id, "");
       const transcripts = Object.fromEntries(Object.entries(state.transcripts).filter(([k]) => !k.startsWith(prefix)));
       const graphs = Object.fromEntries(Object.entries(state.graphs).filter(([k]) => !k.startsWith(prefix)));
       const dirs = Object.fromEntries(Object.entries(state.dirs).filter(([k]) => !k.startsWith(prefix)));
       const files = Object.fromEntries(Object.entries(state.files).filter(([k]) => !k.startsWith(prefix)));
-      update({ machines: state.machines.filter((x) => x.id !== m.id), transcripts, graphs, dirs, files });
+      update({ machines: state.machines.filter((x) => x.id !== m.id), memory, transcripts, graphs, dirs, files });
       break;
     }
     case "transcript.page": {
@@ -587,7 +609,10 @@ function handle(m: HubToClient): void {
       break;
     }
     case "event":
-      update({ events: [...state.events, m.event].slice(-MAX_EVENTS) });
+      update({
+        events: [...state.events, m.event].slice(-MAX_EVENTS),
+        ...(isOperation(m.event) ? { operations: [...state.operations, m.event].slice(-MAX_OPERATIONS) } : {}),
+      });
       break;
     case "command.result":
       pendingCommands.get(m.requestId)?.(m.result);

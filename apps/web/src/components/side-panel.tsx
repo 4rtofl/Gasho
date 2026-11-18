@@ -1,10 +1,12 @@
-// The frame of a session's panel (the branch graph, the files, a plugin's panel). On a computer it sits at the
-// right of the session and closes with its × button or Esc; on a phone it takes the screen, and its heading (a link
-// back, the title, the buttons) goes into the screen's top bar (see PanelBarContext), so there is one bar, not two.
+// The frame of a session's panel (the branch graph, the files, a plugin's panel), and of a plugin's page's panel (P19).
+// On a computer it sits at the right of the session (or the page) and closes with its × button or Esc; on a phone it
+// takes the screen, and its heading (a link back, the title, the buttons) goes into the screen's top bar (see
+// PanelBarContext), so there is one bar, not two.
 import { ArrowLeft, X } from "lucide-react";
 import { createContext, useContext, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { SessionInfo, SessionRepo } from "@gasho/protocol";
+import { closesPanel } from "@/lib/text-input";
 import { cn } from "@/lib/utils";
 
 /**
@@ -19,6 +21,7 @@ export function SidePanel({
   actions,
   docked,
   onClose,
+  backLabel = "セッションに戻る",
   children,
 }: {
   title: ReactNode;
@@ -27,6 +30,8 @@ export function SidePanel({
   /** Beside the session (a computer), rather than in its place (a phone). */
   docked: boolean;
   onClose: () => void;
+  /** The link back on a phone: to the session, or to the page a page's panel is of. */
+  backLabel?: string;
   children: ReactNode;
 }) {
   const bar = useContext(PanelBarContext);
@@ -37,7 +42,7 @@ export function SidePanel({
       className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
     >
       <ArrowLeft className="size-3.5" />
-      セッションに戻る
+      {backLabel}
     </button>
   );
   return (
@@ -45,7 +50,7 @@ export function SidePanel({
       aria-label={typeof title === "string" ? title : undefined}
       className="flex h-full min-h-0 flex-col"
       onKeyDown={(e) => {
-        if (docked && e.key === "Escape") onClose();
+        if (docked && closesPanel(e)) onClose();
       }}
     >
       {!docked && bar ? (
@@ -54,8 +59,8 @@ export function SidePanel({
             <button
               type="button"
               onClick={onClose}
-              aria-label="セッションに戻る"
-              title="セッションに戻る"
+              aria-label={backLabel}
+              title={backLabel}
               className="-ml-1 grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-surface-raised hover:text-foreground"
             >
               <ArrowLeft className="size-4" />

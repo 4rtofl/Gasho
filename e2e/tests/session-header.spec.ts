@@ -9,6 +9,7 @@ test("Gasho の外のセッションと見つからないセッションは、�
   });
   const main = page.getByRole("main");
   await expect(main.getByText("このセッションは Gasho から起動したものではないので、表示しません。")).toBeVisible();
+  await expect(main.getByRole("button", { name: "ホーム", exact: true })).toBeVisible();
   await expect(chatBox(page)).toHaveCount(0);
 
   await page.goto(sessionPath(daemon, OTHER_SESSION_ID));

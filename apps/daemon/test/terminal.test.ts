@@ -185,10 +185,13 @@ test("where systemd runs for the user, a terminal gets a scope of its own, outsi
   const calls = async () => (await fs.readFile(log, "utf8")).trim().split("\n");
   const check = (extra: string) => `systemd-run --user --scope --quiet --collect ${extra}-- ${process.execPath} -p '$$'`;
   const started = (name: string, extra: string) => `systemd-run --user --scope --quiet --collect ${extra}--unit=${name} -- ${process.execPath} `;
-  const t = new Terminals({ stateDir, env: env() });
+  // Run in gasho-daemon's service: said only of a terminal that cannot get a scope of its own.
+  const said: string[] = [];
+  const t = new Terminals({ stateDir, env: env(), inService: true, log: (s) => said.push(s) });
   try {
     await t.start(shell("gasho-scoped-0005", "exec cat"));
     await t.start(shell("gasho-scoped-0006", "exec cat"));
+    assert.equal(said.length, 0);
     const c = await calls();
     // Checked once: scopes can be made, and run their command as it is given; each terminal is started in its own.
     assert.equal(c.length, 3);
@@ -211,10 +214,13 @@ test("where systemd runs for the user, a terminal gets a scope of its own, outsi
 
     // Without systemd for the user (macOS, no user manager), a terminal starts without a scope.
     await fs.rm(log);
-    const none = new Terminals({ stateDir, env: env({ FAIL: "1" }) });
+    const none = new Terminals({ stateDir, env: env({ FAIL: "1" }), inService: true, log: (s) => said.push(s) });
     await none.start(shell("gasho-scoped-0008", "exec cat"));
     assert.deepEqual(await calls(), [check("--expand-environment=no "), check("")]);
     assert.ok((await none.live()).has("gasho-scoped-0008"));
+    // In gasho-daemon's service, that terminal is stopped with it: the log says so.
+    assert.equal(said.length, 1);
+    assert.match(said[0] ?? "", /terminal gasho-scoped-0008 runs inside gasho-daemon's service/);
   } finally {
     for (const name of (await t.live()).keys()) await t.kill(name);
     await fs.rm(stateDir, { recursive: true, force: true });

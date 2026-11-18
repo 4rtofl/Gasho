@@ -56,7 +56,19 @@ test("what a gasho-daemon says about updating it reaches browsers, kept to what 
     previous: "0.14.0",
     progress: { version: "0.23.0", step: "check", at: 5 },
     failed: undefined,
+    rolledBack: undefined,
+    trialMs: undefined,
   });
+  // A version on trial after an update, and one that went back by itself.
+  const trial = updateInfoOf({
+    canUpdate: true,
+    progress: { version: "0.22.0", step: "trial", at: 5 },
+    rolledBack: { from: "0.23.0", to: "0.22.0", error: "boom", at: 3 },
+    trialMs: 60_000,
+  });
+  assert.deepEqual([trial?.progress?.step, trial?.rolledBack, trial?.trialMs], ["trial", { from: "0.23.0", to: "0.22.0", error: "boom", at: 3 }, 60_000]);
+  const odd = updateInfoOf({ canUpdate: true, rolledBack: { from: "../x", to: "0.22.0", at: 3 }, trialMs: 1e12 });
+  assert.deepEqual([odd?.rolledBack, odd?.trialMs], [undefined, undefined]);
   assert.equal(updateInfoOf("yes"), undefined);
   assert.equal(updateInfoOf({ canUpdate: "true" })?.canUpdate, false);
   assert.equal(updateInfoOf({ canUpdate: true, progress: { version: "0.23.0", step: "reboot", at: 5 } })?.progress, undefined);

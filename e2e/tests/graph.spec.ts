@@ -1,5 +1,6 @@
 // The branch graph of a session's repository (views/graph.tsx, components/commit-graph.tsx), from what gasho-daemon
 // answers to git.graph.get. Times are of Playwright's clock, paused at 09:30 in Tokyo.
+import type { ElementHandle } from "@playwright/test";
 import type { GitGraph } from "@gasho/protocol";
 import { expect, test } from "./fixtures.ts";
 import { commit, hashOf, pauseClockAt, serveGraph, sessionDaemon, sessionUrl, showSessionHeader } from "./panel-data.ts";
@@ -11,26 +12,29 @@ const T0 = Date.parse("2026-11-18T09:30:00+09:00");
 const github = { owner: "4rtofl", name: "Gasho", url: "https://github.com/4rtofl/Gasho" };
 const LONG = `${"長い件名の続き、".repeat(16)}ここで終わり`;
 
-/** On branch feat/x, ahead of its upstream by 2 and behind by 1, with branches in each state of their upstream. */
+/**
+ * On branch topic/x, ahead of its upstream by 2 and behind by 1, with branches in each state of their upstream. topic/x
+ * comes last by name, so that it is first in the list only because it is checked out.
+ */
 const graph: GitGraph = {
   root: "/work/gasho",
-  head: "feat/x",
+  head: "topic/x",
   headHash: hashOf("x2"),
   changes: { staged: 1, unstaged: 2, untracked: 3 },
   github,
   branches: [
-    { name: "feat/x", remote: false, hash: hashOf("x2"), upstream: "origin/feat/x", ahead: 2, behind: 1 },
+    { name: "topic/x", remote: false, hash: hashOf("x2"), upstream: "origin/topic/x", ahead: 2, behind: 1 },
     { name: "main", remote: false, hash: hashOf("m1"), upstream: "origin/main", ahead: 0, behind: 0 },
     { name: "old", remote: false, hash: hashOf("m1"), upstream: "origin/old", upstreamGone: true },
     { name: "local-only", remote: false, hash: hashOf("m1") },
-    { name: "origin/feat/x", remote: true, hash: hashOf("x0") },
+    { name: "origin/topic/x", remote: true, hash: hashOf("x0") },
     { name: "origin/main", remote: true, hash: hashOf("m1") },
     { name: "origin/release", remote: true, hash: hashOf("m1") },
   ],
   commits: [
-    commit("x2", { parents: ["x1"], subject: LONG, author: "Alice", at: T0 - 5 * MIN, refs: [{ name: "feat/x", kind: "local" }] }),
+    commit("x2", { parents: ["x1"], subject: LONG, author: "Alice", at: T0 - 5 * MIN, refs: [{ name: "topic/x", kind: "local" }] }),
     commit("x1", { parents: ["x0"], subject: "x の 2 つ目", at: T0 - 30 * MIN }),
-    commit("x0", { parents: ["m1"], subject: "x の 1 つ目", at: T0 - 120 * MIN, refs: [{ name: "origin/feat/x", kind: "remote" }] }),
+    commit("x0", { parents: ["m1"], subject: "x の 1 つ目", at: T0 - 120 * MIN, refs: [{ name: "origin/topic/x", kind: "remote" }] }),
     commit("m1", {
       subject: "最初のコミット",
       at: T0 - 3 * 24 * 60 * MIN,
@@ -46,13 +50,15 @@ const graph: GitGraph = {
 };
 
 test("HEAD のブランチ・未コミットの変更・読み込んだ時刻・ブランチの一覧と上流の状態・コミットが出る", async ({ page, hub, isMobile }) => {
-  const d = await sessionDaemon(hub, { session: { gitBranch: "feat/x" } });
+  const d = await sessionDaemon(hub, { session: { gitBranch: "topic/x" } });
   serveGraph(d, () => graph);
   await pauseClockAt(page, T0);
   await page.goto(sessionUrl(d));
   const panel = page.getByRole("region", { name: "ブランチグラフ" });
   const commits = panel.getByRole("list", { name: "コミットの履歴" });
   const branch = (name: string) => panel.getByRole("listitem").filter({ has: page.getByTitle(name, { exact: true }) });
+  // The line above the branches, without them.
+  const summary = panel.locator("div").filter({ hasText: "に読み込み" }).filter({ hasNot: page.getByRole("listitem") });
 
   await test.step("ヘッダーのブランチ名からブランチグラフを開く", async () => {
     await showSessionHeader(page, isMobile);
@@ -61,30 +67,30 @@ test("HEAD のブランチ・未コミットの変更・読み込んだ時刻・
   });
 
   await test.step("HEAD のブランチ、未コミットの変更の件数、読み込んだ時刻が出る", async () => {
-    await expect(panel.getByText("未コミットの変更：ステージ済み 1・未ステージ 2・未追跡 3")).toBeVisible();
-    await expect(panel.getByText("09:30 に読み込み")).toBeVisible();
-    await expect(panel.getByText("feat/x", { exact: true }).first()).toBeVisible();
+    await expect(summary.getByText("topic/x", { exact: true })).toBeVisible();
+    await expect(summary.getByText("未コミットの変更：ステージ済み 1・未ステージ 2・未追跡 3")).toBeVisible();
+    await expect(summary.getByText("09:30 に読み込み")).toBeVisible();
   });
 
   await test.step("ブランチの一覧は、チェックアウト中のブランチを先頭に、追跡されていないリモートのブランチまで並ぶ", async () => {
     await expect(panel.getByRole("button", { name: "ブランチ（5）" })).toHaveAttribute("aria-expanded", "true");
-    await expect(panel.getByRole("listitem").first()).toContainText("feat/x");
-    await expect(branch("feat/x")).toContainText("チェックアウト中");
+    await expect(panel.getByRole("listitem").first()).toContainText("topic/x");
+    await expect(branch("topic/x")).toContainText("チェックアウト中");
     await expect(branch("origin/release")).toBeVisible();
     // Tracked by a local branch, it is shown with it.
     await expect(branch("origin/main")).toHaveCount(0);
   });
 
   await test.step("上流の状態: ↑n・↓n、同期済み、削除済み、なし", async () => {
-    await expect(branch("feat/x")).toContainText("↑2");
-    await expect(branch("feat/x")).toContainText("↓1");
+    await expect(branch("topic/x")).toContainText("↑2");
+    await expect(branch("topic/x")).toContainText("↓1");
     await expect(branch("main")).toContainText("同期済み");
     await expect(branch("old")).toContainText("上流は削除済み");
     await expect(branch("local-only")).toContainText("上流なし");
   });
 
   await test.step("origin にあるブランチと、リポジトリと、コミットに GitHub のリンクが付く", async () => {
-    await expect(panel.getByRole("link", { name: "feat/x を GitHub で開く" })).toHaveAttribute("href", `${github.url}/tree/feat/x`);
+    await expect(panel.getByRole("link", { name: "topic/x を GitHub で開く" })).toHaveAttribute("href", `${github.url}/tree/topic/x`);
     await expect(panel.getByRole("link", { name: "origin/release を GitHub で開く" })).toHaveAttribute("href", `${github.url}/tree/release`);
     await expect(panel.getByRole("link", { name: "local-only を GitHub で開く" })).toHaveCount(0);
     // On a phone the panel's buttons are in the screen's top bar.
@@ -103,7 +109,16 @@ test("HEAD のブランチ・未コミットの変更・読み込んだ時刻・
 
   await test.step("長い件名は 1 行のまま、その行だけが横にスクロールする", async () => {
     const subject = commits.getByText(LONG);
-    const row = subject.locator("xpath=../..");
+    // The nearest box around the subject that scrolls sideways.
+    const row = (
+      await subject.evaluateHandle((el) => {
+        const w = globalThis as unknown as { getComputedStyle(e: unknown): { overflowX: string } };
+        let box = el.parentElement;
+        while (box && w.getComputedStyle(box).overflowX !== "auto") box = box.parentElement;
+        return box;
+      })
+    ).asElement() as ElementHandle | null;
+    if (!row) throw new Error("件名を囲む要素に、横にスクロールするものがありません");
     const size = await row.evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }));
     expect(size.scroll).toBeGreaterThan(size.client);
     expect((await subject.boundingBox())?.height).toBeLessThan(32);
@@ -124,13 +139,13 @@ test("HEAD のブランチ・未コミットの変更・読み込んだ時刻・
 
   await test.step("ブランチの一覧を閉じると、読み込み直しても閉じたまま", async () => {
     await panel.getByRole("button", { name: "ブランチ（5）" }).click();
-    await expect(branch("feat/x")).toHaveCount(0);
+    await expect(branch("topic/x")).toHaveCount(0);
     await page.reload();
     await expect(commits).toBeVisible();
     await expect(panel.getByRole("button", { name: "ブランチ（5）" })).toHaveAttribute("aria-expanded", "false");
-    await expect(branch("feat/x")).toHaveCount(0);
+    await expect(branch("topic/x")).toHaveCount(0);
     await panel.getByRole("button", { name: "ブランチ（5）" }).click();
-    await expect(branch("feat/x")).toBeVisible();
+    await expect(branch("topic/x")).toBeVisible();
   });
 });
 
@@ -138,7 +153,7 @@ test.describe("PC の幅", () => {
   test.skip(({ isMobile }) => isMobile, "パネルの幅を変えられるのは PC の幅だけ");
 
   test("パネルの幅で、コミットの番号が件名の後ろと右の列のあいだで移り、作者は件名の後ろに残る", async ({ page, hub }) => {
-    const d = await sessionDaemon(hub, { session: { gitBranch: "feat/x" } });
+    const d = await sessionDaemon(hub, { session: { gitBranch: "topic/x" } });
     serveGraph(d, () => graph);
     await pauseClockAt(page, T0);
     await page.goto(sessionUrl(d, "/graph"));
@@ -275,7 +290,6 @@ test("読み込み中・コミット 0 件・detached・件数を切ったとき
 });
 
 test("読み込みの途中で working server が切れても、英語のエラーは出ない", async ({ page, hub }) => {
-  test.fail(true, "#177: hub が答えを待っている要求に machine disconnected と返し、画面がそのまま出す");
   const d = await sessionDaemon(hub);
   // Never answered: the Gasho server is still waiting when the working server goes.
   serveGraph(d, () => undefined);
@@ -285,5 +299,6 @@ test("読み込みの途中で working server が切れても、英語のエラ�
   await d.disconnect();
   await expect(panel.getByText("mac はオフラインです。")).toBeVisible();
   await expect(panel.getByText("読み込み中…")).toHaveCount(0);
+  await expect(panel.getByText("working server との接続が切れました。")).toBeVisible();
   await expect(panel.getByText("machine disconnected")).toHaveCount(0);
 });

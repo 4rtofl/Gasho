@@ -1,6 +1,6 @@
 // The chat box of the session screen: what it sends to gasho-daemon and how, what it says about the session, and what
 // it keeps.
-import type { Locator, Page } from "@playwright/test";
+import { devices, type Locator, type Page } from "@playwright/test";
 import { commandResult, fakeSession, textEntry } from "../harness/index.ts";
 import { expect, test } from "./fixtures.ts";
 import {
@@ -271,7 +271,7 @@ test("添付は 5 個・1 個 10MB・合計 10MB まで。超えると文を出�
   expect(daemon.received.filter((m) => m.type === "session.input")).toHaveLength(0);
 });
 
-test("モデル（既定・「いま」の札）・Effort・Ultracode は、いまと違うものを選ぶと琥珀色の点が付き、次に送るときに切り替わる", async ({ page, hub }) => {
+test("モデル（既定・「いま」の札）・Effort・Ultracode は、いまと違うものを選ぶと次に送るときに切り替わり、Effort と Ultracode には切り替わるまで琥珀色の点が付く", async ({ page, hub }) => {
   const daemon = await openSession(page, hub, {
     session: { model: "Opus 5.5", effort: "medium", ultracode: false },
     daemon: {
@@ -294,16 +294,23 @@ test("モデル（既定・「いま」の札）・Effort・Ultracode は、い�
   await models.getByRole("option", { name: /既定（Sonnet 5\.5）/ }).click();
   await expect(page.getByRole("button", { name: "モデル：既定（Sonnet 5.5）（選び直す）" })).toBeVisible();
 
+  // The amber dot on the button, while what is picked differs from what the session runs with.
+  const dot = (button: Locator) => button.locator(".bg-amber-400");
+  const effort = page.getByRole("button", { name: /^Effort：/ });
+  await expect(dot(effort)).toHaveCount(0);
   await page.getByRole("button", { name: "Effort：Medium" }).click();
   await expect(page.getByRole("menuitemradio", { name: /Medium/ })).toContainText("いま");
   await page.getByRole("menuitemradio", { name: /High/ }).first().click();
   await expect(page.getByRole("button", { name: "Effort：High（送るときに切り替えます）" })).toBeVisible();
+  await expect(dot(effort)).toBeVisible();
 
   const ultracode = page.getByRole("button", { name: "Ultracode" });
   await expect(ultracode).toHaveAttribute("aria-pressed", "false");
+  await expect(dot(ultracode)).toHaveCount(0);
   await ultracode.click();
   await expect(ultracode).toHaveAttribute("aria-pressed", "true");
   await expect(ultracode).toHaveAttribute("title", /送るときに切り替えます/);
+  await expect(dot(ultracode)).toBeVisible();
 
   await chatBox(page).fill("切り替えて続けて");
   await sendButton(page).click();
@@ -312,18 +319,22 @@ test("モデル（既定・「いま」の札）・Effort・Ultracode は、い�
   // Once the session runs with them, the dots go.
   daemon.updateSession(SESSION_ID, { model: "Sonnet 5.5 (default)", effort: "high", ultracode: true });
   await expect(page.getByRole("button", { name: "Effort：High" })).toBeVisible();
+  await expect(dot(effort)).toHaveCount(0);
   await expect(ultracode).not.toHaveAttribute("title", /送るときに切り替えます/);
   await expect(ultracode).toHaveAttribute("aria-pressed", "true");
+  await expect(dot(ultracode)).toHaveCount(0);
 
   // What the working server could not switch is dropped, and the session keeps what it had.
   daemon.handle("session.input", (msg) => commandResult(msg, { ok: true, unapplied: ["effort"], warning: "Effort を切り替えられませんでした" }));
   await page.getByRole("button", { name: "Effort：High" }).click();
   await page.getByRole("menuitemradio", { name: /Max/ }).click();
   await expect(page.getByRole("button", { name: "Effort：Max（送るときに切り替えます）" })).toBeVisible();
+  await expect(dot(effort)).toBeVisible();
   await chatBox(page).fill("もう一度");
   await sendButton(page).click();
   await expect(page.getByText("Effort を切り替えられませんでした")).toBeVisible();
   await expect(page.getByRole("button", { name: "Effort：High" })).toBeVisible();
+  await expect(dot(effort)).toHaveCount(0);
 });
 
 test("古い gasho-daemon では、モデル・Effort・Ultracode・添付のうち、できないものを出さない", async ({ page, hub }) => {
@@ -470,11 +481,24 @@ test("添付できないセッションと、文字も載っている貼り付�
   }
 });
 
-// Ctrl+B is left to a text box on a Mac, iPhone and iPad only (where it moves the cursor back), told by the userAgent.
-test.describe("Mac", () => {
-  test.use({ userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36" });
+test("Mac 以外の PC では、チャット欄で Ctrl+B を押すとサイドバーを開閉する", async ({ page, hub, isMobile }) => {
+  test.skip(isMobile, "サイドバーは 768px 以上の幅で開閉する");
+  // Desktop Chrome's User-Agent is that of Windows, where Ctrl+B does nothing in a text box.
+  await openSession(page, hub);
+  await expect(page.getByRole("button", { name: "サイドバーを畳む" })).toBeVisible();
+  const box = chatBox(page);
+  await box.fill("ab");
+  await box.press("Control+B");
+  await expect(page.getByRole("button", { name: "サイドバーを開く" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "サイドバーを畳む" })).toHaveCount(0);
+  await box.press("Control+B");
+  await expect(page.getByRole("button", { name: "サイドバーを畳む" })).toBeVisible();
+});
 
-  test("Mac のチャット欄で Ctrl+B を押しても、サイドバーを開閉しない（#108）", async ({ page, hub, isMobile }) => {
+test.describe("Mac の Chrome", () => {
+  test.use({ userAgent: devices["Desktop Chrome"].userAgent.replace(/\([^)]*\)/, "(Macintosh; Intel Mac OS X 10_15_7)") });
+
+  test("Mac では、チャット欄で Ctrl+B を押してもサイドバーを開閉しない（#108）", async ({ page, hub, isMobile }) => {
     test.skip(isMobile, "サイドバーは 768px 以上の幅で開閉する");
     await openSession(page, hub);
     await expect(page.getByRole("button", { name: "サイドバーを畳む" })).toBeVisible();
@@ -486,21 +510,5 @@ test.describe("Mac", () => {
     await expect(box).toHaveValue(/x/);
     await expect(page.getByRole("button", { name: "サイドバーを畳む" })).toBeVisible();
     await expect(page.getByRole("button", { name: "サイドバーを開く" })).toHaveCount(0);
-  });
-});
-
-test.describe("Linux", () => {
-  test.use({ userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36" });
-
-  test("Windows・Linux では、チャット欄の Ctrl+B でもサイドバーを開閉する（#108）", async ({ page, hub, isMobile }) => {
-    test.skip(isMobile, "サイドバーは 768px 以上の幅で開閉する");
-    await openSession(page, hub);
-    const box = chatBox(page);
-    await box.fill("ab");
-    await box.press("Control+B");
-    await expect(page.getByRole("button", { name: "サイドバーを開く" })).toBeVisible();
-    await box.press("Control+B");
-    await expect(page.getByRole("button", { name: "サイドバーを畳む" })).toBeVisible();
-    await expect(box).toHaveValue("ab");
   });
 });

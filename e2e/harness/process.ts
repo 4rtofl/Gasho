@@ -1,6 +1,7 @@
 // The processes a test starts (the Gasho server, gasho-daemon), their logs, and the environment they get: a HOME and
 // XDG folders of the test's own, and none of the GASHO_* settings of the shell that runs the tests.
 import { type ChildProcess, spawn } from "node:child_process";
+import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,8 +50,33 @@ export function isolatedEnv(home: string, more: Record<string, string> = {}): Re
   };
 }
 
-/** A port on the loopback that nothing listens on now. */
-export function freePort(): Promise<number> {
+/**
+ * The ports of the Gasho servers stopped to be started again (GashoHub.stopServer), one file each, which freePort
+ * gives to no test of any worker: such a server starts on its port again, which the screen and gasho-daemon go to.
+ */
+const KEPT_PORTS = "/tmp/ge2e-ports";
+
+/** Keeps the port from freePort until the function it gives is called. */
+export function keepPort(port: number): () => void {
+  fs.mkdirSync(KEPT_PORTS, { recursive: true });
+  const file = path.join(KEPT_PORTS, String(port));
+  fs.writeFileSync(file, "");
+  const forget = onExit(() => fs.rmSync(file, { force: true }));
+  return () => {
+    fs.rmSync(file, { force: true });
+    forget();
+  };
+}
+
+/** A port on the loopback that nothing listens on now, and that no stopped Gasho server keeps (keepPort). */
+export async function freePort(): Promise<number> {
+  for (;;) {
+    const port = await anyPort();
+    if (!fs.existsSync(path.join(KEPT_PORTS, String(port)))) return port;
+  }
+}
+
+function anyPort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const s = net.createServer();
     s.on("error", reject);

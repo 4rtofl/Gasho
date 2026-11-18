@@ -107,6 +107,9 @@ test("質問のカードで、単一選択・複数選択・自分の言葉の�
   await features.getByRole("checkbox", { name: "通知" }).check();
   await expect(answer).toBeDisabled();
 
+  // "Other" chosen with nothing written is no answer yet.
+  await naming.getByRole("radio", { name: "その他（自分の言葉で答える）" }).check();
+  await expect(answer).toBeDisabled();
   // Writing one's own answer chooses it in place of the option.
   await naming.getByRole("radio", { name: "ホーム" }).check();
   await naming.getByRole("textbox", { name: "名前：自分の言葉で答える" }).fill("トップ");

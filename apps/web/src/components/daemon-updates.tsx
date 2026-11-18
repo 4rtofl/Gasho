@@ -14,6 +14,8 @@ import {
   pendingWork,
   RESTART_SLOW_MS,
   STEP_LABEL,
+  trialLabel,
+  trialLength,
   updateTo,
 } from "@/lib/daemon-update";
 import { relativeTime } from "@/lib/format";
@@ -24,6 +26,31 @@ import { useNow } from "@/lib/use-now";
 import { cn, copyToClipboard } from "@/lib/utils";
 
 const SMALL_BUTTON = "inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs hover:border-border-hover disabled:opacity-50";
+
+/**
+ * Where DaemonUpdates keeps the updates this tab started, so that a page reloaded meanwhile (to the updated Gasho
+ * server's build of the screen) still says "updated". Per tab, as the reload itself (store.ts).
+ */
+const STARTED_KEY = "gasho.updatesStarted";
+
+function startedInTab(): Record<string, string> {
+  try {
+    const v: unknown = JSON.parse(sessionStorage.getItem(STARTED_KEY) ?? "{}");
+    if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+    return Object.fromEntries(Object.entries(v).filter((e): e is [string, string] => typeof e[1] === "string"));
+  } catch {
+    return {};
+  }
+}
+
+function keepInTab(started: Record<string, string>): void {
+  try {
+    if (Object.keys(started).length > 0) sessionStorage.setItem(STARTED_KEY, JSON.stringify(started));
+    else sessionStorage.removeItem(STARTED_KEY);
+  } catch {
+    // kept for this page only: a reload does not say "updated"
+  }
+}
 
 /** A command to run on the working server, copied with a click. */
 function CommandLine({ command }: { command: string }) {
@@ -47,7 +74,12 @@ export function DaemonUpdates() {
   const [asking, setAsking] = useState<{ machine: MachineInfo; version: string }>();
   const [askingServer, setAskingServer] = useState<string>();
   // The versions this browser updated working servers (and the Gasho server, "") to: "updated" is shown once they run them.
-  const [started, setStarted] = useState<Record<string, string>>({});
+  const [started, setStarted] = useState<Record<string, string>>(startedInTab);
+  // Forgotten once the 端末 screen is left; a reload does not run the cleanup, and the page loaded again reads them.
+  useEffect(() => {
+    keepInTab(started);
+    return () => keepInTab({});
+  }, [started]);
   // Opened for it (the settings screen's versions): scrolled to once drawn, however long the 端末 screen took to show.
   const route = useRoute();
   const opened = route.name === "devices" && route.section === "updates";
@@ -134,10 +166,18 @@ function MachineRow({ machine: m, now, updated, onUpdate }: { machine: MachineIn
   const { latest } = useAppState();
   const u = m.update;
   const to = updateTo(m, latest);
-  const previous = m.connected && u?.canUpdate && !u.progress ? u.previous : undefined;
+  // The version it came from; after going back from the latest, "update" offers it already.
+  const previous = m.connected && u?.canUpdate && (!u.progress || u.progress.step === "trial") && u.previous !== to ? u.previous : undefined;
 
   let status: React.ReactNode;
-  if (u?.progress && (m.connected || u.progress.step === "restart")) {
+  if (u?.progress && u.progress.step === "trial" && m.connected) {
+    status = (
+      <p className="flex items-center gap-1.5 text-xs text-foreground/80">
+        <LoaderCircle className="size-3.5 shrink-0 animate-spin" />
+        {trialLabel(u.trialMs)}
+      </p>
+    );
+  } else if (u?.progress && (m.connected || u.progress.step === "restart")) {
     const slow = !m.connected && now - u.progress.at > RESTART_SLOW_MS;
     status = (
       <>
@@ -188,7 +228,12 @@ function MachineRow({ machine: m, now, updated, onUpdate }: { machine: MachineIn
           <span className="font-mono text-xs text-muted-foreground">{m.daemonVersion ? `gasho-daemon ${m.daemonVersion}` : "バージョンは不明"}</span>
         </p>
         <div className="mt-0.5">{status}</div>
-        {m.connected && u?.failed && !u.progress && (
+        {m.connected && u?.rolledBack && (
+          <p className="mt-1 text-xs text-amber-500">
+            {u.rolledBack.from} がうまく起動しなかったので、{u.rolledBack.to} に自動で戻しました（{relativeTime(u.rolledBack.at, now)}）。{u.rolledBack.error}
+          </p>
+        )}
+        {m.connected && u?.failed && (!u.progress || u.progress.step === "trial") && (
           <p className="mt-1 text-xs text-red-400">
             {u.failed.version} への更新に失敗しました（{relativeTime(u.failed.at, now)}）。何も変えていません。{u.failed.error}
           </p>
@@ -220,11 +265,16 @@ function ConfirmUpdate({ machine, version, onClose, onStarted }: { machine: Mach
   const back = from !== undefined && compareVersions(version, from) < 0;
   const installed = machine.update?.installed?.includes(version) ?? false;
   const { inputs, requests } = pendingWork(machine);
+  const trialMs = machine.update?.trialMs;
   const lines = [
     installed
       ? `入っている ${version} に切り替えて、gasho-daemon を動かし直します。`
       : `${version} を取り込み、起動できることを確かめてから切り替えて、gasho-daemon を動かし直します。うまくいかなかったときは、何も変えません。`,
     "セッションは止まりません。動かし直すあいだ（10秒ほど）は、この working server の様子が届きません。",
+    // A version older than the running one may not go back by itself.
+    trialMs !== undefined &&
+      !back &&
+      `新しいバージョンがうまく起動しなかったとき（${trialLength(trialMs)}のうちに止まったとき）は、自動で前のバージョンに戻します。`,
     inputs > 0 && `送るのを待っている入力が ${inputs} 件あります。送り終えてから切り替えます。5分たっても残っているときは、更新をやめます。`,
     requests > 0 &&
       `権限の確認を待っているものが ${requests} 件あります。動かし直したあとは Gasho から答えられなくなるので、端末か公式アプリで答えてください。`,

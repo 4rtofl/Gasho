@@ -1,0 +1,1 @@
+{ "id": "e2e-broken", "name": "E2E 壊れた", "version": "1.0.0", "api": "1.12", "web": { "js": "web.js" } }

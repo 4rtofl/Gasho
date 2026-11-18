@@ -157,7 +157,7 @@ test("transcript.get for an offline machine answers with an error", () => {
   hub.onClientMessage(c, { type: "transcript.get", machine: machineId, sessionId: "s1", limit: 50 });
   const page = c.sent.at(-1);
   assert.ok(page?.type === "transcript.page");
-  assert.equal(page.error, "machine is offline");
+  assert.equal(page.error, "working server がオフラインです。");
 });
 
 test("revoking a machine disconnects it, fails the commands under way on it, and removes it from browsers", () => {
@@ -168,6 +168,7 @@ test("revoking a machine disconnects it, fails the commands under way on it, and
   hub.onClientConnect(c);
   hub.onClientMessage(c, { type: "session.input", requestId: "a", machine: machineId, sessionId: "s1", text: "テスト" });
   assert.equal(d.sent.at(-1)?.type, "session.input");
+  hub.onClientMessage(c, { type: "git.graph.get", machine: machineId, sessionId: "s1" });
   assert.equal(hub.revokeDevice(machineId), true);
   assert.equal(d.closed?.[0], CLOSE_INVALID_CREDENTIALS);
   hub.onDaemonClose(d); // as the socket's close follows
@@ -178,6 +179,9 @@ test("revoking a machine disconnects it, fails the commands under way on it, and
     machine: machineId,
     result: { ok: false, error: "working server の登録が外されました。" },
   });
+  const graph = c.sent.find((m) => m.type === "git.graph");
+  assert.ok(graph?.type === "git.graph" && !graph.graph);
+  assert.equal(graph.error, "working server の登録が外されました。");
   assert.deepEqual(c.sent.at(-1), { type: "machine.removed", id: machineId });
   assert.equal(hub.revokeDevice(machineId), false);
 });
@@ -415,7 +419,8 @@ test("git.graph.get fails when the working server is offline or disconnects", ()
   hub.onClientMessage(c, { type: "git.graph.get", machine: machineId, sessionId: "s1" });
   hub.onDaemonClose(d);
   const failed = c.sent.filter((m) => m.type === "git.graph").at(-1);
-  assert.ok(failed?.type === "git.graph" && failed.error && !failed.graph);
+  assert.ok(failed?.type === "git.graph" && !failed.graph);
+  assert.equal(failed.error, "working server との接続が切れました。");
 });
 
 test("git.graph.get passes the chosen repository through and echoes it with the graph", () => {
@@ -672,6 +677,10 @@ test("renaming, forking and removing go to a gasho-daemon 0.9.0 or later; older 
     ["Gasho:session.fork", ""],
     ["Gasho:session.remove", "Bobert-gasho"],
   ]);
+
+  // A plugin that removes a session is named in the operations log.
+  hub.onClientMessage(c, { type: "session.remove", requestId: "x2", machine: machineId, sessionId: "s1", via: "github-review" });
+  assert.equal(c.sent.flatMap((m) => (m.type === "event" ? [m.event.summary?.replace(/ \(by .*\)$/, "")] : [])).at(-1), "Bobert-gasho [via: github-review]");
 });
 
 test("a session's name must be one line of 1 to 60 characters; a fork may leave it out", () => {
@@ -686,6 +695,8 @@ test("a session's name must be one line of 1 to 60 characters; a fork may leave 
   assert.match(validateCommand({ type: "session.fork", sessionId: "s1", name: "\u0007" }) ?? "", /制御文字/);
   assert.match(validateCommand({ type: "session.remove", sessionId: "" }) ?? "", /セッションの指定/);
   assert.match(validateCommand({ type: "session.remove", sessionId: 7 } as never) ?? "", /セッションの指定/);
+  assert.equal(validateCommand({ type: "session.remove", sessionId: "s1", via: "github-review" }), undefined);
+  assert.match(validateCommand({ type: "session.remove", sessionId: "s1", via: "Not A Plugin" }) ?? "", /プラグインの指定/);
 });
 
 test("a folder to make and a repository to clone are checked before they reach the working server", () => {
@@ -1144,4 +1155,73 @@ test("removing a worktree goes to a gasho-daemon that can, checked, and the reco
   reply = c.sent.at(-1);
   assert.ok(reply?.type === "command.result" && reply.requestId === "r1");
   assert.deepEqual(reply.result.changes, { uncommitted: 1, unpushed: 2 });
+});
+
+test("a working server's memory reaches the browsers, is kept for those that connect later, and is never saved", () => {
+  const { hub, store, machineId, machineToken, browserId } = setup();
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.25.0" });
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  c.sent.length = 0;
+
+  const saved = store.saveMachine.bind(store);
+  let saves = 0;
+  store.saveMachine = (m) => {
+    saves++;
+    saved(m);
+  };
+  const memory = { total: 16, used: 4 };
+  hub.onDaemonMessage(d, { type: "memory", memory });
+  assert.deepEqual(c.sent, [{ type: "machine.memory", machine: machineId, memory }]);
+  assert.equal(saves, 0);
+  assert.equal(JSON.stringify(store.loadMachines()).includes("memory"), false);
+
+  const later = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(later);
+  const snapshot = later.sent[0];
+  assert.deepEqual(snapshot?.type === "snapshot" ? snapshot.memory : undefined, { [machineId]: memory });
+});
+
+test("a working server's memory is forgotten when it goes offline, cannot read it, or tells something wrong", () => {
+  const { hub, machineId, machineToken, browserId } = setup();
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.25.0" });
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const memory = { total: 16, used: 4 };
+  const memoryMessages = () => c.sent.filter((m) => m.type === "machine.memory");
+  const snapshotMemory = () => {
+    const later = fakePeer<HubToClient>(browserId);
+    hub.onClientConnect(later);
+    const s = later.sent[0];
+    return s?.type === "snapshot" ? s.memory : undefined;
+  };
+
+  hub.onDaemonMessage(d, { type: "memory", memory });
+  hub.onDaemonMessage(d, { type: "memory" });
+  assert.deepEqual(memoryMessages().at(-1), { type: "machine.memory", machine: machineId });
+  assert.deepEqual(snapshotMemory(), {});
+
+  hub.onDaemonMessage(d, { type: "memory", memory });
+  hub.onDaemonMessage(d, { type: "memory", memory: { total: 0, used: 0 } });
+  assert.deepEqual(snapshotMemory(), {});
+
+  hub.onDaemonMessage(d, { type: "memory", memory });
+  hub.onDaemonClose(d);
+  assert.deepEqual(memoryMessages().at(-1), { type: "machine.memory", machine: machineId });
+  assert.deepEqual(snapshotMemory(), {});
+});
+
+test("a gasho-daemon that does not tell its memory replaces one that did without leaving the old value", () => {
+  const { hub, machineId, machineToken, browserId } = setup();
+  const newer = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(newer, { type: "hello", machineId, token: machineToken, daemonVersion: "0.25.0" });
+  hub.onDaemonMessage(newer, { type: "memory", memory: { total: 16, used: 4 } });
+  const older = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(older, { type: "hello", machineId, token: machineToken, daemonVersion: "0.24.0" });
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const s = c.sent[0];
+  assert.deepEqual(s?.type === "snapshot" ? s.memory : undefined, {});
 });

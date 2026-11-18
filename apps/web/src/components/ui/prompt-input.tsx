@@ -3,7 +3,8 @@
 // can be laid out like EasyUI's preview (`showCount`: keyboard hint on the left, character count on the right), and
 // what is typed can be kept outside the component (`draft`), so it is still there when the box is shown again. With
 // `shell`, a text that starts with "!" is shown as a shell command (Claude Code's shell mode). With `commands`, a text
-// that starts with "/" offers Claude Code's skills above the box (SlashMenu, from EasyUI's Combobox).
+// that starts with "/" offers Claude Code's skills above the box (SlashMenu, from EasyUI's Combobox). The keyboard
+// hint shows where it fits on the line, not by the window's width (Hint).
 
 import {
   forwardRef,
@@ -25,6 +26,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, animate, motion, useMotionValue, useReducedMotion } from "framer-motion";
 import { emptyShellInput, isShellInput } from "@/lib/shell";
 import { matchSlash, slashQuery, type SlashCommand, type SlashMatch } from "@/lib/slash";
+import { appleKeys, composing, pastedFiles } from "@/lib/text-input";
 
 /* -------------------------------------------------------------------------- */
 /*  PromptInput — the chat composer. Pairs with <AIResponse /> to finish the   */
@@ -670,7 +672,7 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
   const [modKey, setModKey] = useState<string | null>(null);
   useEffect(() => {
     setFinePointer(window.matchMedia("(pointer: fine)").matches);
-    setModKey(/Mac|iPhone|iPad/i.test(navigator.userAgent) ? "⌘" : "Ctrl");
+    setModKey(appleKeys(navigator.userAgent) ? "⌘" : "Ctrl");
   }, []);
   const enter = enterToSend ?? finePointer;
 
@@ -723,10 +725,10 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
       setAttachments((prev) => {
         const next = [...prev];
         for (const f of list) {
-          if (!matchesAccept(f, accept)) problems.push(`${f.name}: this file type isn't supported`);
-          else if (f.size > maxFileSizeMB * 1024 * 1024) problems.push(`${f.name} is over ${maxFileSizeMB} MB`);
+          if (!matchesAccept(f, accept)) problems.push(`${f.name} は、添付できない種類のファイルです`);
+          else if (f.size > maxFileSizeMB * 1024 * 1024) problems.push(`${f.name} は ${maxFileSizeMB} MB を超えています`);
           else if (next.some((a) => a.name === f.name && a.size === f.size && a.file.lastModified === f.lastModified)) continue;
-          else if (next.length >= maxFiles) problems.push(`You can attach up to ${maxFiles} files`);
+          else if (next.length >= maxFiles) problems.push(`添付できるファイルは ${maxFiles} 個までです`);
           else {
             next.push({
               id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
@@ -742,7 +744,7 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
       });
       if (problems.length) {
         const uniq = Array.from(new Set(problems));
-        flashError(uniq[0] + (uniq.length > 1 ? ` (+${uniq.length - 1} more)` : ""));
+        flashError(uniq[0] + (uniq.length > 1 ? `（ほかに ${uniq.length - 1} 件）` : ""));
       }
     },
     [accept, allowAttachments, disabled, flashError, maxFileSizeMB, maxFiles, setAttachments],
@@ -863,7 +865,7 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
   }, [autoFocus]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.nativeEvent.isComposing || e.keyCode === 229) return; // IME composition
+    if (composing(e)) return;
     if (slashShown && slash !== undefined) {
       const n = matches.length;
       const plain = !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey;
@@ -921,9 +923,10 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
   };
 
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
-    if (e.clipboardData.files.length) {
+    const files = pastedFiles(e.clipboardData, allowAttachments && !disabled);
+    if (files.length) {
       e.preventDefault();
-      addFiles(e.clipboardData.files);
+      addFiles(files);
     }
   };
 
@@ -1052,7 +1055,7 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
                       </span>
                       <button
                         type="button"
-                        aria-label={`Remove ${a.name}`}
+                        aria-label={`${a.name} を外す`}
                         onClick={() => removeAttachment(a.id)}
                         className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg sm:h-8 sm:w-8 ${softBtn} ${focusRing}`}
                       >
@@ -1268,7 +1271,7 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
           <p role="alert" aria-live="polite" className={cx("min-w-0 truncate text-rose-500", !error && "sr-only")}>
             {error}
           </p>
-          {!error && hintNode && <p className="hidden min-w-0 items-center gap-1 sm:flex [@media(pointer:coarse)]:hidden">{hintNode}</p>}
+          {!error && hintNode && <Hint>{hintNode}</Hint>}
           <div className="ml-auto flex shrink-0 items-center gap-3">
             {footer}
             <span className={cx("tabular-nums", over && "text-rose-500")}>
@@ -1281,13 +1284,28 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
           <p role="alert" aria-live="polite" className={cx("min-w-0 truncate", error && "text-rose-500")}>
             {error}
           </p>
-          {!error && hintNode && <p className="hidden shrink-0 items-center gap-1 sm:flex [@media(pointer:coarse)]:hidden">{hintNode}</p>}
+          {!error && hintNode && <Hint>{hintNode}</Hint>}
           {footer && <div className="ml-auto flex shrink-0 items-center gap-3">{footer}</div>}
         </div>
       )}
     </div>
   );
 });
+
+/**
+ * The keyboard hint under the box, where it fits beside what is at the right of the line (the parts of Gasho's
+ * plugins, the count) and on one line: one too wide goes onto a second line, which the height leaves out of sight. The
+ * empty span first keeps the hint off the first line then (a line's first item stays on it however wide it is).
+ * Not on touch screens.
+ */
+function Hint({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex h-[18px] min-w-0 flex-1 flex-wrap overflow-hidden [@media(pointer:coarse)]:hidden">
+      <span className="h-full" />
+      <p className="flex items-center gap-1 whitespace-nowrap">{children}</p>
+    </div>
+  );
+}
 
 function Kbd({ children }: { children: ReactNode }) {
   return (

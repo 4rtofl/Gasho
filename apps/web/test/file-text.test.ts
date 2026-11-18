@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { getFileDraft, hasUnsavedFiles, isDirty, setFileDraft } from "../src/lib/file-drafts.ts";
 import {
   baseName,
   formatBytes,
@@ -72,4 +73,38 @@ test("a new file's name is one name, without spaces around it or control charact
   assert.match(newFileNameProblem("docs/a.md") ?? "", /\//);
   assert.match(newFileNameProblem("a\tb") ?? "", /制御文字/);
   assert.match(newFileNameProblem("あ".repeat(86)) ?? "", /長すぎ/);
+});
+
+test("leaving the page is asked about only while a file being written holds changes that are not saved", () => {
+  const handlers: ((e: { preventDefault: () => void; returnValue?: string }) => void)[] = [];
+  Object.defineProperty(globalThis, "window", {
+    value: { addEventListener: (type: string, h: (typeof handlers)[number]) => type === "beforeunload" && handlers.push(h) },
+    configurable: true,
+  });
+  const leave = () => {
+    const e = { prevented: false, returnValue: undefined as string | undefined, preventDefault: () => (e.prevented = true) };
+    for (const h of handlers) h(e);
+    return e.prevented && e.returnValue === "";
+  };
+  const draft = (value: string) => ({ value, original: "saved", eol: "\n" as const, bom: false });
+
+  assert.equal(isDirty(undefined), false);
+  assert.equal(hasUnsavedFiles(), false);
+  setFileDraft("m/s/a.txt", draft("saved"));
+  assert.equal(getFileDraft("m/s/a.txt")?.value, "saved");
+  assert.equal(hasUnsavedFiles(), false);
+  assert.equal(handlers.length, 1);
+  assert.equal(leave(), false);
+
+  setFileDraft("m/s/b.txt", draft("changed"));
+  assert.equal(isDirty(getFileDraft("m/s/b.txt")), true);
+  assert.equal(hasUnsavedFiles(), true);
+  assert.equal(leave(), true);
+  // One question for the page, however many files.
+  assert.equal(handlers.length, 1);
+
+  setFileDraft("m/s/b.txt", undefined);
+  assert.equal(getFileDraft("m/s/b.txt"), undefined);
+  assert.equal(hasUnsavedFiles(), false);
+  assert.equal(leave(), false);
 });

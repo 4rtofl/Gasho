@@ -49,6 +49,14 @@ export function commandResult(msg: { requestId: string }, result: Extract<Daemon
   return { type: "command.result", requestId: msg.requestId, result };
 }
 
+/** The page of a session's conversation that transcript.get asks for, from the conversations the daemon was given. */
+export function transcriptPage(d: FakeDaemon, msg: HubMessage<"transcript.get">): DaemonToHub {
+  const all = d.transcripts[msg.sessionId] ?? [];
+  const end = Math.min(msg.before ?? all.length, all.length);
+  const start = Math.max(0, end - msg.limit);
+  return { type: "transcript.page", requestId: msg.requestId, sessionId: msg.sessionId, entries: all.slice(start, end), start, total: all.length };
+}
+
 /** What a request of the Gasho server is answered with when the test gave no handler for it. */
 function defaultAnswer(d: FakeDaemon, msg: HubToDaemon): Answer {
   switch (msg.type) {
@@ -56,12 +64,8 @@ function defaultAnswer(d: FakeDaemon, msg: HubToDaemon): Answer {
     case "plugins":
     case "plugin.code":
       return undefined;
-    case "transcript.get": {
-      const all = d.transcripts[msg.sessionId] ?? [];
-      const end = Math.min(msg.before ?? all.length, all.length);
-      const start = Math.max(0, end - msg.limit);
-      return { type: "transcript.page", requestId: msg.requestId, sessionId: msg.sessionId, entries: all.slice(start, end), start, total: all.length };
-    }
+    case "transcript.get":
+      return transcriptPage(d, msg);
     case "git.graph.get":
       return { type: "git.graph", requestId: msg.requestId, sessionId: msg.sessionId, ...(msg.repo ? { repo: msg.repo } : {}), error: "fake daemon: no graph" };
     case "dir.get":
@@ -145,6 +149,29 @@ export class FakeDaemon {
     const closed = new Promise((r) => ws.addEventListener("close", r));
     ws.close();
     await closed;
+  }
+
+  /**
+   * The same working server connected again by another gasho-daemon (after an update to `version`): this one goes
+   * offline, and the new one says hello with this one's sessions, repositories and capabilities (with `capabilities`
+   * over them). The handlers are not carried over.
+   */
+  async startAgain(o: { version?: string; capabilities?: Partial<Capabilities> } = {}): Promise<FakeDaemon> {
+    await this.disconnect();
+    const d = new FakeDaemon({
+      name: this.name,
+      url: this.url,
+      machineId: this.machineId,
+      token: this.token,
+      defaultVersion: this.version,
+      ...(o.version ? { version: o.version } : {}),
+      capabilities: { ...this.capabilities, ...o.capabilities },
+      sessions: this.sessions,
+      repos: this.repos,
+      transcripts: this.transcripts,
+    });
+    await d.connect();
+    return d;
   }
 
   send(msg: DaemonToHub): void {

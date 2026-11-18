@@ -5,7 +5,10 @@
 // approve). For them, "allow" alone answers nothing and Claude Code keeps its dialog open: the answers, or the plan,
 // go back in the tool's input (updatedInput), as Claude Code's hooks documentation says.
 import { randomUUID } from "node:crypto";
+import os from "node:os";
+import path from "node:path";
 import type { AskedOption, AskedQuestion, PermissionDecision, PermissionRequestInfo, PlanMode, QuestionAnswer } from "@gasho/protocol";
+import type { DialogText } from "./managed.ts";
 import { clip, inputSummary, str } from "./util.ts";
 
 /** What the hook answers: a decision, or nothing (Claude Code goes on with its own dialog). */
@@ -170,12 +173,147 @@ export const OPEN_DIALOG = "dialog:";
 const NOT_ASKING = new Set(["AskUserQuestion", "ExitPlanMode", "Agent", "Task"]);
 
 /**
- * The call that Claude Code's permission dialog is about when gasho-daemon holds no hook for it (it restarted while
- * the dialog was open, or the hook timed out): the latest of the calls without a result, leaving out the tools that
- * ask nothing (a subagent's call is in its own transcript).
+ * Tools whose dialog asks about a file, and the verbs before its name that end the question ("Do you want to make this
+ * edit to a.ts?").
  */
-export function dialogCall<C extends { name: string }>(calls: C[] | undefined): C | undefined {
-  return calls?.filter((c) => !NOT_ASKING.has(c.name)).at(-1);
+const FILE_VERBS = new Map([
+  ["Edit", ["make this edit to"]],
+  ["MultiEdit", ["make this edit to"]],
+  ["Write", ["create", "overwrite", "write to"]],
+  ["NotebookEdit", ["make this edit to", "insert this cell into", "delete this cell from"]],
+]);
+
+/** Claude Code's kinds of permission dialog: a command's, a file's, a fetch's, and any other tool's. */
+type DialogKind = "command" | "file" | "fetch" | "other";
+
+function callKind(name: string): DialogKind {
+  if (name === "Bash") return "command";
+  if (FILE_VERBS.has(name)) return "file";
+  return name === "WebFetch" ? "fetch" : "other";
+}
+
+/**
+ * The kind that a dialog's heading (its first line, below the rule) tells: "Bash command", "Edit file", "Fetch"…
+ * While dialogs wait in a row, the heading ends with their count ("Edit file      1 of 2").
+ */
+function headingKind(heading: string): DialogKind {
+  const h = heading.replace(/\s+\d+ of \d+$/, "").trim();
+  if (/^(Bash|Run) command\b/.test(h)) return "command";
+  if (/^((Edit|Create|Overwrite|Write) file|Edit notebook)$/.test(h)) return "file";
+  return h === "Fetch" ? "fetch" : "other";
+}
+
+/**
+ * What Claude Code puts after the heading of a dialog about a call that is not the session's own: a subagent's, a
+ * workflow's, a remote agent's or a plugin's ("Read file · from the general-purpose agent"). It goes on the lines
+ * below when the heading's line has no room.
+ */
+const ELSEWHERE_RE = /(^|\s)· from /;
+
+/** The dashes that Claude Code draws above and below the command in its dialog. */
+const DASHES_RE = /^╌{8,}$/;
+
+/** What is compared with the screen: without the "│" left of a command's lines, spaces and line breaks (lines wrap). */
+function flat(s: string): string {
+  return s.replace(/^\s*│ ?/gm, "").replace(/\s+/g, "");
+}
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Whether lines of the screen show `text`. Where a line wraps, a space or a line break of the text is left out, or a
+ * word is split; within a line, spaces must be where the text has them. `tail`: the lines may show only its end.
+ */
+function showsText(lines: string[], text: string, tail = false): boolean {
+  const pieces = lines.map((l) => l.replace(/^\s*│ ?/, "").trim()).filter(Boolean);
+  if (pieces.length === 0) return false;
+  const shown = pieces.map((p) => p.split(/\s+/).map(escapeRe).join("[ \\t]+")).join("\\s*");
+  return new RegExp(`${tail ? "" : "^\\s*"}${shown}\\s*$`).test(text);
+}
+
+/** How Claude Code may show a file's path: from the folder Claude is in, whole, or from the home folder ("~/…"). */
+function shownPaths(file: string, cwd: string | undefined): string[] {
+  const out = [file];
+  const relative = cwd ? path.relative(cwd, file) : "";
+  if (relative && !relative.startsWith("..") && !path.isAbsolute(relative)) out.push(relative);
+  const home = os.homedir();
+  if (file.startsWith(`${home}/`)) out.push(`~/${file.slice(home.length + 1)}`);
+  return out;
+}
+
+/** A call without a result, and the folder Claude was in when it made it (paths on the screen are from there). */
+type Call = { name: string; input: Record<string, unknown>; cwd?: string };
+
+/**
+ * Whether Claude Code's permission dialog shows this call. A dialog about another agent's or a plugin's call shows
+ * none of the session's. Its heading must be of the call's kind; when the dialog's top is above the screen, only a
+ * command can be told (by its end). A command must be all that is drawn between the dashes above the question; a
+ * file's path below the heading must be the call's, and its question must end with its tool's verb and the file's
+ * name; a fetch's URL must be all that its "url:" shows; another tool, with one text in its input, must show
+ * "Name(text)" between the dashes. An MCP tool never fits: Claude Code shows it by a name made for people ("demo —
+ * Save Note Tool:"), not by its own.
+ */
+function dialogShows(c: Call, d: DialogText): boolean {
+  const kind = callKind(c.name);
+  const dashes = d.lines.flatMap((l, i) => (DASHES_RE.test(l) ? [i] : []));
+  if (!d.top) {
+    if (kind !== "command") return false;
+  } else if (d.lines.slice(0, dashes[0]).some((l) => ELSEWHERE_RE.test(l)) || headingKind(d.lines[0] ?? "") !== kind) return false;
+  // What is drawn between the last two dashes: a command, or another tool's call.
+  const end = dashes.at(-1);
+  const start = dashes.at(-2);
+  const block = end === undefined ? [] : d.lines.slice((start ?? -1) + 1, end);
+  if (kind === "command") {
+    const command = str(c.input.command);
+    if (!command || end === undefined || (start === undefined && d.top)) return false;
+    return showsText(block, command, start === undefined);
+  }
+  if (kind === "file") {
+    const file = str(c.input.file_path) ?? str(c.input.notebook_path);
+    const question = d.lines.findLastIndex((l) => /^\s*Do you want to /.test(l));
+    if (!file || dashes[0] === undefined || question < 0) return false;
+    const below = d.lines.slice(1, dashes[0]);
+    return (
+      shownPaths(file, c.cwd).some((p) => showsText(below, p)) &&
+      (FILE_VERBS.get(c.name) ?? []).some((verb) => showsText(d.lines.slice(question), `Do you want to ${verb} ${path.basename(file)}?`))
+    );
+  }
+  if (kind === "fetch") {
+    // A long URL wraps: it goes on until the line of the prompt.
+    const url = str(c.input.url);
+    const at = d.lines.findIndex((l) => /^\s*url: /.test(l));
+    const until = d.lines.findIndex((l, i) => i > at && /^\s*prompt: /.test(l));
+    return !!url && at >= 0 && until > at && flat(d.lines.slice(at, until).join("\n")) === flat(`url: ${url}`);
+  }
+  const texts = Object.values(c.input).filter((v): v is string => typeof v === "string" && v.trim() !== "");
+  if (texts.length !== 1 || start === undefined) return false;
+  const shown = c.name === "Read" ? shownPaths(texts[0]!, c.cwd) : texts;
+  return shown.some((v) => showsText(block, `${c.name}(${v})`));
+}
+
+/** The calls without a result that may have a permission dialog (a subagent's call is in its own transcript). */
+function asking<C extends { name: string }>(calls: C[] | undefined): C[] {
+  return calls?.filter((c) => !NOT_ASKING.has(c.name)) ?? [];
+}
+
+/**
+ * The call without a result that Claude Code's permission dialog shows (see dialogShows); undefined when none does,
+ * or when calls that differ do (the same call made twice counts as one).
+ */
+export function shownCall<C extends Call>(calls: C[] | undefined, d: DialogText): C | undefined {
+  const [first, ...others] = asking(calls).filter((c) => dialogShows(c, d));
+  const same = (c: C) => c.name === first?.name && JSON.stringify(c.input) === JSON.stringify(first.input);
+  return first && others.every(same) ? first : undefined;
+}
+
+/**
+ * The call that Claude Code's permission dialog is about when gasho-daemon holds no hook for it (it restarted while
+ * the dialog was open, or the hook timed out): the one the dialog on the screen shows, else the earliest of the calls
+ * without a result (Claude Code asks about them in order). That is also the card while the screen shows a dialog that
+ * none fits (a subagent's, for one): answering it then presses nothing and tells the person to answer in the terminal.
+ */
+export function dialogCall<C extends Call>(calls: C[] | undefined, d?: DialogText): C | undefined {
+  return (d && shownCall(calls, d)) ?? asking(calls)[0];
 }
 
 /**

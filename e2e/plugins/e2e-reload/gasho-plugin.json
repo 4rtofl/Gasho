@@ -1,0 +1,1 @@
+{ "id": "e2e-reload", "name": "E2E 入れ替え", "version": "1.0.0", "api": "1.12", "web": { "js": "web.js" } }

@@ -1,7 +1,7 @@
 // The conversation of the session screen: how its entries are drawn, how it is read (a page at a time, from the newest),
 // and where it is scrolled to.
 import type { SentFiles } from "@gasho/protocol";
-import { fakeSession, textEntry } from "../harness/index.ts";
+import { fakeSession, textEntry, transcriptPage } from "../harness/index.ts";
 import { expect, test } from "./fixtures.ts";
 import {
   chatBox,
@@ -16,7 +16,6 @@ import {
   scrollConversation,
   sessionPath,
   toolCall,
-  transcriptPage,
   WEBM,
 } from "./session-helpers.ts";
 

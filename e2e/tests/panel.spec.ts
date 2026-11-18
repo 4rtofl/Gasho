@@ -1,5 +1,6 @@
 // A session's panel (components/side-panel.tsx, DockedPanel in App.tsx): beside the conversation on a computer, where
-// its left edge changes its width, and in the conversation's place on a phone. The branch graph is the panel opened.
+// its left edge changes its width (over the conversation in a window narrower than 988px), and in the conversation's
+// place on a phone. The branch graph is the panel opened.
 import type { FakeDaemon } from "../harness/index.ts";
 import { expect, test } from "./fixtures.ts";
 import { commit, FakeFolder, hashOf, serveGraph, sessionDaemon, sessionUrl, showSessionHeader } from "./panel-data.ts";
@@ -86,6 +87,34 @@ test.describe("PC の幅", () => {
       await panel.getByRole("button", { name: "閉じる" }).click();
       await expect(panel).toBeHidden();
       await expect(input).toBeVisible();
+    });
+  });
+
+  test("窓の幅が 768〜987px ではパネルが会話の右に重なり、988px 以上では会話の右に並ぶ", async ({ page, hub }) => {
+    const d = await sessionDaemon(hub);
+    serveOneCommit(d);
+    await page.setViewportSize({ width: 768, height: 800 });
+    await page.goto(sessionUrl(d, "/graph"));
+    const input = page.getByPlaceholder("Agent への指示を入力…");
+    const panel = page.getByRole("region", { name: "ブランチグラフ" });
+    await expect(panel.getByText("最初のコミット")).toBeVisible();
+    // Where the conversation's input field starts and ends, from the panel's left edge.
+    const fromPanel = async () => {
+      const [p, i] = [await panel.boundingBox(), await input.boundingBox()];
+      return { start: i!.x - p!.x, end: i!.x + i!.width - p!.x };
+    };
+
+    for (const width of [768, 987]) {
+      await test.step(`${width}px では、パネルが会話に重なり、会話の左の端は見えている`, async () => {
+        await page.setViewportSize({ width, height: 800 });
+        await expect.poll(async () => (await fromPanel()).end).toBeGreaterThan(0);
+        expect((await fromPanel()).start).toBeLessThan(0);
+      });
+    }
+
+    await test.step("988px では、パネルが会話の右に並ぶ", async () => {
+      await page.setViewportSize({ width: 988, height: 800 });
+      await expect.poll(async () => (await fromPanel()).end).toBeLessThanOrEqual(0);
     });
   });
 });

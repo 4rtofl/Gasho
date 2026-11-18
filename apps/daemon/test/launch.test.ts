@@ -464,6 +464,43 @@ test("after /clear, a session started from Gasho goes on under its new id, with 
   }
 });
 
+test("while /clear gives a session started from Gasho its new id, every list of sessions sent has it", async () => {
+  const { d, agentsFile, folder, done } = await setup();
+  const claude = await child('process.on("SIGTERM", () => process.exit(0))');
+  const OLD = "aaaaaaaa-0000-4000-8000-000000000011";
+  const NEW = "aaaaaaaa-0000-4000-8000-000000000012";
+  const launchedAt = Date.now();
+  const agents = (sessionId: string) =>
+    writeFileSync(agentsFile, JSON.stringify([{ pid: claude.pid, sessionId, cwd: folder, status: "idle", startedAt: launchedAt - 1000 }]));
+  const sent: { sessionId: string; managed?: boolean }[][] = [];
+  try {
+    d.cfg.pluginDataDir = path.join(folder, "plugin-data");
+    d.refresh = Object.getPrototypeOf(d).refresh;
+    d.readManagedScreens = async () => undefined;
+    d.countTokens = async () => undefined;
+    d.flushInput = async () => undefined;
+    d.hub = { connected: true, send: (m: { type: string; sessions?: [] }) => m.type === "sessions" && sent.push(m.sessions!) };
+    d.managed.add({ sessionId: OLD, terminal: "t-old", pid: claude.pid, cwd: folder, name: "-wip", launchedAt });
+    agents(OLD);
+    await d.refresh();
+    // The sessions are sent for something else (a hook, a permission request) while the new id is saved.
+    const save = d.managed.save.bind(d.managed);
+    d.managed.save = async () => {
+      d.emitSessions();
+      await save();
+    };
+    agents(NEW);
+    await d.refresh();
+    assert.deepEqual(
+      sent.map((list) => list.map((s) => [s.sessionId, s.managed])),
+      [[[OLD, true]], [[NEW, true]]],
+    );
+  } finally {
+    claude.kill("SIGKILL");
+    await done();
+  }
+});
+
 test("an input or a rename that waits while /clear gives the session a new id waits under the new id", async () => {
   const { d, folder, done } = await setup();
   try {

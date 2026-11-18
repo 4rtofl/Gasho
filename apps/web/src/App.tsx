@@ -223,7 +223,8 @@ export function App() {
     if (main.current) main.current.scrollTop = 0;
   }, [page]);
   const { auth, me, machines, notifications, connected, plugins, catalog, latest, server, outdated } = useAppState();
-  // After /clear, the session goes on under a new id: its page (and the panel open beside it) goes there too.
+  // After /clear, the session goes on under a new id: its page (and the panel open beside it) goes there too, and shows
+  // it already while the address changes.
   const movedTo = route.name === "session" ? movedSession(machines.find((m) => m.id === route.machine), route.sessionId)?.sessionId : undefined;
   useEffect(() => {
     if (movedTo && route.name === "session") go({ ...route, sessionId: movedTo }, { replace: true });
@@ -709,16 +710,16 @@ export function App() {
             )}
             {route.name === "session" && (desktop || !panel) && (
               <SessionView
-                key={`${route.machine}/${route.sessionId}`}
+                key={`${route.machine}/${movedTo ?? route.sessionId}`}
                 machine={route.machine}
-                sessionId={route.sessionId}
+                sessionId={movedTo ?? route.sessionId}
                 panel={panel}
                 onSessionAction={setSessionAction}
               />
             )}
             {route.name === "session" && !desktop && panel && (
               <PanelBarContext.Provider value={panelBar}>
-                <PanelView machine={route.machine} sessionId={route.sessionId} panel={panel} docked={false} />
+                <PanelView machine={route.machine} sessionId={movedTo ?? route.sessionId} panel={panel} docked={false} />
               </PanelBarContext.Provider>
             )}
           </motion.main>
@@ -729,7 +730,7 @@ export function App() {
           )}
           {route.name === "session" && desktop && panel && (
             <DockedPanel>
-              <PanelView machine={route.machine} sessionId={route.sessionId} panel={panel} docked />
+              <PanelView machine={route.machine} sessionId={movedTo ?? route.sessionId} panel={panel} docked />
             </DockedPanel>
           )}
         </div>

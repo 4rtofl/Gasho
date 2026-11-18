@@ -246,6 +246,11 @@ export class Daemon {
    * Gasho server would drop the sessions it kept from before the restart (open ones would show as gone).
    */
   private refreshed = false;
+  /**
+   * Set from when followNewIds gives a session its new id until the refresh has it in `tracked`. A list sent meanwhile
+   * would have neither of its ids, and its page would say it is gone.
+   */
+  private followingNewIds = false;
   private refreshing = false;
   private refreshAgain = false;
   private refreshTimer: NodeJS.Timeout | undefined;
@@ -569,6 +574,7 @@ export class Daemon {
         this.tracked.delete(id);
         this.permissions.settleSession(id);
       }
+      this.followingNewIds = false;
       // One that ended while `claude agents` was read is still in rows.
       for (const pid of this.ownPids) if (!isAlive(pid) && !rows.some((r) => r.pid === pid)) this.ownPids.delete(pid);
       await this.forgetEndedSessions(seen);
@@ -580,6 +586,10 @@ export class Daemon {
       log("refresh failed", e);
     } finally {
       this.refreshing = false;
+      if (this.followingNewIds) {
+        this.followingNewIds = false;
+        this.emitSessions();
+      }
       // Also after a failed one: the sessions from before the restart would otherwise show on as if they still ran.
       if (!this.refreshed) {
         this.refreshed = true;
@@ -606,6 +616,7 @@ export class Daemon {
       if (row.startedAt !== undefined && row.startedAt > m.launchedAt) continue;
       const from = m.sessionId;
       this.managed.rekey(from, to);
+      this.followingNewIds = true;
       const move = <V>(map: Map<string, V>) => {
         const v = map.get(from);
         if (v === undefined) return;
@@ -767,7 +778,7 @@ export class Daemon {
   }
 
   private emitSessions(): void {
-    if (!this.refreshed) return;
+    if (!this.refreshed || this.followingNewIds) return;
     const sessions = [...this.tracked.values()]
       // Not yet, or no longer, among Gasho's sessions: sent, it would show as one opened outside Gasho.
       .filter((t) => this.managed.has(t.info.sessionId) || !this.isOwn(t.info.pid))

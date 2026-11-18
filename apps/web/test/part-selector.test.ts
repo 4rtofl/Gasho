@@ -1,14 +1,24 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type CssRule, darkSelector, ruleText } from "../src/plugins/dark-selector.ts";
+import { type CssRule, partSelector, ruleText } from "../src/plugins/part-selector.ts";
 
 test("a selector that starts with .dark matches below a .dark above the plugin's part or inside it", () => {
-  assert.equal(darkSelector(".dark .rcs"), ".dark & .rcs, & .dark .rcs");
-  assert.equal(darkSelector("html.dark > .a"), "html.dark & > .a, & html.dark > .a");
-  assert.equal(darkSelector(".dark"), ".dark &, & .dark");
-  assert.equal(darkSelector('.a, .dark .b[title="x, y"]'), '.a, .dark & .b[title="x, y"], & .dark .b[title="x, y"]');
+  assert.equal(partSelector(".dark .rcs"), ".dark & .rcs, & .dark .rcs");
+  assert.equal(partSelector(".dark"), ".dark &, & .dark");
+  assert.equal(partSelector('.a, .dark .b[title="x, y"]'), '.a, .dark & .b[title="x, y"], & .dark .b[title="x, y"]');
   // The whitespace after a hex escape is a part of it.
-  assert.equal(darkSelector(".dark.\\31 23 .a"), ".dark.\\31 23 & .a, & .dark.\\31 23 .a");
+  assert.equal(partSelector(".dark.\\31 23 .a"), ".dark.\\31 23 & .a, & .dark.\\31 23 .a");
+});
+
+test("a selector that starts with :root, html or body matches the plugin's part or inside it, while those match", () => {
+  assert.equal(partSelector(":root"), ":root &");
+  assert.equal(partSelector(":root .a"), ":root & .a");
+  assert.equal(partSelector(":root:not(.dark)"), ":root:not(.dark) &");
+  assert.equal(partSelector("html.dark > .a"), "html.dark & > .a");
+  assert.equal(partSelector("html body .a"), "html body & .a");
+  assert.equal(partSelector("HTML>BODY"), "HTML>BODY &");
+  assert.equal(partSelector("body > .a"), "body & > .a");
+  assert.equal(partSelector(":root, .a"), ":root &, .a");
 });
 
 test("the other selectors stay as they are", () => {
@@ -24,11 +34,18 @@ test("the other selectors stay as they are", () => {
     ".dark + .a",
     ".dark ~ .a",
     ".dark::before",
+    ":root + .a",
+    "html ~ .a",
+    "html body + .a",
+    "body::before",
+    "html-x .a",
+    ".a :root",
     // Selectors with & match as they did before.
     ".dark & .foo",
     ".dark :is(&) .foo",
+    ":root &",
   ]) {
-    assert.equal(darkSelector(s), undefined, s);
+    assert.equal(partSelector(s), undefined, s);
   }
 });
 
@@ -110,4 +127,13 @@ test("a .dark rule is written anew when the rules nested in it match only inside
   // Below .dark .a, &::before is the pseudo-element of an element inside the part.
   const below = nest(".dark .a", style("&::before", '{ content: "x"; }'));
   assert.equal(ruleText(below), `.dark & .a, & .dark .a${below.cssText.slice(".dark .a".length)}`);
+});
+
+test("a :root rule is written anew in @media, and only when the rules nested in it match only inside the part", () => {
+  assert.equal(ruleText(media(style(":root", "{ --x: 1px; }"))), "@media (min-width: 1px) {:root & { --x: 1px; }}");
+  const inside = nest(":root", style("& .a"));
+  assert.equal(ruleText(inside), `:root &${inside.cssText.slice(":root".length)}`);
+  for (const rule of [nest(":root", style("& ~ *")), nest("html", style("& + .a")), nest("body", scope("& ~ *"))]) {
+    assert.equal(ruleText(rule), rule.cssText, rule.cssText);
+  }
 });

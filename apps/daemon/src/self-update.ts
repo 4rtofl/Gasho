@@ -451,7 +451,8 @@ export class Updater {
     this.o.log(`${version} started well; it is no longer on trial`);
     await this.load();
     this.o.changed();
-    await this.prune(list);
+    // Confirmed already: a folder that cannot be removed is no reason to end this version.
+    await this.prune(list).catch((e: unknown) => this.o.log(`could not remove the versions no longer used: ${e instanceof Error ? e.message : String(e)}`));
   }
 
   /** On trial, why this version is ending (an exception): its next start goes back to the version before, with it. */

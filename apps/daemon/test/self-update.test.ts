@@ -218,6 +218,23 @@ test("a version on trial counts its first start, is tried again after a stop, an
   assert.ok(!existsSync(layout.trialFile));
 });
 
+test("a version on trial is confirmed even when the versions no longer used cannot be removed", async (t) => {
+  const { layout, npm } = await setup();
+  for (const v of ["0.13.0", "0.14.0", "0.15.0"]) await installed(layout, v);
+  await switchTo(layout, "0.14.0");
+  await beginTrial(layout, "0.14.0", "0.15.0", 5);
+  await startOnTrial(layout, "0.15.0", () => undefined);
+  const r = updater({ layout, npm, version: "0.15.0" });
+  await r.updater.load();
+  // 0.13.0 cannot be removed (EACCES): the process must not end for it, as its trial is over.
+  await fs.chmod(layout.versions, 0o555);
+  t.after(() => fs.chmod(layout.versions, 0o755));
+  await r.updater.confirm(async () => "");
+  assert.ok(!r.updater.onTrial());
+  assert.ok(!existsSync(layout.trialFile));
+  assert.ok(existsSync(path.join(layout.versions, "0.13.0")));
+});
+
 test("a version on trial that ended before it was confirmed goes back at its next start, and the version before says why for a week", async () => {
   const { layout, npm } = await setup();
   for (const v of ["0.14.0", "0.15.0"]) await installed(layout, v);

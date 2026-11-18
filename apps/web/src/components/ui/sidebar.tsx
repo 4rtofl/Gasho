@@ -5,8 +5,8 @@
 // items of a section can be put in another order by dragging them (`sort`), a section can hold groups of items under
 // headings of their own that fold (`groups`, a plugin's categories of sessions), which can be dragged too
 // (`groupSort`), whose items can be dragged from one group into another (`itemMove`), and the width on a computer can
-// be changed by dragging the right edge (`ResizeHandle`, lib/widths). Ctrl+B in a box that text is written in is left to
-// the box (on a Mac it moves the cursor back), and only ⌘B folds the sidebar there.
+// be changed by dragging the right edge (`ResizeHandle`, lib/widths). On a Mac, iPhone and iPad, Ctrl+B in a box that
+// text is written in is left to the box (it moves the cursor back), and only ⌘B folds the sidebar there.
 
 import * as React from "react";
 import { AnimatePresence, motion, useDragControls, type PanInfo } from "framer-motion";

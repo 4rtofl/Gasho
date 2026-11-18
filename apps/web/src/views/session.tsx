@@ -1,5 +1,5 @@
 import { ArrowLeft, ExternalLink, FolderOpen, GitBranch, GitPullRequest } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { InputFeature, MachineInfo, SessionInfo, SessionModel } from "@gasho/protocol";
 import { BackgroundTasks } from "@/components/background-tasks";
 import { RepoPicker } from "@/components/repo-picker";
@@ -10,7 +10,7 @@ import { SessionTabs } from "@/components/session-tabs";
 import { StatusBadge } from "@/components/status-badge";
 import { PermissionRequests } from "@/components/permission-card";
 import { Transcript } from "@/components/transcript";
-import { PromptInput, type PromptModel } from "@/components/ui/prompt-input";
+import { PromptInput, type PromptInputHandle, type PromptModel } from "@/components/ui/prompt-input";
 import {
   branchLabel,
   formatCost,
@@ -307,6 +307,13 @@ function modelOptions(
 }
 /** Files sent with one input, in all (the Gasho server checks it too). */
 const MAX_FILES_BYTES = 10 * 1024 * 1024;
+/**
+ * The connection closed before a message's result came. A message that comes while Claude works waits on the working
+ * server until it is done; this page may not know yet that the session works (it sends nothing while it knows).
+ */
+const UNKNOWN_SENT =
+  "Gasho サーバーとの接続が切れたので、送れたか分かりません。Claude の作業中に届いた指示は、作業が終わってから会話に出ます。" +
+  "出なければ、入力欄に戻して、もう一度送ってください。";
 
 /**
  * Which of the picker's models the session uses, from Claude Code's name for it: "Sonnet 5.5 (default)" (its name
@@ -343,6 +350,17 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
   const key = transcriptKey(machine.id, s.sessionId);
   const [error, setError] = useState<string>();
   const [warning, setWarning] = useState<string>();
+  const box = useRef<PromptInputHandle>(null);
+  // Sent when the connection closed before its result came: put back in the box only when asked (see UNKNOWN_SENT).
+  const [unsent, setUnsent] = useState<{ text: string; files: File[] }>();
+  const putBack = () => {
+    if (!unsent) return;
+    // What was typed since stays, as when a send fails.
+    if (!promptDraft(key).get().text) box.current?.setValue(unsent.text);
+    if (unsent.files.length > 0) box.current?.attach(unsent.files);
+    box.current?.focus();
+    setUnsent(undefined);
+  };
   const [picks, setPicks] = usePicks(key);
   const { model: picked, effort: pickedEffort, ultracode: pickedUltracode } = picks;
   const current = currentModel(machine, s.model);
@@ -414,6 +432,7 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
         onSend={async ({ text, files }) => {
           setError(undefined);
           setWarning(undefined);
+          setUnsent(undefined);
           const fail = (message: string): never => {
             setError(message);
             throw new Error(message);
@@ -448,15 +467,10 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
             throw e;
           }
           if (r.unknown) {
-            // Not put back in the box: it may have been typed into the session, and could be sent twice.
+            // Not put back in the box at once: it may have been typed into the session, and could be sent twice.
             removePending(key, pending);
-            // A message that comes while Claude works waits on the working server until it is done. This page may not
-            // know yet that the session works (it sends nothing while it knows), so the warning says so either way.
-            const again = [...(text ? ["送った文は ↑ キーで戻せます"] : []), ...(files.length > 0 ? ["添付は付け直してください"] : [])];
-            setWarning(
-              "Gasho サーバーとの接続が切れたので、送れたか分かりません。Claude の作業中に届いた指示は、作業が終わってから会話に出ます。" +
-                `出なければ、もう一度送ってください（${again.join("。")}）。`,
-            );
+            setUnsent({ text, files });
+            setWarning(UNKNOWN_SENT);
             return;
           }
           if (!r.ok) {
@@ -522,10 +536,20 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
         showCount
         shell
         footer={<PluginComposerFooter machine={machine} session={s} />}
+        ref={box}
       />
       {(status || error || warning) && (
         <p className={cn("mt-1.5 px-3 text-xs", error ? "text-red-400" : warning ? "text-amber-400" : "text-muted-foreground")}>
           {error ?? warning ?? status}
+          {!error && warning === UNKNOWN_SENT && unsent && (
+            <button
+              type="button"
+              onClick={putBack}
+              className="ml-1.5 font-medium underline decoration-amber-400/50 underline-offset-4 hover:text-foreground"
+            >
+              入力欄に戻す
+            </button>
+          )}
         </p>
       )}
     </div>

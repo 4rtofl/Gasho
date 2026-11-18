@@ -89,7 +89,7 @@ test("接続が切れているあいだに指示を送ると「Gasho サーバ�
   expect(countOf(d, "session.input")).toBe(0);
 });
 
-test("送った直後に接続が切れると、結果が分からないと出て、指示は入力欄に戻らない（#106）", async ({ page, hub }) => {
+test("送った直後に接続が切れると、結果が分からないと出て、指示は「入力欄に戻す」を押したときだけ戻る（#106）", async ({ page, hub }) => {
   const d = await hub.fakeDaemon({ name: "mac", sessions: [fakeSession({ sessionId: SESSION, cwd: "/work/gasho", name: "e2e-session" })] });
   // Typed into the session, but its result is lost with the connection.
   d.handle("session.input", () => undefined);
@@ -97,12 +97,23 @@ test("送った直後に接続が切れると、結果が分からないと出�
   await openSession(page, d);
 
   const box = page.getByPlaceholder("Agent への指示を入力…");
+  const attached = page.getByRole("list", { name: "添付ファイル" }).getByRole("listitem");
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "ファイルを添付" }).click();
+  await (await chooser).setFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("メモ") });
   await box.fill("README を読んで");
   await page.getByRole("button", { name: "送信" }).click();
   await d.waitFor("session.input");
   await conn.drop();
   await expect(page.getByText(/分かりません/)).toBeVisible();
   await expect(box).toHaveValue("");
+  await expect(attached).toHaveCount(0);
+
+  // A phone has no ↑ key to recall it.
+  await page.getByRole("button", { name: "入力欄に戻す" }).click();
+  await expect(box).toHaveValue("README を読んで");
+  await expect(attached).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "入力欄に戻す" })).toHaveCount(0);
 });
 
 test("つなぎ直したあとも、遡って読み込んだ会話が残る（#106）", async ({ page, hub }) => {

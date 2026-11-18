@@ -241,7 +241,6 @@ test.describe("絞り込み", () => {
 
   test("ドロワーの中で絞り込みのメニューを Esc で閉じても、ドロワーは開いたまま", async ({ page, hub, isMobile }) => {
     test.skip(!isMobile, "ドロワーはスマホの幅のもの");
-    test.fail(true, "Esc でメニューを閉じると、ドロワーも一緒に閉じる（ドロワーの Esc の処理が、メニューを閉じた Esc も受ける。#183）");
     await hub.fakeDaemon({ sessions: [worktreeSession("g1", { branch: "feat/g1" })] });
     await page.goto("/");
     const nav = await sidebar(page, isMobile);

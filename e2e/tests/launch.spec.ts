@@ -441,7 +441,6 @@ test.describe("サイドバーのダイアログだけ", () => {
 
   test("スマホで、カテゴリーの「＋」で開いたダイアログを Esc で閉じても、ドロワーは開いたまま", async ({ page, hub, isMobile }) => {
     test.skip(!isMobile, "ドロワーはスマホの幅だけ");
-    test.fail(true, "#183: ドロワーが Esc を window の keydown で受けるので、ダイアログを閉じた Esc でドロワーも閉じる");
     const daemon = await hub.fakeDaemon({ name: "mac", repos: [{ path: "/work/app", worktrees: [{ path: "/work/app", branch: "main" }] }] });
     daemon.handle("session.launch", (msg) => commandResult(msg, { ok: false, error: "端末を作れませんでした。" }));
     await openHome(page, 1);

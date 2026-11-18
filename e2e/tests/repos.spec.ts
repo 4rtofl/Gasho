@@ -167,7 +167,6 @@ test("working server ごとに、候補が無い理由と、オフラインで�
 
 test("スマホで、リポジトリの登録のダイアログを Esc で閉じても、ドロワーは開いたまま", async ({ page, hub, isMobile }) => {
   test.skip(!isMobile, "ドロワーはスマホの幅だけ");
-  test.fail(true, "#183: ドロワーが Esc を window の keydown で受けるので、ダイアログを閉じた Esc でドロワーも閉じる");
   await hub.fakeDaemon({ name: "mac" });
   await openHome(page, 1);
   const dialog = await openRepos(page);

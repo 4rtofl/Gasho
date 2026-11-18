@@ -119,6 +119,8 @@ test("質問のカードで、単一選択・複数選択・自分の言葉の�
   await page.clock.fastForward("00:02");
   await expect(page.getByText("送りました")).toHaveCount(0);
   await expect(answer).toBeEnabled();
+  await expect(page.getByRole("button", { name: "答えずに止める" })).toBeEnabled();
+  await expect(db.getByRole("radio", { name: /Postgres/ })).toBeEnabled();
 });
 
 test("答えを次の発言として送る質問にはその説明が出て、「答えずに止める」で拒否が daemon に届く", async ({ page, hub }) => {

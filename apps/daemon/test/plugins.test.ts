@@ -44,16 +44,32 @@ export default {
   },
 };
 `;
+const V5 = `
+export default {
+  async start(ctx) {
+    // Long enough for the settings to change while this version is still starting.
+    await new Promise((r) => setTimeout(r, 500));
+    let last;
+    globalThis.watch = setInterval(() => {
+      const now = JSON.stringify(ctx.settings);
+      if (now !== last) { last = now; ctx.emit("settings", ctx.settings); }
+    }, 20);
+  },
+  stop() { clearInterval(globalThis.watch); },
+  methods: { huge: () => "a".repeat(16 * 1024 * 1024), small: () => "ok" },
+};
+`;
 const HASH1 = "aaaaaaaaaaaaaaaa";
 const HASH2 = "bbbbbbbbbbbbbbbb";
 const BROKEN = `export default { start() { throw new Error("動き始められません"); }, methods: {} };`;
 const HASH3 = "cccccccccccccccc";
 const HASH4 = "dddddddddddddddd";
+const HASH5 = "eeeeeeeeeeeeeeee";
 
 function setup(enabled = true, answerCode = true) {
   const sent: DaemonToHub[] = [];
   const logs: string[] = [];
-  const codes: Record<string, string> = { [HASH1]: V1, [HASH2]: V2, [HASH3]: V3, [HASH4]: BROKEN };
+  const codes: Record<string, string> = { [HASH1]: V1, [HASH2]: V2, [HASH3]: V3, [HASH4]: BROKEN, [HASH5]: V5 };
   let runner: PluginRunner;
   const local = { folders: ["/work"], dataDir: fs.mkdtempSync(path.join(os.tmpdir(), "gasho-plugin-data-")) };
   // A gh that writes down each time it runs.
@@ -203,6 +219,39 @@ test("a daemon part's events go to the Gasho server, at most once a second for e
     runner.update([{ id: "hello", hash: HASH3, run: false, settings: {} }]);
     await new Promise((r) => setTimeout(r, 1200));
     assert.equal(events("progress").length, before);
+  } finally {
+    await runner.stopAll();
+  }
+});
+
+test("a change of the settings reaches a daemon part without a call, in what start got too", async () => {
+  const { runner, until, sent } = setup();
+  const seen = () => sent.flatMap((m) => (m.type === "plugin.event" && m.topic === "settings" ? [m.data] : []));
+  try {
+    runner.update([{ id: "hello", hash: HASH5, run: true, settings: { refreshSeconds: 60, old: true } }]);
+    // While the version starts (its start waits 500 ms), so that it is given the settings of when it was started.
+    await new Promise((r) => setTimeout(r, 200));
+    runner.update([{ id: "hello", hash: HASH5, run: true, settings: { refreshSeconds: 30 } }]);
+    await until(() => seen().length === 1);
+    assert.deepEqual(seen(), [{ refreshSeconds: 30 }]);
+    // Running, and no call: a key taken away is gone too.
+    runner.update([{ id: "hello", hash: HASH5, run: true, settings: { refreshSeconds: 0 } }]);
+    await until(() => seen().length === 2);
+    assert.deepEqual(seen(), [{ refreshSeconds: 30 }, { refreshSeconds: 0 }]);
+  } finally {
+    await runner.stopAll();
+  }
+});
+
+test("a result too big for one message to the Gasho server fails that call, and the next call is answered", async () => {
+  const { runner, call, state, until } = setup();
+  try {
+    runner.update([{ id: "hello", hash: HASH5, run: true, settings: {} }]);
+    await until(() => state()?.state === "running");
+    const big = await call("huge");
+    assert.equal(big.result, undefined);
+    assert.equal(big.error, "huge の答えが大きすぎます（JSON にして 15MB まで）。");
+    assert.equal((await call("small")).result, "ok");
   } finally {
     await runner.stopAll();
   }

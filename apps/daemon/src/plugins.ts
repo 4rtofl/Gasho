@@ -304,7 +304,8 @@ export class PluginRunner {
         slot.failed = undefined;
         slot.crashes = [];
       } else if (slot.failed?.retry) slot.failed = undefined;
-      if (slot.proc?.hash === entry.hash) slot.proc.settings(entry.settings);
+      // Also to a version still starting: it was given the settings of when it was started.
+      for (const p of [slot.proc, slot.starting]) if (p?.hash === entry.hash) p.settings(entry.settings);
       void this.ensure(slot);
     }
     for (const [id, slot] of this.slots) {

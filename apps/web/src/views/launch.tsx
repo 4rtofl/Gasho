@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG_PANEL } from "@/components/dialog-styles";
 import { childPath, CLONE_WAIT_MS, folderChoices, folderNameProblem, repoFolderName, repoProblem } from "@/lib/folders";
 import { go } from "@/lib/route";
+import { useSessionLauncher } from "@/lib/session-launch";
 import { daemonAtLeast } from "@/lib/sessions";
 import { sendCommand, useAppState } from "@/lib/store";
 import { composing, keepOpenWhileComposing } from "@/lib/text-input";
@@ -17,7 +18,6 @@ const OTHER = "\u0000other";
 const TITLE = "新しいセッションを起動する";
 const NONE: readonly string[] = [];
 /** How long to wait for each answer, a little longer than the Gasho server does. */
-const LAUNCH_WAIT_MS = 60_000;
 const FOLDER_WAIT_MS = 20_000;
 
 type Tool = "folder" | "clone";
@@ -69,6 +69,7 @@ function LaunchForm({
   onBusyChange?: (busy: boolean) => void;
 }) {
   const { machines } = useAppState();
+  const launchSession = useSessionLauncher();
   const candidates = useMemo(() => machines.filter((m) => m.connected && m.canLaunch), [machines]);
   const [machineId, setMachineId] = useState(
     initial && candidates.some((m) => m.id === initial.machine) ? initial.machine : (candidates[0]?.id ?? ""),
@@ -124,12 +125,9 @@ function LaunchForm({
     setBusy(true);
     setError(undefined);
     setTrustAsk(undefined);
-    const r = await sendCommand(
-      machine.id,
-      { type: "session.launch", cwd: dir, name: name.trim() || undefined, ...(trust ? { trust: true } : {}) },
-      LAUNCH_WAIT_MS,
-    );
+    const r = await launchSession(machine.id, { cwd: dir, name: name.trim() || undefined, trust });
     setBusy(false);
+    if (r.cancelled) return;
     if (!r.ok || !r.sessionId) {
       if (r.needsTrust) setTrustAsk({ machine: machine.id, cwd: dir, warnings: r.trustWarnings ?? [] });
       else setError(r.error ?? "起動できませんでした。");

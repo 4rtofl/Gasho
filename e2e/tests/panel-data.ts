@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import type { Page } from "@playwright/test";
 import type { CommandResult, DirEntry, DirListing, FileContent, GitCommit, GitGraph, GitRef, HubToDaemon, SessionInfo } from "@gasho/protocol";
-import { fileNameProblem } from "../../apps/daemon/src/files.ts";
+import { fileNameProblem, MAX_TEXT_BYTES, relPathProblem } from "../../apps/daemon/src/files.ts";
 import { commandResult, type FakeDaemon, type FakeDaemonOptions, fakeSession, type GashoHub } from "../harness/index.ts";
 
 export const SESSION_ID = "5d1e7c2a-3b4f-4e6a-9c8d-2f1a0b9e8d71";
@@ -99,16 +99,25 @@ export class FakeFolder {
     });
   }
 
-  /** As writeFileAt (apps/daemon/src/files.ts) answers, in the same order. */
+  /**
+   * As writeFileAt (apps/daemon/src/files.ts) answers, in the same order. Links are not followed, so writing through a
+   * link that points inside the session's folder (to its file, or into its folder) is not answered as gasho-daemon
+   * answers, and a link that loops is answered as a broken one.
+   */
   private write(msg: FileWrite): CommandResult {
     const { path, create } = msg;
+    if (path === "") return { ok: false, error: "ファイルを指定してください。" };
+    const pathWrong = relPathProblem(path);
+    if (pathWrong) return { ok: false, error: pathWrong };
+    if (Buffer.byteLength(msg.content) > MAX_TEXT_BYTES) return { ok: false, error: `${MAX_TEXT_BYTES / 1024 / 1024}MB より大きいファイルは保存できません。` };
     const at = this.entryAt(path);
     if (create) {
       const [parent, name] = splitPath(path);
       const nameWrong = fileNameProblem(name);
       if (nameWrong) return { ok: false, error: nameWrong };
-      const folder = parent === "" ? { kind: "dir" } : this.entryAt(parent);
-      if (!folder) return { ok: false, error: `見つかりません：${parent}` };
+      const folder: DirEntry | undefined = parent === "" ? { name: "", kind: "dir" } : this.entryAt(parent);
+      if (!folder || (folder.link && folder.kind === "other")) return { ok: false, error: `見つかりません：${parent}` };
+      if (folder.outside) return { ok: false, error: "セッションのフォルダーの外を指すリンクは開けません。" };
       if (folder.kind !== "dir") return { ok: false, error: `フォルダーではありません：${parent}` };
       // Anything already there, a broken link included (O_EXCL).
       if (at) return { ok: false, error: `同じ名前のファイルかフォルダーが、すでにあります：${path}` };

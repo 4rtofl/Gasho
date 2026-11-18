@@ -26,6 +26,7 @@ import { hasDrafts } from "./drafts";
 import { hasUnsavedFiles } from "./file-drafts";
 import { usePageVisible } from "./media";
 import { type AutoReload, onOutOfDate, outOfDate } from "./server-update";
+import { unreadOfSession } from "./sessions";
 
 /** Close code the Gasho server uses when this browser is not (or no longer) registered. */
 const CLOSE_UNAUTHORIZED = 4401;
@@ -745,12 +746,12 @@ export function markRead(ids: string[]): void {
  * and those that could not be sent while disconnected once the Gasho server's snapshot brings them back.
  */
 export function useReadWhileOpen(machine: string | undefined, sessionId: string | undefined): void {
-  const { notifications } = useAppState();
+  const { notifications, machines } = useAppState();
   const visible = usePageVisible();
   useEffect(() => {
     if (!visible || !machine || !sessionId) return;
-    markRead(notifications.filter((n) => !n.read && n.machine === machine && n.sessionId === sessionId).map((n) => n.id));
-  }, [visible, machine, sessionId, notifications]);
+    markRead(unreadOfSession(notifications, machines, machine, sessionId).map((n) => n.id));
+  }, [visible, machine, sessionId, notifications, machines]);
 }
 
 /** The state now, outside React (the plugins' loader follows it). */

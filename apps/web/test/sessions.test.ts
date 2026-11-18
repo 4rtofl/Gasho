@@ -8,6 +8,7 @@ import {
   repoKeyOf,
   sessionDot,
   tabAfterRemoval,
+  unreadOfSession,
   unreadSessions,
   worktreeDot,
   worktreeLastUsed,
@@ -234,4 +235,16 @@ test("a worktree's dot is its most pressing session's, gray without sessions, an
     "feat/old /src/old: unknown false",
   ]);
   assert.deepEqual(sessionDot(offline, offline.sessions[2]!, unreadSessions([note("mac", "c", false)])), { status: "unknown", unread: true });
+  // After /clear, what came under the id from before rings the bell of the session it went on as.
+  const cleared = machine("mac", [session("a2", { cwd: "/src/app", worktree: app, previousSessionIds: ["a"] })]);
+  assert.equal(dots([note("mac", "a", false)], [cleared])[0], "main /src/app: idle true");
+});
+
+test("an open session reads its unread notifications, those under an id it had before /clear too", () => {
+  const note = (id: string, machine: string, sessionId: string, read = false): GashoNotification => ({ id, machine, sessionId, at: 0, kind: "done", title: "", read });
+  const machines = [machine("mac", [session("b", { previousSessionIds: ["a"] }), session("c")])];
+  const notes = [note("1", "mac", "a"), note("2", "mac", "b"), note("3", "mac", "b", true), note("4", "mac", "c"), note("5", "ubuntu", "a")];
+  assert.deepEqual(unreadOfSession(notes, machines, "mac", "b").map((n) => n.id), ["1", "2"]);
+  // Open on an id no session lists (the page has not gone on to the new id yet): those under that id.
+  assert.deepEqual(unreadOfSession(notes, machines, "mac", "a").map((n) => n.id), ["1"]);
 });

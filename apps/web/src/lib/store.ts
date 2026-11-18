@@ -22,11 +22,11 @@ import type {
   TranscriptEntry,
 } from "@gasho/protocol";
 import { fetchMe } from "./api";
-import { hasDrafts } from "./drafts";
+import { hasDrafts, moveDraft } from "./drafts";
 import { hasUnsavedFiles } from "./file-drafts";
 import { usePageVisible } from "./media";
 import { type AutoReload, onOutOfDate, outOfDate } from "./server-update";
-import { unreadOfSession } from "./sessions";
+import { movedSession, unreadOfSession } from "./sessions";
 
 /** Close code the Gasho server uses when this browser is not (or no longer) registered. */
 const CLOSE_UNAUTHORIZED = 4401;
@@ -505,6 +505,19 @@ function sameEntry(a: TranscriptEntry, b: TranscriptEntry): boolean {
   return a.uuid !== "" && a.uuid === b.uuid;
 }
 
+/**
+ * After /clear a session goes on under a new id (see movedSession): what its chat box holds goes with it, also for a
+ * session not on screen, before a page goes to the new id.
+ */
+function moveDrafts(machines: MachineInfo[]): void {
+  for (const m of machines) {
+    for (const id of new Set(m.sessions.flatMap((s) => s.previousSessionIds ?? []))) {
+      const to = movedSession(m, id);
+      if (to) moveDraft(transcriptKey(m.id, id), transcriptKey(m.id, to.sessionId));
+    }
+  }
+}
+
 function handle(m: HubToClient): void {
   for (const l of messageListeners) l(m);
   switch (m.type) {
@@ -532,6 +545,7 @@ function handle(m: HubToClient): void {
       break;
     case "snapshot":
       heartbeat = m.heartbeat === true;
+      moveDrafts(m.machines);
       update({
         push: m.push,
         machines: m.machines,
@@ -554,6 +568,7 @@ function handle(m: HubToClient): void {
       const machines = state.machines.filter((x) => x.id !== m.machine.id);
       machines.push(m.machine);
       machines.sort((a, b) => a.name.localeCompare(b.name));
+      moveDrafts([m.machine]);
       update({ machines });
       break;
     }

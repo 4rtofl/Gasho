@@ -32,29 +32,44 @@ test("the other selectors stay as they are", () => {
   }
 });
 
-// The rules below are written as Chrome's CSSOM writes them; happy-dom cannot read nested rules nor a { in a string.
+// The rules below are written as Chrome's CSSOM writes them (a nested `~ *` as `& ~ *`); happy-dom cannot read nested
+// rules nor a { in a string.
+const style = (selectorText: string, block = "{ outline: red; }"): CssRule => ({ selectorText, cssText: `${selectorText} ${block}`, cssRules: [] });
+const inside = (head: string, rules: CssRule[]) => `${head} {\n${rules.map((r) => `  ${r.cssText}\n`).join("")}}`;
+const nest = (selectorText: string, ...rules: CssRule[]): CssRule => ({ selectorText, cssText: inside(selectorText, rules), cssRules: rules });
+const media = (...rules: CssRule[]): CssRule => ({ cssText: inside("@media (min-width: 1px)", rules), cssRules: rules });
+
 test("ruleText writes the selectors of the style rules, and of those in @media and @supports, before their blocks", () => {
-  const style = (selectorText: string, block: string) => ({ selectorText, cssText: `${selectorText} ${block}`, cssRules: [] });
   assert.equal(ruleText(style(".dark .a", "{ color: red; }")), ".dark & .a, & .dark .a { color: red; }");
   assert.equal(ruleText(style(".a", "{ color: red; }")), ".a { color: red; }");
-  const media = { cssText: "@media (min-width: 1px) {\n  .dark .a { color: red; }\n}", cssRules: [style(".dark .a", "{ color: red; }")] };
-  assert.equal(ruleText(media), "@media (min-width: 1px) {.dark & .a, & .dark .a { color: red; }}");
+  assert.equal(ruleText(media(style(".dark .a", "{ color: red; }"))), "@media (min-width: 1px) {.dark & .a, & .dark .a { color: red; }}");
   const supports = { cssText: '@supports (content: "{") {\n  .b { color: blue; }\n}', cssRules: [style(".b", "{ color: blue; }")] };
   assert.equal(ruleText(supports), '@supports (content: "{") {.b { color: blue; }}');
-  const nested = { selectorText: ".dark", cssText: ".dark {\n  & .c { color: green; }\n}", cssRules: [style("& .c", "{ color: green; }")] };
-  assert.equal(ruleText(nested), ".dark &, & .dark {\n  & .c { color: green; }\n}");
+  assert.equal(ruleText(nest(".dark", style("& .c", "{ color: green; }"))), ".dark &, & .dark {\n  & .c { color: green; }\n}");
 });
 
-test("a .dark rule with + or ~ in a nested rule stays as it is, as .dark & would be the part's element", () => {
-  const sibling = { selectorText: "& ~ *", cssText: "& ~ * { outline: red; }", cssRules: [] };
-  const nest = (selectorText: string, child: CssRule) => ({ selectorText, cssText: `${selectorText} {\n  ${child.cssText}\n}`, cssRules: [child] });
+test("a .dark rule stays as it is when a rule nested in it can match outside the plugin's part", () => {
   for (const rule of [
-    nest(".dark", sibling),
-    nest("html.dark", { selectorText: "& + .a", cssText: "& + .a { outline: red; }", cssRules: [] }),
-    nest(".dark", { cssText: "@media (min-width: 1px) {\n  & ~ * { outline: red; }\n}", cssRules: [sibling] }),
+    // .dark & alone is the part's element, and + or ~ after it match Gasho's elements.
+    nest(".dark", style("& ~ *")),
+    nest("html.dark", style("& + .a")),
+    nest(".dark", media(style("& ~ *"))),
+    nest(".dark", nest("&:not(.a)", style("& ~ *"))),
+    // & in () can match around the part's elements.
+    nest(".dark", style(":is(& ~ *)")),
+    nest(".dark", style(":is(& + *)")),
+    nest(".dark", style(":has(+ &)")),
+    nest(".dark", style(":has(> &)")),
+    nest(".dark", style(":has(&)")),
+    nest(".dark", media(style(":is(& ~ *)"))),
+    nest(".dark .a", style(":has(&)")),
   ]) {
     assert.equal(ruleText(rule), rule.cssText, rule.cssText);
   }
-  // Below .dark .a, ~ stays inside the part.
-  assert.equal(ruleText(nest(".dark .a", sibling)), ".dark & .a, & .dark .a {\n  & ~ * { outline: red; }\n}");
+  // + and ~ below an element inside the part stay inside it.
+  for (const rule of [nest(".dark", style("& .foo + .foo")), nest(".dark", nest("& .foo", style("& + .foo")))]) {
+    assert.equal(ruleText(rule), `.dark &, & .dark${rule.cssText.slice(".dark".length)}`, rule.cssText);
+  }
+  const below = nest(".dark .a", style("& ~ *"));
+  assert.equal(ruleText(below), `.dark & .a, & .dark .a${below.cssText.slice(".dark .a".length)}`);
 });

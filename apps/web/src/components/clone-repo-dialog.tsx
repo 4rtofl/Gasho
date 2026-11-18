@@ -3,10 +3,11 @@
 import { LoaderCircle, TriangleAlert, X } from "lucide-react";
 import { Dialog } from "radix-ui";
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import type { CommandResult } from "@gasho/protocol";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG_PANEL } from "@/components/dialog-styles";
 import { CLONE_WAIT_MS, cloneProblem, clonePath, folderChoices, repoFolderName } from "@/lib/folders";
 import { daemonAtLeast } from "@/lib/sessions";
-import { sendCommand, useAppState } from "@/lib/store";
+import { getAppState, sendCommand, subscribeAppState, useAppState } from "@/lib/store";
 import { composing, keepOpenWhileComposing } from "@/lib/text-input";
 import { cn } from "@/lib/utils";
 
@@ -22,6 +23,34 @@ const PLAIN_TEXT = { spellCheck: false, autoCapitalize: "none", autoCorrect: "of
 interface Running {
   machine: string;
   step: "clone" | "register";
+}
+
+/** Cloned or perhaps cloned, but not known to be registered: the form has nothing left to do. */
+interface Unfinished {
+  title: string;
+  path: string;
+  reason: string;
+  hint: string;
+}
+
+const REGISTER_HINT = "絞り込みのメニューの「リポジトリを登録・解除…」から、このフォルダーを登録できます。";
+
+/**
+ * The answer to a command, or "lost" once the connection to the Gasho server closes: the Gasho server answers on the
+ * connection a command came on, so no answer comes after that, though the working server may still carry it out.
+ */
+function answerUnlessLost(sent: Promise<CommandResult>): Promise<CommandResult | "lost"> {
+  return new Promise((resolve) => {
+    const stop = subscribeAppState(() => {
+      if (getAppState().connected) return;
+      stop();
+      resolve("lost");
+    });
+    void sent.then((r) => {
+      stop();
+      resolve(r);
+    });
+  });
 }
 
 /**
@@ -104,8 +133,7 @@ function CloneForm({
   const [repo, setRepo] = useState("");
   const [name, setName] = useState("");
   const [error, setError] = useState<string>();
-  // Cloned, but not registered: the clone is there, so the form has nothing left to do.
-  const [unregistered, setUnregistered] = useState<{ path: string; reason: string }>();
+  const [unfinished, setUnfinished] = useState<Unfinished>();
 
   const busy = running !== undefined;
   useEffect(() => {
@@ -125,29 +153,53 @@ function CloneForm({
     const id = machine.id;
     setError(undefined);
     setRunning({ machine: id, step: "clone" });
-    const cloned = await sendCommand(id, { type: "repo.clone", parent, repo: what, ...(as ? { name: as } : {}) }, CLONE_WAIT_MS);
+    const cloned = await answerUnlessLost(sendCommand(id, { type: "repo.clone", parent, repo: what, ...(as ? { name: as } : {}) }, CLONE_WAIT_MS));
+    if (cloned === "lost") {
+      setRunning(undefined);
+      return setUnfinished({
+        title: "clone できたか分かりません",
+        path: target ?? parent,
+        reason: "clone の途中で Gasho サーバーとの接続が切れました。working server では clone が続いていることがあります。",
+        hint: `clone が終わると、このフォルダーができます。${REGISTER_HINT}`,
+      });
+    }
     if (!cloned.ok || !cloned.path) {
       setRunning(undefined);
       return setError(cloned.error ?? "clone できませんでした。");
     }
     setRunning({ machine: id, step: "register" });
-    const registered = await sendCommand(id, { type: "repo.register", path: cloned.path }, REGISTER_WAIT_MS);
+    const registered = await answerUnlessLost(sendCommand(id, { type: "repo.register", path: cloned.path }, REGISTER_WAIT_MS));
     setRunning(undefined);
-    if (!registered.ok) return setUnregistered({ path: cloned.path, reason: registered.error ?? "原因が分かりません。" });
+    if (registered === "lost") {
+      return setUnfinished({
+        title: "clone できましたが、登録できたか分かりません",
+        path: cloned.path,
+        reason: "登録の途中で Gasho サーバーとの接続が切れました。",
+        hint: `サイドバーの一覧に出ないときは、${REGISTER_HINT}`,
+      });
+    }
+    if (!registered.ok) {
+      return setUnfinished({
+        title: "clone できましたが、登録できませんでした",
+        path: cloned.path,
+        reason: registered.error ?? "原因が分かりません。",
+        hint: REGISTER_HINT,
+      });
+    }
     onCloned(id, registered.path ?? cloned.path);
   };
 
-  if (unregistered) {
+  if (unfinished) {
     return (
       <div className="space-y-4">
         <div role="alert" className="space-y-1.5 rounded-lg bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
           <p className="flex items-center gap-2 font-medium">
             <TriangleAlert className="size-4 shrink-0" />
-            clone できましたが、登録できませんでした
+            {unfinished.title}
           </p>
-          <p className="font-mono text-xs break-all">{unregistered.path}</p>
-          <p className="break-words">{unregistered.reason}</p>
-          <p className="text-xs">絞り込みのメニューの「リポジトリを登録・解除…」から、このフォルダーを登録し直せます。</p>
+          <p className="font-mono text-xs break-all">{unfinished.path}</p>
+          <p className="break-words">{unfinished.reason}</p>
+          <p className="text-xs">{unfinished.hint}</p>
         </div>
         <div className="flex justify-end">
           <button type="button" onClick={onClose} className={BUTTON_SECONDARY}>

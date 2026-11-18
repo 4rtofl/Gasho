@@ -117,6 +117,43 @@ test("cloned but not registered: says where the clone is and why, and stays open
   expect(onClose).not.toHaveBeenCalled();
 });
 
+test("the connection lost during the clone: says the result is unknown and where, can be closed, and registers nothing", async () => {
+  const user = userEvent.setup();
+  const hub = await connectHub({ machines: [server("linux")] });
+  const onClose = vi.fn();
+  const onCloned = vi.fn();
+  render(<CloneRepoDialog open onClose={onClose} onCloned={onCloned} />);
+  await user.type(repoField(), "cli/cli");
+  await user.click(cloneButton());
+  const asked = hub.commands().length;
+  hub.drop();
+
+  const alert = await screen.findByRole("alert");
+  expect(alert.textContent).toContain("clone できたか分かりません");
+  expect(alert.textContent).toContain("/home/me/repos/cli");
+  expect(alert.textContent).toContain("「リポジトリを登録・解除…」");
+  expect(hub.commands()).toHaveLength(asked);
+  expect(onCloned).not.toHaveBeenCalled();
+  await user.click(screen.getAllByRole("button", { name: "閉じる" }).at(-1)!);
+  expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+test("the connection lost during the registration: says the clone is there and the registration is unknown", async () => {
+  const user = userEvent.setup();
+  const hub = await connectHub({ machines: [server("linux")] });
+  const onCloned = vi.fn();
+  render(<CloneRepoDialog open onClose={() => {}} onCloned={onCloned} />);
+  await user.type(repoField(), "cli/cli");
+  await user.click(cloneButton());
+  await hub.answer({ ok: true, path: "/home/me/repos/cli" });
+  hub.drop();
+
+  const alert = await screen.findByRole("alert");
+  expect(alert.textContent).toContain("clone できましたが、登録できたか分かりません");
+  expect(alert.textContent).toContain("/home/me/repos/cli");
+  expect(onCloned).not.toHaveBeenCalled();
+});
+
 test("clones on the working server picked, with that server's folders, and only offers those that can clone", async () => {
   const user = userEvent.setup();
   const hub = await connectHub({

@@ -8,6 +8,7 @@ import type { RegisteredRepo } from "@gasho/protocol";
 import { commandResult, type GashoHub } from "../harness/index.ts";
 import { expect, test } from "./fixtures.ts";
 import { deferred, openHome, sidebar } from "./launch-helpers.ts";
+import { routeConnection } from "./screen.ts";
 
 const TITLE = "リポジトリを clone";
 const OTHER_FOLDER = "ほかのフォルダーを入力する…";
@@ -152,6 +153,36 @@ test("clone できて登録できないと、clone 先と理由を出す", async
   await expect(alert).toContainText("clone できましたが、登録できませんでした");
   await expect(alert).toContainText("/home/me/repos/lib");
   await expect(alert).toContainText("登録先に書き込めません。");
+  await dialog.getByRole("button", { name: "閉じる" }).last().click();
+  await expect(dialog).toBeHidden();
+});
+
+test("clone の途中で接続が切れると、結果が分からないことと clone 先を出し、閉じられる", async ({ page, hub }) => {
+  const conn = await routeConnection(page);
+  const daemon = await hub.fakeDaemon({ name: "mac", capabilities: { folders: ["/home/me/repos/app"] } });
+  const answer = deferred();
+  daemon.handle("repo.clone", async (msg) => {
+    await answer.promise;
+    return commandResult(msg, { ok: true, path: "/home/me/repos/lib" });
+  });
+  await openHome(page, 1);
+  const dialog = await openClone(page);
+  await fill(dialog, { repo: "owner/lib" });
+  await press(dialog);
+  await expect(dialog.getByRole("status")).toContainText("最長 10 分");
+  await expect.poll(() => daemon.received.some((m) => m.type === "repo.clone")).toBe(true);
+
+  await conn.drop();
+  const alert = dialog.getByRole("alert");
+  await expect(alert).toContainText("clone できたか分かりません");
+  await expect(alert).toContainText("/home/me/repos/lib");
+  await expect(alert).toContainText("「リポジトリを登録・解除…」");
+
+  // The working server finishes after the page has connected again: nothing is registered behind the person's back.
+  await expect.poll(() => conn.made).toBeGreaterThan(1);
+  answer.resolve();
+  await expect(alert).toBeVisible();
+  expect(daemon.received.filter((m) => m.type === "repo.register")).toEqual([]);
   await dialog.getByRole("button", { name: "閉じる" }).last().click();
   await expect(dialog).toBeHidden();
 });

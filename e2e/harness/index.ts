@@ -2,7 +2,7 @@
 // of the test's own, fake or real gasho-daemons, and the fake gh, npm and claude. It does not import @playwright/test,
 // which a test runner may load only once: each repository's tests build their fixtures on it (e2e/tests/fixtures.ts).
 export { type BrowserCookie, checkoutVersion, type DaemonOptions, GashoHub, type HubOptions, RealDaemon, startHub } from "./hub.ts";
-export { type Answer, commandResult, delay, FakeDaemon, type FakeDaemonOptions, fakeSession, textEntry } from "./fake-daemon.ts";
+export { type Answer, commandResult, delay, FakeDaemon, type FakeDaemonOptions, fakeSession, textEntry, transcriptPage } from "./fake-daemon.ts";
 export {
   type AgentRow,
   type ArgPattern,

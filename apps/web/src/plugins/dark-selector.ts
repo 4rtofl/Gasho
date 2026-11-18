@@ -24,7 +24,7 @@ function find(text: string, from: number, at: (i: number) => boolean, nested = f
 }
 
 /** Where the block of a rule's cssText starts: its first `{` outside (), [] and strings (as in `@supports (content: "{")`). */
-export function blockStart(cssText: string): number {
+function blockStart(cssText: string): number {
   return find(cssText, 0, (i) => cssText[i] === "{");
 }
 
@@ -58,4 +58,25 @@ export function darkSelector(selectorText: string): string | undefined {
   }
   const out = selectors.map(dark);
   return out.some((s, i) => s !== selectors[i]) ? out.join(", ") : undefined;
+}
+
+/** What ruleText reads of a CSSOM rule. */
+export interface CssRule {
+  readonly cssText: string;
+  /** A style rule's selectors. */
+  readonly selectorText?: string;
+  /** The rules inside a style rule or a rule like @media. */
+  readonly cssRules?: ArrayLike<CssRule>;
+}
+
+/** A style rule or a rule with rules inside (@media, @supports…) of a plugin's web.css, with darkSelector's selectors. */
+export function ruleText(rule: CssRule): string {
+  if (rule.selectorText !== undefined) {
+    const selector = darkSelector(rule.selectorText);
+    // CSSOM writes a style rule as its selectorText and then its block.
+    if (selector && rule.cssText.startsWith(rule.selectorText)) return selector + rule.cssText.slice(rule.selectorText.length);
+  } else if (rule.cssRules) {
+    return `${rule.cssText.slice(0, blockStart(rule.cssText))}{${Array.from(rule.cssRules, ruleText).join("")}}`;
+  }
+  return rule.cssText;
 }

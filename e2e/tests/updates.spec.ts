@@ -61,6 +61,11 @@ async function recordCopies(page: Page): Promise<void> {
 
 const copied = (page: Page) => page.evaluate(() => (globalThis as unknown as { copied: string[] }).copied);
 
+/** Marks this page, to tell whether it was loaded again (the mark goes with it). */
+const mark = (page: Page) => page.evaluate("window.e2eMark = true");
+// undefined while the page is being loaded again (it has nothing to evaluate in), for expect.poll to ask again.
+const marked = (page: Page) => page.evaluate("window.e2eMark === true").catch(() => undefined);
+
 test.describe("公開されている最新のバージョンを調べない Gasho サーバー", () => {
   test.use({ hubOptions: { env: { GASHO_LATEST_CHECK: "off" } } });
 
@@ -216,6 +221,17 @@ test.describe("gasho-daemon を更新できる working server", () => {
       await expect(row).toContainText(`${NEWER} に更新しました。`);
       await expect(row.getByRole("button", { name: `${DAEMON} に戻す` })).toBeVisible();
       return d;
+    });
+
+    await test.step("ページを読み込み直しても、更新したと出る", async () => {
+      await page.reload();
+      await expect(row).toContainText(`${NEWER} に更新しました。`);
+    });
+
+    await test.step("端末の画面を離れて戻ると、更新したとは出なくなる", async () => {
+      await page.goto("/#/");
+      await openDevices(page, await devicesItem(page));
+      await expect(row).toContainText("最新のバージョンです。");
     });
 
     await test.step("更新できるものが無くなると、バッジが消える", async () => {
@@ -405,10 +421,13 @@ test.describe("Gasho から更新できる Gasho サーバー", () => {
       await expect(slow).toBeVisible();
     });
 
-    await test.step("起動し直した新しいバージョンは、試験のあと確定し、更新したと出て、前のバージョンに戻すボタンが出る", async () => {
+    await test.step("起動し直した新しいバージョンにつながると、ページはそのバージョンの画面に読み込み直され、試験のあと確定して、更新したと出て、前のバージョンに戻すボタンが出る", async () => {
+      await mark(page);
       await service.allowRestarts();
       await expect(row).toContainText("gasho-hub 0.90.1", AFTER_RESTART);
-      await expect(row).toContainText("0.90.1 に更新しました。", AFTER_RESTART);
+      await expect.poll(() => marked(page), AFTER_RESTART).toBe(false);
+      await expect.poll(() => hub.proc.log(), AFTER_RESTART).toContain("0.90.1 started well; it is no longer on trial");
+      await expect(row).toContainText("0.90.1 に更新しました。");
       await expect(row.getByRole("button", { name: "0.90.0 に戻す" })).toBeVisible();
       // The steps the screen showed too briefly to be seen, in the Gasho server's log, in order.
       const log = hub.proc.log();
@@ -416,15 +435,10 @@ test.describe("Gasho から更新できる Gasho サーバー", () => {
         log.lastIndexOf(`update to 0.90.1: ${s}`),
       );
       expect(order.every((at, i) => at >= 0 && (i === 0 || at > (order[i - 1] ?? 0)))).toBe(true);
-      expect(log).toContain("0.90.1 started well; it is no longer on trial");
     });
 
-    await test.step("更新できるものが無くなると、バッジが消える", async () => {
-      const item = await devicesItem(page);
-      await expect(item).not.toContainText("更新");
-      await openDevices(page, item);
-    });
-
+    // The badge once updated is seen in the next test: in WebKit, with the page's clock installed, the sidebar's
+    // drawer does not close on the page loaded again.
     await test.step("「0.90.0 に戻す」で、入っている前のバージョンへ切り替えて起動し直し、0.90.0 で確定して、また 0.90.1 に更新できる", async () => {
       await row.getByRole("button", { name: "0.90.0 に戻す" }).click();
       await expect(dialog.getByRole("heading")).toHaveText("Gasho サーバーを 0.90.0 に戻しますか？");
@@ -436,6 +450,24 @@ test.describe("Gasho から更新できる Gasho サーバー", () => {
       await expect.poll(() => hub.proc.log(), AFTER_RESTART).toContain("0.90.0 started well; it is no longer on trial");
       await expect(row.getByRole("button", { name: "0.90.1 に更新" })).toBeVisible();
     });
+  });
+
+  test("更新して読み込み直したページに、更新したと出る", async ({ page, hub }) => {
+    test.slow();
+    await hub.npm.set({ answers: [...((await hub.npm.table()).answers ?? []), await hubInstallAnswer("0.90.1")] });
+    await page.goto("/#/devices");
+    const row = serverRow(page);
+    await mark(page);
+    await row.getByRole("button", { name: "0.90.1 に更新" }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "更新する" }).click();
+    await expect.poll(() => hub.proc.log(), AFTER_RESTART).toContain("0.90.1 started well; it is no longer on trial");
+    await expect.poll(() => marked(page), AFTER_RESTART).toBe(false);
+    await expect(row).toContainText("gasho-hub 0.90.1");
+    await expect(row).toContainText("0.90.1 に更新しました。");
+    // Updated, the Gasho server has nothing to update to: the badge is gone.
+    const item = await devicesItem(page);
+    await expect(item).not.toContainText("更新");
+    await openDevices(page, item);
   });
 });
 

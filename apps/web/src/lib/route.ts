@@ -199,6 +199,14 @@ export function hrefOf(r: Route): string {
   return `${base}/graph${r.panel.repo ? `/${encodeURIComponent(r.panel.repo)}` : ""}`;
 }
 
+/** The page `r` shows, apart from the panel beside it and the section scrolled to: another page starts at its top. */
+export function pageOf(r: Route): string {
+  if (r.name === "devices") return hrefOf({ name: "devices" });
+  if (r.name === "plugin") return hrefOf({ name: "plugin", plugin: r.plugin, page: r.page, params: r.params });
+  if (r.name === "session") return hrefOf({ name: "session", machine: r.machine, sessionId: r.sessionId });
+  return hrefOf(r);
+}
+
 /** The panel or page a plugin's panel was opened from, so going back to it can use the browser's history. */
 let openedFrom: string | undefined;
 

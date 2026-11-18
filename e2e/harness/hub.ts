@@ -1,6 +1,7 @@
 // A Gasho server for one test, in a folder of its own (its database, plugins, caches, and the HOME of the fakes), on a
-// free port of the loopback, with the fake gh and npm. It serves the screen of apps/web/dist, so that the screen and the
-// Gasho server are of one build (a page of another build reloads). Working servers are added to it as fake daemons, or
+// free port of the loopback, with the fake gh and npm. It serves the screen of apps/web/dist (HubOptions.service: its
+// package's, built for its version), so that the screen and the Gasho server are of one build (a page of another build
+// reloads). Working servers are added to it as fake daemons, or
 // as real gasho-daemons that run the fake claude and gh. Nothing of the person's own Gasho server, gasho-daemon or
 // Claude Code is read or written.
 import { spawnSync } from "node:child_process";
@@ -11,7 +12,7 @@ import { Terminals } from "../../apps/daemon/src/terminal.ts";
 import { FakeDaemon, type FakeDaemonOptions } from "./fake-daemon.ts";
 import { type ClaudeTable, FakeCommand, type FakeAnswer, npmLatestAnswer, catalogAnswer } from "./fakes.ts";
 import { HubService, type HubServiceOptions, makeLayout, SERVICE_BIN } from "./hub-service.ts";
-import { freePort, GASHO_DIR, isolatedEnv, onExit, Proc, runScript } from "./process.ts";
+import { freePort, GASHO_DIR, isolatedEnv, keepPort, onExit, Proc, runScript } from "./process.ts";
 
 const HUB_CLI = "apps/hub/src/cli.ts";
 const DAEMON_CLI = "apps/daemon/src/cli.ts";
@@ -29,11 +30,11 @@ export interface HubOptions {
   claude?: ClaudeTable;
   /** More settings of the Gasho server (GASHO_*). */
   env?: Record<string, string>;
-  /** The screen it serves (apps/web/dist). */
+  /** The screen it serves (apps/web/dist); not with `service`. */
   webDist?: string;
   /**
    * Run as `gasho-hub service install` installs it, which Gasho can update (hub-service.ts), in place of this
-   * checkout's apps/hub/src/cli.ts.
+   * checkout's apps/hub/src/cli.ts. Each version serves its own build of the screen, as the published packages do.
    */
   service?: HubServiceOptions;
 }
@@ -117,6 +118,8 @@ export class GashoHub {
   private forget: () => void;
   /** The Gasho server's processes before startServer, for logs(). */
   private earlier: Proc[] = [];
+  /** Lets freePort give the port again, which stopServer kept. */
+  private releasePort: (() => void) | undefined;
   /** The first browser registered, which asks for the codes after it. */
   private cookie: BrowserCookie | undefined;
 
@@ -224,15 +227,28 @@ export class GashoHub {
 
   /** Stops the Gasho server, as one that ended; its folder and its port are kept for startServer. */
   async stopServer(): Promise<void> {
+    this.releasePort ??= keepPort(this.port);
     await this.proc.stop();
   }
 
   /** Starts the Gasho server again after stopServer, on the same port, with the same database and plugins. */
   async startServer(): Promise<void> {
     if (this.proc.alive) throw new Error("the Gasho server is running");
-    this.earlier.push(this.proc);
-    this.proc = new Proc("gasho-hub", HUB_CLI, ["start"], this.env);
-    await this.proc.waitForLog(/listening on /, START_MS);
+    for (let attempt = 1; ; attempt++) {
+      this.earlier.push(this.proc);
+      this.proc = new Proc("gasho-hub", HUB_CLI, ["start"], this.env);
+      try {
+        await this.proc.waitForLog(/listening on /, START_MS);
+        break;
+      } catch (e) {
+        await this.proc.stop();
+        // freePort of another worker had the port for a moment, before it found the port kept.
+        if (attempt < 3 && /is in use/.test(this.proc.log())) continue;
+        throw e;
+      }
+    }
+    this.releasePort?.();
+    this.releasePort = undefined;
   }
 
   /** What the Gasho server and the real gasho-daemons printed, for a test that failed. */
@@ -244,6 +260,7 @@ export class GashoHub {
     await Promise.all(this.fakeDaemons.map((d) => d.disconnect()));
     await Promise.all(this.daemons.map((d) => d.stop()));
     await this.proc.stop();
+    this.releasePort?.();
     await fsp.rm(this.root, { recursive: true, force: true, maxRetries: 5 });
     this.forget();
   }
@@ -313,6 +330,8 @@ async function serviceOf(root: string, o: HubServiceOptions, base: Record<string
   await fsp.mkdir(layout, { recursive: true });
   const launcher = await makeLayout(layout, o);
   const env: Record<string, string> = { ...base, GASHO_HUB_HOME: layout };
+  // The screen beside the running version (its web/), which a page reloads to after an update.
+  delete env.GASHO_WEB_DIST;
   delete env.XPC_SERVICE_NAME;
   delete env.INVOCATION_ID;
   if (o.asService !== false) Object.assign(env, { XPC_SERVICE_NAME: "local.gasho.hub", INVOCATION_ID: "gasho-e2e" });

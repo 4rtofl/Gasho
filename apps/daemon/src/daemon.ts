@@ -37,7 +37,17 @@ import { HubClient } from "./hub-client.ts";
 import { type Install, type Layout, layoutOf } from "./install.ts";
 import { type MediaFailed, readMediaPart } from "./media.ts";
 import { readMemory } from "./memory.ts";
-import { answersMessage, dialogCall, OPEN_DIALOG, OPEN_QUESTION, openPermissionRequest, openQuestionRequest, PermissionRequests, questionAnswers } from "./permissions.ts";
+import {
+  answersMessage,
+  dialogCall,
+  OPEN_DIALOG,
+  OPEN_QUESTION,
+  openPermissionRequest,
+  openQuestionRequest,
+  PermissionRequests,
+  questionAnswers,
+  shownCall,
+} from "./permissions.ts";
 import {
   atBottom,
   bannerModel,
@@ -45,7 +55,9 @@ import {
   cleanEnv,
   clearPromptKeys,
   dialogOpen,
+  type DialogText,
   permissionDialog,
+  permissionDialogText,
   EFFORT_LEVELS,
   forkName,
   isAlive,
@@ -114,7 +126,7 @@ import { PluginRunner } from "./plugins.ts";
 import { npmOf, Updater } from "./self-update.ts";
 import { log, str } from "./util.ts";
 
-export const DAEMON_VERSION = "0.27.2";
+export const DAEMON_VERSION = "0.28.0";
 const GITHUB_CACHE_MS = 5 * 60_000;
 /** How long the worktree a folder is in, or the repositories inside it, and their branches are reused. */
 const REPOS_CACHE_MS = 60_000;
@@ -179,6 +191,11 @@ const MODELS_MAX_AGE_MS = 24 * 3600_000;
 const MODELS_PROBE_INTERVAL_MS = 10 * 60_000;
 /** How long after starting the folders of versions no longer used are removed (see Updater.prune). */
 const PRUNE_VERSIONS_MS = 2 * 60_000;
+/**
+ * How long a version on trial may take to start: past it, the start is taken to hang. A start may be slow without being
+ * a failure, as each terminal that does not answer is waited for (Terminals.live).
+ */
+export const TRIAL_START_LIMIT_MS = 5 * 60_000;
 
 /** How this gasho-daemon was installed and runs, for updates from Gasho (see self-update.ts). */
 export interface UpdateSetup {
@@ -204,6 +221,8 @@ interface Tracked {
   tokensAt?: number;
   /** Claude Code's own state of the session, as its registry has it (see RegistryInfo.status), else as its list does. */
   claude?: ClaudeState;
+  /** Sessions started from Gasho: the permission dialog on the screen when it was last read (see openPermission). */
+  dialog?: DialogText;
 }
 
 /** What happened to the switches asked for with an input (`id`: the request of the input that was handled). */
@@ -310,8 +329,14 @@ export class Daemon {
       changed: () => this.emitCapabilities(),
       exit: (code) => void this.exit(code),
       log: (s) => log(s),
+      trialMs: cfg.trialMs,
     });
-    this.terminals = new SessionTerminals(new Terminals({ stateDir: cfg.stateDir, env: cleanEnv() }), new Zellij(cleanEnv()));
+    // On Linux, run as the service means in its cgroup, which systemd stops as a whole (terminal.ts).
+    const inService = setup.service && process.platform === "linux";
+    this.terminals = new SessionTerminals(
+      new Terminals({ stateDir: cfg.stateDir, env: cleanEnv(), inService, log: (s) => log(s) }),
+      new Zellij(cleanEnv()),
+    );
     this.managed = new ManagedSessions(path.join(cfg.stateDir, "managed.json"));
     this.registered = new RegisteredRepos(path.join(cfg.stateDir, "repos.json"));
     this.plugins = new PluginRunner({
@@ -343,6 +368,8 @@ export class Daemon {
       onRejected: (reason) => {
         log(`the Gasho server rejected this machine (${reason}). Its registration was revoked or is unknown;`);
         log("register again: node src/cli.ts register --server <url> --code <code>");
+        // Not this version's failure: the version before would be rejected all the same.
+        this.updater.stoppedOnTrial();
         void this.exit(1);
       },
     });
@@ -366,6 +393,15 @@ export class Daemon {
   }
 
   async start(): Promise<void> {
+    await this.updater.load();
+    if (!this.updater.onTrial()) {
+      setTimeout(() => void this.updater.prune().catch((e: unknown) => log("could not remove the versions no longer used", e)), PRUNE_VERSIONS_MS).unref();
+      return this.serve();
+    }
+    await this.serveOnTrial();
+  }
+
+  private async serve(): Promise<void> {
     log(`machine ${this.cfg.machineId}, Gasho server ${this.cfg.hubUrl}`);
     if (!this.cfg.hookSecret) log("GASHO_HOOK_SECRET is not set; hook requests are accepted without a secret");
     this.canLaunch = await this.terminals.builtIn.available();
@@ -395,8 +431,6 @@ export class Daemon {
       .catch(() => undefined);
     await this.refreshFolders();
     setInterval(() => void this.refreshFolders(), FOLDERS_REFRESH_MS).unref();
-    await this.updater.load();
-    setTimeout(() => void this.updater.prune().catch((e: unknown) => log("could not remove the versions no longer used", e)), PRUNE_VERSIONS_MS).unref();
     await this.registered.load();
     await this.refreshRepos();
     setInterval(() => void this.refreshRepos(), REGISTERED_REFRESH_MS).unref();
@@ -444,6 +478,52 @@ export class Daemon {
       log("cannot watch the sessions directory; relying on polling", e);
     }
     void this.refresh();
+  }
+
+  /**
+   * This version on trial, just started by an update (self-update.ts): it is confirmed once it has been up for a while
+   * after its start, and its hook server answers. Until then an exception, a failure to start or a start that does not
+   * end in TRIAL_START_LIMIT_MS ends it with why, and its next start goes back to the version before; a stop (SIGTERM,
+   * a restart of the machine) is not a failure (cli.ts), and the next start tries it again.
+   */
+  private async serveOnTrial(): Promise<void> {
+    let failed = false;
+    const fail = (e: unknown) => {
+      if (failed) return;
+      failed = true;
+      this.updater.recordFailure(e instanceof Error ? e.message : String(e));
+      console.error(new Date().toISOString(), "[gasho-daemon] stopped on trial:", e);
+      void this.exit(1);
+    };
+    process.on("uncaughtException", fail);
+    const ms = this.updater.trialMs();
+    log(`on trial: confirmed ${Math.round(ms / 1000)} s after it has started, if all is well`);
+    const limit = setTimeout(
+      () => fail(new Error(`起動が${TRIAL_START_LIMIT_MS / 60_000}分のうちに終わりませんでした。`)),
+      TRIAL_START_LIMIT_MS,
+    );
+    // Not left to the hook server's check at the end of the trial, which would go back without the real reason.
+    await this.serve().catch(fail);
+    clearTimeout(limit);
+    if (failed) return;
+    setTimeout(() => {
+      void (async () => {
+        const problem = await this.trialProblem();
+        if (problem) throw new Error(problem);
+        await this.updater.confirm();
+        process.off("uncaughtException", fail);
+      })().catch(fail);
+    }, ms);
+  }
+
+  /** What keeps this version on trial from being confirmed: its hook server does not answer (any answer counts). */
+  private async trialProblem(): Promise<string | undefined> {
+    try {
+      await fetch(`http://127.0.0.1:${this.cfg.hookPort}/`, { signal: AbortSignal.timeout(10_000) });
+      return undefined;
+    } catch (e) {
+      return `hooks の待ち受け（127.0.0.1:${this.cfg.hookPort}）が答えませんでした：${e instanceof Error ? e.message : String(e)}`;
+    }
   }
 
   /**
@@ -870,6 +950,7 @@ export class Daemon {
       // What the screen shows now wins over the transcript: the line above the prompt box ("◐ medium · ultracode ·
       // /effort", shown for a while after a change) and the "ultracode" in the rule above the box (while it is on).
       const screen = (await this.terminals.screen(m.terminal).catch(() => undefined))?.plain ?? "";
+      t.dialog = permissionDialogText(screen);
       const state = statusLine(screen);
       if (state) {
         t.info.effort = state.effort;
@@ -1445,6 +1526,11 @@ export class Daemon {
     const deadline = Date.now() + LAUNCH_TIMEOUT_MS;
     let resumeAsked = false;
     let mcpDeclined = false;
+    // Claude Code's file has the session id as soon as its list does (the list reads the file). The list, read on the
+    // side, took 20 s and more on a busy machine, and printed nothing when it was stopped then.
+    let listed: AgentRow[] = [];
+    let listing: Promise<void> | undefined;
+    let listFailed = false;
     while (Date.now() < deadline) {
       await sleep(500);
       // The dialogs are drawn at the bottom, in place of the prompt box. A conversation being resumed can quote their
@@ -1483,9 +1569,17 @@ export class Daemon {
         }
         continue;
       }
-      const row = (await listAgents(this.cfg.claudeBin)).find((r) => r.pid === pid && r.sessionId);
+      const reg = await readRegistry(this.cfg.claudeDir, pid);
+      const row: AgentRow | undefined = reg?.sessionId ? { pid, sessionId: reg.sessionId } : listed.find((r) => r.pid === pid && r.sessionId);
       if (row?.sessionId && accept(row)) return { sessionId: row.sessionId, terminal, pid, resumeAsked, mcpDeclined };
       if (!isAlive(pid)) break;
+      listing ??= listAgents(this.cfg.claudeBin)
+        .then((rows) => void (listed = rows))
+        .catch((e: unknown) => {
+          if (!listFailed) log(`"${rcName}": could not read Claude Code's list of sessions, reading its file only`, e);
+          listFailed = true;
+        })
+        .finally(() => (listing = undefined));
     }
     const last = (await this.terminals.screen(terminal).catch(() => undefined))?.plain;
     if (last) log(`"${rcName}" did not start; the end of its screen:\n${bottomLines(last, 8).join("\n")}`);
@@ -2565,7 +2659,7 @@ export class Daemon {
    */
   private openPermission(t: Tracked): PermissionRequestInfo[] | undefined {
     if (t.info.status !== "waiting" || t.info.waitingFor !== "permission prompt" || !this.managed.has(t.info.sessionId)) return undefined;
-    const c = dialogCall(t.meta.openCalls);
+    const c = dialogCall(t.meta.openCalls, t.dialog);
     return c ? [openPermissionRequest(c)] : undefined;
   }
 
@@ -2573,30 +2667,42 @@ export class Daemon {
    * Answers a permission shown from the transcript (see openPermission) with the keys of Claude Code's dialog: "allow"
    * puts the cursor on "Yes" and presses Enter; "deny" presses Esc, as "No" in the terminal: Claude stops, and a
    * message given goes as the next message. Nothing is pressed unless the session still waits and its screen shows
-   * the dialog.
+   * the dialog, about the call on the card (see shownCall): with two calls without a result, the dialog may be about
+   * the other.
    */
   private async answerDialog(m: Extract<HubToDaemon, { type: "permission.answer" }>): Promise<CommandResult> {
     const gone: CommandResult = { ok: false, error: "この確認には、すでに答えられています。" };
     const s = this.managed.get(m.sessionId);
     const t = this.tracked.get(m.sessionId);
     const shown = t && this.openPermission(t)?.[0];
-    if (!s || shown?.id !== m.permissionId) return gone;
+    if (!s || !t || shown?.id !== m.permissionId) return gone;
     if (m.decision === "always") return { ok: false, error: "この確認では、今後も許可することはできません。" };
     if ((await this.currentStatus(s.pid)) !== "waiting") return gone;
-    const read = async () => permissionDialog((await this.terminals.screen(s.terminal).catch(() => undefined))?.plain ?? "");
-    let options = await read();
+    const read = async () => {
+      const screen = (await this.terminals.screen(s.terminal).catch(() => undefined))?.plain ?? "";
+      const text = permissionDialogText(screen);
+      return { options: permissionDialog(screen), call: text && shownCall(t.meta.openCalls, text) };
+    };
+    let dialog = await read();
     const missing: CommandResult = { ok: false, error: "端末に確認の画面が見当たらないため、答えられませんでした。端末か公式アプリで答えてください。" };
-    if (!options) return missing;
+    const other: CommandResult = {
+      ok: false,
+      error: "端末の確認が、このカードの呼び出しについてのものか確かめられないため、答えませんでした。端末か公式アプリで答えてください。",
+    };
+    if (!dialog.options) return missing;
+    if (`${OPEN_DIALOG}${dialog.call?.toolUseId}` !== m.permissionId) return other;
     const message = m.decision === "deny" ? m.message?.trim() : undefined;
     if (m.decision === "deny") {
       await this.terminals.keys(s.terminal, "Esc");
     } else {
-      for (let i = 0; options && !options[0]!.selected && i < options.length; i++) {
+      for (let i = 0; dialog.options && !dialog.options[0]!.selected && i < dialog.options.length; i++) {
         await this.terminals.keys(s.terminal, "Up");
         await sleep(150);
-        options = await read();
+        dialog = await read();
       }
-      if (!options?.[0]?.selected) return missing;
+      if (!dialog.options?.[0]?.selected) return missing;
+      // The dialog may have changed while the cursor moved (answered in the terminal, and the next one opened).
+      if (`${OPEN_DIALOG}${dialog.call?.toolUseId}` !== m.permissionId) return other;
       await this.terminals.keys(s.terminal, "Enter");
     }
     this.settleUntil.set(m.sessionId, Date.now() + INTERRUPT_SETTLE_MS);

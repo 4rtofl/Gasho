@@ -4,7 +4,7 @@ import { useSyncExternalStore } from "react";
 /** A computer's screen (Tailwind's md breakpoint); narrower is a phone. */
 export const DESKTOP = "(min-width: 768px)";
 
-function matches(query: string): boolean {
+export function matches(query: string): boolean {
   try {
     return window.matchMedia(query).matches;
   } catch {

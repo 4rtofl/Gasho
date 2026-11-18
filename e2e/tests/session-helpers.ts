@@ -58,14 +58,6 @@ export function numberedEntries(n: number, from = 1): TranscriptEntry[] {
   return Array.from({ length: n }, (_, i) => entry(i % 2 === 0 ? "user" : "assistant", [{ type: "text", text: `発言 ${from + i}` }]));
 }
 
-/** The page of a session's conversation that transcript.get asks for, from the conversations the daemon was given. */
-export function transcriptPage(daemon: FakeDaemon, msg: Extract<HubToDaemon, { type: "transcript.get" }>): DaemonToHub {
-  const all = daemon.transcripts[msg.sessionId] ?? [];
-  const end = Math.min(msg.before ?? all.length, all.length);
-  const start = Math.max(0, end - msg.limit);
-  return { type: "transcript.page", requestId: msg.requestId, sessionId: msg.sessionId, entries: all.slice(start, end), start, total: all.length };
-}
-
 /** A promise that the test fulfils when it likes: an answer that waits for it comes then. */
 export function gate(): { wait: Promise<void>; open: () => void } {
   let open!: () => void;

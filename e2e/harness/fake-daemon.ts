@@ -49,6 +49,14 @@ export function commandResult(msg: { requestId: string }, result: Extract<Daemon
   return { type: "command.result", requestId: msg.requestId, result };
 }
 
+/** The page of a session's conversation that transcript.get asks for, from the conversations the daemon was given. */
+export function transcriptPage(d: FakeDaemon, msg: HubMessage<"transcript.get">): DaemonToHub {
+  const all = d.transcripts[msg.sessionId] ?? [];
+  const end = Math.min(msg.before ?? all.length, all.length);
+  const start = Math.max(0, end - msg.limit);
+  return { type: "transcript.page", requestId: msg.requestId, sessionId: msg.sessionId, entries: all.slice(start, end), start, total: all.length };
+}
+
 /** What a request of the Gasho server is answered with when the test gave no handler for it. */
 function defaultAnswer(d: FakeDaemon, msg: HubToDaemon): Answer {
   switch (msg.type) {
@@ -56,12 +64,8 @@ function defaultAnswer(d: FakeDaemon, msg: HubToDaemon): Answer {
     case "plugins":
     case "plugin.code":
       return undefined;
-    case "transcript.get": {
-      const all = d.transcripts[msg.sessionId] ?? [];
-      const end = Math.min(msg.before ?? all.length, all.length);
-      const start = Math.max(0, end - msg.limit);
-      return { type: "transcript.page", requestId: msg.requestId, sessionId: msg.sessionId, entries: all.slice(start, end), start, total: all.length };
-    }
+    case "transcript.get":
+      return transcriptPage(d, msg);
     case "git.graph.get":
       return { type: "git.graph", requestId: msg.requestId, sessionId: msg.sessionId, ...(msg.repo ? { repo: msg.repo } : {}), error: "fake daemon: no graph" };
     case "dir.get":

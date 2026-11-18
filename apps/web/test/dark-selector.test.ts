@@ -55,6 +55,8 @@ test("a .dark rule stays as it is when a rule nested in it can match outside the
     nest("html.dark", style("& + .a")),
     nest(".dark", media(style("& ~ *"))),
     nest(".dark", nest("&:not(.a)", style("& ~ *"))),
+    // As .dark::before, a pseudo-element of the part's element.
+    nest(".dark", style("&::before", '{ content: "x"; }')),
     // & in () can match around the part's elements.
     nest(".dark", style(":is(& ~ *)")),
     nest(".dark", style(":is(& + *)")),
@@ -67,7 +69,11 @@ test("a .dark rule stays as it is when a rule nested in it can match outside the
     assert.equal(ruleText(rule), rule.cssText, rule.cssText);
   }
   // + and ~ below an element inside the part stay inside it.
-  for (const rule of [nest(".dark", style("& .foo + .foo")), nest(".dark", nest("& .foo", style("& + .foo")))]) {
+  for (const rule of [
+    nest(".dark", style("& .foo + .foo")),
+    nest(".dark", nest("& .foo", style("& + .foo"))),
+    nest(".dark", style("& .foo::before", '{ content: "x"; }')),
+  ]) {
     assert.equal(ruleText(rule), `.dark &, & .dark${rule.cssText.slice(".dark".length)}`, rule.cssText);
   }
   const below = nest(".dark .a", style("& ~ *"));

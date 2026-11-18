@@ -44,7 +44,10 @@ function split(selectorText: string): string[] {
 /** Where a rule's elements are: the element the plugin's part is drawn in, or inside it. */
 type Place = "part" | "inside";
 
-/** Where a selector nested in a rule at `parent` matches, or undefined when it can match outside the part (Gasho's). */
+/**
+ * Where a selector nested in a rule at `parent` matches, or undefined when it can match outside the part (Gasho's
+ * elements) or a pseudo-element of the part's element.
+ */
 function place(selector: string, parent: Place): Place | undefined {
   // `:has(&)` matches the elements around `&`, and `:is(& ~ *)` those beside it.
   if (find(selector, 0, (i, depth) => depth > 0 && selector[i] === "&", true) < selector.length) return undefined;
@@ -57,7 +60,9 @@ function place(selector: string, parent: Place): Place | undefined {
   });
   const after = amp < 0 ? selector : selector.slice(find(selector, amp, (i) => /[\s>+~]/.test(selector[i]!)));
   if (/^\s*[+~]/.test(after)) return undefined;
-  return amp < 0 || after ? "inside" : "part";
+  if (amp < 0 || after) return "inside";
+  // Like `.dark::before` (dark), `&::before` is left as it is: it would be drawn by the part's element.
+  return find(selector, amp, (i) => PSEUDO_ELEMENT.test(selector.slice(i))) < selector.length ? undefined : "part";
 }
 
 /** Whether a rule in `rules`, at any depth, can match outside the part when the rule they are in matches at `parent`. */

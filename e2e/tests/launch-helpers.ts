@@ -2,15 +2,15 @@
 // brings the sidebar's "新しいセッション" and the categories' "＋" (P17), the sidebar of a computer or of a phone, the
 // fake daemon's answers to a launch, and the Enter that confirms what a Japanese input method converts.
 import { randomUUID } from "node:crypto";
-import path from "node:path";
 import type { Locator, Page } from "@playwright/test";
 import type { CommandResult, HubToDaemon, SessionInfo } from "@gasho/protocol";
-import { commandResult, type FakeDaemon, fakeSession, GASHO_DIR } from "../harness/index.ts";
+import { commandResult, type FakeDaemon, fakeSession } from "../harness/index.ts";
 import { expect } from "./fixtures.ts";
+import { plugin } from "./plugin-helpers.ts";
 import { onPhone } from "./screen.ts";
 
 /** A plugin whose session list has a category, with a "＋", for each worktree, and hides the tabs above a session. */
-export const CATEGORIES_PLUGIN = path.join(GASHO_DIR, "e2e/plugins/session-categories");
+export const CATEGORIES_PLUGIN = plugin("e2e-session-categories");
 
 type Launch = Extract<HubToDaemon, { type: "session.launch" }>;
 

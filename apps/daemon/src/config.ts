@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import { claudeTmpRoot } from "./claude-tmp.ts";
 import { credentialsPath, daemonUrl, type Credentials } from "./credentials.ts";
 
 export interface DaemonConfig {
@@ -17,6 +18,8 @@ export interface DaemonConfig {
   stateDir: string;
   /** Files sent with inputs, one folder per session; Claude reads them from here. */
   attachmentsDir: string;
+  /** Given to the Claude Codes that Gasho starts as CLAUDE_CODE_TMPDIR (claude-tmp.ts). */
+  claudeTmpDir: string;
   /** The code of the plugins' daemon parts, as the Gasho server handed it over (docs/plugins.md). */
   pluginCacheDir: string;
   /** The daemon parts' own files, one folder per plugin; kept when a plugin is updated or removed. */
@@ -38,6 +41,7 @@ export function loadConfig(creds: Credentials, env: NodeJS.ProcessEnv = process.
     pollIntervalMs: Number(env.GASHO_POLL_MS ?? 3000),
     stateDir: path.dirname(credentialsPath(env)),
     attachmentsDir: path.join(env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "gasho", "attachments"),
+    claudeTmpDir: claudeTmpRoot(env),
     pluginCacheDir: path.join(env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "gasho", "daemon-plugins"),
     pluginDataDir: path.join(env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "gasho", "plugin-data"),
     runPlugins: env.GASHO_PLUGINS !== "none",

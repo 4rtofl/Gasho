@@ -155,6 +155,20 @@ zellij を操作するときは、`--session` で対象を必ず指定する。r
 - 送ったファイル20個のうち17個は、UI のテストで撮った PNG だった（残りは HTML 1個と Markdown 2個）。PNG はどれも Claude の作業用のフォルダー（`/tmp/claude-<uid>/…/scratchpad/`）にあり、セッションのフォルダーの外だった。このフォルダーは、マシンを再起動すると消える
 - 会話の記録に残るのはパスだけで、ファイルの中身は残らない。Claude が Read で読んだ画像は、結果の中に base64 で残る（Gasho では「[image]」とだけ出している）
 
+## 検証9：Claude Code の一時フォルダーの場所（CLAUDE_CODE_TMPDIR）
+
+2026年11月18日に、Claude Code 2.1.327 の対話画面で確かめた。作業用のフォルダーで試し、ユーザー設定の hooks は外した（`--setting-sources project`）。
+
+- `CLAUDE_CODE_TMPDIR` を渡すと、一時フォルダーは `<CLAUDE_CODE_TMPDIR>/claude-<uid>/<作業フォルダーを変換した名前>/<セッション ID>/` になった。中には `scratchpad/`、`tasks/`、`started/` がある
+- Write ツールと Bash からスクラッチパッドに書き込めた。バックグラウンドの作業の出力は `tasks/<ID>.output` に書かれ、Read で読めた
+- `--resume` は同じ ID のフォルダーを使い続け、前のファイルを読めた。`--resume --fork-session` は新しい ID のフォルダーになり、元のファイルは引き継がなかった
+- 場所を変えて `--resume` すると、新しい場所に空のフォルダーができ、前の場所のファイルは移らなかった
+- `--session-id` や `--resume` を付けて起動すると、セッションの ID のフォルダーのほかに、どのセッションも使わない ID の、空の `scratchpad/` だけのフォルダーが1つできた
+- Bash には `TMPDIR` は渡されなかった（サンドボックスを使わないとき）
+- `/tmp` が tmpfs の Ubuntu 26.04 で、gasho-daemon から起動したセッションの一時フォルダーが ext4 の上にできることと、削除でそのフォルダーが消えることを確かめた
+
+確かめられなかったこと：サンドボックスの中の Bash。このマシンでサンドボックスを有効にすると、Bash は `apply-seccomp: write /proc/self/setgroups (nested userns is capability-restricted; caller must provide CAP_SYS_ADMIN): Permission denied` で失敗した。`CLAUDE_CODE_TMPDIR` を渡さない既定の場所でも同じエラーになるので、場所を変えたことが原因ではない（このマシンは `kernel.apparmor_restrict_unprivileged_userns = 1`）。公式の文書には、サンドボックスの中の Bash には、パスが長くなりすぎないように短い別の `$TMPDIR` を渡すとある。
+
 ## 未確認の事項
 
 - 名前の変更が、公式アプリのセッション名に反映されるか

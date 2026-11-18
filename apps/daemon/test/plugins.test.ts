@@ -415,6 +415,7 @@ test("gasho-daemon ends (an update, a signal) only once its plugins' daemon part
     pollIntervalMs: 60_000,
     stateDir: dir,
     attachmentsDir: path.join(dir, "attachments"),
+    claudeTmpDir: path.join(dir, "claude-tmp"),
     pluginCacheDir: path.join(dir, "plugin-cache"),
     pluginDataDir: dataDir,
     runPlugins: true,

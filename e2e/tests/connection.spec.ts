@@ -184,6 +184,28 @@ test("結果が分からない指示は、似た指示が会話に出ても残�
   await expect(c.box).toHaveValue("");
 });
 
+test("結果が分からない指示が 2 件あると、「閉じる」は古いものだけを消し、次の指示は「入力欄に戻す」で戻せる（#106）", async ({ page, hub }) => {
+  const d = await hub.fakeDaemon({ name: "mac", sessions: [fakeSession({ sessionId: SESSION, cwd: "/work/gasho", name: "e2e-session" })] });
+  d.handle("session.input", () => undefined);
+  const conn = await routeConnection(page);
+  await openSession(page, d);
+  const c = composer(page);
+
+  await send(page, "1 件目");
+  await send(page, "README を読んで", "notes.txt");
+  await expect.poll(() => countOf(d, "session.input")).toBe(2);
+  await conn.drop();
+  await expect(c.putBack).toHaveText("入力欄に戻す（残り 2 件）");
+
+  await page.getByRole("button", { name: "閉じる" }).click();
+  await expect(c.putBack).toHaveText("入力欄に戻す");
+  await expect(c.box).toHaveValue("");
+  await c.putBack.click();
+  await expect(c.box).toHaveValue("README を読んで");
+  await expect(c.attached).toHaveCount(1);
+  await expect(c.notice).toHaveCount(0);
+});
+
 test("結果を待つあいだに別の会話へ移っても、戻ると「入力欄に戻す」で指示を戻せる（#106）", async ({ page, hub }) => {
   const d = await hub.fakeDaemon({
     name: "mac",

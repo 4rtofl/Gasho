@@ -577,10 +577,11 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
           >
             {unsent.length > 1 ? `入力欄に戻す（残り ${unsent.length} 件）` : "入力欄に戻す"}
           </button>
-          {/* For one that reached the session but shows in the conversation otherwise (a slash command's note). */}
+          {/* For one that reached the session but shows in the conversation otherwise (a slash command's note). The
+              oldest only, as 入力欄に戻す takes it: the next ones may not have reached it. */}
           <button
             type="button"
-            onClick={() => setUnsent(() => [])}
+            onClick={() => setUnsent((list) => list.slice(1))}
             className="ml-3 font-medium underline decoration-amber-400/50 underline-offset-4 hover:text-foreground"
           >
             閉じる

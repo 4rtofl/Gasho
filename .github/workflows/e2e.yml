@@ -1,0 +1,44 @@
+# Runs the end-to-end tests (e2e/: the built screen in Chromium and WebKit, against a Gasho server and working servers
+# of each test's own) on main once a day, and by hand. Not a check of pull requests (ci.yml). The daily run comes from a
+# Cloudflare Worker (infra/release-trigger) that dispatches this workflow: GitHub's own schedule never fired for the
+# release workflow. When a test fails, the run keeps the traces, screenshots and videos, and e2e/report.ts opens an
+# issue (label bug) naming the test and the run, or comments on the test's open one.
+name: E2E
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write # the issues of the tests that failed
+
+concurrency:
+  group: e2e
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium webkit
+      - run: npm run e2e
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: |
+            e2e/test-results/
+            e2e/playwright-report/
+          retention-days: 14
+      - if: failure()
+        run: node --disable-warning=ExperimentalWarning e2e/report.ts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}

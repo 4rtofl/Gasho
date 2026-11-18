@@ -1,7 +1,7 @@
 // The process of one plugin's daemon part (docs/plugins.md). gasho-daemon forks it with the plugin's daemon.js
 // (`node plugin-host.js <daemon.js>`), tells it the plugin and its settings ("init"), and sends it the calls of the
 // plugin's web part ("call"). It imports the plugin, runs `start`, answers each call with what the method returned,
-// and runs `stop` before it ends. A process of its own, so that a plugin that fails or blocks cannot stop gasho-daemon,
+// and runs `stop` before it ends, also when gasho-daemon goes away. A process of its own, so that a plugin that fails or blocks cannot stop gasho-daemon,
 // and so that a new version of the plugin replaces it as a whole (hot reload). What the plugin asks gh for
 // (ctx.github) goes to gasho-daemon ("github"), which runs gh for every plugin, and so do its events for the plugin's
 // web parts (ctx.emit, "event"), which gasho-daemon passes on to the Gasho server at most once a second per topic.
@@ -30,9 +30,13 @@ let def: Definition | undefined;
 const aborts = new Map<number, AbortController>();
 const asked = new Map<number, (a: GitHubAnswer) => void>();
 let nextAsk = 1;
+let ending = false;
+/** How long `stop` may take before this process ends anyway (as long as gasho-daemon waits, STOP_MS in plugins.ts). */
+const STOP_MS = 5000;
 
 function send(m: FromHost): void {
-  process.send?.(m);
+  // Once gasho-daemon is gone, process.send would throw (as an "error" event) in the middle of `stop`.
+  if (process.connected) process.send?.(m);
 }
 
 /** An error the person is shown as it is (what the plugin's PluginError is, made here). */
@@ -178,6 +182,25 @@ async function call(m: Extract<ToHost, { t: "call" }>): Promise<void> {
   }
 }
 
+/**
+ * Ends this process: the calls under way are aborted and the plugin's `stop` runs, for at most STOP_MS. Once only:
+ * gasho-daemon's "stop" and a signal sent to both may come one after the other.
+ */
+function end(): void {
+  if (ending) return;
+  ending = true;
+  for (const a of aborts.values()) a.abort();
+  setTimeout(() => process.exit(0), STOP_MS);
+  void (async () => {
+    try {
+      await def?.stop?.();
+    } catch (e) {
+      console.error("stop failed:", e);
+    }
+    process.exit(0);
+  })();
+}
+
 process.on("message", (raw) => {
   const m = raw as ToHost;
   switch (m.t) {
@@ -202,19 +225,16 @@ process.on("message", (raw) => {
       break;
     }
     case "stop":
-      for (const a of aborts.values()) a.abort();
-      void (async () => {
-        try {
-          await def?.stop?.();
-        } catch (e) {
-          console.error("stop failed:", e);
-        }
-        process.exit(0);
-      })();
+      end();
       break;
   }
 });
-// gasho-daemon is gone: so is this.
-process.on("disconnect", () => process.exit(0));
+// gasho-daemon is gone: so is this, once the plugin has stopped what it started.
+process.on("disconnect", end);
+// The service manager or Ctrl+C sends these to gasho-daemon's processes together (systemd to all of the service's).
+process.on("SIGTERM", end);
+process.on("SIGINT", end);
+// Once gasho-daemon is gone, writing to its pipes fails (EPIPE), which would end this in the middle of `stop`.
+for (const s of [process.stdout, process.stderr]) s.on("error", () => undefined);
 // A promise the plugin forgot about is reported; the process goes on.
 process.on("unhandledRejection", (e) => console.error("unhandled rejection:", e));

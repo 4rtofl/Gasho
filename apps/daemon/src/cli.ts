@@ -82,7 +82,10 @@ try {
     }
     case "run": {
       const creds = await loadCredentials(credentialsPath());
-      await new Daemon(loadConfig(creds), { update: { install, layout, service: await runAsService() } }).start();
+      const daemon = new Daemon(loadConfig(creds), { update: { install, layout, service: await runAsService() } });
+      // Stopped by the service manager, kill or Ctrl+C: the plugins' daemon parts stop first.
+      for (const signal of ["SIGTERM", "SIGINT"] as const) process.on(signal, () => void daemon.exit(0));
+      await daemon.start();
       break;
     }
     case "doctor": {

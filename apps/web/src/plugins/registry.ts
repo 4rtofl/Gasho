@@ -9,7 +9,7 @@ import { useSyncExternalStore } from "react";
 import type { PluginDefinition } from "@gasho/plugin-sdk";
 import type { PluginInfo } from "@gasho/protocol";
 import { getAppState, subscribeAppState, useAppState } from "@/lib/store";
-import { ruleText } from "./dark-selector";
+import { ruleText } from "./part-selector";
 import { apiSupported, checkDefinition } from "./definition";
 import { installShared } from "./sdk";
 

@@ -8,15 +8,35 @@ import { useRef, useState, type FormEvent, type ReactElement, type ReactNode } f
 import type { MachineInfo, SessionInfo } from "@gasho/protocol";
 import { BUTTON_DANGER, BUTTON_PRIMARY, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG_PANEL, MENU, MENU_ITEM } from "@/components/dialog-styles";
 import { sessionLabel } from "@/lib/format";
-import { go, useRoute } from "@/lib/route";
+import { go, parseHash, useRoute } from "@/lib/route";
 import { forkName, MAX_SESSION_NAME, nameProblem } from "@/lib/session-names";
 import { hidesSessionTabs } from "@/lib/session-list";
 import { daemonAtLeast, tabAfterRemoval, worktreeId, worktreesByLastUse } from "@/lib/sessions";
-import { sendCommand, useAppState } from "@/lib/store";
+import { getAppState, sendCommand, useAppState } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { useSessionListMode } from "@/plugins/session-list";
 
 export type SessionAction = "rename" | "fork" | "remove";
+
+/**
+ * Removes a session for a plugin (the SDK's useRemoveSession). When the screen shows it, the tab next to it opens in its
+ * place, or its worktree once there is none. `via`: the plugin that asked, for the operations log.
+ */
+export async function removeSession(machine: string, sessionId: string, via: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  // As they are before it goes.
+  const m = getAppState().machines.find((x) => x.id === machine);
+  const session = m?.sessions.find((s) => s.sessionId === sessionId);
+  const worktree = m && session && worktreesByLastUse([m]).find((w) => w.id === worktreeId(machine, session));
+  const r = await sendCommand(machine, { type: "session.remove", sessionId, via }, REMOVE_WAIT_MS);
+  if (!r.ok) return { ok: false, error: r.error ?? "削除できませんでした。" };
+  const route = parseHash(location.hash);
+  if (route.name === "session" && route.machine === machine && route.sessionId === sessionId) {
+    const tab = worktree && tabAfterRemoval(worktree, sessionId);
+    const path = worktree?.path ?? session?.worktree?.path ?? session?.cwd;
+    go(tab ? { name: "session", machine, sessionId: tab.sessionId } : path ? { name: "worktree", machine, path } : { name: "home" }, { replace: true });
+  }
+  return { ok: true };
+}
 
 /** A session, as it was when an item of its menu was picked, and what to do with it. */
 export interface SessionActionRequest {

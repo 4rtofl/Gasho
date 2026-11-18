@@ -27,6 +27,7 @@ import type {
 import { PLUGIN_API, SDK_EXPORTS } from "@gasho/plugin-sdk/exports";
 import type { PluginInfo, PluginSettingSpec, SessionInfo } from "@gasho/protocol";
 import { GitHubMarkdown } from "@/components/markdown";
+import { removeSession } from "@/components/session-menu";
 import { removeWorktree } from "@/components/worktree-menu";
 import { removeWorktreeProblem } from "@/lib/worktree-remove";
 import { PANEL_BUTTON, panelRepo, RepoTabs, SidePanel } from "@/components/side-panel";
@@ -424,6 +425,15 @@ export const sdk: GashoSdk = {
         return { ok: false, error: "Claude Code がこのフォルダーを信頼するかを聞いています。", needsTrust: true, ...(r.trustWarnings ? { trustWarnings: r.trustWarnings } : {}) };
       }
       return { ok: false, error: r.error ?? "起動できませんでした。" };
+    };
+  },
+  useRemoveSession: () => {
+    const info = usePluginInfo();
+    return async ({ machine, sessionId }) => {
+      if (!info.manifest.permissions?.includes("session.remove")) {
+        return { ok: false, error: `${info.manifest.name} には、セッションを削除する権限がありません（gasho-plugin.json の permissions）。` };
+      }
+      return removeSession(machine, sessionId, info.id);
     };
   },
   useRemoveWorktree: () => {

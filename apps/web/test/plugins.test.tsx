@@ -128,6 +128,34 @@ test("a plugin switches the session's effort level with what it sends, and hears
   expect(screen.getByText("送りました（effort はそのまま：Effort を Max にできませんでした。いまの Effort のまま送ります。）")).toBeTruthy();
 });
 
+test("a plugin removes a session with the permission, naming itself, and the screen leaves that session (API 1.14)", async () => {
+  const user = userEvent.setup();
+  const withRemove = info({ manifest: { ...info().manifest, permissions: ["session.remove"] } });
+  const hub = await connectHub({ machines: [m1], plugins: [withRemove] });
+  location.hash = "#/s/m1/s1";
+  render(<PluginPanelView machine="m1" sessionId="s1" panel={{ kind: "plugin", plugin: "notes", id: "notes", params: {} }} docked onClose={() => {}} />);
+  await user.click(await screen.findByRole("button", { name: "このセッションを削除" }));
+  expect(hub.commands().at(-1)).toMatchObject({ type: "session.remove", sessionId: "s1", via: "notes" });
+  await hub.answer({ ok: true });
+  expect(await screen.findByText("削除しました")).toBeTruthy();
+  expect(location.hash).not.toBe("#/s/m1/s1");
+});
+
+test("a plugin without the permission cannot remove a session, and one that fails hears why", async () => {
+  const user = userEvent.setup();
+  const hub = await connectHub({ machines: [m1], plugins: [info()] });
+  render(<PluginPanelView machine="m1" sessionId="s1" panel={{ kind: "plugin", plugin: "notes", id: "notes", params: {} }} docked onClose={() => {}} />);
+  const sent = hub.commands().length;
+  await user.click(await screen.findByRole("button", { name: "このセッションを削除" }));
+  expect(screen.getByText("メモ には、セッションを削除する権限がありません（gasho-plugin.json の permissions）。")).toBeTruthy();
+  expect(hub.commands()).toHaveLength(sent);
+
+  await hub.say({ type: "plugins", plugins: [info({ manifest: { ...info().manifest, permissions: ["session.remove"] } })] });
+  await user.click(screen.getByRole("button", { name: "このセッションを削除" }));
+  await hub.answer({ ok: false, error: "このセッションは削除できません。" });
+  expect(await screen.findByText("このセッションは削除できません。")).toBeTruthy();
+});
+
 test("a part that throws shows an error in its place, and the session's other parts stay", async () => {
   await connectHub({ machines: [m1], plugins: [info()] });
   const boom = session("s1", { name: "boom" });

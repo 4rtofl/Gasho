@@ -434,7 +434,6 @@ test("日本語の変換中の Enter では送らない", async ({ page, hub, br
 });
 
 test("添付のエラーと、添付を外すボタンの名前を日本語で出す（#108）", async ({ page, hub }) => {
-  test.fail(true, "#108: 添付のエラーと aria-label が英語のまま");
   await openSession(page, hub);
   await attach(page, [1, 2, 3, 4, 5, 6].map((n) => ({ name: `f${n}.txt` })));
   await expect(page.getByRole("alert")).toHaveText("添付できるファイルは 5 個までです");
@@ -446,7 +445,6 @@ test("添付のエラーと、添付を外すボタンの名前を日本語で�
 
 test("添付できないセッションと、文字も載っている貼り付けでは、文字を貼り付ける（#108）", async ({ page, hub, browserName }) => {
   test.skip(browserName !== "chromium", "クリップボードに文字と画像を一緒に載せられるのは Chromium だけ");
-  test.fail(true, "#108: 貼り付けにファイルがあると、添付できるかを見る前に文字の貼り付けを止める");
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   const daemon = await openSession(page, hub);
   const old = await hub.fakeDaemon({ name: "old", version: "0.4.0", capabilities: { features: undefined }, sessions: [fakeSession({ sessionId: OTHER_SESSION_ID, cwd: "/work/old", name: "old-session" })] });

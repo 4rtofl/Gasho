@@ -46,6 +46,7 @@ export default {
 `;
 const STOP_HANGS = `export default { methods: {}, onSessionStop: (ctx) => new Promise((r) => ctx.signal.addEventListener("abort", () => r({ title: "遅い" }))) };`;
 const STOP_THROWS = `export default { methods: {}, onSessionStop() { throw new Error("だめ"); } };`;
+const STOP_LONG = `export default { methods: {}, onSessionStop: () => ({ title: "  " + "長".repeat(1000), body: "本".repeat(1000) }) };`;
 const V3 = `
 export default {
   start(ctx) { ctx.emit("state", { up: true }, { retain: true }); },
@@ -106,11 +107,12 @@ const HASH6 = "ffffffffffffffff";
 const HASH7 = "1111111111111111";
 const HASH8 = "2222222222222222";
 const HASH9 = "3333333333333333";
+const HASH10 = "4444444444444444";
 
 function setup(enabled = true, answerCode = true) {
   const sent: DaemonToHub[] = [];
   const logs: string[] = [];
-  const codes: Record<string, string> = { [HASH1]: V1, [HASH2]: V2, [HASH3]: V3, [HASH4]: BROKEN, [HASH5]: STOPS, [HASH6]: V6, [HASH7]: STOP_HANGS, [HASH8]: STOP_THROWS, [HASH9]: STOP_SAYS };
+  const codes: Record<string, string> = { [HASH1]: V1, [HASH2]: V2, [HASH3]: V3, [HASH4]: BROKEN, [HASH5]: STOPS, [HASH6]: V6, [HASH7]: STOP_HANGS, [HASH8]: STOP_THROWS, [HASH9]: STOP_SAYS, [HASH10]: STOP_LONG };
   let runner: PluginRunner;
   const local = { folders: ["/work"], dataDir: fs.mkdtempSync(path.join(os.tmpdir(), "gasho-plugin-data-")) };
   // A gh that writes down each time it runs.
@@ -203,6 +205,17 @@ test("onSessionStop says what to notify, only with the permission and only of a 
     await until(() => state()?.hash === HASH8);
     assert.equal(await runner.sessionStop("s1"), undefined);
     assert.ok(logs.some((l) => l.includes("onSessionStop failed")));
+  } finally {
+    await runner.stopAll();
+  }
+});
+
+test("onSessionStop's long notification is cut before it goes to the Gasho server", async () => {
+  const { runner, state, until } = setup();
+  try {
+    runner.update([{ id: "hello", hash: HASH10, run: true, settings: {}, sessionStop: true }]);
+    await until(() => state()?.state === "running");
+    assert.deepEqual(await runner.sessionStop("s1"), { plugin: "hello", title: "長".repeat(120), body: "本".repeat(300) });
   } finally {
     await runner.stopAll();
   }

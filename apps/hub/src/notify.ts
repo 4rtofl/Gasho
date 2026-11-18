@@ -7,11 +7,32 @@ export function sessionLabel(s: SessionInfo | undefined, sessionId: string): str
   return sessionId.slice(0, 8);
 }
 
+/** What a plugin's notification may hold, in characters; a plugin's id is no longer than MAX_PLUGIN_ID. */
+const MAX_TITLE = 120;
+const MAX_BODY = 300;
+const MAX_PLUGIN_ID = 32;
+
 /** What a plugin says of a Stop (plugin API 1.15), when gasho-daemon sent something that can be shown. */
 function pluginNotification(ev: HookEvent): HookEvent["notification"] {
   const n = ev.notification;
   if (typeof n?.plugin !== "string" || typeof n.title !== "string" || !n.title.trim()) return undefined;
-  return { plugin: n.plugin, title: n.title.trim().slice(0, 120), ...(typeof n.body === "string" && n.body.trim() ? { body: n.body.trim().slice(0, 300) } : {}) };
+  return {
+    plugin: n.plugin.slice(0, MAX_PLUGIN_ID),
+    title: n.title.trim().slice(0, MAX_TITLE),
+    ...(typeof n.body === "string" && n.body.trim() ? { body: n.body.trim().slice(0, MAX_BODY) } : {}),
+  };
+}
+
+/**
+ * A hook event as the Gasho server keeps and shows it: what a plugin says of a Stop is cut to what a notification
+ * holds, or left out when it cannot be shown. The latest events go to each browser that connects in one message, which
+ * long ones would make too long to write, and the Gasho server would end each time a browser connects.
+ */
+export function boundedHook(ev: HookEvent): HookEvent {
+  if (ev.notification === undefined) return ev;
+  const { notification: _, ...rest } = ev;
+  const notification = pluginNotification(ev);
+  return notification ? { ...rest, notification } : rest;
 }
 
 /**

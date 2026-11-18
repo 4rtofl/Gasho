@@ -43,6 +43,9 @@ const MAX_BACKOFF_MS = 60_000;
 const CODE_MS = 30_000;
 /** How long a notification waits for what the daemon parts say of a session that stopped (onSessionStop). */
 export const SESSION_STOP_MS = 5000;
+/** What a notification of onSessionStop may hold, in characters; more is not sent to the Gasho server. */
+const STOP_TITLE_MAX = 120;
+const STOP_BODY_MAX = 300;
 /** Events of a topic are passed on at most this often; of those in between, the last one, when the time comes. */
 const EVENT_EVERY_MS = 1000;
 
@@ -398,7 +401,8 @@ export class PluginRunner {
         }
         const said = a.data as { title?: unknown; body?: unknown } | null | undefined;
         if (typeof said?.title !== "string" || !said.title.trim()) return undefined;
-        return { plugin: slot.id, title: said.title, ...(typeof said.body === "string" ? { body: said.body } : {}) };
+        const body = typeof said.body === "string" ? said.body.trim().slice(0, STOP_BODY_MAX) : "";
+        return { plugin: slot.id, title: said.title.trim().slice(0, STOP_TITLE_MAX), ...(body ? { body } : {}) };
       }),
     );
     return answers.find((a) => a !== undefined);

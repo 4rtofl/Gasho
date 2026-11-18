@@ -338,6 +338,31 @@ test("commands recorded as system records are notes too", () => {
   assert.deepEqual(command?.blocks, [{ type: "text", text: "/model" }]);
 });
 
+test("/rename (or /name) and what it printed are not shown in the chat", () => {
+  const meta = emptyMeta();
+  const name = "端末画面とプラグイン画面の更新ボタン";
+  // As Claude Code records the /rename gasho-daemon sends.
+  const records = [
+    { type: "system", subtype: "local_command", uuid: "r1", content: `<command-name>/rename</command-name>\n            <command-message>rename</command-message>\n            <command-args>${name}</command-args>` },
+    { type: "system", subtype: "local_command", uuid: "r2", content: `<local-command-stdout>Session renamed to: ${name}</local-command-stdout>`, commandRun: { command: "rename", args: name } },
+    { type: "user", uuid: "r3", message: { role: "user", content: `<command-name>/name</command-name>\n  <command-args>${name}</command-args>` } },
+    { type: "user", uuid: "r4", message: { role: "user", content: `<local-command-stdout>Session renamed to: ${name}</local-command-stdout>` } },
+    // What else it prints, and words it may print one day: the record says which command printed them.
+    { type: "system", subtype: "local_command", uuid: "r5", content: `<local-command-stdout>Session is named: ${name} (a newer rename landed first)</local-command-stdout>`, commandRun: { command: "rename", args: "" } },
+    { type: "system", subtype: "local_command", uuid: "r6", content: "<local-command-stdout>Couldn't generate a name: no conversation yet. Usage: /rename <name></local-command-stdout>", commandRun: { command: "rename", args: "" } },
+    { type: "system", subtype: "local_command", uuid: "r7", content: `<local-command-stdout>Now called ${name}</local-command-stdout>`, commandRun: { command: "name", args: name } },
+    { type: "user", uuid: "r8", message: { role: "user", content: `<local-command-stdout>Session is named: ${name} (a newer rename landed first)</local-command-stdout>` } },
+  ];
+  for (const rec of records) assert.equal(parseRecord(rec, meta), null, rec.uuid);
+  // Other commands are still notes, and what they print still counts.
+  const other = parseRecord({ type: "system", subtype: "local_command", uuid: "r9", content: "<command-name>/model</command-name>" }, meta);
+  assert.deepEqual(other?.blocks, [{ type: "text", text: "/model" }]);
+  const printed = "Set model to Opus 5.5 for this session only";
+  const output = parseRecord({ type: "system", subtype: "local_command", uuid: "r10", content: `<local-command-stdout>${printed}</local-command-stdout>`, commandRun: { command: "model", args: "" } }, meta);
+  assert.deepEqual(output?.blocks, [{ type: "text", text: printed }]);
+  assert.equal(meta.model, "Opus 5.5");
+});
+
 test("the effort level comes from replies and from /effort and /model output; ultracode from /effort ultracode", () => {
   const meta = emptyMeta();
   parseRecord({ type: "assistant", uuid: "a", effort: "medium", message: { model: "claude-haiku-5-5", content: [{ type: "text", text: "はい" }] } }, meta);
@@ -523,4 +548,38 @@ test("Claude Code's notice that background work ended is a note, not something t
   const mixed = parseRecord({ type: "user", uuid: "n3", message: { role: "user", content: `${notice}\n直して` } }, meta);
   assert.equal(mixed?.role, "user");
   assert.deepEqual(mixed?.blocks, [{ type: "text", text: "直して" }]);
+});
+
+test("a page of a session not tracked is an error; of a new session without a transcript yet, an empty conversation", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-page-"));
+  const sent: DaemonToHub[] = [];
+  try {
+    const d = new Daemon({
+      hubUrl: "ws://127.0.0.1:1",
+      machineId: "m",
+      token: "t",
+      hookPort: 0,
+      claudeDir: path.join(dir, "claude"),
+      claudeBin: "/bin/false",
+      pollIntervalMs: 60_000,
+      stateDir: dir,
+      attachmentsDir: path.join(dir, "attachments"),
+    } as ConstructorParameters<typeof Daemon>[0]) as unknown as Record<string, any>;
+    d.hub = { send: (m: DaemonToHub) => sent.push(m) };
+    d.tracked.set("new", { info: { sessionId: "new", cwd: dir, status: "idle", rcMode: "none", prLinks: [] }, meta: emptyMeta() });
+    for (const [sessionId, error] of [["new", undefined], ["gone", "session not found"]] as const) {
+      await d.onHubMessage({ type: "transcript.get", requestId: `r-${sessionId}`, sessionId, limit: 50 });
+      assert.deepEqual(sent.at(-1), {
+        type: "transcript.page",
+        requestId: `r-${sessionId}`,
+        sessionId,
+        entries: [],
+        start: 0,
+        total: 0,
+        ...(error ? { error } : {}),
+      });
+    }
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });

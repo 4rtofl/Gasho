@@ -11,9 +11,12 @@ export const PANEL_WIDTH_MIN = 380;
 export const PANEL_WIDTH_MAX = 620;
 /**
  * The conversation beside a session's side panel, at its narrowest: what the default sidebar and the narrowest panel
- * leave it on the narrowest computer screen (768px).
+ * leave it on the narrowest computer screen (768px). Too narrow to be read: there the panel goes over the conversation
+ * (panelOverlays), and this much of it stays in sight at the left.
  */
 const CONVERSATION_MIN = 140;
+/** The conversation beside the panel, at its narrowest for being read: about a phone's screen. */
+const CONVERSATION_READABLE = 360;
 
 /** A whole number of px within the range, made narrower when the window has no room for it beside the narrowest panel. */
 export function clampSidebarWidth(width: number, windowWidth = Number.POSITIVE_INFINITY): number {
@@ -21,11 +24,20 @@ export function clampSidebarWidth(width: number, windowWidth = Number.POSITIVE_I
 }
 
 /**
- * A whole number of px within the range, made narrower when `room` (what the conversation and the panel share: the
- * window but the sidebar) leaves the conversation too little.
+ * Whether the panel goes over the conversation instead of beside it: `room` (what the conversation and the panel share:
+ * the window but the sidebar) leaves the conversation too little to be read beside the narrowest panel.
+ */
+export function panelOverlays(room: number): boolean {
+  return room - PANEL_WIDTH_MIN < CONVERSATION_READABLE;
+}
+
+/**
+ * A whole number of px within the range, made narrower when `room` leaves the conversation too little: beside the
+ * panel, enough to be read; under it, a strip at the left.
  */
 export function clampPanelWidth(width: number, room = Number.POSITIVE_INFINITY): number {
-  return Math.max(PANEL_WIDTH_MIN, Math.min(PANEL_WIDTH_MAX, room - CONVERSATION_MIN, Math.round(width)));
+  const left = panelOverlays(room) ? CONVERSATION_MIN : CONVERSATION_READABLE;
+  return Math.max(PANEL_WIDTH_MIN, Math.min(PANEL_WIDTH_MAX, room - left, Math.round(width)));
 }
 
 /** The panel's width when none is saved: 40% of the window. */

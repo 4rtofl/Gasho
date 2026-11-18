@@ -23,6 +23,8 @@ export interface FakeAnswer {
   output?: string;
   /** …or the file copied there (a plugin's .tgz). */
   outputFile?: string;
+  /** A folder copied into the folder the command runs in, at `to` (npm install: the packages, at node_modules). */
+  copyInto?: { from: string; to: string };
   /** How long it takes to answer (ms). */
   delayMs?: number;
 }
@@ -132,4 +134,15 @@ export function catalogAnswer(catalog: unknown, repo = "4rtofl/GashoPlugins"): F
 /** npm view <package> version: the answer for the latest published version (apps/hub/src/latest.ts). */
 export function npmLatestAnswer(pkg: string, version: string): FakeAnswer {
   return { args: ["view", pkg, "version"], stdout: JSON.stringify(version) };
+}
+
+/**
+ * npm install of <package>@<version>, as an update runs it (apps/hub/src/self-update.ts): the answer that puts the
+ * packages of `nodeModules` (the package and what it needs) in the folder it installs in.
+ */
+export function npmInstallAnswer(pkg: string, version: string, nodeModules: string): FakeAnswer {
+  return {
+    args: ["install", "--prefer-online", "--no-audit", "--no-fund", "--omit=dev", `${pkg}@${version}`],
+    copyInto: { from: nodeModules, to: "node_modules" },
+  };
 }

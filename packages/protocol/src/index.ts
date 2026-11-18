@@ -396,6 +396,12 @@ export interface PushPayload {
   badge: number;
 }
 
+/** A working server's memory as a whole, in bytes. `used` leaves out what the system can take back at once (the page cache). */
+export interface MachineMemory {
+  total: number;
+  used: number;
+}
+
 /** A working server: a machine that runs Claude Code and gasho-daemon. */
 export interface MachineInfo {
   /** Id issued when the machine was registered. */
@@ -443,8 +449,12 @@ export interface MachineInfo {
   repos?: RegisteredRepo[];
 }
 
-/** A step of an update of gasho-daemon (daemon.update), in order. */
-export type DaemonUpdateStep = "install" | "check" | "wait" | "restart";
+/**
+ * A step of an update of gasho-daemon (daemon.update), in order: installing the version beside the running one,
+ * checking that it starts, waiting for the inputs still to be typed, restarting, and the trial of the new version (it
+ * goes back to the previous one by itself when it ends before the trial is over).
+ */
+export type DaemonUpdateStep = "install" | "check" | "wait" | "restart" | "trial";
 
 /**
  * Updating gasho-daemon from Gasho (daemon.update). gasho-daemon installs each version in a folder of its own beside
@@ -462,10 +472,20 @@ export interface DaemonUpdateInfo {
   installed?: string[];
   /** The version this one replaced, when it was started by an update: the one to go back to. */
   previous?: string;
-  /** An update under way: the version it goes to, and its step (since `at`, ms since the epoch). */
+  /**
+   * An update under way: the version it goes to, and its step (since `at`, ms since the epoch); or the trial of this
+   * version after one (step "trial").
+   */
   progress?: { version: string; step: DaemonUpdateStep; at: number };
-  /** The last update, when it failed; nothing was changed. */
+  /** The last update, when it failed before the switch; nothing was changed. */
   failed?: { version: string; error: string; at: number };
+  /** The last update that went back by itself: the version that did not start, and why. */
+  rolledBack?: { from: string; to: string; error?: string; at: number };
+  /**
+   * How long (ms) a version started by an update is on trial: one that ends sooner goes back to the version before by
+   * itself. Absent from a gasho-daemon that does not go back.
+   */
+  trialMs?: number;
 }
 
 /**
@@ -676,7 +696,7 @@ export interface TranscriptPage {
  * What a plugin's web part may do besides reading and showing: send messages to sessions, start them, remove worktrees
  * with their sessions.
  */
-export type PluginPermission = "session.input" | "session.launch" | "worktree.remove";
+export type PluginPermission = "session.input" | "session.launch" | "session.remove" | "worktree.remove";
 
 /** A method of a plugin's daemon part, which its web part can call. */
 export interface PluginMethodSpec {
@@ -939,7 +959,12 @@ export type DaemonToHub =
    * An event of a plugin's daemon part (ctx.emit): at most one per second for each topic, the last one when there were
    * more. `retain`: the Gasho server keeps it for browsers that connect later.
    */
-  | { type: "plugin.event"; plugin: string; topic: string; data?: unknown; retain?: boolean };
+  | { type: "plugin.event"; plugin: string; topic: string; data?: unknown; retain?: boolean }
+  /**
+   * The server's memory: sent once connected, then every 15 seconds; `memory` is absent when it could not be read. Apart
+   * from `sessions` and `capabilities` because it changes every time: the Gasho server keeps it in memory only.
+   */
+  | { type: "memory"; memory?: MachineMemory };
 
 // gasho-hub -> gasho-daemon
 export type HubToDaemon =
@@ -992,8 +1017,12 @@ export type HubToClient =
       push?: PushInfo;
       /** The Gasho server answers ping with pong (absent from an older one, which ignores ping). */
       heartbeat?: boolean;
+      /** The latest memory of the connected working servers that tell it, by machine id (absent from an older Gasho server). */
+      memory?: Record<string, MachineMemory>;
     }
   | { type: "machine"; machine: MachineInfo }
+  /** A working server's latest memory; `memory` is absent once it is no longer known (the server went offline, or cannot read it). */
+  | { type: "machine.memory"; machine: string; memory?: MachineMemory }
   /** The Gasho server itself, whenever its update or the build of the screen it serves changed. */
   | { type: "server"; server: ServerInfo }
   /** The answer to hub.update: whether the update has begun (its steps follow with server). */
@@ -1160,9 +1189,10 @@ export type SessionCommand =
   | { type: "session.fork"; sessionId: string; name?: string }
   /**
    * Ends a session started from Gasho (its Claude Code, then its terminal) and removes it from Gasho. Its
-   * conversation stays on the working server: `claude --resume` lists it.
+   * conversation stays on the working server: `claude --resume` lists it. `via`: sent by a plugin (its id), for the
+   * operations log.
    */
-  | { type: "session.remove"; sessionId: string }
+  | { type: "session.remove"; sessionId: string; via?: string }
   /**
    * The conversations Claude Code keeps for the folder `cwd` (with `subfolders`, also for the folders inside it) that
    * no Claude Code has open now, the latest first (`history`). Only reads; the operations log does not record it.

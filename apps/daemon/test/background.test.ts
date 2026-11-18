@@ -21,7 +21,7 @@ import {
   typedInBox,
   waitingForBackground,
 } from "../src/managed.ts";
-import { mayRun, runningTasks, sessionStatus } from "../src/sessions.ts";
+import { mayRun, runningTasks, sessionStatus, waitingForOf } from "../src/sessions.ts";
 import { emptyMeta, parseRecord } from "../src/transcript.ts";
 
 const RULE = "─".repeat(50);
@@ -162,7 +162,17 @@ test("a session whose turn has ended while only shells run is idle, though Claud
   assert.equal(sessionStatus({ status: "busy" }, { status: "shell" }), "idle");
   assert.equal(sessionStatus({ status: "busy" }, { status: "busy" }), "busy");
   assert.equal(sessionStatus({ status: "busy" }, undefined), "busy");
-  assert.equal(sessionStatus({ status: "waiting" }, { status: "shell" }), "waiting");
+});
+
+test("a session's state is the one Claude Code wrote last in its file, which the list read seconds before on a busy machine", () => {
+  assert.equal(sessionStatus({ status: "idle" }, { status: "busy" }), "busy");
+  assert.equal(sessionStatus({ status: "busy" }, { status: "waiting", waitingFor: "permission prompt" }), "waiting");
+  assert.equal(waitingForOf({ status: "busy" }, { status: "waiting", waitingFor: "permission prompt" }), "permission prompt");
+  assert.equal(waitingForOf({ status: "waiting", waitingFor: "permission prompt" }, { status: "busy" }), undefined);
+  // Without a state in the file (a session in the background writes `state`), the list's.
+  assert.equal(sessionStatus({ state: "blocked" }, {}), "waiting");
+  assert.equal(waitingForOf({ status: "waiting", waitingFor: "input needed" }, {}), "input needed");
+  assert.equal(sessionStatus(undefined, undefined), "unknown");
 });
 
 // ---------------------------------------------------------------------------------------------------------------------

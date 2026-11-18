@@ -1,0 +1,10 @@
+{
+  "id": "e2e-daemon",
+  "name": "E2E daemon",
+  "version": "1.0.0",
+  "description": "E2E テストで、daemon の部分の状態を出す",
+  "genre": "integration",
+  "api": "1.12",
+  "daemon": { "js": "daemon.js" },
+  "permissions": ["session.input", "session.launch"]
+}

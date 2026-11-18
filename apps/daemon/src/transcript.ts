@@ -40,6 +40,14 @@ const MODEL_SET_RE = /Set model to `?([^`\n]+?)`?(?: and saved| for this session
 /** "Set effort level to high", "… with `medium` effort", "Effort stays high." */
 const EFFORT_SET_RE = /(?:Set effort level to|Effort stays|with) `?(low|medium|high|xhigh|max)`?/i;
 const ULTRACODE_RE = /^Ultracode (on|off)\b/i;
+/**
+ * /rename (alias /name) and what it printed. gasho-daemon sends it to pass a session's name to Claude Code (the name
+ * from the first message, or one given from Gasho's menu); the name shows in the session's header, so neither is
+ * shown in the chat. A system record says which command printed it (`commandRun`), whatever its words; a user message
+ * is told by its words.
+ */
+const RENAME_COMMANDS = new Set(["rename", "name"]);
+const RENAMED_RE = /^Session (?:renamed to|is named):/;
 const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 
 /** "claude-opus-5-5" → "Opus 5.5". Other names are returned as they are. */
@@ -51,14 +59,17 @@ export function modelLabel(id: string): string {
 
 /**
  * A slash command (such as /model) or what it printed, as a short note; undefined for other text. Claude Code
- * records these as user messages or as system records. A model switch also updates the session's model.
+ * records these as user messages or as system records; "" for those not shown. A model switch also updates the
+ * session's model.
  */
 function commandNote(content: string, meta: TranscriptMeta): string | undefined {
   const command = COMMAND_RE.exec(content);
+  if (command?.[1] && RENAME_COMMANDS.has(command[1].trim().replace(/^\//, ""))) return "";
   if (command?.[1]) return `${command[1].trim()} ${COMMAND_ARGS_RE.exec(content)?.[1]?.trim() ?? ""}`.trim();
   const output = COMMAND_OUTPUT_RE.exec(content);
   if (!output) return undefined;
   const text = (output[2] ?? "").trim();
+  if (RENAMED_RE.test(text)) return "";
   const model = MODEL_SET_RE.exec(text)?.[1];
   if (model) meta.model = model.trim();
   if (model && /for this session only/.test(text)) meta.sessionSwitches = (meta.sessionSwitches ?? 0) + 1;
@@ -136,6 +147,8 @@ export interface OpenCall {
   name: string;
   input: Record<string, unknown>;
   at?: number;
+  /** The folder Claude was in when it made the call: its permission dialog shows paths from there. */
+  cwd?: string;
 }
 
 /** How many open calls are kept: a turn that leaves more open is not waiting on a dialog for the oldest. */
@@ -420,6 +433,8 @@ export function parseRecord(rec: Record<string, unknown>, meta: TranscriptMeta):
       const text = str(rec.content) || "Conversation compacted";
       return { uuid, ts, role, blocks: [{ type: "text", text }], isSidechain, compaction: "mark" };
     }
+    const run = rec.commandRun as { command?: unknown } | undefined;
+    if (RENAME_COMMANDS.has(str(run?.command) ?? "")) return null;
     const raw = str(rec.content);
     const text = raw === undefined ? undefined : (commandNote(raw, meta) ?? raw);
     return text ? { uuid, ts, role, blocks: [{ type: "text", text: clip(text, MAX_TEXT) }], isSidechain } : null;
@@ -482,7 +497,8 @@ export function parseRecord(rec: Record<string, unknown>, meta: TranscriptMeta):
         if (role === "assistant" && !isSidechain && id) {
           const input = b.input && typeof b.input === "object" && !Array.isArray(b.input) ? (b.input as Record<string, unknown>) : {};
           const calls = (meta.openCalls ??= []);
-          calls.push({ toolUseId: id, name: str(b.name) ?? "", input, ...(at === undefined ? {} : { at }) });
+          const cwd = str(rec.cwd);
+          calls.push({ toolUseId: id, name: str(b.name) ?? "", input, ...(at === undefined ? {} : { at }), ...(cwd ? { cwd } : {}) });
           if (calls.length > MAX_OPEN_CALLS) calls.shift();
         }
         blocks.push({

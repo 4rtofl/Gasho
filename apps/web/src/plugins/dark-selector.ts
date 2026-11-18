@@ -28,8 +28,11 @@ function blockStart(cssText: string): number {
   return find(cssText, 0, (i) => cssText[i] === "{");
 }
 
-/** `.dark .foo` as `.dark & .foo, & .dark .foo`; another selector as it is. */
-function dark(selector: string): string {
+/**
+ * `.dark .foo` as `.dark & .foo, & .dark .foo`; another selector as it is. `sibling`: a rule nested in the selector's
+ * rule has `+` or `~`.
+ */
+function dark(selector: string, sibling: boolean): string {
   // CSS nesting puts `& ` before a selector only when it has no `&` (even in `:is()`): one with `&` places the part itself.
   if (find(selector, 0, (i) => selector[i] === "&", true) < selector.length) return selector;
   const end = find(selector, 0, (i) => /[\s>+~]/.test(selector[i]!));
@@ -37,8 +40,9 @@ function dark(selector: string): string {
   const rest = selector.slice(end);
   if (find(first, 0, (i) => first[i] === "." && DARK.test(first.slice(i))) === first.length) return selector;
   if (find(first, 0, (i) => PSEUDO_ELEMENT.test(first.slice(i))) < first.length) return selector;
-  // After `.dark &`, `+` and `~` would match the elements beside the plugin's part, which are Gasho's.
-  if (/^\s*[+~]/.test(rest)) return selector;
+  // After `.dark &`, `+` and `~` would match the elements beside the plugin's part, which are Gasho's: in the selector,
+  // or in a nested rule when `.dark &` is the part's element itself.
+  if (/^\s*[+~]/.test(rest) || (sibling && !rest)) return selector;
   return `${first} &${rest}, & ${selector}`;
 }
 
@@ -49,14 +53,14 @@ function dark(selector: string): string {
  * whose first compound selector has `.dark` is written to match below a `.dark` above the part (as Tailwind's `dark:`,
  * `:is(.dark *)`, does) or inside it. `&` is the `:where()` the rule is nested in, so the specificity stays as it was.
  */
-export function darkSelector(selectorText: string): string | undefined {
+export function darkSelector(selectorText: string, sibling = false): string | undefined {
   const selectors: string[] = [];
   for (let start = 0; start <= selectorText.length; ) {
     const comma = find(selectorText, start, (i) => selectorText[i] === ",");
     selectors.push(selectorText.slice(start, comma).trim());
     start = comma + 1;
   }
-  const out = selectors.map(dark);
+  const out = selectors.map((s) => dark(s, sibling));
   return out.some((s, i) => s !== selectors[i]) ? out.join(", ") : undefined;
 }
 
@@ -69,10 +73,18 @@ export interface CssRule {
   readonly cssRules?: ArrayLike<CssRule>;
 }
 
+/** Whether a rule inside `rule`, at any depth, has `+` or `~` in its selectors. */
+function hasSibling(rule: CssRule): boolean {
+  return Array.from(rule.cssRules ?? []).some((r) => {
+    const s = r.selectorText;
+    return (s !== undefined && find(s, 0, (i) => s[i] === "+" || s[i] === "~") < s.length) || hasSibling(r);
+  });
+}
+
 /** A style rule or a rule with rules inside (@media, @supports…) of a plugin's web.css, with darkSelector's selectors. */
 export function ruleText(rule: CssRule): string {
   if (rule.selectorText !== undefined) {
-    const selector = darkSelector(rule.selectorText);
+    const selector = darkSelector(rule.selectorText, hasSibling(rule));
     // CSSOM writes a style rule as its selectorText and then its block.
     if (selector && rule.cssText.startsWith(rule.selectorText)) return selector + rule.cssText.slice(rule.selectorText.length);
   } else if (rule.cssRules) {

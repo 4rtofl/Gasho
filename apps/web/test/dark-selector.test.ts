@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { darkSelector, ruleText } from "../src/plugins/dark-selector.ts";
+import { type CssRule, darkSelector, ruleText } from "../src/plugins/dark-selector.ts";
 
 test("a selector that starts with .dark matches below a .dark above the plugin's part or inside it", () => {
   assert.equal(darkSelector(".dark .rcs"), ".dark & .rcs, & .dark .rcs");
@@ -41,4 +41,18 @@ test("ruleText writes the selectors of the style rules, and of those in @media a
   assert.equal(ruleText(supports), '@supports (content: "{") {.b { color: blue; }}');
   const nested = { selectorText: ".dark", cssText: ".dark {\n  & .c { color: green; }\n}", cssRules: [style("& .c", "{ color: green; }")] };
   assert.equal(ruleText(nested), ".dark &, & .dark {\n  & .c { color: green; }\n}");
+});
+
+test("a .dark rule with + or ~ in a nested rule stays as it is, as .dark & would be the part's element", () => {
+  const sibling = { selectorText: "& ~ *", cssText: "& ~ * { outline: red; }", cssRules: [] };
+  const nest = (selectorText: string, child: CssRule) => ({ selectorText, cssText: `${selectorText} {\n  ${child.cssText}\n}`, cssRules: [child] });
+  for (const rule of [
+    nest(".dark", sibling),
+    nest("html.dark", { selectorText: "& + .a", cssText: "& + .a { outline: red; }", cssRules: [] }),
+    nest(".dark", { cssText: "@media (min-width: 1px) {\n  & ~ * { outline: red; }\n}", cssRules: [sibling] }),
+  ]) {
+    assert.equal(ruleText(rule), rule.cssText, rule.cssText);
+  }
+  // Below .dark .a, ~ stays inside the part.
+  assert.equal(ruleText(nest(".dark .a", sibling)), ".dark & .a, & .dark .a {\n  & ~ * { outline: red; }\n}");
 });

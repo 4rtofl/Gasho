@@ -242,6 +242,19 @@ test("working server がオフラインになると、確認カードとバッ�
   await expect(page.getByRole("radio", { name: /Postgres/ })).toBeDisabled();
 });
 
+test("計画の直してほしいところを書いている途中でオフラインになると、入力欄と「送る」「戻る」を押せない", async ({ page, hub }) => {
+  const daemon = await openSession(page, hub, { status: "waiting", permissionRequests: [request({ toolName: "ExitPlanMode", summary: undefined, plan: "## 計画" })] });
+  await page.getByRole("button", { name: "直してほしいところを伝える" }).click();
+  const feedback = page.getByRole("textbox", { name: "計画の直してほしいところ" });
+  const controls = [feedback, page.getByRole("button", { name: "送る" }), page.getByRole("button", { name: "戻る" })];
+  await feedback.fill("先にテストを書いてください");
+  for (const c of controls) await expect(c).toBeEnabled();
+
+  await daemon.disconnect();
+  await expect(page.getByText("working server がオフラインです。")).toBeVisible();
+  for (const c of controls) await expect(c).toBeDisabled();
+});
+
 test("確認カードが会話の欄より高くても、上の部分と入力欄が見え、下の部分はスクロールして見られる（#109）", async ({ page, hub }) => {
   // Short, as a phone on its side; the width stays the project's (a computer's, or an iPhone's).
   await page.setViewportSize({ width: page.viewportSize()!.width, height: 420 });

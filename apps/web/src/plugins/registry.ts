@@ -9,6 +9,7 @@ import { useSyncExternalStore } from "react";
 import type { PluginDefinition } from "@gasho/plugin-sdk";
 import type { PluginInfo } from "@gasho/protocol";
 import { getAppState, subscribeAppState, useAppState } from "@/lib/store";
+import { ruleText } from "./dark-selector";
 import { apiSupported, checkDefinition } from "./definition";
 import { installShared } from "./sdk";
 
@@ -73,7 +74,7 @@ function scopeRules(rules: CSSRuleList, plugin: string, top = true): string {
       flush();
       out += top && PAGE_LAYERS.has(rule.name) ? rule.cssText : `@layer ${rule.name}{${scopeRules(rule.cssRules, plugin, false)}}`;
     } else if (rule instanceof CSSStyleRule || rule instanceof CSSGroupingRule) {
-      run += rule.cssText;
+      run += ruleText(rule);
     } else {
       // @property, @keyframes, @font-face and the like name things for the whole page; they cannot be nested in a rule.
       flush();

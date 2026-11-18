@@ -187,6 +187,38 @@ test("clone の途中で接続が切れると、結果が分からないこと�
   await expect(dialog).toBeHidden();
 });
 
+test("選んだ working server がオフラインになると、別の working server に切り替えず、理由を出して clone できない", async ({ page, hub }) => {
+  const alpha = await hub.fakeDaemon({ name: "alpha" });
+  const zeta = await hub.fakeDaemon({ name: "zeta" });
+  await openHome(page, 2);
+  const dialog = await openClone(page);
+  await fill(dialog, { server: "zeta", repo: "owner/lib", folder: "/srv/code" });
+
+  await zeta.disconnect();
+  await expect(dialog.getByRole("alert")).toContainText("zeta では、いま clone できません");
+  await expect(dialog.getByRole("combobox", { name: "working server" })).toHaveValue(zeta.machineId);
+  await expect(dialog.getByRole("button", { name: "clone する", exact: true })).toBeDisabled();
+  expect(alpha.received.filter((m) => m.type === "repo.clone")).toEqual([]);
+});
+
+test("clone の途中で working server の接続が切れると、失敗とせず、結果が分からないことと clone 先を出す", async ({ page, hub }) => {
+  const daemon = await hub.fakeDaemon({ name: "mac", capabilities: { folders: ["/home/me/repos/app"] } });
+  daemon.handle("repo.clone", () => new Promise(() => undefined));
+  await openHome(page, 1);
+  const dialog = await openClone(page);
+  await fill(dialog, { repo: "owner/lib" });
+  await press(dialog);
+  await expect.poll(() => daemon.received.some((m) => m.type === "repo.clone")).toBe(true);
+
+  await daemon.disconnect();
+  const alert = dialog.getByRole("alert");
+  await expect(alert).toContainText("clone できたか分かりません");
+  await expect(alert).toContainText("/home/me/repos/lib");
+  await expect(alert).toContainText("「リポジトリを登録・解除…」");
+  await dialog.getByRole("button", { name: "閉じる" }).last().click();
+  await expect(dialog).toBeHidden();
+});
+
 test("ほかのリポジトリに絞り込んでいても、clone したリポジトリが一覧に出る", async ({ page, hub, isMobile }) => {
   test.skip(isMobile, "絞り込みのメニューを閉じる Esc は、スマホではドロワーも閉じる（#183）");
   const app: RegisteredRepo = { path: "/work/app", worktrees: [{ path: "/work/app", branch: "main" }] };

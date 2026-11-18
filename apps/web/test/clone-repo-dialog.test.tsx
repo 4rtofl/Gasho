@@ -190,6 +190,77 @@ test("the working server going offline during the clone does not send the regist
   expect(hub.commands().at(-1)).toMatchObject({ type: "repo.register", machine: "mac" });
 });
 
+test("the working server picked going offline stops the clone instead of moving to another one, until it is back", async () => {
+  const user = userEvent.setup();
+  const hub = await connectHub({ machines: [server("alpha"), server("zeta")] });
+  render(<CloneRepoDialog open onClose={() => {}} />);
+  const picker = screen.getByRole<HTMLSelectElement>("combobox", { name: "working server" });
+  await user.selectOptions(picker, "zeta");
+  await user.type(repoField(), "cli/cli");
+
+  await hub.say({ type: "machine", machine: server("zeta", { connected: false }) });
+  expect(picker.value).toBe("zeta");
+  expect(screen.getByRole("alert").textContent).toContain("zeta では、いま clone できません");
+  expect(cloneButton().disabled).toBe(true);
+  fireEvent.submit(cloneButton().closest("form")!);
+  expect(hub.commands()).toHaveLength(0);
+
+  await hub.say({ type: "machine", machine: server("zeta") });
+  expect(screen.queryByRole("alert")).toBeNull();
+  await user.click(cloneButton());
+  expect(hub.commands().at(-1)).toMatchObject({ type: "repo.clone", machine: "zeta" });
+});
+
+test("another working server connecting changes nothing chosen, also during a clone that then fails", async () => {
+  const user = userEvent.setup();
+  const hub = await connectHub({ machines: [server("alpha", { connected: false }), server("zeta")] });
+  render(<CloneRepoDialog open onClose={() => {}} />);
+  const picker = screen.getByRole<HTMLSelectElement>("combobox", { name: "working server" });
+  expect(picker.value).toBe("zeta");
+  await hub.say({ type: "machine", machine: server("alpha") });
+  expect(picker.value).toBe("zeta");
+
+  await user.type(repoField(), "cli/cli");
+  await user.click(cloneButton());
+  await hub.say({ type: "machine", machine: server("alpha", { folders: ["/srv/alpha/app"] }) });
+  await hub.answer({ ok: false, error: "clone できませんでした：だめでした" });
+  expect(picker.value).toBe("zeta");
+  await user.click(cloneButton());
+  expect(hub.commands().at(-1)).toMatchObject({ type: "repo.clone", machine: "zeta" });
+});
+
+test("the working server lost during the clone: the result is unknown, not a failure, and nothing is registered", async () => {
+  const user = userEvent.setup();
+  const hub = await connectHub({ machines: [server("linux")] });
+  const onCloned = vi.fn();
+  render(<CloneRepoDialog open onClose={() => {}} onCloned={onCloned} />);
+  await user.type(repoField(), "cli/cli");
+  await user.click(cloneButton());
+  const asked = hub.commands().length;
+  // In the order the Gasho server sends them.
+  await hub.say({ type: "machine", machine: server("linux", { connected: false }) });
+  await hub.answer({ ok: false, error: "working server との接続が切れました。" });
+
+  const alert = screen.getByRole("alert").textContent;
+  expect(alert).toContain("clone できたか分かりません");
+  expect(alert).toContain("/home/me/repos/cli");
+  expect(alert).toContain("「リポジトリを登録・解除…」");
+  expect(hub.commands()).toHaveLength(asked);
+  expect(onCloned).not.toHaveBeenCalled();
+});
+
+test("the working server lost during the registration: the clone is there and the registration is unknown", async () => {
+  const user = userEvent.setup();
+  const hub = await connectHub({ machines: [server("linux")] });
+  render(<CloneRepoDialog open onClose={() => {}} />);
+  await user.type(repoField(), "cli/cli");
+  await user.click(cloneButton());
+  await hub.answer({ ok: true, path: "/home/me/repos/cli" });
+  await hub.say({ type: "machine", machine: server("linux", { connected: false }) });
+  await hub.answer({ ok: false, error: "working server との接続が切れました。" });
+  expect(screen.getByRole("alert").textContent).toContain("clone できましたが、登録できたか分かりません");
+});
+
 test("the Enter that confirms a conversion does not start a clone", async () => {
   const user = userEvent.setup();
   const hub = await connectHub({ machines: [server("linux")] });

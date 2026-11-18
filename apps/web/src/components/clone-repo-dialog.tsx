@@ -3,7 +3,7 @@
 import { LoaderCircle, TriangleAlert, X } from "lucide-react";
 import { Dialog } from "radix-ui";
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
-import type { CommandResult } from "@gasho/protocol";
+import type { CommandResult, MachineInfo } from "@gasho/protocol";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG_PANEL } from "@/components/dialog-styles";
 import { CLONE_WAIT_MS, cloneProblem, clonePath, folderChoices, repoFolderName } from "@/lib/folders";
 import { daemonAtLeast } from "@/lib/sessions";
@@ -19,11 +19,11 @@ const FIELD =
   "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-border-hover disabled:opacity-60";
 const PLAIN_TEXT = { spellCheck: false, autoCapitalize: "none", autoCorrect: "off" } as const;
 
-/** What is going on: the working server it was asked of, which stays offered if it goes offline meanwhile. */
-interface Running {
-  machine: string;
-  step: "clone" | "register";
-}
+/** gasho-daemon 0.10.0 clones. */
+const canClone = (m: MachineInfo) => m.connected && daemonAtLeast(m, 0, 10);
+
+/** The Gasho server tells that a working server has gone before it fails what was waiting for that working server. */
+const isGone = (machine: string) => getAppState().machines.find((m) => m.id === machine)?.connected !== true;
 
 /** Cloned or perhaps cloned, but not known to be registered: the form has nothing left to do. */
 interface Unfinished {
@@ -117,14 +117,13 @@ function CloneForm({
   onCloned: (machine: string, path: string) => void;
 }) {
   const { machines } = useAppState();
-  const [running, setRunning] = useState<Running>();
-  // gasho-daemon 0.10.0 clones.
-  const candidates = useMemo(
-    () => machines.filter((m) => (m.connected && daemonAtLeast(m, 0, 10)) || m.id === running?.machine),
-    [machines, running?.machine],
-  );
-  const [machineId, setMachineId] = useState<string>();
-  const machine = candidates.find((m) => m.id === machineId) ?? candidates[0];
+  const [running, setRunning] = useState<"clone" | "register">();
+  const candidates = useMemo(() => machines.filter(canClone), [machines]);
+  // The working server chosen stays chosen, whichever working servers connect or go away, until another is picked.
+  const [machineId, setMachineId] = useState(candidates[0]?.id);
+  if (machineId === undefined && candidates[0]) setMachineId(candidates[0].id);
+  const machine = machines.find((m) => m.id === machineId);
+  const available = machine !== undefined && canClone(machine);
   const folders = useMemo(() => folderChoices(machine?.folders ?? []), [machine?.folders]);
   // The folder picked, while the working server still offers it; at first the first one offered.
   const [picked, setPicked] = useState<string>();
@@ -146,36 +145,39 @@ function CloneForm({
   const target = clonePath(parent, what, as);
 
   const clone = async () => {
-    if (!machine || busy) return;
+    if (!machine || !available || busy) return;
     const problem = cloneProblem(parent, what, as);
     if (problem) return setError(problem);
     // The working server asked, whatever the form shows by the time the clone is done.
     const id = machine.id;
     setError(undefined);
-    setRunning({ machine: id, step: "clone" });
+    setRunning("clone");
     const cloned = await answerUnlessLost(sendCommand(id, { type: "repo.clone", parent, repo: what, ...(as ? { name: as } : {}) }, CLONE_WAIT_MS));
-    if (cloned === "lost") {
+    // gasho-daemon goes on cloning without the Gasho server, so a working server that has gone says nothing of the clone.
+    const daemonGone = cloned !== "lost" && !cloned.ok && isGone(id);
+    if (cloned === "lost" || daemonGone) {
       setRunning(undefined);
       return setUnfinished({
         title: "clone できたか分かりません",
         path: target ?? parent,
-        reason: "clone の途中で Gasho サーバーとの接続が切れました。working server では clone が続いていることがあります。",
-        hint: `clone が終わると、このフォルダーができます。${REGISTER_HINT}`,
+        reason: `clone の途中で${daemonGone ? " working server と Gasho サーバーの" : " Gasho サーバーとの"}接続が切れました。working server では clone が続いていることがあります。`,
+        hint: `clone が終わると、このフォルダーができます。${daemonGone ? "working server がつながったら、" : ""}${REGISTER_HINT}`,
       });
     }
     if (!cloned.ok || !cloned.path) {
       setRunning(undefined);
       return setError(cloned.error ?? "clone できませんでした。");
     }
-    setRunning({ machine: id, step: "register" });
+    setRunning("register");
     const registered = await answerUnlessLost(sendCommand(id, { type: "repo.register", path: cloned.path }, REGISTER_WAIT_MS));
     setRunning(undefined);
-    if (registered === "lost") {
+    const registerGone = registered !== "lost" && !registered.ok && isGone(id);
+    if (registered === "lost" || registerGone) {
       return setUnfinished({
         title: "clone できましたが、登録できたか分かりません",
         path: cloned.path,
-        reason: "登録の途中で Gasho サーバーとの接続が切れました。",
-        hint: `サイドバーの一覧に出ないときは、${REGISTER_HINT}`,
+        reason: `登録の途中で${registerGone ? " working server と Gasho サーバーの" : " Gasho サーバーとの"}接続が切れました。`,
+        hint: `サイドバーの一覧に出ないときは、${registerGone ? "working server がつながってから、" : ""}${REGISTER_HINT}`,
       });
     }
     if (!registered.ok) {
@@ -210,19 +212,11 @@ function CloneForm({
     );
   }
 
-  if (!machine) {
+  if (machineId === undefined) {
     return (
-      <div className="space-y-2">
-        <p className="text-sm text-muted-foreground">
-          clone できる working server がありません。接続していて、gasho-daemon が 0.10.0 以上の working server が必要です。
-        </p>
-        {/* The only working server went offline during the clone: why it failed still shows. */}
-        {error && (
-          <p role="alert" className="text-sm break-words text-red-400">
-            {error}
-          </p>
-        )}
-      </div>
+      <p className="text-sm text-muted-foreground">
+        clone できる working server がありません。接続していて、gasho-daemon が 0.10.0 以上の working server が必要です。
+      </p>
     );
   }
 
@@ -241,7 +235,7 @@ function CloneForm({
       <label className="block space-y-1.5">
         <span className="text-xs text-muted-foreground">working server</span>
         <select
-          value={machine.id}
+          value={machineId}
           disabled={busy}
           onChange={(e) => {
             setMachineId(e.target.value);
@@ -251,6 +245,12 @@ function CloneForm({
           }}
           className={FIELD}
         >
+          {/* The one chosen stays shown when it cannot clone any more, so that nothing changes without being picked. */}
+          {!available && (
+            <option value={machineId} disabled>
+              {machine?.name ?? "選んでいた working server"}（clone できません）
+            </option>
+          )}
           {candidates.map((m) => (
             <option key={m.id} value={m.id}>
               {m.name}
@@ -258,6 +258,11 @@ function CloneForm({
           ))}
         </select>
       </label>
+      {!available && !busy && (
+        <p role="alert" className="text-xs break-words text-red-400">
+          {machine?.name ?? "選んでいた working server"} では、いま clone できません（オフラインか、gasho-daemon が古いため）。つながるのを待つか、ほかの working server を選んでください。
+        </p>
+      )}
 
       <label className="block space-y-1.5">
         <span className="text-xs text-muted-foreground">clone するリポジトリ</span>
@@ -334,7 +339,7 @@ function CloneForm({
 
       {running && (
         <p role="status" className="text-xs text-muted-foreground">
-          {running.step === "clone"
+          {running === "clone"
             ? "clone しています。大きいリポジトリでは最長 10 分かかります。終わるまで、このダイアログは閉じられません。"
             : "clone できました。リポジトリを登録しています。"}
         </p>
@@ -349,9 +354,9 @@ function CloneForm({
         <button type="button" onClick={onClose} disabled={busy} className={BUTTON_SECONDARY}>
           やめる
         </button>
-        <button type="submit" disabled={busy || !what || !parent} className={cn(BUTTON_PRIMARY, "gap-1.5")}>
+        <button type="submit" disabled={busy || !available || !what || !parent} className={cn(BUTTON_PRIMARY, "gap-1.5")}>
           {busy && <LoaderCircle className="size-4 animate-spin" />}
-          {running?.step === "register" ? "登録しています…" : busy ? "clone しています…" : "clone する"}
+          {running === "register" ? "登録しています…" : busy ? "clone しています…" : "clone する"}
         </button>
       </div>
     </form>

@@ -5,6 +5,7 @@
 // approve). For them, "allow" alone answers nothing and Claude Code keeps its dialog open: the answers, or the plan,
 // go back in the tool's input (updatedInput), as Claude Code's hooks documentation says.
 import { randomUUID } from "node:crypto";
+import os from "node:os";
 import path from "node:path";
 import type { AskedOption, AskedQuestion, PermissionDecision, PermissionRequestInfo, PlanMode, QuestionAnswer } from "@gasho/protocol";
 import type { DialogText } from "./managed.ts";
@@ -217,43 +218,77 @@ function flat(s: string): string {
   return s.replace(/^\s*│ ?/gm, "").replace(/\s+/g, "");
 }
 
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Whether lines of the screen show `text`. Where a line wraps, a space or a line break of the text is left out, or a
+ * word is split; within a line, spaces must be where the text has them. `tail`: the lines may show only its end.
+ */
+function showsText(lines: string[], text: string, tail = false): boolean {
+  const pieces = lines.map((l) => l.replace(/^\s*│ ?/, "").trim()).filter(Boolean);
+  if (pieces.length === 0) return false;
+  const shown = pieces.map((p) => p.split(/\s+/).map(escapeRe).join("[ \\t]+")).join("\\s*");
+  return new RegExp(`${tail ? "" : "^\\s*"}${shown}\\s*$`).test(text);
+}
+
+/** How Claude Code may show a file's path: from the folder Claude is in, whole, or from the home folder ("~/…"). */
+function shownPaths(file: string, cwd: string | undefined): string[] {
+  const out = [file];
+  const relative = cwd ? path.relative(cwd, file) : "";
+  if (relative && !relative.startsWith("..") && !path.isAbsolute(relative)) out.push(relative);
+  const home = os.homedir();
+  if (file.startsWith(`${home}/`)) out.push(`~/${file.slice(home.length + 1)}`);
+  return out;
+}
+
+/** A call without a result, and the folder Claude was in when it made it (paths on the screen are from there). */
+type Call = { name: string; input: Record<string, unknown>; cwd?: string };
+
 /**
  * Whether Claude Code's permission dialog shows this call. A dialog about another agent's or a plugin's call shows
- * none of the session's. Its heading must be of the call's kind; a dialog whose top
- * is above the screen can only be a command's or a file's (only they grow so tall). A command must be all that is
- * drawn between the dashes above the question, or its end when the top is cut off; a file's question must end with
- * its tool's verb and the file's name; a fetch's URL must be all that its "url:" shows; another tool must show its
- * name before "(" and every text of its input. An MCP tool never fits: Claude Code shows it by a name made for people
- * ("demo — Save Note Tool:"), not by its own.
+ * none of the session's. Its heading must be of the call's kind; when the dialog's top is above the screen, only a
+ * command can be told (by its end). A command must be all that is drawn between the dashes above the question; a
+ * file's path below the heading must be the call's, and its question must end with its tool's verb and the file's
+ * name; a fetch's URL must be all that its "url:" shows; another tool, with one text in its input, must show
+ * "Name(text)" between the dashes. An MCP tool never fits: Claude Code shows it by a name made for people ("demo —
+ * Save Note Tool:"), not by its own.
  */
-function dialogShows(c: { name: string; input: Record<string, unknown> }, d: DialogText): boolean {
+function dialogShows(c: Call, d: DialogText): boolean {
   const kind = callKind(c.name);
-  const first = d.lines.findIndex((l) => DASHES_RE.test(l));
-  const above = first < 0 ? d.lines : d.lines.slice(0, first);
-  if (d.top ? above.some((l) => ELSEWHERE_RE.test(l)) || headingKind(d.lines[0] ?? "") !== kind : kind !== "command" && kind !== "file") return false;
+  const dashes = d.lines.flatMap((l, i) => (DASHES_RE.test(l) ? [i] : []));
+  if (!d.top) {
+    if (kind !== "command") return false;
+  } else if (d.lines.slice(0, dashes[0]).some((l) => ELSEWHERE_RE.test(l)) || headingKind(d.lines[0] ?? "") !== kind) return false;
+  // What is drawn between the last two dashes: a command, or another tool's call.
+  const end = dashes.at(-1);
+  const start = dashes.at(-2);
+  const block = end === undefined ? [] : d.lines.slice((start ?? -1) + 1, end);
   if (kind === "command") {
     const command = str(c.input.command);
-    const dashes = d.lines.flatMap((l, i) => (DASHES_RE.test(l) ? [i] : []));
-    const end = dashes.at(-1);
-    const start = dashes.at(-2);
     if (!command || end === undefined || (start === undefined && d.top)) return false;
-    const shown = flat(d.lines.slice((start ?? -1) + 1, end).join("\n"));
-    return start === undefined ? shown !== "" && flat(command).endsWith(shown) : shown === flat(command);
+    return showsText(block, command, start === undefined);
   }
-  const text = flat(d.lines.join("\n"));
   if (kind === "file") {
     const file = str(c.input.file_path) ?? str(c.input.notebook_path);
-    return !!file && (FILE_VERBS.get(c.name) ?? []).some((verb) => text.endsWith(flat(`${verb} ${path.basename(file)}?`)));
+    const question = d.lines.findLastIndex((l) => /^\s*Do you want to /.test(l));
+    if (!file || dashes[0] === undefined || question < 0) return false;
+    const below = d.lines.slice(1, dashes[0]);
+    return (
+      shownPaths(file, c.cwd).some((p) => showsText(below, p)) &&
+      (FILE_VERBS.get(c.name) ?? []).some((verb) => showsText(d.lines.slice(question), `Do you want to ${verb} ${path.basename(file)}?`))
+    );
   }
   if (kind === "fetch") {
     // A long URL wraps: it goes on until the line of the prompt.
     const url = str(c.input.url);
     const at = d.lines.findIndex((l) => /^\s*url: /.test(l));
-    const end = d.lines.findIndex((l, i) => i > at && /^\s*prompt: /.test(l));
-    return !!url && at >= 0 && end > at && flat(d.lines.slice(at, end).join("\n")) === flat(`url: ${url}`);
+    const until = d.lines.findIndex((l, i) => i > at && /^\s*prompt: /.test(l));
+    return !!url && at >= 0 && until > at && flat(d.lines.slice(at, until).join("\n")) === flat(`url: ${url}`);
   }
   const texts = Object.values(c.input).filter((v): v is string => typeof v === "string" && v.trim() !== "");
-  return text.includes(flat(`${c.name}(`)) && texts.every((v) => text.includes(flat(v)));
+  if (texts.length !== 1 || start === undefined) return false;
+  const shown = c.name === "Read" ? shownPaths(texts[0]!, c.cwd) : texts;
+  return shown.some((v) => showsText(block, `${c.name}(${v})`));
 }
 
 /** The calls without a result that may have a permission dialog (a subagent's call is in its own transcript). */
@@ -265,7 +300,7 @@ function asking<C extends { name: string }>(calls: C[] | undefined): C[] {
  * The call without a result that Claude Code's permission dialog shows (see dialogShows); undefined when none does,
  * or when calls that differ do (the same call made twice counts as one).
  */
-export function shownCall<C extends { name: string; input: Record<string, unknown> }>(calls: C[] | undefined, d: DialogText): C | undefined {
+export function shownCall<C extends Call>(calls: C[] | undefined, d: DialogText): C | undefined {
   const [first, ...others] = asking(calls).filter((c) => dialogShows(c, d));
   const same = (c: C) => c.name === first?.name && JSON.stringify(c.input) === JSON.stringify(first.input);
   return first && others.every(same) ? first : undefined;
@@ -274,9 +309,10 @@ export function shownCall<C extends { name: string; input: Record<string, unknow
 /**
  * The call that Claude Code's permission dialog is about when gasho-daemon holds no hook for it (it restarted while
  * the dialog was open, or the hook timed out): the one the dialog on the screen shows, else the earliest of the calls
- * without a result (Claude Code asks about them in order).
+ * without a result (Claude Code asks about them in order). That is also the card while the screen shows a dialog that
+ * none fits (a subagent's, for one): answering it then presses nothing and tells the person to answer in the terminal.
  */
-export function dialogCall<C extends { name: string; input: Record<string, unknown> }>(calls: C[] | undefined, d?: DialogText): C | undefined {
+export function dialogCall<C extends Call>(calls: C[] | undefined, d?: DialogText): C | undefined {
   return (d && shownCall(calls, d)) ?? asking(calls)[0];
 }
 

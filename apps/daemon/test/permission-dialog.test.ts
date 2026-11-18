@@ -78,7 +78,7 @@ test("the dialog's choices are read from the bottom of the screen, whatever the 
   assert.equal(permissionDialog(dialog(0).replace("1. Yes", "1. Opus")), undefined);
 });
 
-const call = (toolUseId: string, name: string, input: Record<string, unknown>): OpenCall => ({ toolUseId, name, input });
+const call = (toolUseId: string, name: string, input: Record<string, unknown>): OpenCall => ({ toolUseId, name, input, cwd: "/w" });
 const CALLS = [call("toolu_3", "Bash", { command: FIRST }), call("toolu_4", "Bash", { command: SECOND })];
 const text = (screen: string) => permissionDialogText(screen) ?? assert.fail("no dialog on the screen");
 const shownId = (calls: OpenCall[], screen: string) => shownCall(calls, text(screen))?.toolUseId;
@@ -93,6 +93,9 @@ test("the dialog's text tells which of the calls without a result it is about, o
   assert.equal(shownId([call("toolu_5", "Bash", { command: `${FIRST} && rm -rf build` })], dialog(0)), undefined);
   // The same call twice is one; calls that differ and both fit are none.
   assert.equal(shownId([...CALLS, call("toolu_5", "Bash", { command: FIRST })], dialog(0)), "toolu_3");
+  // Spaces within a line are compared: only where a line wraps may one be left out.
+  assert.equal(shownId([call("toolu_5", "Bash", { command: "touch first- aaa.txt" })], dialog(0)), undefined);
+  assert.equal(shownId([call("toolu_5", "Bash", { command: "rm -rf build /" })], dialog(0, "rm -rf build/")), undefined);
 
   // A command of more than one line: each has "│" on its left, and long ones wrap between words or inside one.
   const lines = "printf 'this is a very long string that will certainly wrap across lines in a narrow terminal %s' first > long-output.txt && mkdir -p sub/dir\ncat long-output.txt";
@@ -125,7 +128,7 @@ test("the dialog's text tells which of the calls without a result it is about, o
   assert.equal(shownId([heredoc, call("toolu_8", "Bash", { command: script("python3 -u - <<'EOF'") })], cut), undefined);
   assert.equal(shownId([call("toolu_8", "Bash", { command: script("python3 - <<'EOF'").replace("print(40)", "print(41)") })], cut), undefined);
 
-  // A file's tool: the question ends with the file's name, also when the dialog's top is above the screen.
+  // A file's tool: the path below the heading is the file's, and the question ends with its name.
   const edit = call("toolu_9", "Edit", { file_path: "/w/notes.txt", old_string: "line two", new_string: "line 2" });
   const write = call("toolu_10", "Write", { file_path: "/w/new-file.txt", content: "hello" });
   const editing = [
@@ -144,9 +147,12 @@ test("the dialog's text tells which of the calls without a result it is about, o
   ].join("\n");
   assert.equal(shownId([edit, write], editing), "toolu_9");
   const creating = [...Array.from({ length: 30 }, (_, i) => `  ${i + 41} ${i + 41}`), DASHES, ...bottom([" Do you want to create new-file.txt?"], FILE_CHOICES, 0)].join("\n");
-  assert.equal(shownId([edit, write], creating), "toolu_10");
-  // Another notes.txt: the question cannot tell them apart.
-  assert.equal(shownId([edit, call("toolu_11", "Edit", { file_path: "/w/sub/notes.txt", old_string: "a", new_string: "b" })], editing), undefined);
+  // When the dialog's top is above the screen, the path is not seen: nothing fits.
+  assert.equal(shownId([edit, write], creating), undefined);
+  // Another notes.txt has another path below the heading.
+  const other = call("toolu_11", "Edit", { file_path: "/w/sub/notes.txt", old_string: "a", new_string: "b" });
+  assert.equal(shownId([edit, other], editing), "toolu_9");
+  assert.equal(shownId([edit, other], editing.replace(" notes.txt\n", " sub/notes.txt\n")), "toolu_11");
   // The question tells the file's whole name and what the tool does to it.
   assert.equal(shownId([edit], editing.replace("edit to notes.txt?", "edit to mynotes.txt?")), undefined);
   assert.equal(shownId([call("toolu_11", "Write", { file_path: "/w/notes.txt", content: "a" })], editing), undefined);
@@ -175,6 +181,11 @@ test("the dialog's text tells which of the calls without a result it is about, o
   assert.equal(shownId([fetch(long)], fetching(` url: ${long.slice(0, 44)}`, ` ${long.slice(44)}`)), "toolu_12");
   const reading = [RULE, " Read file", DASHES, " Read(/etc/hosts)", DASHES, ...bottom([" Do you want to proceed?"], [["1. Yes"], ["2. Yes, allow reading from /etc and", "   /private/etc during this session"], ["3. No"]], 0)].join("\n");
   assert.equal(shownId([call("toolu_13", "Read", { file_path: "/etc/passwd" }), call("toolu_14", "Read", { file_path: "/etc/hosts" })], reading), "toolu_14");
+  // The whole "Read(path)" is compared, also when a long path wraps inside a word.
+  assert.equal(shownId([call("toolu_14", "Read", { file_path: "/etc/host" })], reading), undefined);
+  const far = "/private/tmp/claude-501/-Users-someone-Project/outside/notes.txt";
+  const readingFar = reading.replace(" Read(/etc/hosts)", [` Read(${far.slice(0, 43)}`, ` ${far.slice(43)})`].join("\n"));
+  assert.equal(shownId([call("toolu_14", "Read", { file_path: far })], readingFar), "toolu_14");
   // The heading tells the kind of dialog: a command's description may hold another tool's name and input.
   const hosts = [
     RULE,
@@ -202,7 +213,7 @@ test("the transcript keeps the calls without a result until the person writes", 
   // Read anew each time: an assertion that it is undefined would narrow `meta.openCalls` for good.
   const open = (): OpenCall[] | undefined => meta.openCalls;
   const call = (id: string, name: string, input: Record<string, unknown>) =>
-    parseRecord({ type: "assistant", uuid: id, timestamp: "2026-11-14T17:13:11.780Z", message: { role: "assistant", content: [{ type: "tool_use", id, name, input }] } }, meta);
+    parseRecord({ type: "assistant", uuid: id, timestamp: "2026-11-14T17:13:11.780Z", cwd: "/w", message: { role: "assistant", content: [{ type: "tool_use", id, name, input }] } }, meta);
   const result = (id: string) =>
     parseRecord({ type: "user", uuid: `r${id}`, message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] } }, meta);
   call("toolu_1", "Read", { file_path: "/a" });
@@ -214,6 +225,8 @@ test("the transcript keeps the calls without a result until the person writes", 
     open()?.map((c) => c.toolUseId),
     ["toolu_2", "toolu_3"],
   );
+  // A dialog shows paths from the folder Claude was in when it made the call.
+  assert.equal(open()?.[1]?.cwd, "/w");
   // A subagent asks nothing in the main transcript: the dialog is the command's.
   assert.equal(dialogCall(open())?.toolUseId, "toolu_3");
   result("toolu_3");

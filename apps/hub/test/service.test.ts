@@ -1,12 +1,25 @@
-// `service install` on macOS, run against a fake launchctl that behaves as the one in #87: bootout returns while the
-// old agent is still registered, and bootstrap fails with 5 (Input/output error) until launchd has let it go.
+// Keeping the Gasho server running (service.ts). `service install` on macOS is run against a fake launchctl that behaves
+// as the one in #87: bootout returns while the old agent is still registered, and bootstrap fails with 5 (Input/output
+// error) until launchd has let it go.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { activateCommands, LAUNCHD_BOOTSTRAP_RETRIES } from "../src/service.ts";
+import {
+  activateCommands,
+  envFileOf,
+  LAUNCHD_BOOTSTRAP_RETRIES,
+  launchdPlist,
+  loadEnvFile,
+  portInUse,
+  runAsService,
+  serviceFile,
+  servicePath,
+  systemdUnit,
+} from "../src/service.ts";
 
 const FAKE_LAUNCHCTL = `#!/bin/sh
 dir=$(dirname "$0")
@@ -85,4 +98,96 @@ test("bootstrap gives up after its tries, with launchctl's error of the last one
 
 test("without start (another Gasho server holds the port), launchd is left alone", () => {
   assert.deepEqual(activateCommands("darwin", "/Users/u/Library/LaunchAgents/local.gasho.hub.plist", 501, false), []);
+});
+
+test("on Linux, systemd reads the unit again and enables it, and restarts the Gasho server only with start", () => {
+  const steps = (start: boolean) => activateCommands("linux", "/home/u/.config/systemd/user/gasho-hub.service", 1000, start).map((s) => s.argv.join(" "));
+  assert.deepEqual(steps(true), ["systemctl --user daemon-reload", "systemctl --user enable gasho-hub", "systemctl --user restart gasho-hub"]);
+  assert.deepEqual(steps(false), ["systemctl --user daemon-reload", "systemctl --user enable gasho-hub"]);
+});
+
+const repo = "/home/u/repos/Gasho 100%";
+const input = {
+  node: "/opt/node 24/bin/node",
+  argv: ["/opt/node 24/bin/node", "--disable-warning=ExperimentalWarning", `${repo}/apps/hub/src/cli.ts`],
+  cwd: repo,
+  path: "/opt/node 24/bin:/usr/bin",
+  home: "/home/u",
+};
+
+test("the systemd unit quotes its command and escapes %, and systemd never gives up starting it", () => {
+  const unit = systemdUnit({ ...input, argv: [...input.argv, 'say "hi" \\ back'] });
+  assert.match(unit, /^WorkingDirectory=\/home\/u\/repos\/Gasho 100%%$/m);
+  assert.match(
+    unit,
+    /^ExecStart="\/opt\/node 24\/bin\/node" "--disable-warning=ExperimentalWarning" "\/home\/u\/repos\/Gasho 100%%\/apps\/hub\/src\/cli\.ts" "say \\"hi\\" \\\\ back" start$/m,
+  );
+  assert.match(unit, /^Environment="PATH=\/opt\/node 24\/bin:\/usr\/bin"$/m);
+  assert.match(unit, /^StartLimitIntervalSec=0$/m);
+  assert.match(unit, /^Restart=on-failure$/m);
+});
+
+test("the launchd agent runs the Gasho server with start, its paths escaped for XML, and logs in ~/Library/Logs", () => {
+  const mac = `/Users/u/Gasho & <co>'s "hub"`;
+  const plist = launchdPlist({ ...input, argv: [input.node, `${mac}/launcher.js`], cwd: mac, home: "/Users/u" });
+  assert.match(plist, /<string>local\.gasho\.hub<\/string>/);
+  assert.ok(plist.includes("<string>/Users/u/Gasho &amp; &lt;co&gt;'s &quot;hub&quot;/launcher.js</string>\n    <string>start</string>"));
+  assert.ok(plist.includes("<key>WorkingDirectory</key>\n  <string>/Users/u/Gasho &amp; &lt;co&gt;'s &quot;hub&quot;</string>"));
+  assert.ok(!plist.includes("& <co>"));
+  assert.ok(plist.includes("<key>PATH</key>\n    <string>/opt/node 24/bin:/usr/bin</string>"));
+  assert.ok(plist.includes("<string>/Users/u/Library/Logs/gasho-hub.log</string>"));
+});
+
+test("the service's PATH has Node.js's folder first and the shell's after, without the folders npm adds while it runs", () => {
+  const shell = ["/home/u/.npm/_npx/24d82d1acaca0cc6/node_modules/.bin", "/home/u/Gasho/node_modules/.bin", "/opt/node/bin", "/usr/bin", "/usr/bin"].join(":");
+  assert.equal(servicePath("/opt/node/bin/node", shell), "/opt/node/bin:/usr/bin");
+  assert.equal(servicePath("/usr/bin/node", undefined), "/usr/bin");
+});
+
+test("the service's file goes where systemd or launchd reads it, and nowhere on other systems", () => {
+  assert.equal(serviceFile("linux", "/home/u", {}), "/home/u/.config/systemd/user/gasho-hub.service");
+  assert.equal(serviceFile("linux", "/home/u", { XDG_CONFIG_HOME: "/cfg" }), "/cfg/systemd/user/gasho-hub.service");
+  assert.equal(serviceFile("darwin", "/Users/u", {}), "/Users/u/Library/LaunchAgents/local.gasho.hub.plist");
+  assert.equal(serviceFile("win32", "C:\\Users\\u", {}), undefined);
+});
+
+test("the Gasho server counts as run by a service only when the launcher started it under systemd or launchd", () => {
+  assert.equal(runAsService({ GASHO_HUB_LAUNCHER: "1", INVOCATION_ID: "x" }, "linux"), true);
+  assert.equal(runAsService({ INVOCATION_ID: "x" }, "linux"), false);
+  assert.equal(runAsService({ GASHO_HUB_LAUNCHER: "1" }, "linux"), false);
+  assert.equal(runAsService({ GASHO_HUB_LAUNCHER: "1", XPC_SERVICE_NAME: "local.gasho.hub" }, "darwin"), true);
+  assert.equal(runAsService({ GASHO_HUB_LAUNCHER: "1", INVOCATION_ID: "x" }, "darwin"), false);
+});
+
+test("hub.env is read into the environment, a value set in the shell wins, and only a file that is there but unreadable is reported", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-hub-env-"));
+  const file = path.join(dir, "hub.env");
+  fs.writeFileSync(file, "GASHO_TEST_FROM_FILE=file\nGASHO_TEST_SET=file\n");
+  const said: string[] = [];
+  process.env.GASHO_TEST_SET = "shell";
+  try {
+    loadEnvFile({ GASHO_HUB_ENV: file }, (s) => said.push(s));
+    assert.equal(process.env.GASHO_TEST_FROM_FILE, "file");
+    assert.equal(process.env.GASHO_TEST_SET, "shell");
+    loadEnvFile({ GASHO_HUB_ENV: path.join(dir, "none.env") }, (s) => said.push(s));
+    assert.equal(said.length, 0);
+    loadEnvFile({ GASHO_HUB_ENV: dir }, (s) => said.push(s));
+    assert.equal(said.length, 1);
+    assert.ok(said[0]?.startsWith(`could not read ${dir}: `), said[0]);
+  } finally {
+    delete process.env.GASHO_TEST_FROM_FILE;
+    delete process.env.GASHO_TEST_SET;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  assert.equal(envFileOf({ GASHO_HUB_ENV: "off" }), undefined);
+  assert.equal(envFileOf({ XDG_CONFIG_HOME: "/cfg" }), "/cfg/gasho/hub.env");
+});
+
+test("a port counts as in use while something listens on it", async () => {
+  const server = net.createServer().listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  const { port } = server.address() as net.AddressInfo;
+  assert.equal(await portInUse("127.0.0.1", port), true);
+  await new Promise((resolve) => server.close(resolve));
+  assert.equal(await portInUse("127.0.0.1", port), false);
 });

@@ -133,7 +133,21 @@ test("a :root rule is written anew in @media, and only when the rules nested in 
   assert.equal(ruleText(media(style(":root", "{ --x: 1px; }"))), "@media (min-width: 1px) {:root & { --x: 1px; }}");
   const inside = nest(":root", style("& .a"));
   assert.equal(ruleText(inside), `:root &${inside.cssText.slice(":root".length)}`);
-  for (const rule of [nest(":root", style("& ~ *")), nest("html", style("& + .a")), nest("body", scope("& ~ *"))]) {
+  for (const rule of [
+    nest(":root", style("& ~ *")),
+    nest("html", style("& + .a")),
+    nest("body", scope("& ~ *")),
+    // A condition on & would be tested on the part's element instead of <html>.
+    nest(":root", style("&.dark", "{ --x: 1px; }")),
+    nest(":root", media(style("&:not(.dark)", "{ --x: 1px; }"))),
+    nest("html", style("&:not(.dark) .a")),
+    nest("html body", style("&.a")),
+  ]) {
     assert.equal(ruleText(rule), rule.cssText, rule.cssText);
   }
 });
+  // Below :root .a, & is an element inside the part.
+  for (const rule of [nest(":root .a", style("&.b")), nest(":root", nest("& .a", style("&.b")))]) {
+    const selector = rule.selectorText!;
+    assert.equal(ruleText(rule), `${selector.replace(/^:root/, ":root &")}${rule.cssText.slice(selector.length)}`, rule.cssText);
+  }

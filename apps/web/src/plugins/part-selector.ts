@@ -54,13 +54,16 @@ type Place = "part" | "inside";
 /**
  * Where a selector nested in a rule at `parent` matches, for the selectors that cannot match outside the part: `.foo`
  * (which CSS nesting reads as `& .foo`), `&:hover`, and `&:hover .foo`. Undefined for any other, such as one with `&`
- * after a combinator or in (), or with a combinator other than a space after `&`.
+ * after a combinator or in (), or with a combinator other than a space after `&`. `root`: the rule at `parent` is of
+ * `:root`, `html` or `body`.
  */
-function place(selector: string, parent: Place): Place | undefined {
+function place(selector: string, parent: Place, root: boolean): Place | undefined {
   const amp = find(selector, 0, (i) => selector[i] === "&", true);
   if (amp === selector.length) return /^[>+~]/.test(selector) ? undefined : "inside";
   if (amp > 0 || find(selector, 1, (i) => selector[i] === "&", true) < selector.length) return undefined;
   const end = compoundEnd(selector, 1);
+  // There `&` is the part's element in place of <html> or <body>, so `&.dark` and `&:not(.dark) .foo` would test it.
+  if (root && parent === "part" && end > 1) return undefined;
   if (end < selector.length) return /^\s+[^\s>+~]/.test(selector.slice(end)) ? "inside" : undefined;
   // Like `.dark::before` (inPart), the part's element's `&::before` is left as it is.
   if (find(selector, 1, (i) => PSEUDO_ELEMENT.test(selector.slice(i))) < end) return parent === "inside" ? parent : undefined;
@@ -72,13 +75,13 @@ const GROUP = /^@(media|supports|container|layer)\b/i;
 
 /**
  * Whether the rules in a rule at `parent`, at any depth, match only inside the part: style rules with place's
- * selectors, the at-rules of GROUP, and declarations.
+ * selectors, the at-rules of GROUP, and declarations. `root`: as in place.
  */
-function inside(rules: ArrayLike<CssRule> | undefined, parent: Place): boolean {
+function inside(rules: ArrayLike<CssRule> | undefined, parent: Place, root: boolean): boolean {
   return Array.from(rules ?? []).every((r) => {
-    if (r.selectorText === undefined) return !r.cssText.startsWith("@") || (GROUP.test(r.cssText) && inside(r.cssRules, parent));
-    const places = split(r.selectorText).map((s) => place(s, parent));
-    return !places.includes(undefined) && inside(r.cssRules, places.includes("part") ? "part" : "inside");
+    if (r.selectorText === undefined) return !r.cssText.startsWith("@") || (GROUP.test(r.cssText) && inside(r.cssRules, parent, root));
+    const places = split(r.selectorText).map((s) => place(s, parent, root));
+    return !places.includes(undefined) && inside(r.cssRules, places.includes("part") ? "part" : "inside", root);
   });
 }
 
@@ -117,7 +120,7 @@ function inPart(selector: string, nested: ArrayLike<CssRule>): string {
   if (!root && hasPseudoElement(first)) return selector;
   // After `.dark &`, `+` and `~` would match the elements beside the plugin's part, which are Gasho's. For the rules
   // nested in the selector's, `.dark &` is the part's element itself, and `.dark & .foo` an element inside it.
-  if (/^\s*[+~]/.test(rest) || !inside(nested, rest ? "inside" : "part")) return selector;
+  if (/^\s*[+~]/.test(rest) || !inside(nested, rest ? "inside" : "part", root > 0)) return selector;
   // No element inside the part is :root, html or body.
   return root ? `${first} &${rest}` : `${first} &${rest}, & ${selector}`;
 }

@@ -2168,7 +2168,8 @@ export class Daemon {
       background: t.info.background?.length ?? 0,
       pendingInputs: this.managed.pending(m.sessionId),
       permissionRequests: (this.permissions.of(m.sessionId) ?? this.openQuestion(t) ?? this.openPermission(t))?.length ?? 0,
-      operating: this.flushing.has(m.terminal) || this.settleUntil.has(m.sessionId) || this.latePicker.has(m.sessionId),
+      // settleUntil keeps its time until the next input: only a time still to come means anything.
+      operating: this.flushing.has(m.terminal) || (this.settleUntil.get(m.sessionId) ?? 0) > Date.now() || this.latePicker.has(m.sessionId),
       scheduled: t.meta.scheduledAt !== undefined && t.meta.scheduledAt >= (t.info.startedAt ?? 0),
       activity: [t.info.lastActivityAt, t.info.startedAt, m.launchedAt, t.claude?.at],
     });

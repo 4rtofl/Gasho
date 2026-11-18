@@ -304,6 +304,30 @@ test("text in the prompt box, an open terminal or a waiting input keep a session
   }
 });
 
+test("a session stopped from Gasho and left alone is hibernated once the stop has settled", async () => {
+  const { d, agents, row, procs, done } = await setup();
+  try {
+    const pid = procs[0]!.pid!;
+    agents([{ ...row(pid), status: "busy" }]);
+    await d.refresh();
+    assert.equal((await d.interrupt(SID)).ok, true);
+    assert.ok(d.settleUntil.has(SID));
+    agents([row(pid)]);
+    await d.refresh();
+
+    await d.hibernateIdle();
+    assert.equal(procs[0]!.signalCode, null);
+    assert.equal(d.managed.get(SID).hibernated, undefined);
+
+    await until(() => Date.now() > d.settleUntil.get(SID), "the stop has settled");
+    await d.hibernateIdle();
+    assert.equal(procs[0]!.signalCode, "SIGTERM");
+    assert.ok(d.managed.get(SID).hibernated);
+  } finally {
+    await done();
+  }
+});
+
 test("an input brings the session back as it was, and is typed once it runs", async () => {
   const { d, term, started, agents, shown, done } = await setup();
   try {

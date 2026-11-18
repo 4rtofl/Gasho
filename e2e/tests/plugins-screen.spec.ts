@@ -183,9 +183,10 @@ test.describe("入れたもの", () => {
 });
 
 test.describe("操作", () => {
-  test.use({ hubOptions: { plugins: [plugin("e2e-parts")] } });
-
   test("「更新」でカタログの版に入れ替え、「設定」で設定の画面に移り、有効と無効を切り替え、外す", async ({ page, hub }) => {
+    // Linked to a copy: should removing the plugin delete the linked folder too, it deletes the copy, not the checkout's files.
+    const partsDir = await copyTestPlugin(hub, "e2e-parts");
+    await addPlugin(hub, partsDir, { link: true });
     await addPlugin(hub, plugin("e2e-daemon"));
     const next = await copyTestPlugin(hub, "e2e-daemon", (m) => ({ ...m, version: "1.1.0" }));
     const release = await releasePlugin(hub, next, { delayMs: 3_000 });
@@ -244,7 +245,7 @@ test.describe("操作", () => {
       await expect(dialog).toBeHidden();
       await expect(parts).toHaveCount(0);
       expect(fs.existsSync(path.join(pluginsDir(hub), "e2e-parts"))).toBe(false);
-      expect(fs.existsSync(path.join(plugin("e2e-parts"), "web.js"))).toBe(true);
+      expect(fs.existsSync(path.join(partsDir, "web.js"))).toBe(true);
     });
 
     await test.step("カタログから入れたプラグインを外すと、ファイルを消す", async () => {
@@ -260,7 +261,8 @@ test.describe("操作", () => {
     });
   });
 
-  test("「設定」を押すと、設定の画面のそのプラグインの欄が見える位置で開く", async ({ page }) => {
+  test("「設定」を押すと、設定の画面のそのプラグインの欄が見える位置で開く", async ({ page, hub }) => {
+    await addPlugin(hub, plugin("e2e-parts"), { link: true });
     await page.goto("/#/plugins");
     await card(page.getByRole("region", { name: "入れたもの" }), "E2E 部品").getByRole("button", { name: "設定" }).click();
     await expect(page.getByRole("heading", { name: "E2E 部品" })).toBeInViewport();

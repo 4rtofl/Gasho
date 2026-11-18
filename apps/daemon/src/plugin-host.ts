@@ -1,7 +1,7 @@
 // The process of one plugin's daemon part (docs/plugins.md). gasho-daemon forks it with the plugin's daemon.js
 // (`node plugin-host.js <daemon.js>`), tells it the plugin and its settings ("init"), and sends it the calls of the
 // plugin's web part ("call"). It imports the plugin, runs `start`, answers each call with what the method returned,
-// and runs `stop` before it ends. A process of its own, so that a plugin that fails or blocks cannot stop gasho-daemon,
+// and runs `stop` before it ends, also when gasho-daemon goes away. A process of its own, so that a plugin that fails or blocks cannot stop gasho-daemon,
 // and so that a new version of the plugin replaces it as a whole (hot reload). What the plugin asks gh for
 // (ctx.github) goes to gasho-daemon ("github"), which runs gh for every plugin, and so do its events for the plugin's
 // web parts (ctx.emit, "event"), which gasho-daemon passes on to the Gasho server at most once a second per topic.
@@ -19,16 +19,24 @@ interface Definition {
 const file = process.argv[2];
 let plugin = "?";
 let machine = { id: "", name: "" };
-let settings: Record<string, unknown> = {};
+/**
+ * One object for the life of the process, its contents replaced when the settings change: what `start` got reads them
+ * as they are now, without waiting for a call.
+ */
+const settings: Record<string, unknown> = {};
 let folders: string[] = [];
 let dataDir = "";
 let def: Definition | undefined;
 const aborts = new Map<number, AbortController>();
 const asked = new Map<number, (a: GitHubAnswer) => void>();
 let nextAsk = 1;
+let ending = false;
+/** How long `stop` may take before this process ends anyway (as long as gasho-daemon waits, STOP_MS in plugins.ts). */
+const STOP_MS = 5000;
 
 function send(m: FromHost): void {
-  process.send?.(m);
+  // Once gasho-daemon is gone, process.send would throw (as an "error" event) in the middle of `stop`.
+  if (process.connected) process.send?.(m);
 }
 
 /** An error the person is shown as it is (what the plugin's PluginError is, made here). */
@@ -38,10 +46,20 @@ function userError(message: string): Error {
 
 const log = (...args: unknown[]) => console.log(...args);
 
+function takeSettings(next: Record<string, unknown>): void {
+  for (const key of Object.keys(settings)) delete settings[key];
+  Object.assign(settings, next);
+}
+
 /** A topic of an event, at most (characters). */
 const MAX_TOPIC = 100;
 /** The data of an event, at most (as JSON, in bytes). */
 const MAX_EVENT_BYTES = 256 * 1024;
+/**
+ * The result of a call, at most (as JSON, in bytes). It goes to the Gasho server in one WebSocket message, which may be
+ * 16 MB at most (maxPayload): one over it closes the connection of the working server, and every session's with it.
+ */
+const MAX_RESULT_BYTES = 15 * 1024 * 1024;
 
 /** ctx.emit: checks the event (a PluginError when it is not right) and hands it to gasho-daemon. */
 function emit(topic: unknown, data: unknown, options?: { retain?: boolean }): void {
@@ -115,7 +133,7 @@ function baseContext() {
 async function init(m: Extract<ToHost, { t: "init" }>): Promise<void> {
   plugin = m.plugin;
   machine = m.machine;
-  settings = m.settings;
+  takeSettings(m.settings);
   folders = m.local.folders;
   dataDir = m.local.dataDir;
   try {
@@ -137,7 +155,7 @@ async function init(m: Extract<ToHost, { t: "init" }>): Promise<void> {
 async function call(m: Extract<ToHost, { t: "call" }>): Promise<void> {
   const controller = new AbortController();
   aborts.set(m.id, controller);
-  settings = m.settings;
+  takeSettings(m.settings);
   try {
     const method = def && Object.hasOwn(def.methods, m.method) ? def.methods[m.method] : undefined;
     if (typeof method !== "function") throw userError(`${plugin} に ${m.method} という処理はありません。`);
@@ -149,6 +167,10 @@ async function call(m: Extract<ToHost, { t: "call" }>): Promise<void> {
       github: githubOf(m.id, controller.signal),
     };
     const data = await method(m.params, ctx);
+    const json = JSON.stringify(data);
+    if (json !== undefined && Buffer.byteLength(json) > MAX_RESULT_BYTES) {
+      throw userError(`${m.method} の答えが大きすぎます（JSON にして ${MAX_RESULT_BYTES / 1024 / 1024}MB まで）。`);
+    }
     send({ t: "result", id: m.id, ok: true, data });
   } catch (e) {
     const user = (e as { gashoPluginError?: unknown } | null)?.gashoPluginError === true;
@@ -158,6 +180,25 @@ async function call(m: Extract<ToHost, { t: "call" }>): Promise<void> {
   } finally {
     aborts.delete(m.id);
   }
+}
+
+/**
+ * Ends this process: the calls under way are aborted and the plugin's `stop` runs, for at most STOP_MS. Once only:
+ * gasho-daemon's "stop" and a signal sent to both may come one after the other.
+ */
+function end(): void {
+  if (ending) return;
+  ending = true;
+  for (const a of aborts.values()) a.abort();
+  setTimeout(() => process.exit(0), STOP_MS);
+  void (async () => {
+    try {
+      await def?.stop?.();
+    } catch (e) {
+      console.error("stop failed:", e);
+    }
+    process.exit(0);
+  })();
 }
 
 process.on("message", (raw) => {
@@ -173,7 +214,7 @@ process.on("message", (raw) => {
       aborts.get(m.id)?.abort();
       break;
     case "settings":
-      settings = m.settings;
+      takeSettings(m.settings);
       break;
     case "folders":
       folders = m.folders;
@@ -184,19 +225,16 @@ process.on("message", (raw) => {
       break;
     }
     case "stop":
-      for (const a of aborts.values()) a.abort();
-      void (async () => {
-        try {
-          await def?.stop?.();
-        } catch (e) {
-          console.error("stop failed:", e);
-        }
-        process.exit(0);
-      })();
+      end();
       break;
   }
 });
-// gasho-daemon is gone: so is this.
-process.on("disconnect", () => process.exit(0));
+// gasho-daemon is gone: so is this, once the plugin has stopped what it started.
+process.on("disconnect", end);
+// The service manager or Ctrl+C sends these to gasho-daemon's processes together (systemd to all of the service's).
+process.on("SIGTERM", end);
+process.on("SIGINT", end);
+// Once gasho-daemon is gone, writing to its pipes fails (EPIPE), which would end this in the middle of `stop`.
+for (const s of [process.stdout, process.stderr]) s.on("error", () => undefined);
 // A promise the plugin forgot about is reported; the process goes on.
 process.on("unhandledRejection", (e) => console.error("unhandled rejection:", e));

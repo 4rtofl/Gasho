@@ -42,7 +42,14 @@ export function parseCookies(header: string | undefined): Record<string, string>
     const i = part.indexOf("=");
     if (i < 0) continue;
     const key = part.slice(0, i).trim();
-    if (key) out[key] = decodeURIComponent(part.slice(i + 1).trim());
+    if (!key) continue;
+    const value = part.slice(i + 1).trim();
+    // Other apps on the same host name may set cookies that are not URI-encoded: those are kept as they are.
+    try {
+      out[key] = decodeURIComponent(value);
+    } catch {
+      out[key] = value;
+    }
   }
   return out;
 }

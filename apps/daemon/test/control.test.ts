@@ -22,6 +22,7 @@ import {
   sessionCommand,
   type SessionCliIO,
   startControlServer,
+  worktreeCommand,
 } from "../src/control.ts";
 import { Daemon } from "../src/daemon.ts";
 import { plainScreen } from "../src/managed.ts";
@@ -99,9 +100,13 @@ test("when the daemon does not run, the session commands say so and what to do",
   try {
     await assert.rejects(controlRequest(file, { op: "session.list" }), (e: Error) => e instanceof DaemonNotRunning && /gasho-daemon is not running/.test(e.message));
     const { io: cli } = io((req) => controlRequest(file, req));
-    for (const args of [["list"], ["launch", "--cwd", dir], ["send", "x", "--text", "hi"]]) {
+    for (const args of [["list"], ["launch", "--cwd", dir], ["send", "x", "--text", "hi"], ["remove", "x"]]) {
       await assert.rejects(sessionCommand(args, cli), /not running: nothing answers on .*control\.sock[\s\S]*gasho-daemon run/);
     }
+    await assert.rejects(
+      worktreeCommand(["remove", dir], { request: (req, ms) => controlRequest(file, req, ms), out: () => undefined }),
+      /not running: nothing answers on/,
+    );
   } finally {
     await done();
   }
@@ -112,6 +117,11 @@ test("parseRequest keeps only the fields of each op", () => {
   assert.deepEqual(parseRequest({ op: "session.list", x: 1 }), { op: "session.list" });
   assert.throws(() => parseRequest({ op: "session.rename", sessionId: "s" }), /name must be a string/);
   assert.throws(() => parseRequest(null), /unknown op/);
+  assert.deepEqual(parseRequest({ op: "session.remove", sessionId: "s", force: true }), { op: "session.remove", sessionId: "s" });
+  assert.throws(() => parseRequest({ op: "session.remove" }), /sessionId must be a string/);
+  assert.deepEqual(parseRequest({ op: "worktree.remove", path: "/w", force: true, branch: "b", pushed: ["x"] }), { op: "worktree.remove", path: "/w", force: true });
+  assert.deepEqual(parseRequest({ op: "worktree.remove", path: "/w", force: "yes" }), { op: "worktree.remove", path: "/w" });
+  assert.throws(() => parseRequest({ op: "worktree.remove", path: 1 }), /path must be a string/);
 });
 
 /** A daemon as the control socket sees it: sessions with the names Claude Code lists, and a launch. */
@@ -131,6 +141,8 @@ function fakeDaemon(o: { listedAs: string; renameShows?: boolean }) {
         return req.sessionId === SID ? { ok: true, queued: false } : { ok: false, error: "no such session" };
       case "session.list":
         return { ok: true, sessions: session ? [JSON.parse(JSON.stringify(session)) as ControlSession] : [] };
+      default:
+        return { ok: false, error: `unexpected ${req.op}` };
     }
   };
   return { calls, request };
@@ -220,6 +232,76 @@ test("list prints one line per session, or JSON", async () => {
   const empty = io(async () => ({ ok: true, sessions: [] }));
   await sessionCommand(["list"], empty.io);
   assert.match(empty.out[0]!, /no sessions/);
+  // A session whose folder is gone says so.
+  const gone: ControlSession[] = [{ ...sessions[0]!, cwdMissing: true }];
+  const missing = io(async () => ({ ok: true, sessions: gone }));
+  await sessionCommand(["list"], missing.io);
+  await sessionCommand(["list", "--json"], missing.io);
+  assert.equal(missing.out[0], "impl-79\tidle\t/a\tid-1\t(folder missing)");
+  assert.equal(JSON.parse(missing.out[1]!)[0].cwdMissing, true);
+});
+
+test("session remove finds the session as send does, removes it by its id, and says why when the daemon refuses", async () => {
+  const sessions: ControlSession[] = [
+    { sessionId: "id-1", name: "impl-79", cwd: "/gone", terminal: "t1", status: "idle", cwdMissing: true },
+    { sessionId: "id-2", name: "wt-ab", gashoName: "review", cwd: "/b", terminal: "t2", status: "busy" },
+  ];
+  const sent: ControlRequest[] = [];
+  const { io: cli, out } = io(async (req) => {
+    if (req.op === "session.list") return { ok: true, sessions };
+    sent.push(req);
+    return req.op === "session.remove" && req.sessionId === "id-2" ? { ok: false, error: "削除できません。" } : { ok: true };
+  });
+  await sessionCommand(["remove", "impl-79"], cli);
+  assert.deepEqual(sent, [{ op: "session.remove", sessionId: "id-1" }]);
+  assert.deepEqual(JSON.parse(out[0]!), { sessionId: "id-1", name: "impl-79", cwd: "/gone" });
+  await assert.rejects(sessionCommand(["remove", "review"], cli), /削除できません。/);
+  await assert.rejects(sessionCommand(["remove", "nobody"], cli), /no session started by Gasho is named "nobody"/);
+  await assert.rejects(sessionCommand(["remove"], cli), /needs the session's name or id/);
+  assert.equal(sent.length, 2);
+});
+
+test("worktree remove sends the folder as an absolute path, waits long enough, and prints what it removed or why not", async () => {
+  const sent: { req: ControlRequest; timeoutMs?: number }[] = [];
+  const out: string[] = [];
+  let answer: ControlReply = {
+    ok: true,
+    ended: ["id-1"],
+    path: "/repo-wt/79",
+    branch: "feat/79",
+    endedSessions: [{ sessionId: "id-1", name: "impl-79" }],
+  };
+  const cli = {
+    request: async (req: ControlRequest, timeoutMs?: number) => {
+      sent.push({ req, timeoutMs });
+      return answer;
+    },
+    out: (s: string) => out.push(s),
+    resolve: (p: string) => path.resolve("/here", p),
+  };
+  await worktreeCommand(["remove", "79"], cli);
+  await worktreeCommand(["remove", "--force", "/repo-wt/79"], cli);
+  assert.deepEqual(
+    sent.map((s) => s.req),
+    [
+      { op: "worktree.remove", path: "/here/79" },
+      { op: "worktree.remove", path: "/repo-wt/79", force: true },
+    ],
+  );
+  assert.ok((sent[0]!.timeoutMs ?? 0) >= 160_000);
+  assert.deepEqual(JSON.parse(out[0]!), { path: "/repo-wt/79", branch: "feat/79", ended: [{ sessionId: "id-1", name: "impl-79" }] });
+
+  answer = { ok: false, error: "この worktree には未コミットの変更が 2 件あるため、削除していません。", changes: { uncommitted: 2, unpushed: 0 } };
+  await assert.rejects(worktreeCommand(["remove", "/repo-wt/79"], cli), /未コミットの変更が 2 件/);
+  answer = { ok: false, error: "終了できないセッションがあるため、worktree は削除していません：id-2", endedSessions: [{ sessionId: "id-1", name: "impl-79" }] };
+  await assert.rejects(worktreeCommand(["remove", "/repo-wt/79"], cli), /終了できないセッション[\s\S]*ended meanwhile: impl-79/);
+
+  const before = sent.length;
+  await assert.rejects(worktreeCommand(["remove"], cli), /needs one folder/);
+  await assert.rejects(worktreeCommand(["remove", "a", "b"], cli), /needs one folder/);
+  await assert.rejects(worktreeCommand(["remove", "a", "--branch"], cli), /does not take --branch/);
+  await assert.rejects(worktreeCommand(["list"], cli), /usage:[\s\S]*worktree remove/);
+  assert.equal(sent.length, before);
 });
 
 const REPL = ["─".repeat(50), "❯ ", "─".repeat(50), ""].join("\n");

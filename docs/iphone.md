@@ -66,7 +66,7 @@ manifest、アイコン、`index.html` のホーム画面向けの meta（`apple
 - ロック画面に出すのは、セッションの名前と通知の種類（「応答が終わりました」など）だけで、会話の中身は出さない。同じセッションの通知は、新しいものが古いものと入れ替わる。通知を押すと、そのセッションを開く
 - その端末で Gasho が前面に出ているあいだは、その端末には送らない。画面は、前面に出たときと裏に回ったときに Gasho サーバーに知らせ、前面にいるあいだは25秒ごとに ping を送る。60秒のあいだ何も届かない画面は、前面にいないものとみなす（iPhone は、知らせる前に止めることがあるため）
 - アイコンのバッジに、確認待ちのセッションの数を出す（Badging API）。画面を開いているあいだは画面が、閉じているあいだは通知が届いたときに Service Worker が書き換える。閉じているあいだに確認が済んでも、バッジは次に通知が届くか、画面を開くまで減らない
-- web：Service Worker（`apps/web/public/sw.js`）は、`push` で通知を出し、`notificationclick` でそのセッションを開くだけにした。ファイルはキャッシュしない。設定の画面は `apps/web/src/components/push-settings.tsx`、購読とバッジは `apps/web/src/lib/push.ts`
+- web：Service Worker（`apps/web/public/sw.js`）は、`push` で通知を出し、`notificationclick` でそのセッションを開くだけにした。ファイルはキャッシュしない。タップされたセッションは 1 分だけ覚えておき、画面が起動したときと前面に戻ったときに尋ねて開く（アプリが閉じていると、iOS は `start_url` で起動し、`openWindow` の URL に移らないことがあるため。#147）。設定の画面は `apps/web/src/components/push-settings.tsx`、購読とバッジは `apps/web/src/lib/push.ts`
 - hub：VAPID の鍵（P-256）は初回に作り、データベースの `meta` に保存する。購読は、端末ごとに `push_subscriptions` に保存する（schema 5）。通知を作るところ（`apps/hub/src/hub.ts` で `notificationFor` を呼ぶところ）で送る。暗号化（RFC 8291 の aes128gcm）と VAPID の署名（RFC 8292）は `node:crypto` で書き、依存は増やしていない（`apps/hub/src/push.ts`）。push service が 404・410 を返した購読は消す。端末の登録を取り消すと、その端末の購読も消す。Service Worker のファイルは `Cache-Control: no-store` で返す
 - VAPID の `sub`（push service に伝える送り手）は、環境変数 `GASHO_VAPID_SUBJECT` で変えられる。既定は `https://github.com/4rtofl/Gasho` で、個人の連絡先は入れない
 - 通知は Apple の push service（`web.push.apple.com`）を経由するので、Gasho サーバーから外へつながる必要がある。iPhone の Tailscale がオフでも通知は届くが、タップして開くには Tailscale が要る

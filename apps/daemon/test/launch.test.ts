@@ -294,6 +294,32 @@ test("ending sessions opened outside Gasho signals the process `claude agents` l
   }
 });
 
+test("after a restart, no sessions are sent before the first refresh has ended, also one that failed", async () => {
+  const { d, agentsFile, folder, done } = await setup();
+  const sent: string[][] = [];
+  try {
+    d.cfg.pluginDataDir = path.join(folder, "plugin-data");
+    d.refresh = Object.getPrototypeOf(d).refresh;
+    d.readManagedScreens = async () => undefined;
+    d.countTokens = async () => undefined;
+    d.hub = {
+      connected: true,
+      send: (m: { type: string; sessions?: { sessionId: string }[] }) => m.type === "sessions" && sent.push(m.sessions!.map((s) => s.sessionId)),
+    };
+    // Connected before the first refresh, as start() connects: the Gasho server keeps the sessions it has meanwhile.
+    d.emitSessions();
+    assert.deepEqual(sent, []);
+    await fs.writeFile(agentsFile, "not json");
+    await d.refresh();
+    assert.deepEqual(sent, [[]]);
+    await fs.writeFile(agentsFile, JSON.stringify([{ pid: process.pid, sessionId: "s1", cwd: folder, status: "idle" }]));
+    await d.refresh();
+    assert.deepEqual(sent, [[], ["s1"]]);
+  } finally {
+    await done();
+  }
+});
+
 test("a Claude Code that Gasho is starting or removing is neither sent nor ended as one opened outside Gasho", async () => {
   const { d, agentsFile, folder, done } = await setup();
   // The copy a fork starts, and a session that is removed: both end a little after SIGTERM.

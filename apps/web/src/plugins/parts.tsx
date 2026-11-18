@@ -20,7 +20,7 @@ import type {
 } from "@gasho/plugin-sdk";
 import type { MachineInfo, PluginInfo, PluginSettingSpec, SessionInfo } from "@gasho/protocol";
 import { SidePanel } from "@/components/side-panel";
-import { go, hrefOf, type Route, type SessionPanel, type WorktreeView } from "@/lib/route";
+import { go, hrefOf, type PagePanel, type Route, type SessionPanel, type WorktreeView } from "@/lib/route";
 import type { WorktreeSessions } from "@/lib/sessions";
 import { useAppState } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -140,6 +140,40 @@ export function PluginPageView({ plugin, page, params }: { plugin: string; page:
     <Part part={part}>
       <Page params={params} />
     </Part>
+  );
+}
+
+// ---- the panels of a page (P19) ----
+
+/** A panel of a plugin's page (route `panel`): beside the page on a computer (`docked`), in its place on a phone. */
+export function PluginPagePanelView({ plugin, panel, docked, onClose }: { plugin: string; panel: PagePanel; docked: boolean; onClose: () => void }) {
+  const { infos, parts, errors, loading } = usePluginRegistry();
+  const info = infos.find((p) => p.id === plugin);
+  const part = parts.find((p) => p.info.id === plugin);
+  const why = unavailable(info, part, errors, loading);
+  const Panel = part && Object.hasOwn(part.def.pagePanels ?? {}, panel.id) ? part.def.pagePanels?.[panel.id] : undefined;
+  const problem = why ?? (!Panel ? "このパネルはありません。" : undefined);
+  const scope = { docked, onClose, backLabel: "戻る" };
+  if (problem || !part || !Panel) {
+    return (
+      <SidePanel title={info?.manifest.name ?? plugin} docked={docked} onClose={onClose} backLabel={scope.backLabel}>
+        <p className="text-sm text-muted-foreground">{problem}</p>
+      </SidePanel>
+    );
+  }
+  return (
+    <PanelScopeContext.Provider value={scope}>
+      <Part
+        part={part}
+        fallback={
+          <SidePanel title={part.info.manifest.name} docked={docked} onClose={onClose} backLabel={scope.backLabel}>
+            <p className="text-sm text-red-400">{part.info.manifest.name} の表示でエラーが起きました。プラグインの画面で理由を見られます。</p>
+          </SidePanel>
+        }
+      >
+        <Panel params={panel.params} docked={docked} />
+      </Part>
+    </PanelScopeContext.Provider>
   );
 }
 
@@ -446,19 +480,13 @@ export function PluginWorktreeView({ worktree, view }: { worktree: WorktreeSessi
 
 // ---- home tiles (P6) ----
 
-const TILE_CLASSES: Record<TileSize, string> = {
-  stat: "",
-  small: "col-span-2 lg:col-span-1",
-  medium: "col-span-2",
-  large: "col-span-2 lg:col-span-3",
-};
-
 export interface PluginTile {
   /** `<plugin>.<tile>` */
   id: string;
   name: string;
   after?: string;
-  className: string;
+  size: TileSize;
+  tall: boolean;
   content: ReactNode;
 }
 
@@ -472,7 +500,8 @@ export function usePluginTiles(): PluginTile[] {
         id: `${part.info.id}.${t.id}`,
         name: t.title,
         ...(t.after ? { after: t.after } : {}),
-        className: cn(TILE_CLASSES[t.size ?? "small"] ?? TILE_CLASSES.small, t.tall && "lg:row-span-2"),
+        size: t.size ?? "small",
+        tall: t.tall === true,
         content: (
           <Part part={part}>
             <Tile />

@@ -8,6 +8,9 @@ import { hooksConfig, installedHookEvents, installHooks, startHookServer, summar
 
 type Group = { hooks: Array<Record<string, unknown>> };
 
+/** How t.waitFor waits for what the hook server does after answering: up to 5 seconds, for a machine under load. */
+const WAIT = { interval: 10, timeout: 5_000 };
+
 test("summarizeHook keeps the command, the notification type and the last message", () => {
   assert.deepEqual(
     summarizeHook(
@@ -79,7 +82,7 @@ test("installHooks keeps other settings and hooks, and does not duplicate its ow
   }
 });
 
-test("hook server answers 200 at once and rejects a wrong secret", async () => {
+test("hook server answers 200 at once and rejects a wrong secret", async (t) => {
   const received: Array<Record<string, unknown>> = [];
   const server = startHookServer({ host: "127.0.0.1", port: 0, secret: "s3cret", onEvent: (p) => received.push(p) });
   await new Promise<void>((resolve) => server.once("listening", () => resolve()));
@@ -87,14 +90,36 @@ test("hook server answers 200 at once and rejects a wrong secret", async () => {
   try {
     const url = `http://127.0.0.1:${port}/hooks`;
     const body = JSON.stringify({ hook_event_name: "Stop", session_id: "s1" });
-    const bad = await fetch(url, { method: "POST", body, headers: { "x-gasho-secret": "nope" } });
+    const bad = await fetch(url, { method: "POST", body, headers: { "content-type": "application/json", "x-gasho-secret": "nope" } });
     assert.equal(bad.status, 401);
-    const ok = await fetch(url, { method: "POST", body, headers: { "x-gasho-secret": "s3cret" } });
+    const ok = await fetch(url, { method: "POST", body, headers: { "content-type": "application/json", "x-gasho-secret": "s3cret" } });
     assert.equal(ok.status, 200);
     assert.equal(await ok.text(), "");
+    await t.waitFor(() => assert.equal(received.length, 1), WAIT);
+    assert.equal(received[0]?.hook_event_name, "Stop");
+  } finally {
+    server.close();
+  }
+});
+
+test("hook server refuses what a web page in a browser can send: an Origin, or a body that is not JSON (#99)", async () => {
+  const received: Array<Record<string, unknown>> = [];
+  const server = startHookServer({ host: "127.0.0.1", port: 0, secret: undefined, onEvent: (p) => received.push(p) });
+  await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+  const { port } = server.address() as AddressInfo;
+  try {
+    const body = JSON.stringify({ hook_event_name: "Notification", session_id: "s1", message: "x" });
+    for (const path of ["/hooks", "/statusline"]) {
+      const post = (headers: Record<string, string>) => fetch(`http://127.0.0.1:${port}${path}`, { method: "POST", body, headers });
+      assert.equal((await post({ "content-type": "application/json", origin: "https://example.com" })).status, 403);
+      assert.equal((await post({ "content-type": "application/json", origin: "null" })).status, 403);
+      assert.equal((await post({ "content-type": "text/plain" })).status, 415);
+      assert.equal((await post({ "content-type": "application/x-www-form-urlencoded" })).status, 415);
+    }
+    // JSON without Origin, as Claude Code sends it; the type's case and parameters do not matter.
+    assert.equal((await fetch(`http://127.0.0.1:${port}/hooks`, { method: "POST", body, headers: { "content-type": "Application/JSON; charset=utf-8" } })).status, 200);
     await new Promise((r) => setTimeout(r, 20));
     assert.equal(received.length, 1);
-    assert.equal(received[0]?.hook_event_name, "Stop");
   } finally {
     server.close();
   }

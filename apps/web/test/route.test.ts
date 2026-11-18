@@ -24,6 +24,8 @@ test("plugins' pages, panels and worktree screens keep their params in the query
     { name: "plugins" },
     { name: "plugin", plugin: "kanban", page: "board", params: {} },
     { name: "plugin", plugin: "kanban", page: "board", params: { view: "すべて", q: "a&b=c" } },
+    { name: "plugin", plugin: "github-review", page: "review", params: {}, panel: { id: "pr", params: {} } },
+    { name: "plugin", plugin: "github-review", page: "review", params: { q: "is:open a/b?" }, panel: { id: "pr", params: { repo: "org/web app", number: "14", x: "a&b=c/d?" } } },
     { name: "session", machine: "m1", sessionId: "s1", panel: { kind: "plugin", plugin: "git", id: "list", params: { kind: "pulls" } } },
     { name: "session", machine: "m1", sessionId: "s1", panel: { kind: "plugin", plugin: "git", id: "item", params: { kind: "issues", number: "42", repo: "org/web app" } } },
     { name: "worktree", machine: "m1", path: "/Users/me/Gasho issue/a?b", view: { plugin: "github-allmighty", id: "issue", params: { number: "17" } } },
@@ -32,6 +34,10 @@ test("plugins' pages, panels and worktree screens keep their params in the query
   for (const r of routes) assert.deepEqual(parseHash(hrefOf(r)), r);
   assert.equal(hrefOf({ name: "plugin", plugin: "kanban", page: "board", params: { b: "2", a: "1" } }), "#/p/kanban/board?a=1&b=2");
   assert.equal(
+    hrefOf({ name: "plugin", plugin: "github-review", page: "review", params: { q: "is:open" }, panel: { id: "pr", params: { repo: "o/r", number: "5" } } }),
+    "#/p/github-review/review/p/pr/number=5&repo=o%2Fr?q=is%3Aopen",
+  );
+  assert.equal(
     hrefOf({ name: "session", machine: "m", sessionId: "s", panel: { kind: "plugin", plugin: "git", id: "list", params: { kind: "issues" } } }),
     "#/s/m/s/p/git/list?kind=issues",
   );
@@ -39,7 +45,7 @@ test("plugins' pages, panels and worktree screens keep their params in the query
     hrefOf({ name: "worktree", machine: "m", path: "/src/app", view: { plugin: "gh", id: "issue", params: { number: "17" } } }),
     "#/w/m/%2Fsrc%2Fapp/p/gh/issue?number=17",
   );
-  for (const bad of ["#/p/GitHub/list", "#/p/x/list", "#/p/a_b/list", "#/s/m/s/p/Kanban/board", "#/s/m/s/p/x/board", "#/w/m/%2Fa/p/Gh/issue", "#/w/m/%2Fa/p/gh"]) {
+  for (const bad of ["#/p/GitHub/list/p/x",  "#/p/x/list", "#/p/a_b/list", "#/s/m/s/p/Kanban/board", "#/s/m/s/p/x/board", "#/w/m/%2Fa/p/Gh/issue", "#/w/m/%2Fa/p/gh"]) {
     assert.deepEqual(parseHash(bad), { name: "home" }, bad);
   }
 });

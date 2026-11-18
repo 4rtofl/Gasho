@@ -398,8 +398,13 @@ test("競合: 読んだあとに変わったファイルの保存は断られ、
     f.text("notes.txt", "claude again\n");
     await page.getByRole("button", { name: "保存" }).click();
     await expect(notice).toBeVisible();
-    page.once("dialog", (dlg) => void dlg.accept());
+    let message = "";
+    page.once("dialog", (dlg) => {
+      message = dlg.message();
+      void dlg.accept();
+    });
     await notice.getByRole("button", { name: "編集を捨てて読み込み直す" }).click();
+    await expect.poll(() => message).toBe("編集した内容を捨てて、いまのファイルを読み込み直しますか？");
     await expect(editor).toBeHidden();
     await expect(panel.getByText("claude again")).toBeVisible();
     expect(f.files.get("notes.txt")?.text).toBe("claude again\n");

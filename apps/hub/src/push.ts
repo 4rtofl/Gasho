@@ -133,11 +133,14 @@ export interface PushSenderOptions {
   log?: (s: string) => void;
 }
 
-/** What a notification says on the lock screen: the session's name and what happened, nothing of the conversation. */
+/**
+ * What a notification says on the lock screen: the session's name and what happened, nothing of the conversation. A
+ * plugin's notification says what its title says (written for this, without the body).
+ */
 export function pushPayloadOf(n: GashoNotification, label: string, badge: number): PushPayload {
   return {
     title: label,
-    body: KIND_TEXT[n.kind],
+    body: n.plugin ? n.title : KIND_TEXT[n.kind],
     kind: n.kind,
     tag: `${n.machine}/${n.sessionId}`,
     url: `/#/s/${encodeURIComponent(n.machine)}/${encodeURIComponent(n.sessionId)}`,

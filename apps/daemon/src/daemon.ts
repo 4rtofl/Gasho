@@ -1127,7 +1127,7 @@ export class Daemon {
   }
 
   /**
-   * A request on the local control socket (control.ts, `gasho-daemon session …`): done as the same command from the
+   * A request on the local control socket (control.ts, `gasho-daemon session …` and `gasho-daemon worktree …`): done as the same command from the
    * Gasho server is.
    */
   private async onControl(req: ControlRequest): Promise<ControlReply> {
@@ -1144,11 +1144,33 @@ export class Daemon {
         case "session.list":
           await this.refresh();
           return { ok: true, sessions: this.controlSessions() };
+        case "session.remove":
+          log(`session.remove of ${req.sessionId} from the control socket`);
+          return await this.remove(req.sessionId);
+        case "worktree.remove":
+          log(`worktree.remove of ${req.path}${req.force ? " (forced)" : ""} from the control socket`);
+          return await this.controlRemoveWorktree(req.path, req.force === true, requestId);
       }
     } catch (e) {
       log(`${req.op} from the control socket failed`, e);
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
+  }
+
+  /**
+   * worktree.remove from the control socket: as from Gasho's screen (no branch deleted, nothing counted as pushed but
+   * what a remote has), and the answer also names the worktree's folder and branch, and the sessions that ended.
+   */
+  private async controlRemoveWorktree(dir: string, force: boolean, requestId: string): Promise<ControlReply> {
+    const w = await removableWorktree(dir);
+    if ("error" in w) return { ok: false, error: w.error };
+    // Their names as they are before they end: once ended, they are gone from the lists.
+    const names = new Map<string, string>();
+    for (const m of this.managed.all()) names.set(m.sessionId, m.name);
+    for (const t of this.tracked.values()) if (t.info.name) names.set(t.info.sessionId, t.info.name);
+    const r = await this.removeWorktree({ type: "worktree.remove", requestId, path: w.path, ...(force ? { force: true } : {}) });
+    const endedSessions = (r.ended ?? []).map((sessionId) => ({ sessionId, ...(names.has(sessionId) ? { name: names.get(sessionId)! } : {}) }));
+    return { ...r, path: w.path, ...(w.branch ? { branch: w.branch } : {}), ...(endedSessions.length > 0 ? { endedSessions } : {}) };
   }
 
   /** The sessions Gasho started, under the names `claude agents` (and so ListAgents) shows. */
@@ -1165,6 +1187,7 @@ export class Daemon {
         terminal: m.terminal,
         status: info?.status ?? "unknown",
         ...(pending > 0 ? { pendingInputs: pending } : {}),
+        ...(fs.existsSync(m.cwd) ? {} : { cwdMissing: true }),
       };
     });
   }

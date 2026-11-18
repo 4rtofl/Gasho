@@ -5,7 +5,7 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { loadConfig } from "./config.ts";
-import { controlRequest, controlSocketOf, SESSION_USAGE, sessionCommand } from "./control.ts";
+import { controlRequest, controlSocketOf, SESSION_USAGE, sessionCommand, WORKTREE_USAGE, worktreeCommand } from "./control.ts";
 import { credentialsPath, loadCredentials, register, saveCredentials } from "./credentials.ts";
 import { DAEMON_VERSION, Daemon } from "./daemon.ts";
 import { hooksConfig, installHooks, SECRET_ENV } from "./hooks.ts";
@@ -43,6 +43,7 @@ const usage = `usage: ${command} <command>
   attach [NAME]                                    show the terminal of a session Gasho started, and type into it
                                                    (Ctrl+] leaves it running); without NAME, list the terminals
 ${SESSION_USAGE}
+${WORKTREE_USAGE}
   version                                          print the version
 
 The registration is stored in ${credentialsPath()} (GASHO_DAEMON_CONFIG to change).
@@ -134,6 +135,11 @@ try {
         out: (s) => console.log(s),
         note: (s) => console.error(s),
       });
+      break;
+    }
+    case "worktree": {
+      const socket = controlSocketOf(path.dirname(credentialsPath()));
+      await worktreeCommand(args.slice(1), { request: (req, timeoutMs) => controlRequest(socket, req, timeoutMs), out: (s) => console.log(s) });
       break;
     }
     case "hooks": {

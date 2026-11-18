@@ -16,3 +16,4 @@ export {
   npmLatestAnswer,
 } from "./fakes.ts";
 export { GASHO_DIR } from "./process.ts";
+export { addPlugin, catalogWith, copyTestPlugin, listedPlugin, type PluginRelease, pluginsDir, releasePlugin, TEST_PLUGINS, writePlugin } from "./plugins.ts";

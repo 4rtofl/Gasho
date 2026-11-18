@@ -729,9 +729,10 @@ export class Hub {
       this.broadcast({ type: "machine", machine: m });
     }
     this.forgetMemory(id);
-    this.failPending((req) => req.machine === id, "machine disconnected");
-    this.failCommands((c) => c.machine === id, "working server との接続が切れました。");
-    this.failMedia(id, "working server との接続が切れました。");
+    const error = "working server との接続が切れました。";
+    this.failPending((req) => req.machine === id, error);
+    this.failCommands((c) => c.machine === id, error);
+    this.failMedia(id, error);
     this.plugins?.onDaemonClose(id);
   }
 
@@ -1232,9 +1233,10 @@ export class Hub {
       // The daemon was taken out of `daemons` before it was closed, so onDaemonClose leaves this to be done here.
       this.memory.delete(id);
       if (this.machines.delete(id)) {
-        this.failPending((req) => req.machine === id, "machine was removed");
-        this.failCommands((c) => c.machine === id, "working server の登録が外されました。");
-        this.failMedia(id, "working server の登録が外されました。");
+        const error = "working server の登録が外されました。";
+        this.failPending((req) => req.machine === id, error);
+        this.failCommands((c) => c.machine === id, error);
+        this.failMedia(id, error);
         this.broadcast({ type: "machine.removed", id });
         this.plugins?.onDaemonClose(id);
       }

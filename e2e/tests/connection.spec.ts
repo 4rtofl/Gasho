@@ -90,7 +90,6 @@ test("接続が切れているあいだに指示を送ると「Gasho サーバ�
 });
 
 test("送った直後に接続が切れると、結果が分からないと出て、指示は入力欄に戻らない（#106）", async ({ page, hub }) => {
-  test.fail(true, "#106: 接続が切れても待ちが終わらず、時間切れのあと「応答がありませんでした。」と出て指示が入力欄に戻る（PR #118 で修正中）");
   const d = await hub.fakeDaemon({ name: "mac", sessions: [fakeSession({ sessionId: SESSION, cwd: "/work/gasho", name: "e2e-session" })] });
   // Typed into the session, but its result is lost with the connection.
   d.handle("session.input", () => undefined);
@@ -107,7 +106,6 @@ test("送った直後に接続が切れると、結果が分からないと出�
 });
 
 test("つなぎ直したあとも、遡って読み込んだ会話が残る（#106）", async ({ page, hub }) => {
-  test.fail(true, "#106: つなぎ直すと最新のページで会話を置き換え、遡って読み込んだ行が消える（PR #118 で修正中）");
   const row = (i: number) => `会話の行 ${String(i).padStart(3, "0")}`;
   const d = await hub.fakeDaemon({
     name: "mac",

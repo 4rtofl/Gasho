@@ -1,6 +1,7 @@
 // What the fakes share: record the call, then give the first answer of the table that fits it (fakes.ts).
 import fs from "node:fs/promises";
 import os from "node:os";
+import path from "node:path";
 import { callsFile, type FakeName, type FakeTable, matches, readTable } from "../fakes.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -23,6 +24,7 @@ export async function runFake<T extends FakeTable>(name: FakeName, builtIn?: (ta
     const out = i >= 0 ? args[i + 1] : undefined;
     if (out && answer.output !== undefined) await fs.writeFile(out, answer.output);
     if (out && answer.outputFile !== undefined) await fs.copyFile(answer.outputFile, out);
+    if (answer.copyInto) await fs.cp(answer.copyInto.from, path.join(process.cwd(), answer.copyInto.to), { recursive: true, verbatimSymlinks: true });
     if (answer.stdout) process.stdout.write(answer.stdout);
     if (answer.stderr) process.stderr.write(answer.stderr);
     return exit(answer.exitCode ?? 0);

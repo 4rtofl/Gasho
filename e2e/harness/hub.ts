@@ -10,6 +10,7 @@ import path from "node:path";
 import { Terminals } from "../../apps/daemon/src/terminal.ts";
 import { FakeDaemon, type FakeDaemonOptions } from "./fake-daemon.ts";
 import { type ClaudeTable, FakeCommand, type FakeAnswer, npmLatestAnswer, catalogAnswer } from "./fakes.ts";
+import { HubService, type HubServiceOptions, makeLayout, SERVICE_BIN } from "./hub-service.ts";
 import { freePort, GASHO_DIR, isolatedEnv, onExit, Proc, runScript } from "./process.ts";
 
 const HUB_CLI = "apps/hub/src/cli.ts";
@@ -30,6 +31,11 @@ export interface HubOptions {
   env?: Record<string, string>;
   /** The screen it serves (apps/web/dist). */
   webDist?: string;
+  /**
+   * Run as `gasho-hub service install` installs it, which Gasho can update (hub-service.ts), in place of this
+   * checkout's apps/hub/src/cli.ts.
+   */
+  service?: HubServiceOptions;
 }
 
 export interface DaemonOptions {
@@ -105,6 +111,8 @@ export class GashoHub {
   proc: Proc;
   readonly fakeDaemons: FakeDaemon[] = [];
   readonly daemons: RealDaemon[] = [];
+  /** HubOptions.service: what the Gasho server runs under. */
+  readonly service: HubService | undefined;
   private env: Record<string, string>;
   private forget: () => void;
   /** The Gasho server's processes before startServer, for logs(). */
@@ -119,8 +127,10 @@ export class GashoHub {
     proc: Proc;
     fakes: [FakeCommand, FakeCommand, FakeCommand<ClaudeTable>];
     forget: () => void;
+    service?: HubService;
   }) {
     this.root = o.root;
+    this.service = o.service;
     this.forget = o.forget;
     this.home = path.join(o.root, "home");
     this.port = o.port;
@@ -274,20 +284,43 @@ export async function startHub(o: HubOptions = {}): Promise<GashoHub> {
   });
   await fsp.mkdir(path.join(root, "hub"), { recursive: true });
   for (const dir of o.plugins ?? []) await runScript("gasho-hub plugin add", HUB_CLI, ["plugin", "add", "--link", path.resolve(dir)], base);
+  const service = o.service && (await serviceOf(root, o.service, base, forget));
   for (let attempt = 1; ; attempt++) {
     const port = await freePort();
-    const env = { ...base, GASHO_HUB_PORT: String(port) };
-    const proc = new Proc("gasho-hub", HUB_CLI, ["start"], env);
+    const env = { ...(service?.env ?? base), GASHO_HUB_PORT: String(port) };
+    const proc = service ? new Proc("gasho-hub (service)", SERVICE_BIN, [service.launcher, service.control], env) : new Proc("gasho-hub", HUB_CLI, ["start"], env);
     try {
       await proc.waitForLog(/listening on /, START_MS);
-      return new GashoHub({ root, port, env, proc, fakes: [gh, npm, claude], forget });
+      const hubService = service && new HubService({ root: service.layout, control: service.control, proc });
+      return new GashoHub({ root, port, env, proc, fakes: [gh, npm, claude], forget: service?.forget ?? forget, service: hubService });
     } catch (e) {
       await proc.stop();
       // Another process took the port after freePort let it go.
       if (attempt < 3 && /is in use/.test(proc.log())) continue;
       await fsp.rm(root, { recursive: true, force: true });
-      forget();
+      (service?.forget ?? forget)();
       throw e;
     }
   }
+}
+
+/**
+ * The layout of HubOptions.service in the test's folder, and the environment the service manager gives the launcher
+ * (none of the shell's: XPC_SERVICE_NAME is set in a terminal of macOS too).
+ */
+async function serviceOf(root: string, o: HubServiceOptions, base: Record<string, string>, forgetRoot: () => void) {
+  const layout = path.join(root, "hub", "service");
+  await fsp.mkdir(layout, { recursive: true });
+  const launcher = await makeLayout(layout, o);
+  const env: Record<string, string> = { ...base, GASHO_HUB_HOME: layout };
+  delete env.XPC_SERVICE_NAME;
+  delete env.INVOCATION_ID;
+  if (o.asService !== false) Object.assign(env, { XPC_SERVICE_NAME: "local.gasho.hub", INVOCATION_ID: "gasho-e2e" });
+  // A Gasho server left running when the test runner ended before the test did: found by its launcher's path.
+  const forgetProcs = onExit(() => spawnSync("pkill", ["-f", launcher]));
+  const forget = () => {
+    forgetProcs();
+    forgetRoot();
+  };
+  return { layout, launcher, control: path.join(root, "hub", "service.json"), env, forget };
 }

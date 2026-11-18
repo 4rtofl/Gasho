@@ -1,6 +1,7 @@
 // A session's panel (components/side-panel.tsx, DockedPanel in App.tsx): beside the conversation on a computer, where
-// its left edge changes its width (over the conversation in a window narrower than 988px), and in the conversation's
-// place on a phone. The branch graph is the panel opened.
+// its left edge changes its width (over the conversation where the window but the sidebar is narrower than 740px: in a
+// window narrower than 988px with the sidebar at its default 248px), and in the conversation's place on a phone. The
+// branch graph is the panel opened.
 import type { FakeDaemon } from "../harness/index.ts";
 import { expect, test } from "./fixtures.ts";
 import { commit, FakeFolder, hashOf, serveGraph, sessionDaemon, sessionUrl, showSessionHeader } from "./panel-data.ts";
@@ -90,7 +91,7 @@ test.describe("PC の幅", () => {
     });
   });
 
-  test("窓の幅が 768〜987px ではパネルが会話の右に重なり、988px 以上では会話の右に並ぶ", async ({ page, hub }) => {
+  test("サイドバーが既定の 248px のとき、窓の幅が 768〜987px ではパネルが会話の右に重なり、988px 以上では会話の右に並ぶ", async ({ page, hub }) => {
     const d = await sessionDaemon(hub);
     serveOneCommit(d);
     await page.setViewportSize({ width: 768, height: 800 });

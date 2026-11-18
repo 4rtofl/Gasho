@@ -45,32 +45,33 @@ function split(selectorText: string): string[] {
 type Place = "part" | "inside";
 
 /**
- * Where a selector nested in a rule at `parent` matches, or undefined when it can match outside the part (Gasho's
- * elements) or a pseudo-element of the part's element.
+ * Where a selector nested in a rule at `parent` matches, for the selectors that cannot match outside the part: `.foo`
+ * (which CSS nesting reads as `& .foo`), `&:hover`, and `&:hover .foo`. Undefined for any other, such as one with `&`
+ * after a combinator or in (), or with a combinator other than a space after `&`.
  */
 function place(selector: string, parent: Place): Place | undefined {
-  // `:has(&)` matches the elements around `&`, and `:is(& ~ *)` those beside it.
-  if (find(selector, 0, (i, depth) => depth > 0 && selector[i] === "&", true) < selector.length) return undefined;
-  if (parent === "inside") return parent;
-  // CSS nesting puts a selector without `&` after `& `, and one that starts with a combinator after `&`.
-  let amp = -1;
-  find(selector, 0, (i) => {
-    if (selector[i] === "&") amp = i;
-    return false;
-  });
-  const after = amp < 0 ? selector : selector.slice(find(selector, amp, (i) => /[\s>+~]/.test(selector[i]!)));
-  if (/^\s*[+~]/.test(after)) return undefined;
-  if (amp < 0 || after) return "inside";
-  // Like `.dark::before` (dark), `&::before` is left as it is: it would be drawn by the part's element.
-  return find(selector, amp, (i) => PSEUDO_ELEMENT.test(selector.slice(i))) < selector.length ? undefined : "part";
+  const amp = find(selector, 0, (i) => selector[i] === "&", true);
+  if (amp === selector.length) return /^[>+~]/.test(selector) ? undefined : "inside";
+  if (amp > 0 || find(selector, 1, (i) => selector[i] === "&", true) < selector.length) return undefined;
+  const end = find(selector, 1, (i) => /[\s>+~]/.test(selector[i]!));
+  if (end < selector.length) return /^\s+[^\s>+~]/.test(selector.slice(end)) ? "inside" : undefined;
+  // Like `.dark::before` (dark), the part's element's `&::before` is left as it is.
+  if (find(selector, 1, (i) => PSEUDO_ELEMENT.test(selector.slice(i))) < end) return parent === "inside" ? parent : undefined;
+  return parent;
 }
 
-/** Whether a rule in `rules`, at any depth, can match outside the part when the rule they are in matches at `parent`. */
-function escapes(rules: ArrayLike<CssRule> | undefined, parent: Place): boolean {
-  return Array.from(rules ?? []).some((r) => {
-    if (r.selectorText === undefined) return escapes(r.cssRules, parent);
+/** The at-rules whose rules match as they would outside them. */
+const GROUP = /^@(media|supports|container|layer)\b/i;
+
+/**
+ * Whether the rules in a rule at `parent`, at any depth, match only inside the part: style rules with place's
+ * selectors, the at-rules of GROUP, and declarations.
+ */
+function inside(rules: ArrayLike<CssRule> | undefined, parent: Place): boolean {
+  return Array.from(rules ?? []).every((r) => {
+    if (r.selectorText === undefined) return !r.cssText.startsWith("@") || (GROUP.test(r.cssText) && inside(r.cssRules, parent));
     const places = split(r.selectorText).map((s) => place(s, parent));
-    return places.includes(undefined) || escapes(r.cssRules, places.includes("part") ? "part" : "inside");
+    return !places.includes(undefined) && inside(r.cssRules, places.includes("part") ? "part" : "inside");
   });
 }
 
@@ -85,7 +86,7 @@ function dark(selector: string, nested: ArrayLike<CssRule>): string {
   if (find(first, 0, (i) => PSEUDO_ELEMENT.test(first.slice(i))) < first.length) return selector;
   // After `.dark &`, `+` and `~` would match the elements beside the plugin's part, which are Gasho's. For the rules
   // nested in the selector's, `.dark &` is the part's element itself, and `.dark & .foo` an element inside it.
-  if (/^\s*[+~]/.test(rest) || escapes(nested, rest ? "inside" : "part")) return selector;
+  if (/^\s*[+~]/.test(rest) || !inside(nested, rest ? "inside" : "part")) return selector;
   return `${first} &${rest}, & ${selector}`;
 }
 
@@ -112,13 +113,13 @@ export interface CssRule {
   readonly cssRules?: ArrayLike<CssRule>;
 }
 
-/** A style rule or a rule with rules inside (@media, @supports…) of a plugin's web.css, with darkSelector's selectors. */
+/** A style rule or an at-rule of GROUP of a plugin's web.css, with darkSelector's selectors; another rule as it is. */
 export function ruleText(rule: CssRule): string {
   if (rule.selectorText !== undefined) {
     const selector = darkSelector(rule.selectorText, rule.cssRules);
     // CSSOM writes a style rule as its selectorText and then its block.
     if (selector && rule.cssText.startsWith(rule.selectorText)) return selector + rule.cssText.slice(rule.selectorText.length);
-  } else if (rule.cssRules) {
+  } else if (rule.cssRules && GROUP.test(rule.cssText)) {
     return `${rule.cssText.slice(0, blockStart(rule.cssText))}{${Array.from(rule.cssRules, ruleText).join("")}}`;
   }
   return rule.cssText;

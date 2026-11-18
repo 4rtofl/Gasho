@@ -2085,6 +2085,11 @@ export class Daemon {
       return;
     }
     log(`${m.name} (${m.sessionId}) still runs in ${m.terminal}; it is not hibernated`);
+    this.stayAwake(m, h);
+  }
+
+  /** The session turns out not to be hibernated: its Claude Code runs on, and a new name given meanwhile is sent to it. */
+  private stayAwake(m: ManagedSession, h: Hibernated): void {
     delete m.hibernated;
     if (h.renamed) this.managed.unshift(m.sessionId, { text: renameCommand(m.name), auto: true });
   }
@@ -2195,21 +2200,29 @@ export class Daemon {
 
   /**
    * Ends a session's Claude Code and terminal as a removal does, and keeps the session: what it goes on with is saved
-   * first. Its temporary folder and attachments stay, for when it comes back.
+   * first. Its temporary folder and attachments stay, for when it comes back. If that cannot be saved, it is not
+   * hibernated: nothing would remember what it needs to come back, and its Claude Code has not been touched yet.
    */
   private hibernate(m: ManagedSession): Promise<void> {
     const id = m.sessionId;
     const t = this.tracked.get(id);
     if (!t) return Promise.resolve();
     // From here on inputs wait for it to come back, and nothing is typed into it.
-    m.hibernated = {
+    const h: Hibernated = {
       at: Date.now(),
       ...(t.info.model ? { model: t.info.model } : {}),
       ...(t.info.effort ? { effort: t.info.effort } : {}),
       ...(t.info.ultracode ? { ultracode: true } : {}),
     };
+    m.hibernated = h;
     const ended = (async () => {
-      await this.managed.save();
+      try {
+        await this.managed.save();
+      } catch (e) {
+        log(`could not save that ${m.name} (${id}) is hibernated; it goes on running`, e);
+        this.stayAwake(m, h);
+        return;
+      }
       this.emitSessions();
       await this.endClaude(m, id);
       for (const map of [this.settleUntil, this.lastStop, this.latePicker]) map.delete(id);
@@ -2218,6 +2231,8 @@ export class Daemon {
     })().finally(() => {
       this.hibernating.delete(id);
       this.emitSessions();
+      // Inputs that came in meanwhile, if it went on running after all.
+      if (!m.hibernated) this.flushWaitingInputs();
     });
     this.hibernating.set(id, ended);
     return ended;
@@ -2260,7 +2275,7 @@ export class Daemon {
       if (h.resumingIn) await this.terminals.kill(h.resumingIn);
       delete h.resumingIn;
       h.resumeError = error;
-      await this.managed.save();
+      await this.managed.save().catch((e: unknown) => log(`could not save why ${sessionId} did not come back`, e));
     }
     log(`could not bring ${sessionId} back: ${error}`);
     return { ok: false, error };
@@ -2278,6 +2293,8 @@ export class Daemon {
     delete h.resumeError;
     // An input can come in while its Claude Code is still ending: two must never have the conversation open.
     await this.hibernating.get(sessionId)?.catch(() => undefined);
+    // Its hibernation was called off meanwhile (see hibernate): the Claude Code it has still runs.
+    if (m.hibernated !== h) return { ok: true, sessionId };
     const start: ClaudeStart = { accept: (row) => row.sessionId === sessionId, resuming: true };
     const running = this.interrupted.get(sessionId);
     this.interrupted.delete(sessionId);

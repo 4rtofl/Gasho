@@ -575,6 +575,37 @@ test("an id the session had before /clear reaches it while it is hibernated", as
   }
 });
 
+test("a session whose hibernation cannot be saved goes on running, and takes what is sent to it", async () => {
+  const { d, term, started, procs, shown, done } = await setup();
+  const save = d.managed.save;
+  try {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    d.managed.save = async () => {
+      await held;
+      throw new Error("no space left on device");
+    };
+    const going = d.hibernateIdle();
+    await until(() => d.hibernating.has(SID), "it began to hibernate");
+
+    // Sent while the save is under way: it must not start a second Claude Code.
+    d.managed.save = save;
+    assert.equal((await d.input({ type: "session.input", requestId: "r1", sessionId: SID, text: "保存できなかったときの発言" })).ok, true);
+    release();
+    await going;
+    await d.waking.get(SID);
+
+    assert.equal(procs[0]!.signalCode, null);
+    assert.equal(d.managed.get(SID).hibernated, undefined);
+    assert.equal(started.length, 0);
+    await d.refresh();
+    assert.equal(shown().hibernation, undefined);
+    await until(() => term.entered.includes("保存できなかったときの発言"), "the input was typed");
+  } finally {
+    await done();
+  }
+});
+
 test("removing a hibernated session signals nothing, and forgets it", async () => {
   const { d, killed, agents, shown, done } = await setup();
   try {

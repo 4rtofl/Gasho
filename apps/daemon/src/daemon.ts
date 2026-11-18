@@ -1778,7 +1778,8 @@ export class Daemon {
    * is idle: it waits while the session works. A /rename still waiting is replaced, not sent too.
    */
   private async rename(sessionId: string, name: string, requestId: string): Promise<CommandResult> {
-    if (!this.managed.has(sessionId)) {
+    const session = this.managed.get(sessionId);
+    if (!session) {
       return { ok: false, error: "このセッションの名前は変えられません。変えられるのは、Gasho が起動したセッションだけです。" };
     }
     const checked = sessionName(name);
@@ -1787,23 +1788,24 @@ export class Daemon {
     this.managed.drop(sessionId, (input) => isRename(input.text));
     const named = this.managed.named(sessionId);
     if (this.managed.setName(sessionId, checked.name) || named) await this.managed.save();
+    // From here on by session.sessionId: /clear can give the session a new id meanwhile (see followNewIds).
     // Other inputs waiting go first, and typing them can take long (a model switch): the answer does not wait for them.
-    const ahead = this.managed.pending(sessionId) > 0;
-    this.managed.enqueue(sessionId, { id: requestId, text: renameCommand(checked.name) });
-    log(`renaming ${sessionId} to "${checked.name}"`);
+    const ahead = this.managed.pending(session.sessionId) > 0;
+    this.managed.enqueue(session.sessionId, { id: requestId, text: renameCommand(checked.name) });
+    log(`renaming ${session.sessionId} to "${checked.name}"`);
     this.emitSessions();
     if (ahead) return { ok: true, queued: true };
     let warnings: string[] = [];
     try {
-      const flushed = await this.flushInput(sessionId);
+      const flushed = await this.flushInput(session.sessionId);
       // The queue may have held earlier inputs: what happened to those is not this request's to report.
       if (flushed?.id === requestId) warnings = flushed.warnings;
     } catch (e) {
-      log(`could not send /rename to ${sessionId} yet`, e);
+      log(`could not send /rename to ${session.sessionId} yet`, e);
       warnings.push("Claude Code の画面を操作できませんでした。名前の変更は待たせてあり、あとで送ります。");
     }
     this.emitSessions();
-    return { ok: true, queued: this.managed.pending(sessionId) > 0, ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}) };
+    return { ok: true, queued: this.managed.pending(session.sessionId) > 0, ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}) };
   }
 
   /**
@@ -1909,7 +1911,8 @@ export class Daemon {
 
   private async input(m: Extract<HubToDaemon, { type: "session.input" }>): Promise<CommandResult> {
     const { sessionId, text, model, effort, ultracode, files } = m;
-    if (!this.managed.has(sessionId)) {
+    const session = this.managed.get(sessionId);
+    if (!session) {
       return { ok: false, error: "このセッションには Gasho から入力できません。入力できるのは、Gasho が起動したセッションだけです。" };
     }
     const body = text.trim();
@@ -1923,7 +1926,8 @@ export class Daemon {
       const paths = await this.saveAttachments(sessionId, files);
       message = [body, paths.map((p) => `@${p}`).join("\n")].filter(Boolean).join("\n\n");
     }
-    this.managed.enqueue(sessionId, {
+    // From here on by session.sessionId: /clear can give the session a new id while the files are written (see followNewIds).
+    this.managed.enqueue(session.sessionId, {
       id: m.requestId,
       text: message,
       ...(model ? { model } : {}),
@@ -1934,14 +1938,14 @@ export class Daemon {
     let failed: string | undefined;
     try {
       // The queue may have held earlier inputs: what happened to those is not this request's to report.
-      const flushed = await this.flushInput(sessionId);
+      const flushed = await this.flushInput(session.sessionId);
       if (flushed?.id === m.requestId) outcome = flushed;
     } catch (e) {
       // The input is back on the queue and is sent later: saying that it failed would invite sending it again.
-      log(`could not send the input to ${sessionId} yet`, e);
+      log(`could not send the input to ${session.sessionId} yet`, e);
       failed = "Claude Code の画面を操作できませんでした。入力は待たせてあり、あとで送ります。";
     }
-    const queued = this.managed.pending(sessionId) > 0;
+    const queued = this.managed.pending(session.sessionId) > 0;
     this.emitSessions();
     const warning = [...(outcome?.warnings ?? []), failed].filter(Boolean).join(" ");
     const unapplied = [...new Set(outcome?.unapplied ?? [])];

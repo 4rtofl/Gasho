@@ -463,3 +463,35 @@ test("after /clear, a session started from Gasho goes on under its new id, with 
     await done();
   }
 });
+
+test("an input or a rename that waits while /clear gives the session a new id waits under the new id", async () => {
+  const { d, folder, done } = await setup();
+  try {
+    d.flushInput = async () => undefined;
+    d.hub = { connected: true, send: () => undefined };
+    d.managed.add({ sessionId: "s1", terminal: "t", pid: 1, cwd: folder, name: "x", launchedAt: 1 });
+    // /clear while the files sent with the input are written ...
+    const saveAttachments = d.saveAttachments.bind(d);
+    d.saveAttachments = async (id: string, files: unknown) => {
+      const paths = await saveAttachments(id, files);
+      d.managed.rekey("s1", "s2");
+      return paths;
+    };
+    const files = [{ name: "a.txt", data: Buffer.from("a").toString("base64") }];
+    assert.deepEqual(await d.input({ type: "session.input", requestId: "r1", sessionId: "s1", text: "見て", files }), { ok: true, queued: true });
+    // ... and while the new name is saved.
+    const save = d.managed.save.bind(d.managed);
+    d.managed.save = async () => {
+      await save();
+      d.managed.rekey("s2", "s3");
+    };
+    assert.deepEqual(await d.rename("s2", "y", "r2"), { ok: true, queued: true });
+    assert.deepEqual(
+      d.managed.waiting("s3").map((i: { text: string }) => i.text.split("\n")[0]),
+      ["見て", "/rename y"],
+    );
+    assert.equal(d.managed.pending("s1") + d.managed.pending("s2"), 0);
+  } finally {
+    await done();
+  }
+});

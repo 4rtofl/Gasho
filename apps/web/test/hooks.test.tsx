@@ -149,7 +149,7 @@ test("after /clear, a session's chat box, the messages sent from it not typed ye
   settlePending(key("a"), addPending(key("a"), { text: "打った", files: [], after: 5 }), "sent");
   // And one whose result never came.
   const unsent = renderHook(() => useUnsent(key("a")));
-  const lost = { id: "u1", text: "届いたか分からない", files: [], sent: { text: "届いたか分からない", files: [], after: 5 } };
+  const lost = { id: "u1", text: "届いたか分からない", files: [], sent: { text: "届いたか分からない", files: [], after: 5, at: 0 } };
   act(() => unsent.result.current[1]((list) => [...list, lost]));
   // The page of "a" is open, with its box being typed in.
   const before = chatBox("書きかけ");

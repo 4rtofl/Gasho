@@ -206,6 +206,54 @@ test("結果が分からない指示が 2 件あると、「閉じる」は古�
   await expect(c.notice).toHaveCount(0);
 });
 
+test("届いた「はい」の行を画面が受け取る前に送った「はい」は、結果が分からないと、その行が出ても「入力欄に戻す」が残る（#106）", async ({ page, hub }) => {
+  const d = await hub.fakeDaemon({ name: "mac", sessions: [fakeSession({ sessionId: SESSION, cwd: "/work/gasho", name: "e2e-session" })] });
+  let first = true;
+  d.handle("session.input", (m) => {
+    if (!first) return undefined;
+    first = false;
+    // Recorded, but the page is not told: its connection has stopped.
+    d.transcripts[SESSION] = [...(d.transcripts[SESSION] ?? []), textEntry("user", m.text)];
+    return commandResult(m);
+  });
+  const conn = await routeConnection(page);
+  await openSession(page, d);
+  const c = composer(page);
+
+  await send(page, "はい");
+  await d.waitFor("session.input");
+  await send(page, "はい");
+  await expect.poll(() => countOf(d, "session.input")).toBe(2);
+  const before = countOf(d, "transcript.get");
+  await conn.drop();
+  await expect.poll(() => countOf(d, "transcript.get")).toBeGreaterThan(before);
+  await page.waitForTimeout(500);
+  await c.putBack.click();
+  await expect(c.box).toHaveValue("はい");
+});
+
+test("同じ文の指示 2 件の結果が分からず、1 件目だけが会話に出ると、2 件目は「入力欄に戻す」で戻せる（#106）", async ({ page, hub }) => {
+  const d = await hub.fakeDaemon({ name: "mac", sessions: [fakeSession({ sessionId: SESSION, cwd: "/work/gasho", name: "e2e-session" })] });
+  d.handle("session.input", () => undefined);
+  const conn = await routeConnection(page);
+  await openSession(page, d);
+  const c = composer(page);
+
+  await send(page, "続けて");
+  await send(page, "続けて");
+  await expect.poll(() => countOf(d, "session.input")).toBe(2);
+  // The first one was typed into the session once Claude's work was over; the second never reached it.
+  d.transcripts[SESSION] = [...(d.transcripts[SESSION] ?? []), textEntry("user", "続けて")];
+  const before = countOf(d, "transcript.get");
+  await conn.drop();
+  await expect.poll(() => countOf(d, "transcript.get")).toBeGreaterThan(before);
+  await expect(c.putBack).toHaveText("入力欄に戻す");
+  await page.waitForTimeout(500);
+  await c.putBack.click();
+  await expect(c.box).toHaveValue("続けて");
+  await expect(c.notice).toHaveCount(0);
+});
+
 test("結果を待つあいだに別の会話へ移っても、戻ると「入力欄に戻す」で指示を戻せる（#106）", async ({ page, hub }) => {
   const d = await hub.fakeDaemon({
     name: "mac",

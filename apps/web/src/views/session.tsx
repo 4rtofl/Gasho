@@ -23,7 +23,7 @@ import {
   waitingLabel,
 } from "@/lib/format";
 import { promptDraft, useDraftBox, usePicks, useUnsent } from "@/lib/drafts";
-import { addPending, noneWaiting, pendingShown, recordedAsSent, removePending, sessionWorking, settlePending, usePending } from "@/lib/pending";
+import { addPending, noneWaiting, notRecordedYet, pendingShown, removePending, sessionWorking, settlePending, usePending } from "@/lib/pending";
 import { go, type SessionPanel } from "@/lib/route";
 import { closeSmallSessionHeader, useSessionHeaderShown } from "@/lib/session-header";
 import { daemonAtLeast, rememberOpened, shownStatus, worktreeId, worktreesByLastUse } from "@/lib/sessions";
@@ -369,10 +369,7 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
   // One the conversation shows as it was sent was typed into the session after all.
   useEffect(() => {
     if (!transcript) return;
-    setUnsent((list) => {
-      const left = list.filter((u) => !recordedAsSent(u.sent, transcript.entries, transcript.start));
-      return left.length < list.length ? left : list;
-    });
+    setUnsent((list) => notRecordedYet(list, transcript.entries, transcript.start));
   }, [transcript, setUnsent]);
   // Puts back the oldest one: each goes back as it was sent, to be sent again on its own.
   const putBack = () => {
@@ -480,6 +477,7 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
           const ultra = pickedUltracode !== undefined && pickedUltracode !== ultracode ? pickedUltracode : undefined;
           // Shown at the end of the conversation at once: Claude Code records the message only once it is typed into
           // the session, after switching the model (/model) and the like.
+          const sentAt = Date.now();
           const pending = addPending(key, { text, files: files.map((f) => f.name), after: entries });
           let r: SentResult;
           try {
@@ -505,7 +503,8 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
           if (r.unknown) {
             // Not put back in the box at once: it may have been typed into the session, and could be sent twice.
             removePending(key, pending);
-            setUnsent((list) => [...list, { id: pending, text, files, sent: { text, files: files.map((f) => f.name), after: entries } }]);
+            const sent = { text, files: files.map((f) => f.name), after: entries, at: sentAt };
+            setUnsent((list) => [...list, { id: pending, text, files, sent }]);
             return;
           }
           if (!r.ok) {

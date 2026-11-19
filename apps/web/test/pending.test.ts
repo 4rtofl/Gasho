@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { TranscriptEntry } from "@gasho/protocol";
 import { safeFileName } from "../../daemon/src/managed.ts";
-import { pendingShown, recorded, recordedAsSent, savedName, SENT_GRACE_MS, type PendingMessage } from "../src/lib/pending.ts";
+import { notRecordedYet, pendingShown, recorded, recordedAsSent, savedName, SENT_GRACE_MS, type PendingMessage, type SentAs } from "../src/lib/pending.ts";
 
 const message = (text: string, extra: Partial<PendingMessage> = {}): PendingMessage => ({
   id: "p1",
@@ -64,29 +64,49 @@ test("files sent alone, shell commands and slash commands are recognized as Clau
 
 test("a message whose result never came is found only as it was sent, not by another that starts alike", () => {
   const dir = "@/home/u/.local/share/gasho/attachments/s1";
-  const sent = (text: string, files: string[] = []) => ({ text, files, after: 0 });
+  const sent = (text: string, files: string[] = []): SentAs => ({ text, files, after: 0, at: 0 });
+  const found = (m: SentAs, entries: TranscriptEntry[]) => recordedAsSent([m], entries, 0)[0] !== -1;
   // Not reached: another message shows in the conversation.
   const url = sent("https://github.com/4rtofl/Gasho/pull/118 をレビューしてください。", ["notes.txt"]);
-  assert.equal(recordedAsSent(url, [entry("user", "https://github.com/4rtofl/Gasho/pull/119 をレビューしてください。")], 0), false);
+  assert.equal(found(url, [entry("user", "https://github.com/4rtofl/Gasho/pull/119 をレビューしてください。")]), false);
   const test1 = sent("テストして", ["notes.txt"]);
-  assert.equal(recordedAsSent(test1, [entry("user", "先にテストしてから直してください")], 0), false);
-  assert.equal(recordedAsSent(sent("テストして"), [entry("user", "先にテストしてから直してください")], 0), false);
+  assert.equal(found(test1, [entry("user", "先にテストしてから直してください")]), false);
+  assert.equal(found(sent("テストして"), [entry("user", "先にテストしてから直してください")]), false);
   const alone = sent("", ["a.png"]);
-  assert.equal(recordedAsSent(alone, [entry("user", `別の資料です\n\n${dir}/20261118T100000-1-b.png`)], 0), false);
-  assert.equal(recordedAsSent(alone, [entry("user", `${dir}/20261118T100000-1-b.png`)], 0), false);
-  assert.equal(recordedAsSent(test1, [entry("user", "テストして")], 0), false);
+  assert.equal(found(alone, [entry("user", `別の資料です\n\n${dir}/20261118T100000-1-b.png`)]), false);
+  assert.equal(found(alone, [entry("user", `${dir}/20261118T100000-1-b.png`)]), false);
+  assert.equal(found(test1, [entry("user", "テストして")]), false);
 
   // Reached: it shows as it was sent (spaces laid out otherwise, names as gasho-daemon saves them).
-  assert.equal(recordedAsSent(url, [entry("user", `${url.text}\n\n${dir}/20261118T100000-1-notes.txt`)], 0), true);
-  assert.equal(recordedAsSent(alone, [entry("user", `${dir}/20261118T100000-1-a.png`)], 0), true);
+  assert.equal(found(url, [entry("user", `${url.text}\n\n${dir}/20261118T100000-1-notes.txt`)]), true);
+  assert.equal(found(alone, [entry("user", `${dir}/20261118T100000-1-a.png`)]), true);
   const two = sent("見て", ["my notes.txt", "図.png"]);
   const both = `見 て\n\n${dir}/20261118T100000-1-my_notes.txt\n${dir}/20261118T100000-2-図.png`;
-  assert.equal(recordedAsSent(two, [entry("user", both)], 0), true);
-  assert.equal(recordedAsSent(sent("!git status"), [entry("user", "<bash-input>git status</bash-input>")], 0), true);
-  assert.equal(recordedAsSent(sent("/effort ultracode on"), [entry("system", "/effort ultracode on")], 0), true);
+  assert.equal(found(two, [entry("user", both)]), true);
+  assert.equal(found(sent("!git status"), [entry("user", "<bash-input>git status</bash-input>")]), true);
+  assert.equal(found(sent("/effort ultracode on"), [entry("system", "/effort ultracode on")]), true);
   // Sent before, or by a subagent: not this one.
-  assert.equal(recordedAsSent({ ...sent("テストして"), after: 1 }, [entry("user", "テストして")], 0), false);
-  assert.equal(recordedAsSent(sent("テストして"), [entry("user", "テストして", { isSidechain: true })], 0), false);
+  assert.equal(found({ ...sent("テストして"), after: 1 }, [entry("user", "テストして")]), false);
+  assert.equal(found(sent("テストして"), [entry("user", "テストして", { isSidechain: true })]), false);
+});
+
+test("one sent again with the same text is found neither by the entry of the one before nor by the entry found for an older one", () => {
+  const time = (s: number) => Date.UTC(2026, 10, 18, 10, 0, s);
+  const said = (text: string, s: number) => entry("user", text, { uuid: `${text}-${s}`, ts: new Date(time(s)).toISOString() });
+  // The first はい reached the session, and the page had not had its entry when the second one was sent.
+  const second = { id: "u2", sent: { text: "はい", files: [], after: 2, at: time(10) } };
+  const before = [entry("user", "直して"), entry("assistant", "直してよいですか"), said("はい", 5), entry("assistant", "次も直しますか")];
+  assert.equal(notRecordedYet([second], before, 0).length, 1);
+  assert.deepEqual(notRecordedYet([second], [...before, said("はい", 12)], 0), []);
+
+  // Two 続けて waited for their results, and only the first one shows.
+  const go = (id: string, s: number) => ({ id, sent: { text: "続けて", files: [], after: 1, at: time(s) } });
+  const one = [entry("user", "直して"), said("続けて", 30)];
+  const left = notRecordedYet([go("u1", 20), go("u2", 21)], one, 0);
+  assert.deepEqual(left.map((u) => [u.id, u.sent.after]), [["u2", 2]]);
+  // Read again, the entry found for the first one is still not the second one's.
+  assert.equal(notRecordedYet(left, one, 0), left);
+  assert.deepEqual(notRecordedYet(left, [...one, said("続けて", 40)], 0), []);
 });
 
 test("a file's name is matched as gasho-daemon saves it", () => {

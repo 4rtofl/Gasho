@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useSyncExternalStore, type RefObject } from "react";
 import type { EffortLevel, SessionModel } from "@gasho/protocol";
 import { createPromptDraft, type PromptDraftStore } from "@/components/ui/prompt-input";
+import type { SentAs } from "./pending";
 
 /** What is picked in the chat box, to switch (for this session only) when the next message is sent. */
 export interface Picks {
@@ -23,11 +24,8 @@ export interface Unsent {
   text: string;
   /** The files sent with it that have not been put back in the box. */
   files: File[];
-  /**
-   * Its text and the names of its files as sent, and how many entries the conversation had then: to find it in the
-   * conversation should it show there (see lib/pending's recordedAsSent).
-   */
-  sent: { text: string; files: string[]; after: number };
+  /** As it was sent: to find it in the conversation should it show there (see lib/pending's recordedAsSent). */
+  sent: SentAs;
 }
 
 interface Draft {

@@ -67,36 +67,74 @@ export function savedName(name: string): string {
   return cleaned.slice(-100) || "file";
 }
 
-/**
- * Whether the conversation shows a message as it was sent: an entry recorded after the ones it had then, with its
- * whole text (spaces aside) and nothing else, and the files sent with it, in order, by their names. Stricter than
- * `recorded`: a message kept only until the conversation shows it must not be taken for another that starts alike.
- */
-export function recordedAsSent(
-  m: { text: string; files: readonly string[]; after: number },
-  entries: readonly TranscriptEntry[],
-  start: number,
-): boolean {
+/** A message sent from here, as it was sent: how many entries the conversation had then, and when (this browser's clock). */
+export interface SentAs {
+  text: string;
+  files: readonly string[];
+  after: number;
+  at: number;
+}
+
+/** Whether an entry is the message as it was sent: its whole text (spaces aside) and nothing else, and its files. */
+function isAsSent(m: SentAs, e: TranscriptEntry): boolean {
+  if (e.isSidechain || (e.role !== "user" && e.role !== "system")) return false;
   const shell = isShellInput(m.text);
   const text = squeeze(shell ? m.text.slice(1) : m.text);
-  for (let i = Math.max(0, m.after - start); i < entries.length; i++) {
-    const e = entries[i];
-    if (!e || e.isSidechain || (e.role !== "user" && e.role !== "system")) continue;
-    const raw = e.blocks.map((b) => (b.type === "text" ? b.text : "")).join("");
-    if (e.role === "system") {
-      if (m.text.startsWith("/") && m.files.length === 0 && squeeze(raw) === text) return true;
-    } else if (shell) {
-      if (squeeze(shellCommand(raw) ?? "") === text) return true;
-    } else if (squeeze(raw.replace(ATTACHED_RE, "")) === text) {
-      const files = [...raw.matchAll(ATTACHED_RE)].map((f) => f[1]?.split("/").pop() ?? "");
-      const same = (file: string, k: number) => {
-        const name = `${k + 1}-${savedName(m.files[k] ?? "")}`;
-        return file === name || file.endsWith(`-${name}`);
-      };
-      if (files.length === m.files.length && files.every(same)) return true;
+  const raw = e.blocks.map((b) => (b.type === "text" ? b.text : "")).join("");
+  if (e.role === "system") return m.text.startsWith("/") && m.files.length === 0 && squeeze(raw) === text;
+  if (shell) return squeeze(shellCommand(raw) ?? "") === text;
+  if (squeeze(raw.replace(ATTACHED_RE, "")) !== text) return false;
+  // The files sent with it, in order, by their names.
+  const files = [...raw.matchAll(ATTACHED_RE)].map((f) => f[1]?.split("/").pop() ?? "");
+  const same = (file: string, k: number) => {
+    const name = `${k + 1}-${savedName(m.files[k] ?? "")}`;
+    return file === name || file.endsWith(`-${name}`);
+  };
+  return files.length === m.files.length && files.every(same);
+}
+
+/**
+ * Where the conversation shows each of the messages whose result never came (oldest first) as it was sent: the index
+ * of the entry in the whole conversation, or -1. Stricter than `recorded`, as the message is kept only until the
+ * conversation shows it: the entry is recorded after it was sent (after the entries the conversation had then, and not
+ * before its time), and after the entry found for an older one. The same short text ("はい", "続けて") is often sent
+ * again, and the page may not have had the entry of the one before when this one was sent. `start` is the index of
+ * entries[0] in the whole conversation.
+ */
+export function recordedAsSent(list: readonly SentAs[], entries: readonly TranscriptEntry[], start: number): number[] {
+  let from = 0;
+  return list.map((m) => {
+    for (let i = Math.max(0, m.after - start, from); i < entries.length; i++) {
+      const e = entries[i];
+      if (!e) continue;
+      // The working server's clock: should this browser's be ahead, a message that reached the session stays (閉じる
+      // removes it).
+      if (e.ts && Date.parse(e.ts) < m.at) continue;
+      if (isAsSent(m, e)) {
+        from = i + 1;
+        return start + i;
+      }
     }
-  }
-  return false;
+    return -1;
+  });
+}
+
+/**
+ * The messages whose result never came (oldest first) the conversation does not show yet (see recordedAsSent), `list`
+ * itself when it shows none of them. One sent after one it shows is looked for after that entry from then on: that
+ * entry is not taken for it once the one found is no longer in the list.
+ */
+export function notRecordedYet<T extends { sent: SentAs }>(list: T[], entries: readonly TranscriptEntry[], start: number): T[] {
+  const found = recordedAsSent(list.map((u) => u.sent), entries, start);
+  if (found.every((at) => at < 0)) return list;
+  let past = -1;
+  const left: T[] = [];
+  list.forEach((u, i) => {
+    const at = found[i] ?? -1;
+    if (at >= 0) past = Math.max(past, at);
+    else left.push(past < u.sent.after ? u : { ...u, sent: { ...u.sent, after: past + 1 } });
+  });
+  return left;
 }
 
 /**

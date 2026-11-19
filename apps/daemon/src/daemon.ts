@@ -6,6 +6,7 @@ import path from "node:path";
 import type {
   AgentInfo,
   AgentKind,
+  AgentOperation,
   BackgroundTask,
   BackgroundTaskKind,
   CommandResult,
@@ -14,6 +15,7 @@ import type {
   GitHubRepo,
   HubToDaemon,
   InputFeature,
+  MachineAgents,
   InputFile,
   MediaPart,
   ModelOption,
@@ -26,6 +28,7 @@ import type {
   SwitchField,
   TranscriptEntry,
 } from "@gasho/protocol";
+import { claudeRunner, detectClaude } from "./claude-status.ts";
 import { codexRunner, detectCodex, startCodexServer } from "./codex.ts";
 import { CodexSessions } from "./codex-sessions.ts";
 import type { DaemonConfig } from "./config.ts";
@@ -138,7 +141,7 @@ const GITHUB_CACHE_MS = 5 * 60_000;
 /** How long the worktree a folder is in, or the repositories inside it, and their branches are reused. */
 const REPOS_CACHE_MS = 60_000;
 const FOLDERS_REFRESH_MS = 5 * 60_000;
-/** How often Codex is looked for again: it may be installed, updated or logged in to at any time. */
+/** How often the agents are looked for again: one may be installed, updated or logged in to at any time. */
 const CODEX_REFRESH_MS = 5 * 60_000;
 /** How often the repository, branch and worktree of Codex's sessions are read again. */
 const CODEX_DETAILS_MS = 15_000;
@@ -178,6 +181,8 @@ const MODEL_NAMES: Record<SessionModel, string> = { default: "既定のモデル
 const EFFORT_NAMES: Record<EffortLevel, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "xHigh", max: "Max" };
 /** What this gasho-daemon can switch or carry with an input (MachineInfo.features). */
 const INPUT_FEATURES: readonly InputFeature[] = ["model", "effort", "ultracode", "files"];
+/** What a session of Claude Code can do (AgentInfo.operations); one of Codex only talks, for now. */
+const CLAUDE_OPERATIONS: readonly AgentOperation[] = [...INPUT_FEATURES, "fork", "background", "skills", "shell"];
 /** How long the prompt box may take to let go of a text after Enter (see typeInput). */
 const ENTER_WAIT_MS = 8000;
 /** When it did not, how long to wait before looking at the box again. */
@@ -303,6 +308,10 @@ export class Daemon {
   /** Permission requests held until they are answered (in Gasho, or elsewhere). */
   private permissions = new PermissionRequests(() => this.emitSessions());
   private canLaunch = false;
+  /** Claude Code on this working server, as last looked for. */
+  private claude: AgentInfo | undefined;
+  /** Counts the looks for Claude Code: a look that a later one overtook is not sent. */
+  private claudeRead = 0;
   /** Codex on this working server, as last looked for; undefined when it is not installed. */
   private codex: AgentInfo | undefined;
   /** Counts the looks for Codex: a look that a later one overtook is not sent. */
@@ -501,8 +510,12 @@ export class Daemon {
     await this.refreshRepos();
     setInterval(() => void this.refreshRepos(), REGISTERED_REFRESH_MS).unref();
     // Not waited for: the capabilities are sent again once it is known.
+    void this.refreshClaude();
     void this.refreshCodex();
-    setInterval(() => void this.refreshCodex(), CODEX_REFRESH_MS).unref();
+    setInterval(() => {
+      void this.refreshClaude();
+      void this.refreshCodex();
+    }, CODEX_REFRESH_MS).unref();
     await this.codexSessions.load();
     setInterval(() => void this.codexSessions.refreshDetails(), CODEX_DETAILS_MS).unref();
 
@@ -893,6 +906,7 @@ export class Daemon {
       const repos = (await this.reposOf(codex.cwd)) ?? [];
       return {
         sessionId,
+        agent: "codex",
         cwd: codex.cwd,
         ...(codex.name ? { name: codex.name } : {}),
         managed: true,
@@ -907,6 +921,7 @@ export class Daemon {
     const repos = (await this.reposOf(t.info.cwd)) ?? [];
     return {
       sessionId,
+      agent: "claude",
       cwd: t.info.cwd,
       ...(name ? { name } : {}),
       managed: Boolean(this.managed.get(sessionId)),
@@ -1023,6 +1038,24 @@ export class Daemon {
     return { github, repos, worktree, gitBranch: worktree?.branch };
   }
 
+  /** Looks at Claude Code, and tells the Gasho server when what it found changed. */
+  private async refreshClaude(): Promise<void> {
+    const read = ++this.claudeRead;
+    const claude = await detectClaude(claudeRunner(this.cfg.claudeBin));
+    if (read !== this.claudeRead || JSON.stringify(claude) === JSON.stringify(this.claude)) return;
+    this.claude = claude;
+    log(`Claude Code ${claude.version ?? "(version unknown)"}: ${claude.status}`);
+    this.emitCapabilities();
+  }
+
+  /** The agents found here, and what this gasho-daemon does with each. */
+  private agentsFound(): MachineAgents {
+    return {
+      ...(this.claude ? { claude: { ...this.claude, canLaunch: true, operations: [...CLAUDE_OPERATIONS] } } : {}),
+      ...(this.codex ? { codex: { ...this.codex, canLaunch: true, operations: [] } } : {}),
+    };
+  }
+
   /** Looks for Codex, and tells the Gasho server when what it found changed. */
   private async refreshCodex(): Promise<void> {
     const read = ++this.codexRead;
@@ -1047,7 +1080,7 @@ export class Daemon {
       canEnd: true,
       canRemoveWorktree: true,
       canListSkills: true,
-      agents: this.codex ? { codex: { ...this.codex, canLaunch: true } } : {},
+      agents: this.agentsFound(),
       update: this.updater.info(),
     });
   }

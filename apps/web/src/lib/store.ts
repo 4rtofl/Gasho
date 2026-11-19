@@ -1,6 +1,7 @@
 // Client state, kept in sync with gasho-hub over /ws/client.
 import { useEffect, useSyncExternalStore } from "react";
 import type {
+  AgentKind,
   ClientToHub,
   CommandResult,
   DeviceInfo,
@@ -433,6 +434,26 @@ export function updateServer(version: string, timeoutMs = 20_000): Promise<Comma
       resolve(r);
     });
     if (!sendToHub({ type: "hub.update", requestId: id, version })) {
+      clearTimeout(timer);
+      serverResults.delete(id);
+      resolve({ ok: false, error: "Gasho サーバーにつながっていません。" });
+    }
+  });
+}
+
+/** Changes the agent a new session starts with, for every browser. */
+export function setDefaultAgent(agent: AgentKind, timeoutMs = 20_000): Promise<CommandResult> {
+  return new Promise((resolve) => {
+    const id = requestId();
+    const timer = setTimeout(() => {
+      serverResults.delete(id);
+      resolve({ ok: false, error: "応答がありませんでした。" });
+    }, timeoutMs);
+    serverResults.set(id, (r) => {
+      clearTimeout(timer);
+      resolve(r);
+    });
+    if (!sendToHub({ type: "defaultAgent.set", requestId: id, agent })) {
       clearTimeout(timer);
       serverResults.delete(id);
       resolve({ ok: false, error: "Gasho サーバーにつながっていません。" });

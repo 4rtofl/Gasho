@@ -136,3 +136,22 @@ test("a working server without Codex, or offline, says nothing about it", async 
   render(<DaemonUpdates />);
   for (const name of ["Linux", "Older", "Offline"]) expect(within(row(name)).queryByText(/^Codex/)).toBeNull();
 });
+
+test("a working server's row says which Claude Code it has, above Codex, and how to log in", async () => {
+  await connectHub({
+    machines: [
+      linux({ agents: { claude: { status: "available", version: "2.1.327" }, codex: { status: "available", version: "0.170.0" } } }),
+      machine("out", [], { name: "Out", daemonVersion: "0.30.0", agents: { claude: { status: "loginRequired", version: "2.1.327" } } }),
+    ],
+    latest,
+    server,
+  });
+  render(<DaemonUpdates />);
+  const claude = within(row("Linux")).getByText("Claude Code 2.1.327");
+  const codex = within(row("Linux")).getByText("Codex 0.170.0");
+  expect(claude.parentElement?.textContent).toBe("Claude Code 2.1.327：使えます");
+  expect(claude.compareDocumentPosition(codex) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(within(row("Out")).getByText("Claude Code 2.1.327").parentElement?.textContent).toBe("Claude Code 2.1.327：ログインしていません");
+  expect(within(row("Out")).getByText("claude auth login")).toBeTruthy();
+  expect(within(row("Out")).queryByText(/^Codex/)).toBeNull();
+});

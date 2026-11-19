@@ -146,7 +146,9 @@ function RemoveDialog({ worktree, onClose }: { worktree: WorktreeSessions; onClo
             <div className="mt-2 space-y-1.5 text-sm text-muted-foreground">
               <p>
                 {sessions.length > 0
-                  ? `中の ${sessions.length} 件のセッションの Claude Code を終了し、worktree のフォルダーを削除します（git worktree remove）。`
+                  ? sessions.some((s) => s.agent === "codex")
+                    ? `中の ${sessions.length} 件のセッションを終了し、worktree のフォルダーを削除します（git worktree remove）。`
+                    : `中の ${sessions.length} 件のセッションの Claude Code を終了し、worktree のフォルダーを削除します（git worktree remove）。`
                   : "worktree のフォルダーを削除します（git worktree remove）。"}
                 {working && "作業中のセッションは、作業が途中で止まります。"}
               </p>

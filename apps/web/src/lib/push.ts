@@ -5,7 +5,7 @@ import type { MachineInfo, NotificationKind, PushInfo } from "@gasho/protocol";
 import { getAppState, sendToHub, subscribeAppState } from "./store";
 
 export const NOTIFICATION_KINDS: { kind: NotificationKind; label: string; note: string }[] = [
-  { kind: "done", label: "完了", note: "Claude が応答を終えたとき" },
+  { kind: "done", label: "完了", note: "エージェントが応答を終えたとき" },
   { kind: "permission", label: "確認待ち", note: "権限の確認、質問、計画の承認を待っているとき" },
   { kind: "idle", label: "入力待ち", note: "応答のあと、しばらく入力がないとき" },
   { kind: "error", label: "エラー", note: "エラーで止まったとき" },

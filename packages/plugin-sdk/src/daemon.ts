@@ -1,9 +1,9 @@
 // The plugin SDK for the daemon part of a Gasho plugin (daemon.js). gasho-daemon runs the daemon part in a process of
 // its own (plugin-host of gasho-daemon), imports it, and calls its methods for the web part (useRequest, useCall).
 // See docs/plugins.md of Gasho.
-import type { GitHubRepo } from "@gasho/protocol";
+import type { AgentKind, GitHubRepo } from "@gasho/protocol";
 
-export type { GitHubRepo } from "@gasho/protocol";
+export type { AgentKind, GitHubRepo } from "@gasho/protocol";
 
 /** A folder of the session a call is about: the session's own, or a repository gasho-daemon found inside it. */
 export interface SessionFolder {
@@ -16,6 +16,8 @@ export interface SessionFolder {
 /** The session a call is about (only one gasho-daemon tracks). */
 export interface DaemonSession {
   sessionId: string;
+  /** The agent that runs it. Plugin API 1.16; absent from an older gasho-daemon, whose sessions are Claude Code's. */
+  agent?: AgentKind;
   /** The session's folder (an absolute path). */
   cwd: string;
   name?: string;

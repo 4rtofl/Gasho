@@ -502,8 +502,9 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
           }
           if (r.unknown) {
             // Not put back in the box at once: it may have been typed into the session, and could be sent twice.
-            removePending(key, pending);
-            const sent = { text, files: files.map((f) => f.name), after: entries, at: sentAt };
+            // After /clear, it is looked for in the new conversation, from its first entry (see movePending).
+            const after = removePending(key, pending)?.after ?? entries;
+            const sent = { text, files: files.map((f) => f.name), after, at: sentAt };
             setUnsent((list) => [...list, { id: pending, text, files, sent }]);
             return;
           }

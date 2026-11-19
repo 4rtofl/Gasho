@@ -186,11 +186,15 @@ export function addPending(key: string, message: { text: string; files: string[]
   return id;
 }
 
-export function removePending(key: string, id: string): void {
+/** Returns the message removed: after /clear, its `after` is of the new conversation (see movePending). */
+export function removePending(key: string, id: string): PendingMessage | undefined {
   clearTimeout(timers.get(id));
   timers.delete(id);
   const at = holder(key, id);
-  if (at) set(at, (lists.get(at) ?? []).filter((p) => p.id !== id));
+  if (!at) return undefined;
+  const list = lists.get(at) ?? [];
+  set(at, list.filter((p) => p.id !== id));
+  return list.find((p) => p.id === id);
 }
 
 /**

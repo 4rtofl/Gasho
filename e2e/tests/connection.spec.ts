@@ -254,6 +254,32 @@ test("同じ文の指示 2 件の結果が分からず、1 件目だけが会話
   await expect(c.notice).toHaveCount(0);
 });
 
+test("結果を待つあいだに /clear で ID が変わり、結果が分からなくなった指示は、新しい会話に出ると「入力欄に戻す」が消える（#106）", async ({ page, hub }) => {
+  const start = Array.from({ length: 5 }, (_, i) => textEntry(i % 2 ? "assistant" : "user", `前の会話 ${i + 1}`));
+  const d = await hub.fakeDaemon({
+    name: "mac",
+    sessions: [fakeSession({ sessionId: SESSION, cwd: "/work/gasho", name: "e2e-session" })],
+    transcripts: { [SESSION]: start },
+  });
+  d.handle("session.input", () => undefined);
+  const conn = await routeConnection(page);
+  await openSession(page, d);
+  const c = composer(page);
+
+  await send(page, "README を読んで");
+  await d.waitFor("session.input");
+  d.transcripts[OTHER] = [];
+  d.setSessions([fakeSession({ sessionId: OTHER, cwd: "/work/gasho", name: "e2e-session", previousSessionIds: [SESSION] })]);
+  await expect(page).toHaveURL(new RegExp(OTHER));
+  // Typed into the new conversation, while the connection was closed.
+  d.transcripts[OTHER] = [textEntry("user", "README を読んで")];
+  const before = countOf(d, "transcript.get");
+  await conn.drop();
+  await expect.poll(() => countOf(d, "transcript.get")).toBeGreaterThan(before);
+  await expect(page.getByText("README を読んで", { exact: true })).toBeVisible();
+  await expect(c.notice).toHaveCount(0);
+});
+
 test("結果を待つあいだに別の会話へ移っても、戻ると「入力欄に戻す」で指示を戻せる（#106）", async ({ page, hub }) => {
   const d = await hub.fakeDaemon({
     name: "mac",

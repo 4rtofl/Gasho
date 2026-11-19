@@ -149,7 +149,8 @@ export function bannerModel(screen: string): string | undefined {
   if (at < 0) return undefined;
   // The logo is drawn with block elements (U+2580–U+259F).
   const rest = (lines[at + 1] ?? "").replace(/^[\s\u2580-\u259f]+/, "");
-  const name = /^(.+?)\s+·\s/.exec(rest)?.[1]?.trim();
+  // Started with --effort, Claude Code adds the effort level: "Haiku 5.5 with low effort".
+  const name = /^(.+?)\s+·\s/.exec(rest)?.[1]?.replace(/\s+with\s+\S+\s+effort$/i, "").trim();
   return name && name.length <= 40 && /\d/.test(name) ? name : undefined;
 }
 

@@ -987,6 +987,92 @@ test("a restart while a session is being ended: one that goes on running is not 
   }
 });
 
+test("a restart while a session is being ended, with its terminal slow to answer: it goes on, and nothing starts a second", async () => {
+  const { d, make, term, started, procs, shown, done } = await setup();
+  try {
+    d.managed.get(SID).hibernated = { at: Date.now() };
+    d.managed.enqueue(SID, { id: "r1", text: "遅い端末への発言" });
+    await d.managed.save();
+    term.live.clear();
+
+    const again = make();
+    again.endWaitMs = 300;
+    await again.loadManaged();
+    again.wakeInterrupted();
+    assert.equal(again.managed.get(SID).hibernated, undefined);
+    await again.refresh();
+    await until(() => term.entered.includes("遅い端末への発言"), "the input was typed");
+    assert.equal(started.length, 0);
+    assert.equal(procs[0]!.signalCode, null);
+    assert.equal(shown(again).hibernation, undefined);
+  } finally {
+    await done();
+  }
+});
+
+test("a restart while a session is being ended, with its terminal slow to answer: one that ends in time stays hibernated", async () => {
+  const { d, make, term, killed, started, procs, done } = await setup();
+  try {
+    d.managed.get(SID).hibernated = { at: Date.now() };
+    await d.managed.save();
+    term.live.clear();
+
+    const again = make();
+    again.endWaitMs = 5000;
+    setTimeout(() => procs[0]!.kill("SIGTERM"), 100);
+    await again.loadManaged();
+    assert.ok(again.managed.get(SID).hibernated);
+    assert.deepEqual(killed, ["t1"]);
+    assert.equal(started.length, 0);
+  } finally {
+    await done();
+  }
+});
+
+test("a Claude Code not listed at the restart is still found before a second is started", async () => {
+  const { d, make, term, agents, row, started, procs, done } = await setup();
+  try {
+    d.managed.get(SID).hibernated = { at: Date.now() };
+    await d.managed.save();
+    term.live.clear();
+    agents([]);
+
+    const again = make();
+    again.endWaitMs = 300;
+    await again.loadManaged();
+    assert.ok(again.managed.get(SID).hibernated);
+
+    agents([row(procs[0]!.pid!)]);
+    await again.input({ type: "session.input", requestId: "r1", sessionId: SID, text: "あとから届いた発言" });
+    await again.waking.get(SID);
+    await until(() => term.entered.includes("あとから届いた発言"), "the input was typed");
+    assert.equal(again.managed.get(SID).hibernated, undefined);
+    assert.equal(started.length, 0);
+    assert.equal(procs[0]!.signalCode, null);
+  } finally {
+    await done();
+  }
+});
+
+test("a PID that another conversation's Claude Code has taken does not keep a session from sleeping or coming back", async () => {
+  const { d, make, term, agents, row, started, procs, done } = await setup();
+  try {
+    d.managed.get(SID).hibernated = { at: Date.now() };
+    await d.managed.save();
+    term.live.clear();
+    agents([{ ...row(procs[0]!.pid!), sessionId: NEXT }]);
+
+    const again = make();
+    await again.loadManaged();
+    assert.ok(again.managed.get(SID).hibernated);
+    await again.wake(SID);
+    assert.equal(started.length, 1);
+    assert.equal(procs[0]!.signalCode, null);
+  } finally {
+    await done();
+  }
+});
+
 test("a restart while a session is being ended: one that has ended stays hibernated, and its terminal is closed", async () => {
   const { d, make, term, killed, agents, started, procs, done } = await setup();
   try {

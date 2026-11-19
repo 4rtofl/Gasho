@@ -479,13 +479,13 @@ export class Daemon {
     const live = await this.terminals.builtIn.live();
     let inZellij: Set<string> | undefined;
     let listing: Promise<AgentRow[] | undefined> | undefined;
+    const listed = () => (listing ??= listAgents(this.cfg.claudeBin).catch(() => undefined));
     await this.managed.load(async (m) => {
       // Nothing of it runs: it stays until it is used.
       if (m.hibernated) return true;
       if (m.wokenFrom && !(isAlive(m.pid) && live.get(m.terminal)?.pid === m.pid)) {
         // A terminal slow to answer is missing from `live`: its Claude Code still runs, and must not get a second one.
-        listing ??= listAgents(this.cfg.claudeBin).catch(() => undefined);
-        const rows = await listing;
+        const rows = await listed();
         if (isAlive(m.pid) && (rows === undefined || rows.some((r) => r.pid === m.pid))) return true;
         // It ended before the inputs kept for it were typed: they wait for it to come back once more.
         m.hibernated = m.wokenFrom;
@@ -499,7 +499,7 @@ export class Daemon {
       this.terminals.useZellij(m.terminal);
       return true;
     });
-    for (const m of this.managed.all()) if (m.hibernated) await this.settleHibernated(m, m.hibernated, live);
+    for (const m of this.managed.all()) if (m.hibernated) await this.settleHibernated(m, m.hibernated, live, listed);
     await this.managed.save();
     const old = this.managed.all().filter((m) => m.zellij).length;
     if (old > 0) log(`${old} session(s) started by gasho-daemon 0.10 or before still run in zellij; they are used through zellij until they end`);
@@ -2311,9 +2311,15 @@ export class Daemon {
    * After a restart of gasho-daemon: a session saved as hibernated may still have a Claude Code running, as the restart
    * can come while it is being ended or brought back. Two must never have the conversation open. A terminal that was
    * bringing it back is taken over (wakeInterrupted). One that was being ended gets the time an end takes: if it goes on
-   * running, it was never stopped, and the session simply is not hibernated.
+   * running, it was never stopped, and the session simply is not hibernated. A terminal slow to answer is missing from
+   * `live`, so `claude agents` is asked too.
    */
-  private async settleHibernated(m: ManagedSession, h: Hibernated, live: Map<string, HostHello>): Promise<void> {
+  private async settleHibernated(
+    m: ManagedSession,
+    h: Hibernated,
+    live: Map<string, HostHello>,
+    listed: () => Promise<AgentRow[] | undefined>,
+  ): Promise<void> {
     if (h.resumingIn) {
       const host = live.get(h.resumingIn);
       if (host && !host.exited && isAlive(host.pid)) {
@@ -2326,14 +2332,27 @@ export class Daemon {
       delete h.resumingIn;
     }
     const host = live.get(m.terminal);
-    if (host?.pid !== m.pid) return;
-    for (let waited = 0; waited < this.endWaitMs && !host.exited && isAlive(m.pid); waited += 250) await sleep(250);
-    if (host.exited || !isAlive(m.pid)) {
+    if (host?.pid !== m.pid && !this.stillRuns(m, (await listed()) ?? [])) return;
+    if (await this.endsInTime(m, host)) {
       await this.terminals.kill(m.terminal);
       return;
     }
     log(`${m.name} (${m.sessionId}) still runs in ${m.terminal}; it is not hibernated`);
     this.stayAwake(m, h);
+  }
+
+  /**
+   * Whether the Claude Code a hibernated session last ran in still has its conversation open. Its PID alone does not
+   * tell: after a long sleep another process, even another Claude Code, may have been given that number.
+   */
+  private stillRuns(m: ManagedSession, rows: AgentRow[]): boolean {
+    return isAlive(m.pid) && rows.some((r) => r.pid === m.pid && r.sessionId === m.sessionId);
+  }
+
+  /** Gives a Claude Code that was being ended the time an end takes, and tells whether it has ended. */
+  private async endsInTime(m: ManagedSession, host?: HostHello): Promise<boolean> {
+    for (let waited = 0; waited < this.endWaitMs && !host?.exited && isAlive(m.pid); waited += 250) await sleep(250);
+    return host?.exited !== undefined || !isAlive(m.pid);
   }
 
   /** The session turns out not to be hibernated: its Claude Code runs on, and a new name given meanwhile is sent to it. */
@@ -2561,6 +2580,15 @@ export class Daemon {
       log(`going on with bringing ${m.name} (${sessionId}) back in ${running.terminal}`);
       started = await this.claudeListed(running.terminal, running.pid, m.cwd, m.name, start);
     } else {
+      // A restart cut its end short, and it was not listed then: it goes on, and takes what waits for it.
+      if (this.stillRuns(m, await listAgents(this.cfg.claudeBin)) && !(await this.endsInTime(m))) {
+        log(`${m.name} (${sessionId}) still runs in ${m.terminal}; it is not hibernated`);
+        this.stayAwake(m, h);
+        await this.managed.save();
+        await this.refresh();
+        this.flushWaitingInputs();
+        return { ok: true, sessionId };
+      }
       if (!this.canLaunch) return this.wakeFailed(sessionId, NO_TERMINAL);
       const stat = await fsp.stat(m.cwd).catch(() => undefined);
       if (!stat?.isDirectory()) return this.wakeFailed(sessionId, `会話のフォルダーがありません：${m.cwd}`);

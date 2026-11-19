@@ -321,9 +321,11 @@ const MAX_FILES_BYTES = 10 * 1024 * 1024;
  * The connection closed before a message's result came. A message that comes while Claude works waits on the working
  * server until it is done; this page may not know yet that the session works (it sends nothing while it knows).
  */
-const UNKNOWN_SENT =
-  "Gasho サーバーとの接続が切れたので、送れたか分かりません。Claude の作業中に届いた指示は、作業が終わってから会話に出ます。" +
-  "出なければ、入力欄に戻して、もう一度送ってください。";
+const UNKNOWN_SENT_HEAD =
+  "Gasho サーバーとの接続が切れたので、送れたか分かりません。Claude の作業中に届いた指示は、作業が終わってから会話に出ます。";
+const UNKNOWN_SENT = `${UNKNOWN_SENT_HEAD}出なければ、入力欄に戻して、もう一度送ってください。`;
+/** When the page read again less of the conversation than came after the message was sent: it may show in the rest. */
+const UNKNOWN_SENT_UNREAD = `${UNKNOWN_SENT_HEAD}切れているあいだに進んだ会話は、上に遡ると読み込みます。そこにも出ていなければ、入力欄に戻して、もう一度送ってください。`;
 
 /**
  * Which of the picker's models the session uses, from Claude Code's name for it: "Sonnet 5.5 (default)" (its name
@@ -582,7 +584,7 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
       )}
       {unsent.length > 0 && (
         <p className="mt-1.5 px-3 text-xs text-amber-400">
-          {UNKNOWN_SENT}
+          {transcript && (unsent[0]?.sent.after ?? 0) < transcript.start ? UNKNOWN_SENT_UNREAD : UNKNOWN_SENT}
           <button
             type="button"
             onClick={putBack}

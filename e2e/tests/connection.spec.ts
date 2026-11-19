@@ -254,6 +254,23 @@ test("同じ文の指示 2 件の結果が分からず、1 件目だけが会話
   await expect(c.notice).toHaveCount(0);
 });
 
+test("切れているあいだに、つなぎ直して読む分より会話が進むと、上に遡って確かめるよう知らせる（#106）", async ({ page, hub }) => {
+  const d = await hub.fakeDaemon({ name: "mac", sessions: [fakeSession({ sessionId: SESSION, cwd: "/work/gasho", name: "e2e-session" })] });
+  d.handle("session.input", () => undefined);
+  const conn = await routeConnection(page);
+  await openSession(page, d);
+  const c = composer(page);
+
+  await send(page, "README を読んで");
+  await d.waitFor("session.input");
+  // Typed into the session, and Claude went on far, while the connection was closed.
+  const more = Array.from({ length: 120 }, (_, i) => textEntry("assistant", `読んだところ ${i + 1}`));
+  d.transcripts[SESSION] = [...(d.transcripts[SESSION] ?? []), textEntry("user", "README を読んで"), ...more];
+  await conn.drop();
+  await expect(page.getByText("読んだところ 120", { exact: true })).toBeVisible();
+  await expect(c.notice).toContainText("上に遡ると読み込みます");
+});
+
 test("結果を待つあいだに /clear で ID が変わり、結果が分からなくなった指示は、新しい会話に出ると「入力欄に戻す」が消える（#106）", async ({ page, hub }) => {
   const start = Array.from({ length: 5 }, (_, i) => textEntry(i % 2 ? "assistant" : "user", `前の会話 ${i + 1}`));
   const d = await hub.fakeDaemon({

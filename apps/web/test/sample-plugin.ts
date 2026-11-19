@@ -12,6 +12,7 @@ function Notes() {
   const [shown] = sdk.useSetting<boolean>("shown");
   const [count, setCount] = sdk.useSharedState("count", 0);
   const send = sdk.useSendInput();
+  const call = sdk.useCall();
   const removeSession = sdk.useRemoveSession();
   const launch = sdk.useLaunchSession();
   const [said, setSaid] = React.useState("");
@@ -27,10 +28,21 @@ function Notes() {
         type: "button",
         onClick: async () => {
           const r = await send({ machine: ctx!.machine.id, sessionId: ctx!.session.sessionId, text: "続けて" });
-          setSaid(r.ok ? "送りました" : r.error);
+          setSaid(r.ok ? "送りました" : r.unknown ? `分からない：${r.error}` : r.error);
         },
       },
       "続けてと送る",
+    ),
+    h(
+      "button",
+      {
+        type: "button",
+        onClick: async () => {
+          const r = await call({ machine: ctx!.machine.id, method: "save" });
+          setSaid(r.ok ? "書きました" : r.unknown ? `分からない：${r.error}` : r.error);
+        },
+      },
+      "書く",
     ),
     h(
       "button",

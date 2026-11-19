@@ -119,6 +119,27 @@ test("a plugin sends to a session only with the permission for it, and says it i
   expect(hub.sent).toHaveLength(sent);
 });
 
+test("a plugin hears that what it sent may have been typed when the connection closed before the result (API 1.17)", async () => {
+  const user = userEvent.setup();
+  const hub = await connectHub({ machines: [m1], plugins: [info()] });
+  render(<PluginPanelView machine="m1" sessionId="s1" panel={{ kind: "plugin", plugin: "notes", id: "notes", params: {} }} docked onClose={() => {}} />);
+  await user.click(await screen.findByRole("button", { name: "続けてと送る" }));
+  hub.drop();
+  expect(await screen.findByText("分からない：Gasho サーバーとの接続が切れたので、結果が分かりません。")).toBeTruthy();
+});
+
+test("a plugin hears that a method it called may have run when the connection closed before the result (API 1.17)", async () => {
+  const user = userEvent.setup();
+  const hub = await connectHub({ machines: [m1], plugins: [info()] });
+  render(<PluginPanelView machine="m1" sessionId="s1" panel={{ kind: "plugin", plugin: "notes", id: "notes", params: {} }} docked onClose={() => {}} />);
+  await user.click(await screen.findByRole("button", { name: "書く" }));
+  expect(hub.sent.at(-1)).toMatchObject({ type: "plugin.request", plugin: "notes", machine: "m1", method: "save" });
+  hub.drop();
+  // The call ends once connected again: the Gasho server forgot it with the connection.
+  await hub.reopen();
+  expect(await screen.findByText("分からない：Gasho サーバーとの接続が切れたので、結果が分かりません。")).toBeTruthy();
+});
+
 test("a plugin switches the session's effort level with what it sends, and hears what was not switched (API 1.12)", async () => {
   const user = userEvent.setup();
   const hub = await connectHub({ machines: [m1], plugins: [info()] });

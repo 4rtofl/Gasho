@@ -376,7 +376,8 @@ export const sdk: GashoSdk = {
     const plugin = useContext(PluginScopeContext) ?? "";
     return async <T,>(target: RequestTarget & { summary?: string }): Promise<CallResult<T>> => {
       const r = await callPlugin(plugin, target);
-      return r.error !== undefined ? { ok: false, error: r.error } : { ok: true, data: r.result as T };
+      if (r.error === undefined) return { ok: true, data: r.result as T };
+      return { ok: false, error: r.error, ...(r.unknown ? { unknown: true } : {}) };
     };
   },
   useSetting,
@@ -406,7 +407,7 @@ export const sdk: GashoSdk = {
       );
       if (!r.ok) {
         removePending(key, pending);
-        return { ok: false, error: r.error ?? "送れませんでした。" };
+        return { ok: false, error: r.error ?? "送れませんでした。", ...(r.unknown ? { unknown: true } : {}) };
       }
       settlePending(key, pending, r.queued ? "queued" : "sent");
       return {

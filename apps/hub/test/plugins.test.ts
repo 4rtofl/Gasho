@@ -69,8 +69,8 @@ test("checkManifest takes a good manifest and says what is wrong with a bad one"
   assert.match(bad({ id: "Hello" }), /id/);
   assert.match(bad({}, "other"), /フォルダーの名前/);
   assert.match(bad({ api: "2.0" }), /API 2\.0/);
-  assert.match(bad({ api: "1.18" }), /API 1\.18/);
-  assert.match(bad({ api: "1.17" }), /この Gasho は 1\.16 までです/);
+  assert.match(bad({ api: "1.19" }), /API 1\.19/);
+  assert.match(bad({ api: "1.18" }), /この Gasho は 1\.17 までです/);
   assert.match(bad({ version: "1" }), /version/);
   assert.match(bad({ genre: "Dev Tools" }), /genre/);
   assert.match(bad({ genre: ["devtools"] }), /genre/);

@@ -15,7 +15,7 @@ type PluginRequest = Extract<ClientToHub, { type: "plugin.request" }>;
 
 interface Waiting {
   msg: PluginRequest;
-  resolve: (r: { result?: unknown; error?: string }) => void;
+  resolve: (r: { result?: unknown; error?: string; unknown?: true }) => void;
   timer: ReturnType<typeof setTimeout>;
   /** A read, asked again on a new connection; a write is not (it may have run). */
   again: boolean;
@@ -53,12 +53,16 @@ onConnected(() => {
     }
     waiting.delete(id);
     clearTimeout(w.timer);
-    w.resolve({ error: "Gasho サーバーとの接続が切れたので、結果が分かりません。" });
+    w.resolve({ error: "Gasho サーバーとの接続が切れたので、結果が分かりません。", unknown: true });
   }
 });
 
 /** Calls a method of a plugin's daemon part once. `again`: a read, which waits for the connection and is asked again. */
-export function callPlugin(plugin: string, t: RequestTarget & { summary?: string }, again = false): Promise<{ result?: unknown; error?: string }> {
+export function callPlugin(
+  plugin: string,
+  t: RequestTarget & { summary?: string },
+  again = false,
+): Promise<{ result?: unknown; error?: string; unknown?: true }> {
   return new Promise((resolve) => {
     const requestId = `p${Date.now().toString(36)}-${(seq++).toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     const msg: PluginRequest = {

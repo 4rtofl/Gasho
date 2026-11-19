@@ -6,28 +6,36 @@
 // the conversations open in the worktree outside Gasho, if any (see outside-sessions).
 import { LoaderCircle, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import type { AgentKind } from "@gasho/protocol";
+import { AgentMark } from "@/components/agent-mark";
+import { LaunchMenu } from "@/components/launch-menu";
 import { OutsideSessions } from "@/components/outside-sessions";
 import { SessionHistory } from "@/components/session-history";
 import { SessionContextMenu, type SessionActionRequest } from "@/components/session-menu";
 import { StatusDot } from "@/components/status-badge";
+import { launchAgentFor, launchTitle, sessionAgent, showsAgents } from "@/lib/agents";
 import { sessionLabel } from "@/lib/format";
 import { go, type WorktreeView } from "@/lib/route";
+import { useSessionLauncher } from "@/lib/session-launch";
 import { hidesSessionTabs } from "@/lib/session-list";
 import { sessionDot, unreadSessions, type WorktreeSessions } from "@/lib/sessions";
-import { sendCommand, useAppState } from "@/lib/store";
+import { useAppState } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { PluginWorktreeTabs } from "@/plugins/parts";
 import { useSessionListMode } from "@/plugins/session-list";
-
-/** How long to wait for a new session, a little longer than the Gasho server does. */
-export const LAUNCH_WAIT_MS = 60_000;
+import type { LaunchInitial } from "@/views/launch";
 
 /**
  * Starting a session in a worktree's top folder and opening it: whether it can be, whether it is under way, and why it
- * could not. The new session opens only while the caller is still shown: one picked meanwhile is not left for it.
+ * could not. The new session opens only while the caller is still shown: one picked meanwhile is not left for it. When
+ * Claude Code asks whether to trust the folder (a repository just cloned, say), `onAskTrust` puts that question to the
+ * person, in the app's dialog: the first session of a worktree replaces the screen that asked, and what the launch has
+ * to tell must still show then. Only "信頼して起動する" there starts the session.
  */
-export function useWorktreeLaunch(worktree: WorktreeSessions) {
+export function useWorktreeLaunch(worktree: WorktreeSessions, onAskTrust: (initial: LaunchInitial) => void) {
   const { machine } = worktree;
+  const defaultAgent = useAppState().server?.defaultAgent;
+  const launchSession = useSessionLauncher();
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string>();
   const shown = useRef(true);
@@ -38,33 +46,41 @@ export function useWorktreeLaunch(worktree: WorktreeSessions) {
     };
   }, []);
   const canLaunch = machine.connected && machine.canLaunch === true;
-  const launch = async () => {
+  /** `agent`: the one picked from the menu of the "＋"; else the default one. */
+  const launch = async (agent: AgentKind = launchAgentFor(machine, defaultAgent)) => {
     if (!canLaunch || launching) return;
     setLaunching(true);
     setError(undefined);
-    const r = await sendCommand(machine.id, { type: "session.launch", cwd: worktree.path }, LAUNCH_WAIT_MS);
+    const r = await launchSession(machine.id, { cwd: worktree.path, agent });
     if (!shown.current) return;
     setLaunching(false);
+    if (r.cancelled) return;
     if (!r.ok || !r.sessionId) {
-      setError(r.error ?? "起動できませんでした。");
+      if (r.needsTrust) onAskTrust({ machine: machine.id, folder: worktree.path, trust: r.trustWarnings ?? [], agent });
+      else setError(r.error ?? "起動できませんでした。");
       return;
     }
     go({ name: "session", machine: machine.id, sessionId: r.sessionId });
   };
-  return { canLaunch, launching, error, launch };
+  return { canLaunch, launching, error, launch, defaultAgent };
 }
 
-/** `current`: the session open below, if any. `view`: the plugin's screen open below instead, if any. */
+/**
+ * `current`: the session open below, if any. `view`: the plugin's screen open below instead, if any. `onAskTrust`: see
+ * useWorktreeLaunch.
+ */
 export function SessionTabs({
   worktree,
   current,
   view,
   onAction,
+  onAskTrust,
 }: {
   worktree: WorktreeSessions;
   current?: string;
   view?: WorktreeView;
   onAction: (request: SessionActionRequest) => void;
+  onAskTrust: (initial: LaunchInitial) => void;
 }) {
   const { machine, sessions } = worktree;
   const active = useRef<HTMLButtonElement>(null);
@@ -72,9 +88,11 @@ export function SessionTabs({
   useEffect(() => {
     active.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, []);
-  const { canLaunch, launching, error, launch } = useWorktreeLaunch(worktree);
+  const { canLaunch, launching, error, launch, defaultAgent } = useWorktreeLaunch(worktree, onAskTrust);
   const hidden = hidesSessionTabs(useSessionListMode());
-  const unread = unreadSessions(useAppState().notifications);
+  const { notifications, machines } = useAppState();
+  const unread = unreadSessions(notifications);
+  const marks = showsAgents(machines);
 
   return (
     <>
@@ -104,6 +122,7 @@ export function SessionTabs({
                   )}
                 >
                   <StatusDot {...sessionDot(machine, s, unread)} />
+                  {marks && <AgentMark agent={sessionAgent(s)} />}
                   <span className="truncate">{sessionLabel(s)}</span>
                   {/* Work Claude started that runs on in the background (listed above the chat box, where it can be stopped). */}
                   {machine.connected && s.background?.length ? (
@@ -120,16 +139,18 @@ export function SessionTabs({
             );
           })}
         {!hidden && (
-          <button
-            type="button"
-            onClick={() => void launch()}
-            disabled={!canLaunch || launching}
-            aria-label="この worktree で新しいセッションを起動"
-            title={canLaunch ? "この worktree で新しいセッションを起動" : "接続していて、セッションの端末を作れる working server でだけ起動できます"}
-            className="grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-          >
-            {launching ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
-          </button>
+          <LaunchMenu machine={machine} onPick={(agent) => void launch(agent)}>
+            <button
+              type="button"
+              onClick={() => void launch()}
+              disabled={!canLaunch || launching}
+              aria-label="この worktree で新しいセッションを起動"
+              title={canLaunch ? launchTitle(machine, defaultAgent, "この worktree で新しいセッションを起動") : "接続していて、セッションの端末を作れる working server でだけ起動できます"}
+              className="grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            >
+              {launching ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
+            </button>
+          </LaunchMenu>
         )}
         <PluginWorktreeTabs worktree={worktree} open={view} />
         {error && (

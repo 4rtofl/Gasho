@@ -13,7 +13,7 @@ import { sessionLabel } from "@/lib/format";
 import { showNotice } from "@/lib/notice";
 import { forgetWorktree } from "@/lib/remembered-worktrees";
 import { go, parseHash } from "@/lib/route";
-import type { WorktreeSessions } from "@/lib/sessions";
+import { shownStatus, type WorktreeSessions } from "@/lib/sessions";
 import { getAppState, sendCommand } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { removeWorktreeProblem, sessionsInWorktree, showsWorktree } from "@/lib/worktree-remove";
@@ -115,7 +115,7 @@ function RemoveDialog({ worktree, onClose }: { worktree: WorktreeSessions; onClo
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [changes, setChanges] = useState<WorktreeChanges>();
-  const working = sessions.some((s) => s.status === "busy" || s.status === "waiting");
+  const working = sessions.some((s) => shownStatus(s) === "busy" || s.status === "waiting");
 
   const remove = async () => {
     setBusy(true);
@@ -146,7 +146,9 @@ function RemoveDialog({ worktree, onClose }: { worktree: WorktreeSessions; onClo
             <div className="mt-2 space-y-1.5 text-sm text-muted-foreground">
               <p>
                 {sessions.length > 0
-                  ? `中の ${sessions.length} 件のセッションの Claude Code を終了し、worktree のフォルダーを削除します（git worktree remove）。`
+                  ? sessions.some((s) => s.agent === "codex")
+                    ? `中の ${sessions.length} 件のセッションを終了し、worktree のフォルダーを削除します（git worktree remove）。`
+                    : `中の ${sessions.length} 件のセッションの Claude Code を終了し、worktree のフォルダーを削除します（git worktree remove）。`
                   : "worktree のフォルダーを削除します（git worktree remove）。"}
                 {working && "作業中のセッションは、作業が途中で止まります。"}
               </p>
@@ -167,7 +169,7 @@ function RemoveDialog({ worktree, onClose }: { worktree: WorktreeSessions; onClo
             <ul aria-label="一緒に終了するセッション" className="mt-3 max-h-48 space-y-0.5 overflow-y-auto rounded-lg border border-border p-1 text-sm">
               {sessions.map((s) => (
                 <li key={s.sessionId} className="flex items-center gap-2 px-2 py-1.5">
-                  <StatusDot status={s.status} />
+                  <StatusDot status={shownStatus(s)} />
                   <span className="min-w-0 flex-1 truncate" title={sessionLabel(s)}>
                     {sessionLabel(s)}
                   </span>

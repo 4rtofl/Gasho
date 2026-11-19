@@ -1,9 +1,9 @@
 // The plugin SDK for the daemon part of a Gasho plugin (daemon.js). gasho-daemon runs the daemon part in a process of
 // its own (plugin-host of gasho-daemon), imports it, and calls its methods for the web part (useRequest, useCall).
 // See docs/plugins.md of Gasho.
-import type { GitHubRepo } from "@gasho/protocol";
+import type { AgentKind, GitHubRepo } from "@gasho/protocol";
 
-export type { GitHubRepo } from "@gasho/protocol";
+export type { AgentKind, GitHubRepo } from "@gasho/protocol";
 
 /** A folder of the session a call is about: the session's own, or a repository gasho-daemon found inside it. */
 export interface SessionFolder {
@@ -16,6 +16,8 @@ export interface SessionFolder {
 /** The session a call is about (only one gasho-daemon tracks). */
 export interface DaemonSession {
   sessionId: string;
+  /** The agent that runs it. Plugin API 1.16; absent from an older gasho-daemon, whose sessions are Claude Code's. */
+  agent?: AgentKind;
   /** The session's folder (an absolute path). */
   cwd: string;
   name?: string;
@@ -149,6 +151,17 @@ export type DaemonStartContext = Omit<DaemonContext, "session" | "signal">;
 
 export type DaemonMethod = (params: unknown, ctx: DaemonContext) => unknown;
 
+/** What onSessionStop gets: the context of a call, always with the session that stopped. */
+export type SessionStopContext = DaemonContext & { session: DaemonSession };
+
+/** The notification to send in place of Gasho's own "の応答が終わりました" (plugin API 1.15). */
+export interface SessionStopNotification {
+  /** Up to 120 characters; also what the lock screen shows, so keep what the conversation says out of it. */
+  title: string;
+  /** Up to 300 characters. Shown in Gasho only. */
+  body?: string;
+}
+
 /** What the daemon part of a plugin does (its daemon.js exports it as default). */
 export interface DaemonPluginDefinition {
   /** The methods the web part can call; gasho-plugin.json `methods` lists them. Results are JSON. */
@@ -157,6 +170,13 @@ export interface DaemonPluginDefinition {
   start?(ctx: DaemonStartContext): void | Promise<void>;
   /** Called before the process is stopped (disabled, removed, replaced by a new version, gasho-daemon stopping). */
   stop?(): void | Promise<void>;
+  /**
+   * Called when a session started from Gasho ends a turn (needs the permission "session.notification", plugin API
+   * 1.15). Return a notification to send it in place of Gasho's own, or nothing to leave Gasho's. Gasho's notification
+   * waits for the answer, for at most 5 seconds (ctx.signal is then aborted): return at once for a session that is none
+   * of the plugin's. A failure or a late answer leaves Gasho's own.
+   */
+  onSessionStop?(ctx: SessionStopContext): SessionStopNotification | undefined | void | Promise<SessionStopNotification | undefined | void>;
 }
 
 /** Returns `def`; for TypeScript. */

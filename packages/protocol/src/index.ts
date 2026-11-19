@@ -95,8 +95,10 @@ export interface FolderRepo {
 }
 
 export interface SessionInfo {
-  /** Local session id (UUID). */
+  /** Local session id (UUID); for Codex, the id of its thread. */
   sessionId: string;
+  /** The agent that runs the session. Absent means Claude Code. */
+  agent?: AgentKind;
   pid?: number;
   cwd: string;
   name?: string;
@@ -346,6 +348,19 @@ export interface HookEvent {
    * Stop like any other. Older gasho-daemon versions do not set it.
    */
   automatic?: boolean;
+  /**
+   * On a Stop: what a plugin's daemon part says of the end of this turn (onSessionStop, plugin API 1.15), in place of
+   * Gasho's own "の応答が終わりました". Older gasho-daemon versions do not set it.
+   */
+  notification?: PluginStopNotification;
+}
+
+/** What a plugin's daemon part says when a session stops (onSessionStop, plugin API 1.15). */
+export interface PluginStopNotification {
+  /** The plugin's id. */
+  plugin: string;
+  title: string;
+  body?: string;
 }
 
 // In the messages below, `machine` is always a machine id (the id of its registered device), never its name.
@@ -365,6 +380,11 @@ export interface GashoNotification {
   title: string;
   body?: string;
   read: boolean;
+  /**
+   * The plugin that wrote the title (onSessionStop, plugin API 1.15): the lock screen then shows the title. Only on the
+   * notification as it is made; the Gasho server does not keep it.
+   */
+  plugin?: string;
 }
 
 /** A browser's Web Push subscription, as PushSubscription.toJSON() gives it. */
@@ -401,11 +421,43 @@ export interface PushPayload {
   badge: number;
 }
 
+/** The tokens a working server's sessions started from Gasho used on a day: [YYYY-MM-DD in Japan Standard Time, tokens]. */
+export type TokenDay = [day: string, tokens: number];
+
 /** A working server's memory as a whole, in bytes. `used` leaves out what the system can take back at once (the page cache). */
 export interface MachineMemory {
   total: number;
   used: number;
 }
+
+/** The coding agents Gasho knows. */
+export type AgentKind = "claude" | "codex";
+
+/**
+ * Whether an agent can be used on a working server. available: it is logged in. loginRequired: it is installed but not
+ * logged in. unknown: it is installed, but it could not tell (its settings cannot be read, or it did not answer).
+ */
+export type AgentStatus = "available" | "loginRequired" | "unknown";
+
+/**
+ * What a session of an agent can do besides talking: switch the model, the effort level and ultracode, carry files, be
+ * forked, list its work in the background, offer skills after "/", and run shell commands after "!".
+ */
+export type AgentOperation = "model" | "effort" | "ultracode" | "files" | "fork" | "background" | "skills" | "shell";
+
+/** An agent installed on a working server. */
+export interface AgentInfo {
+  status: AgentStatus;
+  /** Its version (x.y.z), when it told it. */
+  version?: string;
+  /** gasho-daemon starts sessions of this agent (session.launch's `agent`). Absent from one that only reports the agent. */
+  canLaunch?: boolean;
+  /** What its sessions can do. Absent from a gasho-daemon that does not tell: there, only Claude Code runs, and it can do all of it. */
+  operations?: AgentOperation[];
+}
+
+/** The agents gasho-daemon looked for and found on its working server: one that is not installed is not listed. */
+export type MachineAgents = Partial<Record<AgentKind, AgentInfo>>;
 
 /** A working server: a machine that runs Claude Code and gasho-daemon. */
 export interface MachineInfo {
@@ -445,6 +497,8 @@ export interface MachineInfo {
   canRemoveWorktree?: boolean;
   /** Whether gasho-daemon lists the skills and custom commands a session's Claude Code reads (session.skills). */
   canListSkills?: boolean;
+  /** The agents found on this working server (absent from a gasho-daemon that does not look for them). */
+  agents?: MachineAgents;
   /** Whether Gasho can update this gasho-daemon, and how an update goes (absent from one older than updates from Gasho). */
   update?: DaemonUpdateInfo;
   /**
@@ -537,6 +591,8 @@ export interface ServerInfo {
    */
   web?: string;
   update: HubUpdateInfo;
+  /** The agent a new session starts with, the same for every browser (absent from an older Gasho server: Claude Code). */
+  defaultAgent?: AgentKind;
 }
 
 /** The latest published versions, as the Gasho server last looked them up on the package registry. */
@@ -701,7 +757,7 @@ export interface TranscriptPage {
  * What a plugin's web part may do besides reading and showing: send messages to sessions, start them, remove worktrees
  * with their sessions.
  */
-export type PluginPermission = "session.input" | "session.launch" | "session.remove" | "worktree.remove";
+export type PluginPermission = "session.input" | "session.launch" | "session.remove" | "worktree.remove" | "session.notification";
 
 /** A method of a plugin's daemon part, which its web part can call. */
 export interface PluginMethodSpec {
@@ -899,6 +955,8 @@ export interface DaemonPluginEntry {
   run: boolean;
   /** The values of its settings with scope "server". */
   settings: Record<string, unknown>;
+  /** It has the permission "session.notification": its onSessionStop is asked when a session stops (plugin API 1.15). */
+  sessionStop?: boolean;
 }
 
 /**
@@ -944,6 +1002,8 @@ export type DaemonToHub =
       canRemoveWorktree?: boolean;
       /** Answers session.skills. */
       canListSkills?: boolean;
+      /** The agents found on the working server (sent again when they change). */
+      agents?: MachineAgents;
       /** Whether Gasho can update it, and the update under way (sent again at each step). */
       update?: DaemonUpdateInfo;
     }
@@ -969,7 +1029,12 @@ export type DaemonToHub =
    * The server's memory: sent once connected, then every 15 seconds; `memory` is absent when it could not be read. Apart
    * from `sessions` and `capabilities` because it changes every time: the Gasho server keeps it in memory only.
    */
-  | { type: "memory"; memory?: MachineMemory };
+  | { type: "memory"; memory?: MachineMemory }
+  /**
+   * The tokens used per day: the whole last year once connected, then the days whose totals changed, at most once a
+   * minute. Each is the day's total, so that telling it again changes nothing.
+   */
+  | { type: "token.days"; days: TokenDay[] };
 
 // gasho-hub -> gasho-daemon
 export type HubToDaemon =
@@ -1028,6 +1093,13 @@ export type HubToClient =
   | { type: "machine"; machine: MachineInfo }
   /** A working server's latest memory; `memory` is absent once it is no longer known (the server went offline, or cannot read it). */
   | { type: "machine.memory"; machine: string; memory?: MachineMemory }
+  /**
+   * The answer to token.days.get: the last year's tokens per day, by machine id. `reported`: a working server has told
+   * its days (an older gasho-daemon does not).
+   */
+  | { type: "token.days"; days: Record<string, TokenDay[]>; reported: boolean }
+  /** The days of a working server whose totals changed. */
+  | { type: "token.days.update"; machine: string; days: TokenDay[] }
   /** The Gasho server itself, whenever its update or the build of the screen it serves changed. */
   | { type: "server"; server: ServerInfo }
   /** The answer to hub.update: whether the update has begun (its steps follow with server). */
@@ -1072,8 +1144,12 @@ export type ClientToHub =
   | { type: "notification.read"; ids: string[] }
   /** Looks up the latest published versions now (answered with latest). */
   | { type: "latest.check" }
+  /** The last year's tokens per day (answered with token.days; token.days.update follows what changes). */
+  | { type: "token.days.get" }
   /** Updates the Gasho server to `version`, or goes back to it (answered with server.result). */
   | { type: "hub.update"; requestId: string; version: string }
+  /** Changes the agent a new session starts with (answered with server.result; every browser gets the new server). */
+  | { type: "defaultAgent.set"; requestId: string; agent: AgentKind }
   | ({ requestId: string; machine: string } & SessionCommand)
   /**
    * Calls a method of a plugin's daemon part on a working server (answered with plugin.response). `summary`: what the
@@ -1140,7 +1216,8 @@ export type SessionCommand =
    * folder" (gasho-daemon 0.10.0 and later). Without it, the launch stops at the question and its result says so
    * (`needsTrust`), so that the person decides.
    */
-  | { type: "session.launch"; cwd: string; name?: string; trust?: boolean }
+  /** `agent`: the agent to start; Claude Code when absent. `trust` is about Claude Code's question only. */
+  | { type: "session.launch"; cwd: string; name?: string; trust?: boolean; agent?: AgentKind }
   /** Makes the folder `name` inside the folder `parent` (gasho-daemon 0.10.0 and later). */
   | { type: "folder.create"; parent: string; name: string }
   /**

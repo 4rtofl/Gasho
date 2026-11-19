@@ -97,3 +97,61 @@ test("the Gasho server is updated through its own message, and the latest versio
   await hub.answer({ ok: true });
   expect(screen.queryByRole("alertdialog")).toBeNull();
 });
+
+test("a working server's row says whether Codex can be used, and what to do when it cannot", async () => {
+  await connectHub({
+    machines: [
+      linux({ agents: { codex: { status: "available", version: "0.170.0" } } }),
+      machine("login", [], { name: "Login", daemonVersion: "0.30.0", agents: { codex: { status: "loginRequired", version: "0.170.0" } } }),
+      machine("old", [], { name: "Old", daemonVersion: "0.30.0", agents: { codex: { status: "available", version: "0.169.9" } } }),
+      machine("unknown", [], { name: "Unknown", daemonVersion: "0.30.0", agents: { codex: { status: "unknown" } } }),
+    ],
+    latest,
+    server,
+  });
+  render(<DaemonUpdates />);
+
+  expect(within(row("Linux")).getByText("Codex 0.170.0").parentElement?.textContent).toBe("Codex 0.170.0：使えます");
+  expect(within(row("Linux")).queryByText(/より古いバージョンです/)).toBeNull();
+  expect(within(row("Linux")).queryByRole("button", { name: "codex login" })).toBeNull();
+
+  expect(within(row("Login")).getByText("Codex 0.170.0").parentElement?.textContent).toBe("Codex 0.170.0：ログインしていません");
+  expect(within(row("Login")).getByText("codex login")).toBeTruthy();
+
+  expect(within(row("Old")).getByText("Gasho で確かめた版（0.170.0）より古いバージョンです。")).toBeTruthy();
+
+  expect(within(row("Unknown")).getByText("Codex").parentElement?.textContent).toBe("Codex：状態を確かめられませんでした");
+});
+
+test("a working server without Codex, or offline, says nothing about it", async () => {
+  await connectHub({
+    machines: [
+      linux({ agents: {} }),
+      machine("older", [], { name: "Older", daemonVersion: "0.29.0" }),
+      machine("offline", [], { name: "Offline", daemonVersion: "0.30.0", connected: false, agents: { codex: { status: "available", version: "0.170.0" } } }),
+    ],
+    latest,
+    server,
+  });
+  render(<DaemonUpdates />);
+  for (const name of ["Linux", "Older", "Offline"]) expect(within(row(name)).queryByText(/^Codex/)).toBeNull();
+});
+
+test("a working server's row says which Claude Code it has, above Codex, and how to log in", async () => {
+  await connectHub({
+    machines: [
+      linux({ agents: { claude: { status: "available", version: "2.1.327" }, codex: { status: "available", version: "0.170.0" } } }),
+      machine("out", [], { name: "Out", daemonVersion: "0.30.0", agents: { claude: { status: "loginRequired", version: "2.1.327" } } }),
+    ],
+    latest,
+    server,
+  });
+  render(<DaemonUpdates />);
+  const claude = within(row("Linux")).getByText("Claude Code 2.1.327");
+  const codex = within(row("Linux")).getByText("Codex 0.170.0");
+  expect(claude.parentElement?.textContent).toBe("Claude Code 2.1.327：使えます");
+  expect(claude.compareDocumentPosition(codex) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(within(row("Out")).getByText("Claude Code 2.1.327").parentElement?.textContent).toBe("Claude Code 2.1.327：ログインしていません");
+  expect(within(row("Out")).getByText("claude auth login")).toBeTruthy();
+  expect(within(row("Out")).queryByText(/^Codex/)).toBeNull();
+});

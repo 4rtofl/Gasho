@@ -6,14 +6,18 @@ import { GasshoOverlay } from "@/components/gassho";
 import { ResizeHandle } from "@/components/resize-handle";
 import { SessionHeaderToggle } from "@/components/session-header-toggle";
 import { PanelBarContext } from "@/components/side-panel";
-import { RegisterRepos, RepoFilter } from "@/components/repo-filter";
+import { CloneRepoDialog } from "@/components/clone-repo-dialog";
+import { CloneRepoButton, RegisterRepos, RepoFilter } from "@/components/repo-filter";
 import { ReposDialog } from "@/components/repos-dialog";
 import { SessionActionDialog, SessionContextMenu, type SessionActionRequest } from "@/components/session-menu";
+import { UnusedSessionsDialog } from "@/components/unused-sessions-dialog";
 import { RemoveWorktreeDialog, WorktreeContextMenu } from "@/components/worktree-menu";
 import { showNotice, useNotice } from "@/lib/notice";
-import { LAUNCH_WAIT_MS } from "@/components/session-tabs";
+import { AgentMark } from "@/components/agent-mark";
+import { LaunchMenu } from "@/components/launch-menu";
+import { launchAgentFor, launchTitle, sessionAgent, showsAgents } from "@/lib/agents";
 import { StatusDot } from "@/components/status-badge";
-import { Sidebar, SidebarTrigger, useSidebar, type SidebarGroup, type SidebarItem, type SidebarMove, type SidebarSection } from "@/components/ui/sidebar";
+import { Sidebar, SidebarTrigger, useSidebar, type SidebarAction, type SidebarGroup, type SidebarItem, type SidebarMove, type SidebarSection } from "@/components/ui/sidebar";
 import { updateToTell } from "@/lib/daemon-update";
 import { hubUpdateToTell } from "@/lib/server-update";
 import { useChoices } from "@/lib/flag";
@@ -43,6 +47,7 @@ import {
   type ListedSession,
 } from "@/lib/session-list";
 import { useGroupingPrefs, useSessionListPrefs } from "@/lib/session-list-prefs";
+import { useSessionLauncher } from "@/lib/session-launch";
 import {
   movedSession,
   narrowWorktrees,
@@ -58,7 +63,7 @@ import {
   worktreesByLastUse,
   type WorktreeSessions,
 } from "@/lib/sessions";
-import { reloadToNewBuild, sendCommand, useAppState, useReadWhileOpen } from "@/lib/store";
+import { reloadToNewBuild, useAppState, useReadWhileOpen } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import {
   arrangeWorktreeCategories,
@@ -243,6 +248,7 @@ export function App() {
   const [launchOpen, setLaunchOpen] = useState(false);
   // The dialog that registers repositories, opened from the menu that narrows the sidebar's worktrees.
   const [reposOpen, setReposOpen] = useState(false);
+  const [cloneOpen, setCloneOpen] = useState(false);
   const [repoKeys, setRepoKeys] = useChoices(WORKTREE_REPO_KEY);
   // The order the sidebar's worktrees were dragged into (none: the one used last first), and the order held while the
   // pointer is over the list.
@@ -296,6 +302,7 @@ export function App() {
   }, [desktop]);
   // The category whose "＋" is starting a session, and what the dialog opens with when that did not work.
   const [launchingIn, setLaunchingIn] = useState<string>();
+  const launchSession = useSessionLauncher();
   const [launchInitial, setLaunchInitial] = useState<LaunchInitial>();
   useReadWhileOpen(route.name === "session" ? route.machine : undefined, route.name === "session" ? route.sessionId : undefined);
 
@@ -361,18 +368,32 @@ export function App() {
   const folded = new Set(listPrefs.folded ?? []);
   // "＋" of a category: a session in its worktree's folder, at once (as the "＋" after a worktree's tabs). When it does
   // not start (Claude Code asks whether to trust the folder, say), "新しいセッション" opens for that folder and tells why.
-  const launchIn = async (w: SessionListWorktree) => {
+  const defaultAgent = server?.defaultAgent;
+  const marks = showsAgents(machines);
+  const launchIn = async (w: SessionListWorktree, agent = launchAgentFor(w.machine, defaultAgent)) => {
     if (launchingIn) return;
     setLaunchingIn(w.key);
-    const r = await sendCommand(w.machine.id, { type: "session.launch", cwd: w.path }, LAUNCH_WAIT_MS);
+    const r = await launchSession(w.machine.id, { cwd: w.path, agent });
     setLaunchingIn(undefined);
+    if (r.cancelled) return;
     if (r.ok && r.sessionId) {
       setMobileOpen(false);
       go({ name: "session", machine: w.machine.id, sessionId: r.sessionId });
       return;
     }
-    openLaunch({ machine: w.machine.id, folder: w.path, ...(r.needsTrust ? { trust: r.trustWarnings ?? [] } : { error: r.error ?? "起動できませんでした。" }) });
+    openLaunch({ machine: w.machine.id, folder: w.path, agent, ...(r.needsTrust ? { trust: r.trustWarnings ?? [] } : { error: r.error ?? "起動できませんでした。" }) });
   };
+  // The "＋" of a category: it starts the default agent, and its menu picks another.
+  const launchAction = (title: string, target: SessionListWorktree): SidebarAction => ({
+    label: launchTitle(target.machine, defaultAgent, `${title} で新しいセッションを起動`),
+    icon: launchingIn === target.key ? <LoaderCircle className="animate-spin" /> : <Plus />,
+    onClick: () => void launchIn(target),
+    wrap: (button) => (
+      <LaunchMenu machine={target.machine} onPick={(agent) => void launchIn(target, agent)}>
+        {button}
+      </LaunchMenu>
+    ),
+  });
   // A session's row, as the sidebar's list of sessions had them: its state, its name, waiting or offline, the work it
   // runs in the background, and its menu (rename, fork, remove).
   const sessionRow = (row: ListedSession): SidebarItem[] => {
@@ -387,11 +408,17 @@ export function App() {
         description: row.description,
         icon: <StatusDot {...sessionDot(m, s, unreadOnes)} />,
         badge: !m.connected ? "オフライン" : s.status === "waiting" ? "確認" : undefined,
-        mark: background ? (
-          <LoaderCircle role="img" aria-label={`バックグラウンドで ${background} 件実行中`} className="size-3 animate-spin text-sky-400 motion-reduce:animate-none">
-            <title>{`バックグラウンドで ${background} 件実行中`}</title>
-          </LoaderCircle>
-        ) : undefined,
+        mark:
+          background || marks ? (
+            <span className="flex items-center gap-1">
+              {marks && <AgentMark agent={sessionAgent(s)} />}
+              {background > 0 && (
+                <LoaderCircle role="img" aria-label={`バックグラウンドで ${background} 件実行中`} className="size-3 animate-spin text-sky-400 motion-reduce:animate-none">
+                  <title>{`バックグラウンドで ${background} 件実行中`}</title>
+                </LoaderCircle>
+              )}
+            </span>
+          ) : undefined,
         wrap: (button: ReactElement) => (
           <SessionContextMenu machine={m} session={s} onPick={setSessionAction}>
             {button}
@@ -416,13 +443,7 @@ export function App() {
       // Folded, a category still tells that a session in it waits for an answer.
       badge: isFolded && waiting > 0 ? `確認 ${waiting}` : undefined,
       icon: <FolderGit2 />,
-      action: canLaunch
-        ? {
-            label: `${c.title} で新しいセッションを起動`,
-            icon: launchingIn === target.key ? <LoaderCircle className="animate-spin" /> : <Plus />,
-            onClick: () => void launchIn(target),
-          }
-        : undefined,
+      action: canLaunch ? launchAction(c.title, target) : undefined,
       folded: isFolded,
       onFoldedChange: (f) => changeListPrefs((p) => withFolded(p, c.id, f)),
       // Folded, only the open session's row shows (where the person is).
@@ -440,6 +461,14 @@ export function App() {
     description: line === undefined ? [w.repo, machines.length > 1 ? w.machine.name : undefined].filter(Boolean).join(" · ") || undefined : line || undefined,
     icon: <StatusDot {...worktreeDot(w, unreadOnes)} />,
     badge: !w.machine.connected ? "オフライン" : w.sessions.some((s) => s.status === "waiting") ? "確認" : undefined,
+    mark:
+      marks && w.sessions.length > 0 ? (
+        <span className="flex items-center gap-1">
+          {[...new Set(w.sessions.map(sessionAgent))].map((agent) => (
+            <AgentMark key={agent} agent={agent} />
+          ))}
+        </span>
+      ) : undefined,
     wrap: (button: ReactElement) => (
       <WorktreeContextMenu worktree={w} onPick={setRemovingWorktree}>
         {button}
@@ -465,13 +494,7 @@ export function App() {
       // Folded, a category still tells that a worktree in it waits for an answer.
       badge: isFolded && waiting > 0 ? `確認 ${waiting}` : undefined,
       icon: <FolderGit2 />,
-      action: canLaunch
-        ? {
-            label: `${c.title} で新しいセッションを起動`,
-            icon: launchingIn === target.key ? <LoaderCircle className="animate-spin" /> : <Plus />,
-            onClick: () => void launchIn(target),
-          }
-        : undefined,
+      action: canLaunch ? launchAction(c.title, target) : undefined,
       folded: isFolded,
       onFoldedChange: (f) => changeGroupingPrefs((p) => withFolded(p, c.id, f)),
       // Folded, only the open worktree's row shows (where the person is).
@@ -535,16 +558,19 @@ export function App() {
           }
         : undefined,
     tools: (
-      <RepoFilter
-        choices={repos}
-        picked={narrowed}
-        onPick={setRepoKeys}
-        onRegister={() => setReposOpen(true)}
-        machineNames={machines.length > 1}
-        groupings={groupings.options}
-        grouping={groupings.picked}
-        onGroup={groupings.pick}
-      />
+      <>
+        <RepoFilter
+          choices={repos}
+          picked={narrowed}
+          onPick={setRepoKeys}
+          onRegister={() => setReposOpen(true)}
+          machineNames={machines.length > 1}
+          groupings={groupings.options}
+          grouping={groupings.picked}
+          onGroup={groupings.pick}
+        />
+        <CloneRepoButton onClick={() => setCloneOpen(true)} />
+      </>
     ),
     sort: grouped
       ? undefined
@@ -707,6 +733,7 @@ export function App() {
                 worktree={worktrees.find((w) => w.id === worktreeKey(route.machine, route.path))}
                 view={route.view}
                 onSessionAction={setSessionAction}
+                onAskTrust={openLaunch}
               />
             )}
             {route.name === "session" && (desktop || !panel) && (
@@ -716,6 +743,7 @@ export function App() {
                 sessionId={movedTo ?? route.sessionId}
                 panel={panel}
                 onSessionAction={setSessionAction}
+                onAskTrust={openLaunch}
               />
             )}
             {route.name === "session" && !desktop && panel && (
@@ -752,6 +780,7 @@ export function App() {
         }
       />
       <RemoveWorktreeDialog worktree={removingWorktree} onClose={() => setRemovingWorktree(null)} />
+      <UnusedSessionsDialog />
       <LaunchDialog
         open={launchOpen}
         initial={launchInitial}
@@ -762,6 +791,14 @@ export function App() {
         onLaunched={() => setMobileOpen(false)}
       />
       <ReposDialog open={reposOpen} onClose={() => setReposOpen(false)} />
+      <CloneRepoDialog
+        open={cloneOpen}
+        onClose={() => setCloneOpen(false)}
+        // A list narrowed to other repositories would not show the new one.
+        onCloned={(machine, path) => {
+          if (narrowed.length > 0) setRepoKeys([...repoKeys, worktreeKey(machine, path)]);
+        }}
+      />
       {/* Out of the sidebar: its events do not reach the drawer, and closing the drawer does not take it away. */}
       {gassho && <GasshoOverlay from={gassho} logo={LOGO} href={SITE_URL} onClose={() => setGassho(null)} />}
     </div>

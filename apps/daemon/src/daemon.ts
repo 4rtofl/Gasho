@@ -4,6 +4,9 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type {
+  AgentInfo,
+  AgentKind,
+  AgentOperation,
   BackgroundTask,
   BackgroundTaskKind,
   CommandResult,
@@ -12,6 +15,7 @@ import type {
   GitHubRepo,
   HubToDaemon,
   InputFeature,
+  MachineAgents,
   InputFile,
   MediaPart,
   ModelOption,
@@ -24,12 +28,16 @@ import type {
   SwitchField,
   TranscriptEntry,
 } from "@gasho/protocol";
+import { claudeRunner, detectClaude } from "./claude-status.ts";
+import { codexRunner, detectCodex, startCodexServer } from "./codex.ts";
+import { CodexSessions } from "./codex-sessions.ts";
 import type { DaemonConfig } from "./config.ts";
 import { type ControlReply, type ControlRequest, type ControlSession, controlSocketOf, startControlServer } from "./control.ts";
 import { listDir, readFileAt, writeFileAt } from "./files.ts";
 import { cloneRepo, createFolder } from "./folders.ts";
 import { githubRepoOf, nestedRepos, readGitGraph, worktreeOf } from "./git.ts";
 import { GitHubProxy } from "./github.ts";
+import { TokenDays } from "./token-days.ts";
 import { TokenCounter } from "./tokens.ts";
 import { startHookServer, summarizeHook } from "./hooks.ts";
 import { isInside, statusLineLaunch, statusLineOf, userStatusLine } from "./statusline.ts";
@@ -122,15 +130,21 @@ import { changesProblem, removableWorktree, removeWorktree, worktreeChanges } fr
 import { listSkills } from "./skills.ts";
 import { appendBatches, conversationFacts, emptyMeta, followTranscript, pastConversations, TranscriptTail, type TranscriptMeta } from "./transcript.ts";
 import type { SessionWire } from "./plugin-ipc.ts";
+import { HookRelay } from "./hook-relay.ts";
 import { PluginRunner } from "./plugins.ts";
 import { npmOf, Updater } from "./self-update.ts";
 import { log, str } from "./util.ts";
+import { CLAUDE_TMP_SWEEP_MS, prepareClaudeTmp, removeSessionTmp, sessionOfTmpFile, sweepClaudeTmp } from "./claude-tmp.ts";
 
-export const DAEMON_VERSION = "0.28.2";
+export const DAEMON_VERSION = "0.34.0";
 const GITHUB_CACHE_MS = 5 * 60_000;
 /** How long the worktree a folder is in, or the repositories inside it, and their branches are reused. */
 const REPOS_CACHE_MS = 60_000;
 const FOLDERS_REFRESH_MS = 5 * 60_000;
+/** How often the agents are looked for again: one may be installed, updated or logged in to at any time. */
+const CODEX_REFRESH_MS = 5 * 60_000;
+/** How often the repository, branch and worktree of Codex's sessions are read again. */
+const CODEX_DETAILS_MS = 15_000;
 /** How often the server's memory is read and told to the Gasho server. */
 const MEMORY_REFRESH_MS = 15_000;
 /** How often the registered repositories' worktrees are read again: one may be made or removed elsewhere (Orca, git). */
@@ -141,6 +155,8 @@ const FORK_READY_MS = 15_000;
 const FORK_TRANSCRIPT_MS = 5000;
 /** Removing a session: how long Claude Code may take to end after SIGTERM (Remote Control sessions take a moment). */
 const REMOVE_WAIT_MS = 8000;
+/** Removing a session: how long a Claude Code that was stopped may take to be gone, before its temporary folder is removed. */
+const CLAUDE_END_WAIT_MS = 2000;
 const MAX_INPUT = 20_000;
 const INTERRUPT_SETTLE_MS = 1500;
 /**
@@ -160,10 +176,13 @@ const NO_TERMINAL =
 /** Said when Claude Code asked about a folder's new MCP servers while starting, and was answered "not now". */
 const MCP_DECLINED =
   "このフォルダーの .mcp.json にある MCP サーバーは、使わない設定にして起動しました（Claude Code の確認に「使わない」と答えました）。使うときは、端末で claude を起動して /mcp から有効にしてください。";
+const CODEX_NO_FORK = "Codex のセッションは、Gasho からはフォークできません。";
 const MODEL_NAMES: Record<SessionModel, string> = { default: "既定のモデル", opus: "Opus", fable: "Fable", sonnet: "Sonnet", haiku: "Haiku" };
 const EFFORT_NAMES: Record<EffortLevel, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "xHigh", max: "Max" };
 /** What this gasho-daemon can switch or carry with an input (MachineInfo.features). */
 const INPUT_FEATURES: readonly InputFeature[] = ["model", "effort", "ultracode", "files"];
+/** What a session of Claude Code can do (AgentInfo.operations); one of Codex only talks, for now. */
+const CLAUDE_OPERATIONS: readonly AgentOperation[] = [...INPUT_FEATURES, "fork", "background", "skills", "shell"];
 /** How long the prompt box may take to let go of a text after Enter (see typeInput). */
 const ENTER_WAIT_MS = 8000;
 /** When it did not, how long to wait before looking at the box again. */
@@ -178,6 +197,8 @@ const LATE_PICKER_WAIT_MS = 10_000;
 const PROBE_MIN_AGE_MS = 30_000;
 /** An idle session's tokens are counted again after this long (a working one at every refresh). */
 const TOKENS_IDLE_MS = 30_000;
+/** The tokens per day are told to the Gasho server and saved at most this often. */
+const TOKEN_DAYS_EVERY_MS = 60_000;
 /** How long the sessions wait to be sent after a status line report, for the reports that follow it. */
 const EMIT_DELAY_MS = 500;
 /** How long the state of the sessions is read after a change in Claude Code's files: they come several at a time. */
@@ -282,9 +303,26 @@ export class Daemon {
   /** The terminals of the sessions Gasho started (built-in; zellij for those from gasho-daemon 0.10 and before). */
   private terminals: SessionTerminals;
   private managed: ManagedSessions;
+  private tokenDays: TokenDays;
+  private tokenDaysAt = 0;
   /** Permission requests held until they are answered (in Gasho, or elsewhere). */
   private permissions = new PermissionRequests(() => this.emitSessions());
   private canLaunch = false;
+  /** Claude Code on this working server, as last looked for. */
+  private claude: AgentInfo | undefined;
+  /** Counts the looks for Claude Code: a look that a later one overtook is not sent. */
+  private claudeRead = 0;
+  /** Codex on this working server, as last looked for; undefined when it is not installed. */
+  private codex: AgentInfo | undefined;
+  /** Counts the looks for Codex: a look that a later one overtook is not sent. */
+  private codexRead = 0;
+  /** The sessions of Codex that Gasho started: they do not come through `tracked` and `managed`. */
+  private codexSessions: CodexSessions;
+  /** The conversations being opened again, and until when that may take (see openingClaudeTmp). */
+  private readonly claudeTmpOpening = new Map<string, number>();
+  private sweepingClaudeTmp = false;
+  /** The running sessions and their conversations have been read: until then, nothing says which files they show. */
+  private sessionsRead = false;
   private folders: string[] = [];
   private folderRepos: FolderRepo[] = [];
   /** Counts the reads of the folders' repositories: a read that a later one overtook is not sent. */
@@ -315,6 +353,8 @@ export class Daemon {
   private prompts = new Map<string, { at: number; text: string }[]>();
   /** The daemon parts of plugins (docs/plugins.md). */
   private plugins: PluginRunner;
+  /** Passes the hooks on to the Gasho server, a Stop with what the plugins say of it. */
+  private hookRelay: HookRelay;
   /** Updates of gasho-daemon from Gasho. */
   private updater: Updater;
   /** gasho-daemon has begun to end (exit). */
@@ -347,7 +387,24 @@ export class Daemon {
       new Zellij(cleanEnv()),
     );
     this.managed = new ManagedSessions(path.join(cfg.stateDir, "managed.json"));
+    this.codexSessions = new CodexSessions({
+      file: path.join(cfg.stateDir, "codex-threads.json"),
+      version: DAEMON_VERSION,
+      startServer: () => this.startCodexAppServer(),
+      describe: (cwd) => this.folderDetails(cwd),
+      changed: () => this.emitSessions(),
+      event: (event) => this.hub.send({ type: "hook", event }),
+      append: (sessionId, entries) => this.hub.send({ type: "transcript.append", sessionId, entries }),
+      log: (...args) => log(...args),
+    });
     this.registered = new RegisteredRepos(path.join(cfg.stateDir, "repos.json"));
+    this.tokenDays = new TokenDays(path.join(cfg.stateDir, "token-days.json"));
+    this.hookRelay = new HookRelay({
+      send: (event) => this.hub.send({ type: "hook", event }),
+      asks: () => this.plugins.hearsSessionStop(),
+      ask: (sessionId) => this.plugins.sessionStop(sessionId),
+      log,
+    });
     this.plugins = new PluginRunner({
       cacheDir: cfg.pluginCacheDir,
       send: (m) => this.hub.send(m),
@@ -368,6 +425,7 @@ export class Daemon {
         this.emitSessions();
         this.emitCapabilities();
         this.emitRepos();
+        this.emitAllTokenDays();
         void this.emitMemory();
         // Also tells the Gasho server that this gasho-daemon runs plugins.
         this.plugins.status(true);
@@ -393,6 +451,7 @@ export class Daemon {
     if (this.exiting) return;
     this.exiting = true;
     await this.plugins.stopAll().catch((e: unknown) => log("could not stop the plugins", e));
+    await this.tokenDays.save();
     process.exit(code);
   }
 
@@ -418,7 +477,10 @@ export class Daemon {
     // The sessions started before this daemon: those whose Claude Code and terminal still run are kept.
     const live = await this.terminals.builtIn.live();
     let inZellij: Set<string> | undefined;
+    await this.tokenDays.load();
     await this.managed.load(async (m) => {
+      // Also for a fork that ended meanwhile: it can be opened again. Under /clear, the id it was forked under is its first.
+      if (m.forkedAt !== undefined) this.tokenDays.rememberFork(m.previousIds?.[0] ?? m.sessionId, m.forkedAt);
       if (!isAlive(m.pid)) return false;
       if (!m.zellij) return live.get(m.terminal)?.pid === m.pid;
       inZellij ??= (await this.terminals.zellij.available()) ? await this.terminals.zellij.liveSessions() : new Set();
@@ -434,6 +496,10 @@ export class Daemon {
       if (!kept.has(name)) log(`terminal ${name} (pid ${h.pid}, ${h.cwd}) is not one of the sessions Gasho keeps; it is left as it is`);
     }
     await this.pruneAttachments();
+    // The first clean-up follows the first refresh that succeeds.
+    setInterval(() => {
+      if (this.sessionsRead) void this.sweepClaudeTmp();
+    }, CLAUDE_TMP_SWEEP_MS).unref();
     this.models = await fsp
       .readFile(this.modelsFile(), "utf8")
       .then((t) => JSON.parse(t) as { at: number; options: ModelOption[] })
@@ -443,6 +509,15 @@ export class Daemon {
     await this.registered.load();
     await this.refreshRepos();
     setInterval(() => void this.refreshRepos(), REGISTERED_REFRESH_MS).unref();
+    // Not waited for: the capabilities are sent again once it is known.
+    void this.refreshClaude();
+    void this.refreshCodex();
+    setInterval(() => {
+      void this.refreshClaude();
+      void this.refreshCodex();
+    }, CODEX_REFRESH_MS).unref();
+    await this.codexSessions.load();
+    setInterval(() => void this.codexSessions.refreshDetails(), CODEX_DETAILS_MS).unref();
 
     this.hub.connect();
     setInterval(() => void this.emitMemory(), MEMORY_REFRESH_MS).unref();
@@ -464,7 +539,7 @@ export class Daemon {
         this.permissions.observe(payload);
         const ev = summarizeHook(payload);
         if (!ev) return;
-        this.hub.send({ type: "hook", event: ev });
+        this.hookRelay.pass(ev);
         // Hooks often mean the status changed; refresh soon instead of waiting for the next poll.
         this.scheduleStatuses();
         this.scheduleRefresh(250);
@@ -651,6 +726,7 @@ export class Daemon {
       }
       for (const id of [...this.tracked.keys()]) {
         if (seen.has(id)) continue;
+        await this.countLastTokens(id, this.tracked.get(id)?.tokens);
         this.tracked.delete(id);
         this.permissions.settleSession(id);
       }
@@ -662,6 +738,10 @@ export class Daemon {
       await this.countTokens();
       this.emitSessions();
       this.flushWaitingInputs();
+      if (!this.sessionsRead) {
+        this.sessionsRead = true;
+        void this.sweepClaudeTmp();
+      }
     } catch (e) {
       log("refresh failed", e);
     } finally {
@@ -821,12 +901,27 @@ export class Daemon {
    * plugin never gets a folder the browser named, only these (see PluginRunner).
    */
   private async pluginSession(sessionId: string): Promise<SessionWire | undefined> {
+    const codex = this.codexSessions.sessions().find((s) => s.sessionId === sessionId);
+    if (codex) {
+      const repos = (await this.reposOf(codex.cwd)) ?? [];
+      return {
+        sessionId,
+        agent: "codex",
+        cwd: codex.cwd,
+        ...(codex.name ? { name: codex.name } : {}),
+        managed: true,
+        ...(codex.github ? { github: codex.github } : {}),
+        ...(codex.gitBranch ? { gitBranch: codex.gitBranch } : {}),
+        repos: repos.map((r) => ({ path: r.path, ...(r.github ? { github: r.github } : {}), ...(r.branch ? { branch: r.branch } : {}) })),
+      };
+    }
     const t = this.tracked.get(sessionId);
     if (!t) return undefined;
     const name = this.managed.get(sessionId)?.name ?? t.info.name;
     const repos = (await this.reposOf(t.info.cwd)) ?? [];
     return {
       sessionId,
+      agent: "claude",
       cwd: t.info.cwd,
       ...(name ? { name } : {}),
       managed: Boolean(this.managed.get(sessionId)),
@@ -859,7 +954,7 @@ export class Daemon {
 
   private emitSessions(): void {
     if (!this.refreshed || this.followingNewIds) return;
-    const sessions = [...this.tracked.values()]
+    const claude = [...this.tracked.values()]
       // Not yet, or no longer, among Gasho's sessions: sent, it would show as one opened outside Gasho.
       .filter((t) => this.managed.has(t.info.sessionId) || !this.isOwn(t.info.pid))
       .map((t) => {
@@ -875,8 +970,8 @@ export class Daemon {
           previousSessionIds: m?.previousIds,
           permissionRequests: this.permissions.of(t.info.sessionId) ?? this.openQuestion(t) ?? this.openPermission(t),
         };
-      })
-      .sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0));
+      });
+    const sessions = [...claude, ...this.codexSessions.sessions()].sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0));
     const json = JSON.stringify(sessions);
     if (json === this.lastSent || !this.hub.connected) return;
     this.lastSent = json;
@@ -884,7 +979,7 @@ export class Daemon {
   }
 
   private async refreshFolders(): Promise<void> {
-    const cwds = [...this.tracked.values()].map((t) => t.info.cwd);
+    const cwds = [...[...this.tracked.values()].map((t) => t.info.cwd), ...this.codexSessions.sessions().map((s) => s.cwd)];
     const folders = await launchableFolders(os.homedir(), cwds);
     // Not waited for (git runs in every folder), and read again also when the folders are the same: their repositories
     // gain and lose worktrees.
@@ -931,6 +1026,46 @@ export class Daemon {
     return { ok: true };
   }
 
+  /** Starts Codex's app-server if it does not run, outside gasho-daemon's service: a restart here must not stop its turns. */
+  private async startCodexAppServer(): Promise<string> {
+    const command = await this.terminals.builtIn.inOwnScope(`gasho-codex-app-server-${randomUUID().slice(0, 8)}`, [this.cfg.codexBin, "app-server", "daemon", "start"]);
+    return startCodexServer(command, { ...cleanEnv(), ...(process.env.CODEX_HOME ? { CODEX_HOME: process.env.CODEX_HOME } : {}) });
+  }
+
+  /** The repository, branch and worktree of a folder, as a session in it shows them. */
+  private async folderDetails(cwd: string): Promise<Partial<SessionInfo>> {
+    const [github, repos, worktree] = await Promise.all([this.githubOf(cwd), this.reposOf(cwd), this.worktreeAt(cwd)]);
+    return { github, repos, worktree, gitBranch: worktree?.branch };
+  }
+
+  /** Looks at Claude Code, and tells the Gasho server when what it found changed. */
+  private async refreshClaude(): Promise<void> {
+    const read = ++this.claudeRead;
+    const claude = await detectClaude(claudeRunner(this.cfg.claudeBin));
+    if (read !== this.claudeRead || JSON.stringify(claude) === JSON.stringify(this.claude)) return;
+    this.claude = claude;
+    log(`Claude Code ${claude.version ?? "(version unknown)"}: ${claude.status}`);
+    this.emitCapabilities();
+  }
+
+  /** The agents found here, and what this gasho-daemon does with each. */
+  private agentsFound(): MachineAgents {
+    return {
+      ...(this.claude ? { claude: { ...this.claude, canLaunch: true, operations: [...CLAUDE_OPERATIONS] } } : {}),
+      ...(this.codex ? { codex: { ...this.codex, canLaunch: true, operations: [] } } : {}),
+    };
+  }
+
+  /** Looks for Codex, and tells the Gasho server when what it found changed. */
+  private async refreshCodex(): Promise<void> {
+    const read = ++this.codexRead;
+    const codex = await detectCodex(codexRunner(this.cfg.codexBin));
+    if (read !== this.codexRead || JSON.stringify(codex) === JSON.stringify(this.codex)) return;
+    this.codex = codex;
+    log(codex ? `Codex ${codex.version ?? "(version unknown)"}: ${codex.status}` : "Codex is not installed");
+    this.emitCapabilities();
+  }
+
   private emitCapabilities(): void {
     if (!this.hub.connected) return;
     this.hub.send({
@@ -945,6 +1080,7 @@ export class Daemon {
       canEnd: true,
       canRemoveWorktree: true,
       canListSkills: true,
+      agents: this.agentsFound(),
       update: this.updater.info(),
     });
   }
@@ -953,7 +1089,7 @@ export class Daemon {
   private inputsToType(): number {
     let n = this.flushing.size;
     for (const m of this.managed.all()) n += this.managed.waiting(m.sessionId).filter((input) => !input.auto).length;
-    return n;
+    return n + this.codexSessions.waitingInputs();
   }
 
   private modelsFile(): string {
@@ -1041,8 +1177,9 @@ export class Daemon {
     for (const m of this.managed.all()) {
       const t = this.tracked.get(m.sessionId);
       if (!t?.transcript) continue;
-      // A fork's transcript starts with a copy of the conversation it was forked from: not this session's tokens.
-      t.tokens ??= new TokenCounter(t.transcript, { since: m.forkedAt });
+      // A fork's transcript starts with a copy of the conversation it was forked from: not this session's tokens. A fork
+      // opened again from the history is known as one only by what was remembered when it was made.
+      t.tokens ??= new TokenCounter(t.transcript, { since: this.tokenDays.forkedAt(m.sessionId) ?? m.forkedAt });
       if (t.info.status !== "busy" && t.tokensAt !== undefined && now - t.tokensAt < TOKENS_IDLE_MS) continue;
       t.tokensAt = now;
       try {
@@ -1052,7 +1189,37 @@ export class Daemon {
       }
       t.info.tokens = t.tokens.totals();
       t.info.tokenHours = t.tokens.hours(now);
+      if (t.tokens.complete) this.tokenDays.record(m.sessionId, t.tokens.days(), now);
     }
+    this.emitTokenDays(now);
+  }
+
+  /** What a session that has ended wrote since it was last counted: its days stay after it is gone. */
+  private async countLastTokens(sessionId: string, tokens: TokenCounter | undefined): Promise<void> {
+    if (!tokens) return;
+    try {
+      do await tokens.update();
+      while (!tokens.complete);
+      this.tokenDays.record(sessionId, tokens.days());
+    } catch (e) {
+      log(`could not count the last tokens of ${sessionId}`, e);
+    }
+  }
+
+  /** The days whose totals changed, at most once a minute; they are saved at the same pace. */
+  private emitTokenDays(now: number): void {
+    if (now - this.tokenDaysAt < TOKEN_DAYS_EVERY_MS) return;
+    this.tokenDaysAt = now;
+    void this.tokenDays.save(now);
+    if (!this.hub.connected) return;
+    const days = this.tokenDays.takeChanged();
+    if (days.length > 0) this.hub.send({ type: "token.days", days });
+  }
+
+  /** The whole year, once connected: also what changed while the Gasho server could not be told. */
+  private emitAllTokenDays(): void {
+    this.tokenDaysAt = Date.now();
+    this.hub.send({ type: "token.days", days: this.tokenDays.all() });
   }
 
   /**
@@ -1245,7 +1412,7 @@ export class Daemon {
         try {
           switch (m.type) {
             case "session.launch":
-              result = await this.launch(m.cwd, m.name, m.trust === true);
+              result = await this.launch(m.cwd, m.name, m.trust === true, m.agent);
               break;
             case "session.input":
               result = await this.input(m);
@@ -1278,6 +1445,11 @@ export class Daemon {
               result = await this.end(m.sessionIds);
               break;
             case "permission.answer": {
+              if (this.codexSessions.has(m.sessionId)) {
+                const error = this.codexSessions.answer(m.sessionId, m.permissionId, m.decision, m.answers);
+                result = error ? { ok: false, error } : { ok: true };
+                break;
+              }
               if (m.permissionId.startsWith(OPEN_QUESTION)) {
                 result = await this.answerQuestion(m);
                 break;
@@ -1332,7 +1504,7 @@ export class Daemon {
       switch (req.op) {
         case "session.launch":
           log(`session.launch in ${req.cwd} from the control socket`);
-          return await this.launch(req.cwd, req.name, req.trust === true);
+          return await this.launch(req.cwd, req.name, req.trust === true, req.agent);
         case "session.input":
           return await this.input({ type: "session.input", requestId, sessionId: req.sessionId, text: req.text });
         case "session.rename":
@@ -1364,6 +1536,7 @@ export class Daemon {
     const names = new Map<string, string>();
     for (const m of this.managed.all()) names.set(m.sessionId, m.name);
     for (const t of this.tracked.values()) if (t.info.name) names.set(t.info.sessionId, t.info.name);
+    for (const s of this.codexSessions.sessions()) if (s.name) names.set(s.sessionId, s.name);
     const r = await this.removeWorktree({ type: "worktree.remove", requestId, path: w.path, ...(force ? { force: true } : {}) });
     const endedSessions = (r.ended ?? []).map((sessionId) => ({ sessionId, ...(names.has(sessionId) ? { name: names.get(sessionId)! } : {}) }));
     return { ...r, path: w.path, ...(w.branch ? { branch: w.branch } : {}), ...(endedSessions.length > 0 ? { endedSessions } : {}) };
@@ -1371,7 +1544,18 @@ export class Daemon {
 
   /** The sessions Gasho started, under the names `claude agents` (and so ListAgents) shows. */
   private controlSessions(): ControlSession[] {
-    return this.managed.all().map((m) => {
+    const codex = this.codexSessions.sessions().map(
+      (s): ControlSession => ({
+        sessionId: s.sessionId,
+        name: s.name ?? path.basename(s.cwd),
+        cwd: s.cwd,
+        agent: "codex",
+        status: s.status,
+        ...(s.pendingInputs ? { pendingInputs: s.pendingInputs } : {}),
+        ...(fs.existsSync(s.cwd) ? {} : { cwdMissing: true }),
+      }),
+    );
+    const claude = this.managed.all().map((m) => {
       const info = this.tracked.get(m.sessionId)?.info;
       const name = info?.name || m.name;
       const pending = this.managed.waiting(m.sessionId).filter((input) => !input.auto).length;
@@ -1381,17 +1565,23 @@ export class Daemon {
         name,
         ...(name !== m.name ? { gashoName: m.name } : {}),
         cwd: m.cwd,
+        agent: "claude" as const,
         terminal: m.terminal,
         status: info?.status ?? "unknown",
         ...(pending > 0 ? { pendingInputs: pending } : {}),
         ...(fs.existsSync(m.cwd) ? {} : { cwdMissing: true }),
       };
     });
+    return [...claude, ...codex];
   }
 
   private async sendTranscriptPage(m: Extract<HubToDaemon, { type: "transcript.get" }>): Promise<void> {
     const t = this.tracked.get(m.sessionId);
     const reply = { type: "transcript.page" as const, requestId: m.requestId, sessionId: m.sessionId };
+    if (this.codexSessions.has(m.sessionId)) {
+      this.hub.send({ ...reply, ...(await this.codexSessions.page(m.sessionId, m.before, m.limit)) });
+      return;
+    }
     if (!t) {
       this.hub.send({ ...reply, entries: [], start: 0, total: 0, error: "session not found" });
       return;
@@ -1409,16 +1599,21 @@ export class Daemon {
     }
   }
 
+  /** The folder of a session this daemon knows, of either agent. */
+  private folderOf(sessionId: string): string | undefined {
+    return this.tracked.get(sessionId)?.info.cwd ?? this.codexSessions.cwdOf(sessionId);
+  }
+
   /**
    * The folder of a session's repository: its own folder, or `repo` inside it. Only sessions this daemon tracks, and
    * only a repository it found inside the folder, never a path the browser made up.
    */
   private async repoDir(sessionId: string, repo: string | undefined): Promise<{ dir: string } | { error: string }> {
-    const t = this.tracked.get(sessionId);
-    if (!t) return { error: "このセッションは見つかりません。" };
-    if (repo === undefined) return { dir: t.info.cwd };
-    const found = (await this.reposOf(t.info.cwd))?.find((r) => r.path === repo);
-    return found ? { dir: path.join(t.info.cwd, found.path) } : { error: "このリポジトリは見つかりません。" };
+    const cwd = this.folderOf(sessionId);
+    if (cwd === undefined) return { error: "このセッションは見つかりません。" };
+    if (repo === undefined) return { dir: cwd };
+    const found = (await this.reposOf(cwd))?.find((r) => r.path === repo);
+    return found ? { dir: path.join(cwd, found.path) } : { error: "このリポジトリは見つかりません。" };
   }
 
   /** Branches and history of the repository the session works in. */
@@ -1447,7 +1642,7 @@ export class Daemon {
   /** The entries of a folder inside a session's folder (see files.ts). Only the folder of a session this daemon tracks. */
   private async sendDir(m: Extract<HubToDaemon, { type: "dir.get" }>): Promise<void> {
     const reply = { type: "dir" as const, requestId: m.requestId, sessionId: m.sessionId, path: m.path };
-    const root = this.tracked.get(m.sessionId)?.info.cwd;
+    const root = this.folderOf(m.sessionId);
     const dir = root ? await listDir(root, m.path).catch((e: unknown) => ({ error: String(e) })) : { error: "このセッションは見つかりません。" };
     this.hub.send("error" in dir ? { ...reply, error: dir.error } : { ...reply, dir });
   }
@@ -1455,7 +1650,7 @@ export class Daemon {
   /** A file inside a session's folder: its text, an image's data, or what kind of file it is (see files.ts). */
   private async sendFile(m: Extract<HubToDaemon, { type: "file.get" }>): Promise<void> {
     const reply = { type: "file" as const, requestId: m.requestId, sessionId: m.sessionId, path: m.path };
-    const root = this.tracked.get(m.sessionId)?.info.cwd;
+    const root = this.folderOf(m.sessionId);
     const file = root ? await readFileAt(root, m.path).catch((e: unknown) => ({ error: String(e) })) : { error: "このセッションは見つかりません。" };
     this.hub.send("error" in file ? { ...reply, error: file.error } : { ...reply, file });
   }
@@ -1476,7 +1671,7 @@ export class Daemon {
 
   /** Writes a text file inside a session's folder, or makes one (see files.ts). */
   private async writeFile(m: Extract<HubToDaemon, { type: "file.write" }>): Promise<CommandResult> {
-    const root = this.tracked.get(m.sessionId)?.info.cwd;
+    const root = this.folderOf(m.sessionId);
     if (!root) return { ok: false, error: "このセッションは見つかりません。" };
     const written = await writeFileAt(root, m.path, m.content, { baseHash: m.baseHash, create: m.create === true });
     if ("error" in written) return { ok: false, error: written.error, ...(written.conflict ? { conflict: true } : {}) };
@@ -1490,7 +1685,8 @@ export class Daemon {
    * Starts `claude --remote-control` in `cwd` in a terminal of its own and waits for its session id. With `trust`,
    * Claude Code's question whether to trust the folder is answered with yes; without it, the launch stops there.
    */
-  private async launch(cwd: string, name: string | undefined, trust = false): Promise<CommandResult> {
+  private async launch(cwd: string, name: string | undefined, trust = false, agent: AgentKind = "claude"): Promise<CommandResult> {
+    if (agent === "codex") return this.launchCodex(cwd, name);
     if (!this.canLaunch) return { ok: false, error: NO_TERMINAL };
     const dir = path.resolve(cwd);
     const stat = await fsp.stat(dir).catch(() => undefined);
@@ -1510,6 +1706,30 @@ export class Daemon {
     // A folder trusted just now is one to offer from now on.
     void this.refreshFolders();
     return started.mcpDeclined ? { ok: true, sessionId, warning: MCP_DECLINED } : { ok: true, sessionId };
+  }
+
+  /** Starts a session of Codex in `cwd`: a new thread of its app-server. */
+  private async launchCodex(cwd: string, name: string | undefined): Promise<CommandResult> {
+    const dir = path.resolve(cwd);
+    const stat = await fsp.stat(dir).catch(() => undefined);
+    if (!stat?.isDirectory()) return { ok: false, error: `フォルダーがありません：${dir}` };
+    const checked = name?.trim() ? sessionName(name) : undefined;
+    if (checked && "error" in checked) return { ok: false, error: checked.error };
+    // It may have been installed or logged in to since it was last looked for.
+    if (this.codex?.status !== "available") await this.refreshCodex();
+    if (!this.codex) return { ok: false, error: "この working server には Codex が入っていません。" };
+    if (this.codex.status === "loginRequired") return { ok: false, error: "Codex にログインしていません。working server で codex login を実行してください。" };
+    if (this.codex.status !== "available") return { ok: false, error: "Codex の状態を確かめられませんでした。working server で codex login status を実行して確かめてください。" };
+    try {
+      const sessionId = await this.codexSessions.launch(dir, checked?.name);
+      log(`started Codex's thread ${sessionId} in ${dir}`);
+      void this.refreshFolders();
+      return { ok: true, sessionId };
+    } catch (e) {
+      log("could not start a session of Codex", e);
+      void this.refreshCodex();
+      return { ok: false, error: `Codex のセッションを起動できませんでした：${e instanceof Error ? e.message : String(e)}` };
+    }
   }
 
   /** Makes a folder for a session to start in (see folders.ts). */
@@ -1555,6 +1775,17 @@ export class Daemon {
     | { error: string; needsTrust?: true; trustWarnings?: string[] }
   > {
     const terminal = terminalName(rcName);
+    // Until `claude agents` lists it, nothing says that the folder of a conversation being opened again is in use.
+    const resumed = claudeArgs.indexOf("--resume");
+    if (resumed >= 0) this.claudeTmpOpening.set(claudeArgs[resumed + 1]!, Date.now() + LAUNCH_TIMEOUT_MS);
+    // Claude Code does not start with a folder it cannot use: it then uses its default one.
+    const claudeTmp = await prepareClaudeTmp(this.cfg.claudeTmpDir).then(
+      () => ({ CLAUDE_CODE_TMPDIR: this.cfg.claudeTmpDir }),
+      (e: unknown) => {
+        log(`cannot use ${this.cfg.claudeTmpDir} for Claude Code's temporary files; starting it with its default folder`, e);
+        return {};
+      },
+    );
     // Its status line reports the context window and the plan's usage limits to gasho-daemon (statusline.ts).
     const statusLine = statusLineLaunch({
       port: this.cfg.hookPort,
@@ -1569,7 +1800,7 @@ export class Daemon {
         file: this.cfg.claudeBin,
         // One argument: a name starting with "-" (say "-wip") given on its own would be read as Claude Code's options.
         args: [`--remote-control=${rcName}`, ...claudeArgs, ...statusLine.args],
-        env: { ...cleanEnv(), ...statusLine.env },
+        env: { ...cleanEnv(), ...claudeTmp, ...statusLine.env },
       });
     } catch (e) {
       log(`could not start a terminal for "${rcName}"`, e);
@@ -1687,6 +1918,7 @@ export class Daemon {
    * that names it in Claude Code too (the Remote Control name is set already), and its conversation can be read at once.
    */
   private async fork(sessionId: string, name: string | undefined): Promise<CommandResult> {
+    if (this.codexSessions.has(sessionId)) return { ok: false, error: CODEX_NO_FORK };
     const source = this.managed.get(sessionId);
     if (!source) return { ok: false, error: "このセッションはフォークできません。フォークできるのは、Gasho が起動したセッションだけです。" };
     if (!this.canLaunch) return { ok: false, error: NO_TERMINAL };
@@ -1710,6 +1942,8 @@ export class Daemon {
       return { ok: false, error };
     }
     const { sessionId: forkId, terminal, pid } = started;
+    this.tokenDays.rememberFork(forkId, forkedAt);
+    await this.tokenDays.save();
     const warnings: string[] = started.mcpDeclined ? [MCP_DECLINED] : [];
     let resumeAsked = started.resumeAsked;
     try {
@@ -1764,6 +1998,7 @@ export class Daemon {
 
   /** What can be typed after "/" in a session's Claude Code (see listSkills). Only sessions this daemon tracks. */
   private async skills(sessionId: string): Promise<CommandResult> {
+    if (this.codexSessions.has(sessionId)) return { ok: true, skills: [] };
     const t = this.tracked.get(sessionId);
     if (!t) return { ok: false, error: "このセッションは見つかりません。" };
     const skills = await listSkills({
@@ -1874,6 +2109,10 @@ export class Daemon {
    * is idle: it waits while the session works. A /rename still waiting is replaced, not sent too.
    */
   private async rename(sessionId: string, name: string, requestId: string): Promise<CommandResult> {
+    if (this.codexSessions.has(sessionId)) {
+      const named = sessionName(name);
+      return "error" in named ? { ok: false, error: named.error } : this.codexSessions.rename(sessionId, named.name);
+    }
     // By session.sessionId from here on: `sessionId` can be one the session had before /clear (see ManagedSessions.find),
     // and /clear can give it a new id while the name is saved (see followNewIds).
     const session = this.managed.find(sessionId);
@@ -1912,8 +2151,13 @@ export class Daemon {
    * signalled, so a PID used again by another process is never hit.
    */
   private async remove(sessionId: string): Promise<CommandResult> {
+    if (this.codexSessions.has(sessionId)) {
+      log(`removing Codex's session ${sessionId}; its conversation stays with Codex`);
+      return this.codexSessions.remove(sessionId);
+    }
     const m = this.managed.get(sessionId);
     if (!m) return { ok: false, error: "このセッションは削除できません。削除できるのは、Gasho が起動したセッションだけです。" };
+    const tokens = this.tracked.get(sessionId)?.tokens;
     // From here on nothing is typed into it, and Gasho no longer shows it.
     this.ownPids.add(m.pid);
     this.managed.remove(sessionId);
@@ -1941,9 +2185,66 @@ export class Daemon {
       }
     }
     for (const dir of this.attachmentsOfSession(m)) await fsp.rm(dir, { recursive: true, force: true });
+    await this.countLastTokens(sessionId, tokens);
+    await this.tokenDays.save();
     log(`removed session ${m.name} (${sessionId}); closed its terminal ${m.terminal}`);
+    // Not waited for: a large folder takes a while, and the session is removed whether or not this works.
+    void this.removeClaudeTmp(sessionId, m.pid);
     await this.refresh();
     return { ok: true };
+  }
+
+  /**
+   * Removes the temporary folder of a session just removed, once its Claude Code has ended. If it has not, or if the
+   * folder is still needed (claudeTmpNeeded), it stays, and sweepClaudeTmp removes it when it is no longer used.
+   */
+  private async removeClaudeTmp(sessionId: string, pid: number): Promise<void> {
+    for (let waited = 0; waited < CLAUDE_END_WAIT_MS && isAlive(pid); waited += 100) await sleep(100);
+    if (isAlive(pid) || this.claudeTmpNeeded(sessionId)) {
+      log(`the temporary folder of ${sessionId} is left for the regular clean-up`);
+      return;
+    }
+    await removeSessionTmp(this.cfg.claudeTmpDir, sessionId).catch((e: unknown) => log(`could not remove the temporary folder of ${sessionId}`, e));
+  }
+
+  /**
+   * Whether the temporary folder of `id` is needed by another session: one Gasho keeps that may write to it or was forked
+   * from it, a conversation being opened again, or a running session whose conversation shows an image or video from it.
+   */
+  private claudeTmpNeeded(id: string): boolean {
+    if (this.managed.needsTmpOf(id) || this.openingClaudeTmp(id)) return true;
+    for (const [sessionId, t] of this.tracked) {
+      if (sessionId === id) continue;
+      for (const file of t.meta.sentFiles ?? []) if (sessionOfTmpFile(file) === id) return true;
+    }
+    return false;
+  }
+
+  /** Whether a Claude Code is being started on this conversation, and may not be listed yet. */
+  private openingClaudeTmp(sessionId: string): boolean {
+    const until = this.claudeTmpOpening.get(sessionId);
+    if (until !== undefined && until <= Date.now()) this.claudeTmpOpening.delete(sessionId);
+    return until !== undefined && until > Date.now();
+  }
+
+  /**
+   * Removes the temporary folders left behind by sessions that no longer run (Claude Code crashed, or ended while
+   * gasho-daemon was stopped). Without the list of what runs, nothing is removed.
+   */
+  private async sweepClaudeTmp(): Promise<void> {
+    if (this.sweepingClaudeTmp) return;
+    this.sweepingClaudeTmp = true;
+    try {
+      const running = new Set((await listAgents(this.cfg.claudeBin)).map((r) => r.sessionId));
+      const keep = (id: string) => running.has(id) || this.tracked.has(id) || this.claudeTmpNeeded(id);
+      const { removed, failed } = await sweepClaudeTmp(this.cfg.claudeTmpDir, { keep });
+      if (removed.length > 0) log(`removed ${removed.length} temporary folder(s) of sessions that no longer run`);
+      for (const { dir, error } of failed) log(`could not remove the temporary folder ${dir}`, error);
+    } catch (e) {
+      log("could not clean up the temporary folders of Claude Code", e);
+    } finally {
+      this.sweepingClaudeTmp = false;
+    }
   }
 
   /**
@@ -1969,7 +2270,8 @@ export class Daemon {
     const own = this.managed
       .all()
       .filter((s) => isInside(s.cwd, w.path))
-      .map((s) => s.sessionId);
+      .map((s) => s.sessionId)
+      .concat(this.codexSessions.sessions().filter((s) => isInside(s.cwd, w.path)).map((s) => s.sessionId));
     const outside = [...this.tracked.values()]
       .filter((t) => isInside(t.info.cwd, w.path) && !this.managed.has(t.info.sessionId))
       .map((t) => t.info.sessionId);
@@ -2008,6 +2310,7 @@ export class Daemon {
 
   private async input(m: Extract<HubToDaemon, { type: "session.input" }>): Promise<CommandResult> {
     const { sessionId, text, model, effort, ultracode, files } = m;
+    if (this.codexSessions.has(sessionId)) return this.inputToCodex(m);
     // By session.sessionId from here on: `sessionId` can be one the session had before /clear (see ManagedSessions.find),
     // and /clear can give it a new id while the files are written (see followNewIds).
     const session = this.managed.find(sessionId);
@@ -2048,6 +2351,21 @@ export class Daemon {
     const warning = [...(outcome?.warnings ?? []), failed].filter(Boolean).join(" ");
     const unapplied = [...new Set(outcome?.unapplied ?? [])];
     return { ok: true, queued, ...(warning ? { warning } : {}), ...(unapplied.length > 0 ? { unapplied } : {}) };
+  }
+
+  /** An input to a session of Codex: its text only, for now. What only Claude Code can switch stays as it is. */
+  private async inputToCodex(m: Extract<HubToDaemon, { type: "session.input" }>): Promise<CommandResult> {
+    if (m.files?.length) return { ok: false, error: "Codex のセッションには、ファイルを添付できません。" };
+    const body = m.text.trim();
+    if (!body) return { ok: false, error: "入力が空です。" };
+    if (body.length > MAX_INPUT) return { ok: false, error: `入力が長すぎます（${MAX_INPUT} 文字まで）。` };
+    const unapplied: SwitchField[] = [
+      ...(m.model !== undefined ? (["model"] as const) : []),
+      ...(m.effort !== undefined ? (["effort"] as const) : []),
+      ...(m.ultracode !== undefined ? (["ultracode"] as const) : []),
+    ];
+    const r = await this.codexSessions.input(m.sessionId, body);
+    return r.ok && unapplied.length > 0 ? { ...r, unapplied } : r;
   }
 
   private attachmentsOf(sessionId: string): string {
@@ -2473,6 +2791,7 @@ export class Daemon {
    * work. One stop at a time (see INTERRUPT_REPEAT_MS).
    */
   private async interrupt(sessionId: string): Promise<CommandResult> {
+    if (this.codexSessions.has(sessionId)) return this.codexSessions.interrupt(sessionId);
     const m = this.managed.get(sessionId);
     if (!m) return { ok: false, error: "このセッションは Gasho から止められません。公式アプリで止めてください。" };
     if (Date.now() - (this.lastStop.get(sessionId) ?? 0) < INTERRUPT_REPEAT_MS) return { ok: true };
@@ -2510,6 +2829,7 @@ export class Daemon {
    * is typed into the session meanwhile.
    */
   private async stopTasks(sessionId: string, taskId?: string, which?: (kind: BackgroundTaskKind) => boolean): Promise<CommandResult> {
+    if (this.codexSessions.has(sessionId)) return { ok: false, error: "Codex のセッションには、バックグラウンドの作業の一覧がありません。" };
     const m = this.managed.get(sessionId);
     if (!m) return { ok: false, error: "このセッションは Gasho から起動したものではないため、止められません。" };
     const known = this.tracked.get(sessionId)?.info.background ?? [];

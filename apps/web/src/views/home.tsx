@@ -1,12 +1,13 @@
 // The home screen: a dashboard of tiles of several sizes (a bento grid): the states of the sessions and the
-// instructions sent lately as number tiles, the sessions as the largest tile, the notifications, the tokens used, then
-// the latest operations and the working servers, with the plugins' tiles among them. As many columns as the home's
+// instructions sent lately as number tiles, the sessions as the largest tile, the notifications, the tokens used (the
+// last 24 hours, and a year of days as a heatmap), then the latest operations and the working servers, with the plugins' tiles among them. As many columns as the home's
 // width holds (TILE_COLUMNS), from two (on a phone, the number tiles two by two and the rest one under the other) to
 // five. Only sessions started from Gasho are shown.
 // A tile can be put elsewhere by dragging the handle at the middle of its top edge, or with the arrow keys once the
 // handle has the focus; this browser keeps the order.
 import { motion, useTransform } from "framer-motion";
 import {
+  CalendarDays,
   CircleArrowUp,
   CircleDot,
   CircleStop,
@@ -37,7 +38,7 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { TileSize } from "@gasho/plugin-sdk";
 import type {
   GashoNotification,
@@ -49,6 +50,7 @@ import type {
 } from "@gasho/protocol";
 import { EFFORTS } from "@/components/session-controls";
 import { StatusBadge } from "@/components/status-badge";
+import { ActivityHeatmap } from "@/components/ui/activity-heatmap";
 import { NotificationStack, type NotificationItem } from "@/components/ui/notification-stack";
 import { MemoryMeters } from "@/components/memory-meters";
 import { CHART_BLUE, StatCard, TILE, TILE_SHADOW } from "@/components/ui/stat-card";
@@ -56,9 +58,10 @@ import { updateTo } from "@/lib/daemon-update";
 import { branchLabel, formatCost, relativeTime, repoLabel, sessionLabel, waitingText } from "@/lib/format";
 import { arrangeTiles, sameOrder, useSavedOrder } from "@/lib/order";
 import { go } from "@/lib/route";
-import { notificationShown, shownSessions } from "@/lib/sessions";
+import { notificationShown, shownSessions, shownStatus } from "@/lib/sessions";
 import { useSortable, type Sortable } from "@/lib/sortable";
-import { MAX_OPERATIONS, markRead, useAppState } from "@/lib/store";
+import { MAX_OPERATIONS, markRead, onConnected, requestTokenDays, useAppState } from "@/lib/store";
+import { sumTokenDays, tokenDayOf } from "@/lib/token-days";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
 import { usePluginTiles, type PluginTile } from "@/plugins/parts";
@@ -99,6 +102,7 @@ const TILE_NAMES = {
   notifications: "通知",
   tokens: "トークン",
   tokenBreakdown: "トークンの内訳",
+  tokenHeatmap: "トークンのヒートマップ",
   operations: "最近の操作",
   machines: "working server",
   memory: "メモリ",
@@ -164,16 +168,16 @@ export function HomeView() {
         .flatMap((machine) => shownSessions(machine).map((s) => ({ machine, s })))
         .sort(
           (a, b) =>
-            STATUS_ORDER[a.machine.connected ? a.s.status : "unknown"] - STATUS_ORDER[b.machine.connected ? b.s.status : "unknown"] ||
+            STATUS_ORDER[a.machine.connected ? shownStatus(a.s) : "unknown"] - STATUS_ORDER[b.machine.connected ? shownStatus(b.s) : "unknown"] ||
             (b.s.lastActivityAt ?? 0) - (a.s.lastActivityAt ?? 0),
         ),
     [machines],
   );
   const online = rows.filter((r) => r.machine.connected);
-  const count = (status: SessionStatus) => online.filter((r) => r.s.status === status).length;
+  const count = (status: SessionStatus) => online.filter((r) => shownStatus(r.s) === status).length;
   // Under each count, the sessions it counts.
   const names = (status: SessionStatus) => {
-    const list = online.filter((r) => r.s.status === status).map((r) => sessionLabel(r.s));
+    const list = online.filter((r) => shownStatus(r.s) === status).map((r) => sessionLabel(r.s));
     if (list.length === 0) return "なし";
     return list.length <= 2 ? list.join("、") : `${list.slice(0, 2).join("、")} ほか ${list.length - 2} 件`;
   };
@@ -314,6 +318,14 @@ export function HomeView() {
       content: (
         <Tile title="トークンの内訳（過去24時間）" icon={<Cpu className="size-4" />}>
           <TokenBreakdown tokens={tokens} />
+        </Tile>
+      ),
+    },
+    tokenHeatmap: {
+      size: "large",
+      content: (
+        <Tile title="トークンのヒートマップ" icon={<CalendarDays className="size-4" />}>
+          <TokenHeatmap now={now} />
         </Tile>
       ),
     },
@@ -595,6 +607,32 @@ function TokenBreakdown({ tokens }: { tokens: TokenTrend }) {
   );
 }
 
+/** A year of the tokens used per day, of all working servers together; asked for when the home screen opens. */
+export function TokenHeatmap({ now }: { now: number }) {
+  const { tokenDays, tokenDaysReported } = useAppState();
+  useEffect(() => {
+    requestTokenDays();
+    return onConnected(requestTokenDays);
+  }, []);
+  const data = useMemo(() => sumTokenDays(tokenDays ?? {}), [tokenDays]);
+  if (!tokenDays) return <p className="text-sm text-muted-foreground">読み込んでいます…</p>;
+  if (data.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        {tokenDaysReported
+          ? "まだトークンの使用量はありません。Gasho から起動したセッションで使うと、ここに日ごとの量が出ます。"
+          : "日ごとのトークン数を送る gasho-daemon がありません。gasho-daemon を更新すると、ここに出ます。"}
+      </p>
+    );
+  }
+  return (
+    <>
+      <ActivityHeatmap data={data} endDate={tokenDayOf(now)} unit="トークン" format={compact} />
+      <p className="mt-2 text-[11px] text-muted-foreground">日本時間で1日を区切っています（サブエージェントを含む）。</p>
+    </>
+  );
+}
+
 /**
  * The instructions sent from Gasho in the last 24 hours, in twelve 2-hour steps, and in the 24 hours before when the
  * operations on hand reach back that far.
@@ -672,7 +710,7 @@ function SessionCard({ row: { machine, s }, now }: { row: Row; now: number }) {
       )}
     >
       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-        {machine.connected ? <StatusBadge status={s.status} /> : <span>オフライン</span>}
+        {machine.connected ? <StatusBadge status={shownStatus(s)} /> : <span>オフライン</span>}
         <span className="shrink-0">{relativeTime(s.lastActivityAt, now)}</span>
       </div>
       <div className="min-w-0">

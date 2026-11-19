@@ -7,7 +7,7 @@ import { drag, pointOn, sendHook, startDrag, worktreeSession } from "./home-side
 
 test.describe.configure({ mode: "parallel" });
 
-const TILES = ["作業中", "確認待ち", "待機中", "送った指示", "セッション", "通知", "トークン", "トークンの内訳", "最近の操作", "working server", "メモリ"];
+const TILES = ["作業中", "確認待ち", "待機中", "送った指示", "セッション", "通知", "トークン", "トークンの内訳", "トークンのヒートマップ", "最近の操作", "working server", "メモリ"];
 
 /** The tiles' names, in the order shown (their handles are named after them). */
 const tileOrder = (page: Page) =>
@@ -31,7 +31,7 @@ const columns = (page: Page) =>
   });
 
 test.describe("見出しとタイル", () => {
-  test("見出しに working server の台数と Gasho から起動したセッションの数が出て、タイルが 11 枚並ぶ", async ({ page, hub }) => {
+  test("見出しに working server の台数と Gasho から起動したセッションの数が出て、タイルが 12 枚並ぶ", async ({ page, hub }) => {
     const busy = worktreeSession("busy-one", { status: "busy" });
     const waiting = worktreeSession("waiting-one", { status: "waiting" });
     const idle = worktreeSession("idle-one", { status: "idle" });
@@ -179,7 +179,6 @@ test.describe("通知", () => {
   });
 
   test("右へドラッグすると既読になり、ホームのまま", async ({ page, hub, isMobile }) => {
-    test.fail(!isMobile, "マウスで右へドラッグすると、既読になったうえで、その通知のセッションが開く（ドラッグの終わりの click が本文に届く。#182）");
     await threeNotifications(hub);
     await page.goto("/");
     const stack = notificationTile(page);

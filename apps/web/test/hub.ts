@@ -69,6 +69,8 @@ export interface Hub {
    * an update of the Gasho server (server.result). The last one sent, unless one is given.
    */
   answer(result: CommandResult, request?: ClientToHub): Promise<void>;
+  /** Closes the page's connection, as a network that lost it. */
+  drop(): void;
 }
 
 /** Registers this browser with the stand-in, connects to it, and has it send `snapshot` (no machines unless given). */
@@ -92,6 +94,7 @@ export async function connectHub(snapshot: Partial<Omit<Snapshot, "type">> = {})
     sent: socket.sent,
     commands,
     say,
+    drop: () => act(() => socket.close()),
     answer(result, request = socket.sent.findLast((m) => "requestId" in m)) {
       if (!request || !("requestId" in request)) throw new Error("no request was sent");
       const { requestId } = request;

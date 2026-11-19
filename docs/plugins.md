@@ -152,10 +152,10 @@ GitHub プラグインの場合は、次のようになる。
 | `name`、`description` | 画面に出す名前（40文字まで）と説明 |
 | `genre` | ジャンルの ID。GashoPlugins のプラグインでは必ず書き、GashoPlugins の `genres.json` にあるジャンル（連携の `integration`、開発ツールの `devtools` など）から1つ選ぶ。GashoPlugins の GitHub Actions が、Pull request と main への push のたびに確かめる。プラグインの画面は、カードにジャンルの名前を出し、「GashoPlugins にあるもの」をジャンルごとに分けて並べる（P9）。ジャンルの名前と並びは、カタログから読む（P10）。Gasho サーバーは、ID の形だけを確かめる |
 | `version` | プラグインの版（1.2.0 の形）。GashoPlugins に新しい版を出すときに上げる。プラグインの画面は、カタログの版が入れた版より新しいときに「更新」を出す。ホットリロードで入れ替えるかは、版ではなく中身のハッシュで判断する |
-| `api` | プラグインが前提にする、プラグインの API の版。Gasho は、メジャーが同じで、マイナーが Gasho の対応する版以下のものだけを読み込む。daemon の部分は、マイナーがその gasho-daemon の版以下の working server でだけ使える（それより古い gasho-daemon は「古い」と出す）。拡張点を足すなど、前の版のプラグインがそのまま動く変更ではマイナーを上げ、動かなくなる変更ではメジャーを上げる。1.1 で、`session.launch`、`useLaunchSession`、`useNavigation` の `openSession`、daemon の部分の `ctx.folders()` と `ctx.dataDir` を足した。1.2 で、会話の末尾（P13、`conversationEnd`）と `useSessionActivity` を足した。1.3 で、daemon の部分の `ctx.github` を足した。1.4 で、入力欄の下（P14、`composerFooter`）、SDK の `Popover`、`SessionInfo` の `context` と `limits` を足し、プラグイン専用のフォルダーで動く Claude Code をセッションとして扱わないようにした。1.5 で、daemon の部分の `ctx.emit` と画面の部分の `useEvent`（P8）、worktree のタブ（P15、`worktreeTabs`・`worktreeViews`）、`useNavigation` の `worktreeHref`・`openWorktreeView` を足した。1.6 で、テーマ（P16、`theme`）を足した。1.7 で、サイドバーのセッションの一覧（P17、`sessionList`）を足した。1.8 で、サイドバーの worktree の一覧の分け方（P18、`worktreeGroupings`）を足した。1.9 で、分け方の `useOnMove` と、`useSharedState` を足した。1.10 で、`useRemoveWorktree`、`removeWorktreeProblem`、`permissions` の `worktree.remove` を足した。gasho-daemon は、1.5 から 1.10 を名乗るようにした（`worktree.remove` に答えるのはこの gasho-daemon からなので、api 1.10 の daemon の部分は、これより古い gasho-daemon では「古い」と出る）。1.11 で、ページのパネル（P19、`pagePanels`）を足した。P19 は画面だけの変更だが、api 1.11 の daemon の部分が動くよう、gasho-daemon も 1.11 を名乗る（それより古い gasho-daemon では「古い」と出る）。1.12 で、`useSendInput` の `model`・`effort`・`ultracode` と結果の `data`（`SendInputResult`）を足した。これも画面だけの変更だが、gasho-daemon も 1.12 を名乗る。1.14 で、`useRemoveSession` と `permissions` の `session.remove` を足した。これも画面だけの変更だが、gasho-daemon も 1.14 を名乗る |
+| `api` | プラグインが前提にする、プラグインの API の版。Gasho は、メジャーが同じで、マイナーが Gasho の対応する版以下のものだけを読み込む。daemon の部分は、マイナーがその gasho-daemon の版以下の working server でだけ使える（それより古い gasho-daemon は「古い」と出す）。拡張点を足すなど、前の版のプラグインがそのまま動く変更ではマイナーを上げ、動かなくなる変更ではメジャーを上げる。1.1 で、`session.launch`、`useLaunchSession`、`useNavigation` の `openSession`、daemon の部分の `ctx.folders()` と `ctx.dataDir` を足した。1.2 で、会話の末尾（P13、`conversationEnd`）と `useSessionActivity` を足した。1.3 で、daemon の部分の `ctx.github` を足した。1.4 で、入力欄の下（P14、`composerFooter`）、SDK の `Popover`、`SessionInfo` の `context` と `limits` を足し、プラグイン専用のフォルダーで動く Claude Code をセッションとして扱わないようにした。1.5 で、daemon の部分の `ctx.emit` と画面の部分の `useEvent`（P8）、worktree のタブ（P15、`worktreeTabs`・`worktreeViews`）、`useNavigation` の `worktreeHref`・`openWorktreeView` を足した。1.6 で、テーマ（P16、`theme`）を足した。1.7 で、サイドバーのセッションの一覧（P17、`sessionList`）を足した。1.8 で、サイドバーの worktree の一覧の分け方（P18、`worktreeGroupings`）を足した。1.9 で、分け方の `useOnMove` と、`useSharedState` を足した。1.10 で、`useRemoveWorktree`、`removeWorktreeProblem`、`permissions` の `worktree.remove` を足した。gasho-daemon は、1.5 から 1.10 を名乗るようにした（`worktree.remove` に答えるのはこの gasho-daemon からなので、api 1.10 の daemon の部分は、これより古い gasho-daemon では「古い」と出る）。1.11 で、ページのパネル（P19、`pagePanels`）を足した。P19 は画面だけの変更だが、api 1.11 の daemon の部分が動くよう、gasho-daemon も 1.11 を名乗る（それより古い gasho-daemon では「古い」と出る）。1.12 で、`useSendInput` の `model`・`effort`・`ultracode` と結果の `data`（`SendInputResult`）を足した。これも画面だけの変更だが、gasho-daemon も 1.12 を名乗る。1.14 で、`useRemoveSession` と `permissions` の `session.remove` を足した。これも画面だけの変更だが、gasho-daemon も 1.14 を名乗る。1.15 で、daemon の部分の `onSessionStop` と、`permissions` の `session.notification` を足した。`onSessionStop` を呼ぶのはこの gasho-daemon からなので、api 1.15 の daemon の部分は、これより古い gasho-daemon では「古い」と出る |
 | `web`、`daemon` | 画面の部分と daemon の部分のファイル。`web`・`daemon`・`theme` のうち、少なくとも1つは要る |
 | `methods` | 画面の部分から呼べる、daemon の部分のメソッド。`kind` は、読むだけのもの（`read`）か、何かを変えるもの（`write`）か。`write` の呼び出しは操作のログに残す。`timeoutSeconds` は待つ時間で、既定は15秒、長くても120秒まで |
-| `permissions` | 読む・出す以外に、画面の部分がすること。`session.input`（セッションに発言を送る）、`session.launch`（セッションを起動する。API 1.1）、`session.remove`（Gasho が起動したセッションを削除する。API 1.14）、`worktree.remove`（worktree を中のセッションとともに削除する。API 1.10） |
+| `permissions` | 読む・出す以外に、画面の部分がすること。`session.input`（セッションに発言を送る）、`session.launch`（セッションを起動する。API 1.1）、`session.remove`（Gasho が起動したセッションを削除する。API 1.14）、`worktree.remove`（worktree を中のセッションとともに削除する。API 1.10）、`session.notification`（セッションの応答が終わったときの通知を、daemon の部分の `onSessionStop` で置き換える。API 1.15） |
 | `settings` | 設定の項目（P5） |
 | `theme` | テーマ（P16）の、名前と CSS の値 |
 
@@ -532,7 +532,7 @@ worktreeGroupings: [
 
 ```
 ┌──────────────────────┐
-│ worktree        ▤ ↺ │ ▤：絞り込みと分け方のメニュー
+│ worktree     ▤ 📖 ↺ │ ▤：絞り込みと分け方のメニュー　📖：リポジトリを clone
 │ ˅ Gasho           ＋ │ 見出し：押すと畳む。＋で、そのカテゴリの worktree にセッションを起動する
 │   ● main             │ 行：いまの一覧の行（状態、名前、2行目、確認・オフライン）
 │   ● feat/x    確認   │
@@ -549,7 +549,7 @@ worktreeGroupings: [
 | `worktrees` | サイドバーの一覧に出す worktree。絞り込みで選んだリポジトリのものだけで、並びは、セッションのある worktree を最後に使った順、登録したリポジトリのほかの worktree、セッションが無くなってブラウザーが覚えている worktree の順（ドラッグで並べ替えた順ではない）。P17 の `SessionListWorktree` に、行の点と同じ状態（`status`）と、最後に使った時刻（`lastUsed`）を足したもの |
 | `machines` | working server |
 
-`status` は、その worktree のセッションのうち、いちばん急ぐものの状態である。確認待ち（`waiting`）、作業中（`busy`）、待機中（`idle`）の順に見る。working server がオフラインのときと、セッションの無い worktree では `unknown` になる。`lastUsed` は、セッションの最後に使った時刻のうち、いちばん新しいもので、セッションが無ければ無い。
+`status` は、その worktree のセッションのうち、いちばん急ぐものの状態である。確認待ち（`waiting`）、作業中（`busy`）、待機中（`idle`）の順に見る。応答が終わっていても、バックグラウンドで動いているものがあるセッションは作業中とする。working server がオフラインのときと、セッションの無い worktree では `unknown` になる。`lastUsed` は、セッションの最後に使った時刻のうち、いちばん新しいもので、セッションが無ければ無い。
 
 返すのはカテゴリの配列で、その順が既定の順になる。カテゴリは、ID（`id`）、見出し（`title`）、見出しの後ろの薄い文字（`description`）、ポインターを乗せたときの説明（`hint`）、「＋」で起動する worktree の `key`（`launch`）、worktree（`worktrees`）を持つ。worktree は、`key` と、行の2行目（`description`）である。2行目を書かなければ、いまの一覧と同じ2行目（リポジトリ名と、working server が2台以上ならその名前）を出し、空の文字列にすれば2行目を出さない。
 
@@ -639,7 +639,7 @@ function PrPanel({ params, docked }: PagePanelProps) {
 | `useSharedState(key, 初期値)` | Gasho サーバーに保存する JSON の値と、値を変える関数（API 1.9）。すべてのブラウザーで同じ値を読み書きする。下の「すべてのブラウザーで共通の値」を参照 |
 | `useNavigation()` | このプラグインのページとパネルを開く・閉じる・戻る。ホームのタイルのようにセッションの外からは、セッションを指定してパネルを開く。`<a href>` に入れる URL も作る。`openSession(machine, sessionId)` と `sessionHref(…)` で、Gasho のセッションの画面に移る（API 1.1）。`openWorktreeView(画面, 引数, at)` と `worktreeHref(…)` で、worktree のタブの画面を開く（API 1.5、P15） |
 | `useSendInput()` | セッションに発言を送る関数を返す。引数は `{ machine, sessionId, text }`。`permissions` に `session.input` が要る。入力欄から送ったときと同じく、会話の末尾にすぐ出し、操作のログに残す。API 1.12 から、引数に `model`・`effort`・`ultracode` も渡せる。入力欄のピッカーと同じく、送る前にそのセッションだけ切り替える。切り替えられるのは Gasho から起動したセッションで、gasho-daemon が `MachineInfo.features` にその項目を挙げているとき（0.6.0 以降）だけである。結果の `data` には、待ってから入力されるか（`queued`）、切り替えられなかった項目（`unapplied`）とその理由（`warning`）が入る。切り替えられなくても、文はそのまま送る |
-| `useLaunchSession()` | working server のフォルダーでセッションを起動する関数を返す（API 1.1）。引数は `{ machine, cwd, name, trust }`。`permissions` に `session.launch` が要る。「新しいセッション」と同じく起動し、操作のログに残す。Claude Code がフォルダーを信頼するかを聞いたときは起動せず、`needsTrust` を返す。利用者に確かめてから `trust: true` で呼び直す |
+| `useLaunchSession()` | working server のフォルダーでセッションを起動する関数を返す（API 1.1）。引数は `{ machine, cwd, name, trust, agent }`。`agent`（API 1.16）に `"codex"` を渡すと Codex のセッションを起動し、渡さなければ Claude Code を起動する。設定の既定のエージェントは使わない。`permissions` に `session.launch` が要る。「新しいセッション」と同じく起動し、操作のログに残す。Claude Code がフォルダーを信頼するかを聞いたときは起動せず、`needsTrust` を返す。利用者に確かめてから `trust: true` で呼び直す。起動先に未使用のセッションがあると、Gasho が削除するかを利用者に聞き、答えが出てから起動する。プラグインは起動の前に worktree などを作っていることがあるので、プラグインからの起動は、この確認でキャンセルできない |
 | `useRemoveSession()` | Gasho が起動したセッションを削除する関数を返す（API 1.14）。引数は `{ machine, sessionId }`、結果は `{ ok: true }` か `{ ok: false, error }`。`permissions` に `session.remove` が要る。セッションのメニューの「削除」と同じく、Claude Code を終了して Gasho の一覧から外し、操作のログに残す。確認のダイアログは出さず、作業の途中でも止めるので、呼ぶ前にプラグインが `status` を確かめる。会話の記録は working server に残る。画面がそのセッションを出していれば、隣のタブか worktree へ移る |
 | `useRemoveWorktree()` | worktree を、中のセッションとともに削除する関数を返す（API 1.10）。`permissions` に `worktree.remove` が要る。サイドバーの worktree の行の「削除…」と同じく、gasho-daemon が中のセッションを終え（Gasho の外で起動したものも）、`git worktree remove` で消し、操作のログに残す。下の「worktree の削除」を参照 |
 | `removeWorktreeProblem(machine, { path, repo })` | worktree を削除できない理由（人に見せる文）。削除できるなら `undefined`（API 1.10）。リポジトリの外（`repo` が無い）、リポジトリの main の worktree（`path` が `repo`）、オフラインの working server、worktree を削除できない古い gasho-daemon（`MachineInfo.canRemoveWorktree` が無い）のときに理由を返す。サイドバーのメニューも、これで項目を押せなくする |
@@ -776,7 +776,7 @@ export default defineDaemonPlugin({
 | 名前 | 中身 |
 |---|---|
 | `ctx.machine` | working server の ID と名前 |
-| `ctx.session` | 呼び出しで指したセッション。gasho-daemon が見ているセッションだけで、ID、フォルダー、名前、GitHub のリポジトリ、フォルダーの中のリポジトリを持つ。`repo(パス)` は、セッションのフォルダー（パスを渡さないとき）か、gasho-daemon がその中で見つけたリポジトリのフォルダーを、その GitHub のリポジトリと一緒に返す |
+| `ctx.session` | 呼び出しで指したセッション。gasho-daemon が見ているセッションだけで、ID、エージェント（`agent`、API 1.16）、フォルダー、名前、GitHub のリポジトリ、フォルダーの中のリポジトリを持つ。`repo(パス)` は、セッションのフォルダー（パスを渡さないとき）か、gasho-daemon がその中で見つけたリポジトリのフォルダーを、その GitHub のリポジトリと一緒に返す |
 | `ctx.settings` | Gasho サーバーに保存した設定の値（`scope: "server"`）。設定を変えると、呼び出しを待たずに中身が新しい値になる。`start` で受け取ったものも同じ（「設定（P5）」） |
 | `ctx.folders()` | その working server で、Gasho がセッションを起動できるフォルダー（Claude Code が信頼しているフォルダーと、その親）。画面の `MachineInfo.folders` と同じもの。ブラウザーから来たパスで git などを動かす前に、この中にあるかを確かめるのに使う（API 1.1） |
 | `ctx.dataDir` | その working server での、このプラグイン専用のフォルダー（`~/.local/share/gasho/plugin-data/<ID>/`）。呼び出しをまたいで覚えておくもの（選んだ項目など）を置く。プラグインを更新しても外しても残る（API 1.1）。この中で動く Claude Code は、gasho-daemon がセッションとして扱わない（「プラグインが動かす Claude Code」、API 1.4） |
@@ -808,6 +808,26 @@ await ctx.github.write(["issue", "edit", "12", "--repo", "4rtofl/Gasho", "--add-
 - `read` の記録がどのリポジトリのものかは、引数の `--repo`（`-R`）か、`gh api repos/<owner>/<name>/…` のパスで決める。ほかの形（`gh api graphql` など）では、`repo` に書く
 - `write` は、`gasho-plugin.json` の `kind` が `write` のメソッドの中でだけ使える。ほかのメソッドと `start` から使うと、`PluginError` になる。GitHub を変えたことが、そのメソッドの呼び出しとして操作のログに残るようにするためである
 - gasho-daemon は、gh を `GASHO_GH_BIN`（既定は `gh`）で実行し、gasho-daemon を動かしている人のログインを使う
+
+### セッションの応答が終わったときの通知（API 1.15）
+
+`permissions` に `session.notification` を書いたプラグインは、Gasho から起動したセッションの応答が終わったときの通知（「○○ の応答が終わりました」）を、自分の通知に置き換えられる。daemon の部分に `onSessionStop` を書く。
+
+```ts
+export default defineDaemonPlugin({
+  methods: {},
+  async onSessionStop(ctx) {
+    if (!watching(ctx.session.sessionId)) return undefined; // Gasho の通知のまま
+    return { title: "#158 のレビューが終わりました（マージできます）", body: "4rtofl/Gasho「通知を直す」" };
+  },
+});
+```
+
+- `ctx` は、メソッドの呼び出しと同じもので、`ctx.session` は応答が終わったセッションである。`ctx.github.write` は使えない
+- 何も返さないと、Gasho の通知をそのまま送る。投げたとき、5秒以内に答えないとき（`ctx.signal` で中断を知らせる）も同じである
+- Gasho の通知は答えを待つ。ほかのセッションの通知を遅らせないよう、関係のないセッションにはすぐ返す。待っているあいだに届いた、そのセッションのフックは、そのあとに順に Gasho サーバーへ送る
+- `title` は120文字まで、`body` は300文字まで。ロック画面の通知（Web Push）には `title` だけを出すので、`title` には会話の中身を書かない
+- 複数のプラグインが答えたときは、プラグインの並びで最初のものを使う
 
 ### プラグインが動かす Claude Code（API 1.4）
 
@@ -1127,14 +1147,14 @@ Gasho の CSS（Tailwind CSS）には、Gasho のコードが使うクラスし�
 プラグインの CSS は、そのプラグインの部品の中にだけ当てる。プラグインのクラスは、Gasho のクラスと同じ Tailwind CSS の層に入り、Gasho の CSS より後にあるので、そのまま足すと Gasho の要素にも当たる。たとえば、プラグインの `.flex` が、Gasho のヘッダーの `md:hidden` を上書きし、広い画面でもスマホ用のヘッダーが出る。ほかのプラグインの部品にも同じことが起きる。そこで画面は、`web.css` のスタイルの規則を、部品を包む要素（`data-gasho-plugin="<ID>"`）の中だけに当たるように書き換えてから足す。テーマの変数（`theme` の層）、`@property`、`@keyframes` は、ページ全体に当てる。
 
 - 当たるのは、ページ、セッションのパネル、ホームのタイル、設定、会話の末尾、入力欄の下の部品、worktree のタブの画面と、SDK の `Popover` の中。セッションのヘッダー、サイドバーの項目、セッションの一覧（P17）と worktree の一覧の分け方（P18）、worktree のタブは Gasho が描くので、プラグインの CSS は当たらない
-- 部品の外（`document.body` など）に要素を出すときは、`data-gasho-plugin="<ID>"` を付けた要素で包む。SDK の `Popover` は、中身をこの要素で包んでページの末尾に出すので、プラグインの CSS が当たる
+- 部品の外（`document.body` など）に要素を出すときは、`data-gasho-plugin="<ID>"` を付けた要素で包む。SDK の `Popover` は、中身をこの要素で包んでページの末尾に出すので、プラグインの CSS が当たる。この要素には、部品を包む要素と同じく `display: contents`（Tailwind CSS の `contents`）を付ける。下に書く `:root`・`body`・`.dark` だけの規則はこの要素にも当たるので、付けないと `padding`・`background` などがこの要素に出る
 - 暗い画面の色は、Tailwind CSS の `dark:` か、`.dark` で始まる規則（`.dark .foo`）で書く。`<html class="dark">` のときに当たるよう、画面が `.dark` で始まる規則を `.dark & .foo, & .dark .foo`（`&` は部品を包む要素）に書き換える。`@media`・`@supports`・`@container`・`@layer` の中の規則も同じ
-- 書き換えるのは、部品の外の要素に当たらないと言える次の形だけである。ほかの規則は書き換えないので、`<html class="dark">` では当たらない。規則の全体を書き換えないので、同じ規則に書いた変数（`--x`）も当たらない
-- セレクターは、最初の複合セレクターに `.dark` があり、その後ろに何も無いか、空白か `>` でつながるもの（`.dark`・`.dark .foo`・`.dark > .foo`）。`.dark + .foo`・`.dark ~ .foo`・`.dark::before` は書き換えない。`&` を含むもの（`.dark & .foo`）は、書き換えなくても当たるので、そのままにする
-- 入れ子の規則のセレクターは、`&` を含まず結合子で始まらないもの（`.foo`・`.foo + .bar`）か、`&` で始まり、`&` の複合セレクターの後ろに何も無いか空白でつながるもの（`&:hover`・`&:hover .foo`）。`&` の前後に `+`・`~`・`>` があるもの（`& ~ *`・`> .foo`）、`&` の前にセレクターがあるもの（`.foo &`）、括弧の中に `&` があるもの（`:is(& ~ *)`・`:has(&)`）は書き換えない。`.dark` だけの規則の入れ子の `&::before` も書き換えない（`.dark .foo { &::before { … } }`・`.dark { .foo::before { … } }` は書き換える）
+- `:root`・`html`・`body` で始まる規則（`:root { --x: … }`・`:root .foo`）は、部品を包む要素とその中に当てる。画面が `:root & .foo` のように書き換えるので、`:root:not(.dark)`・`html.dark` のような条件は、`<html>` がそれに合うときだけ当たる。`html body .foo`・`html > body .foo` も同じ。`body > .foo` は、部品を包む要素の直下の要素に当たる。`@media` などの中の規則も同じ
+- 書き換えるのは、部品の外の要素に当たらないと言える次の形だけである。ほかの形の `.dark` で始まる規則は `<html class="dark">` では当たらず、ほかの形の `:root`・`html`・`body` で始まる規則はどの要素にも当たらない。規則の全体を書き換えないので、同じ規則に書いた変数（`--x`）も当たらない
+- セレクターは、最初の複合セレクターに `.dark` があるか、最初の複合セレクターが `:root`・`html`・`body` で始まり、その後ろに何も無いか、空白か `>` でつながるもの（`.dark`・`.dark .foo`・`.dark > .foo`・`:root`・`body > .foo`）。`.dark + .foo`・`.dark ~ .foo`・`:root ~ .foo`・`.dark::before`・`body::before`・`html body::before` は書き換えない。`&` を含むもの（`.dark & .foo`）は、書き換えなくても当たるので、そのままにする
+- 入れ子の規則のセレクターは、`&` を含まず結合子で始まらないもの（`.foo`・`.foo + .bar`）か、`&` で始まり、`&` の複合セレクターの後ろに何も無いか空白でつながるもの（`&:hover`・`&:hover .foo`）。`&` の前後に `+`・`~`・`>` があるもの（`& ~ *`・`> .foo`）、`&` の前にセレクターがあるもの（`.foo &`）、括弧の中に `&` があるもの（`:is(& ~ *)`・`:has(&)`）は書き換えない。`.dark`・`:root` だけの規則の入れ子の `&::before` も書き換えない（`.dark .foo { &::before { … } }`・`.dark { .foo::before { … } }` は書き換える）。`:root`・`html`・`body` だけの規則の入れ子で、`&` に条件が付くもの（`:root { &.dark { … } }`・`html { &:not(.dark) .foo { … } }`）も書き換えない。書き換えると `&` が部品を包む要素になり、条件を `<html>` ではなくその要素で判定するからである。この条件は、入れ子にせずに `:root.dark`・`html:not(.dark) .foo` と書く
 - at-rule は、入れ子でも外側でも `@media`・`@supports`・`@container`・`@layer` に限る。`@scope`・`@starting-style` などを入れ子に持つ規則と、それらの中の規則は書き換えない
-- `.dark` だけの規則（`.dark { … }`）は、暗い画面で部品を包む要素にも当たる。変数（`--x`）は部品の中で使える。`display` などを書くと、部品を包む要素の `display: contents` が変わり、部品の並びが変わる
-- `:root`・`html`・`body` で始まる規則は、部品を包む要素の中から探すので、どの要素にも当たらない（`html.dark .foo`・`:root.dark .foo` は、`.dark` を含むので上のとおり書き換えて当てる）。変数は部品の中のクラス（`.foo { --x: … }`）に書く
+- `.dark` だけの規則（`.dark { … }`）と `:root`・`html`・`body` だけの規則（`:root { … }`）は、部品を包む要素に当たる。変数（`--x`）と、`color`・`font-family` のように子に受け継がれる値は、部品の中で使える。部品を包む要素と `Popover` の中身を包む要素は `display: contents` で箱を持たないので、`background`・`margin` などは出ない。`display` などを書くと、`display: contents` が変わり、部品の並びが変わる
 
 次のときは、プラグインの画面にそのプラグインを「読み込めない」と理由つきで出し、Gasho のほかの部分はそのまま動かす。
 

@@ -1,6 +1,7 @@
 import { ArrowLeft, ExternalLink, FolderOpen, GitBranch, GitPullRequest } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { InputFeature, MachineInfo, SessionInfo, SessionModel } from "@gasho/protocol";
+import { AgentMark } from "@/components/agent-mark";
 import { BackgroundTasks } from "@/components/background-tasks";
 import { RepoPicker } from "@/components/repo-picker";
 import { EffortPicker, UltracodeToggle } from "@/components/session-controls";
@@ -11,6 +12,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { PermissionRequests } from "@/components/permission-card";
 import { Transcript } from "@/components/transcript";
 import { PromptInput, type PromptInputHandle, type PromptModel } from "@/components/ui/prompt-input";
+import { canDo, sessionAgent, showsAgents } from "@/lib/agents";
 import {
   branchLabel,
   formatCost,
@@ -24,27 +26,31 @@ import { promptDraft, useDraftBox, usePicks, useUnsent } from "@/lib/drafts";
 import { addPending, noneWaiting, pendingShown, recordedAsSent, removePending, sessionWorking, settlePending, usePending } from "@/lib/pending";
 import { go, type SessionPanel } from "@/lib/route";
 import { closeSmallSessionHeader, useSessionHeaderShown } from "@/lib/session-header";
-import { daemonAtLeast, rememberOpened, worktreeId, worktreesByLastUse } from "@/lib/sessions";
+import { daemonAtLeast, rememberOpened, shownStatus, worktreeId, worktreesByLastUse } from "@/lib/sessions";
 import { loadSkills, useSkills } from "@/lib/skills";
 import { loadTranscript, sendCommand, type SentResult, transcriptKey, type TranscriptState, useAppState } from "@/lib/store";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
 import { PluginComposerFooter, PluginConversationEnd, PluginHeaderItems } from "@/plugins/parts";
+import type { LaunchInitial } from "@/views/launch";
 
 /**
  * `panel`: the panel open beside the session (a computer), if any; its link in the header shows as open.
  * `onSessionAction`: an item picked from a tab's menu (rename, fork, remove); the app opens its dialog.
+ * `onAskTrust`: Claude Code asks whether to trust the worktree's folder; the app opens its dialog.
  */
 export function SessionView({
   machine,
   sessionId,
   panel,
   onSessionAction,
+  onAskTrust,
 }: {
   machine: string;
   sessionId: string;
   panel?: SessionPanel;
   onSessionAction: (request: SessionActionRequest) => void;
+  onAskTrust: (initial: LaunchInitial) => void;
 }) {
   const { machines, transcripts } = useAppState();
   const now = useNow();
@@ -98,7 +104,7 @@ export function SessionView({
 
   return (
     <div className="flex h-full flex-col">
-      <SessionTabs worktree={worktreesByLastUse([m]).find((w) => w.id === worktree)!} current={sessionId} onAction={onSessionAction} />
+      <SessionTabs worktree={worktreesByLastUse([m]).find((w) => w.id === worktree)!} current={sessionId} onAction={onSessionAction} onAskTrust={onAskTrust} />
       {headerShown ? (
         <header className="shrink-0 space-y-2 border-b border-border px-4 py-3 md:px-6">
           <BackLink />
@@ -106,8 +112,11 @@ export function SessionView({
             <div className="min-w-0">
               {/* A phone has the name and the state in its top bar (see App). */}
               <h1 className="hidden truncate text-lg font-semibold tracking-tight md:block">{sessionLabel(s)}</h1>
-              <p className="truncate text-xs text-muted-foreground">
-                {m.name} · {s.cwd}
+              <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                {showsAgents(machines) && <AgentMark agent={sessionAgent(s)} />}
+                <span className="truncate">
+                  {m.name} · {s.cwd}
+                </span>
               </p>
             </div>
             <div className="hidden items-center gap-2 md:flex">
@@ -207,6 +216,7 @@ export function SessionView({
         // Header hidden: one line keeps the session's name and state on screen. A phone has them in its top bar (see
         // App), with the toggle, so it leaves this line out and the conversation gets the room.
         <header className="hidden shrink-0 items-center gap-2 border-b border-border px-4 py-1.5 md:flex md:px-6">
+          {showsAgents(machines) && <AgentMark agent={sessionAgent(s)} />}
           <h1 className="min-w-0 truncate text-sm font-medium">{sessionLabel(s)}</h1>
           {status}
           <SessionHeaderToggle className="ml-auto" />
@@ -230,7 +240,7 @@ export function SessionView({
 /** The session's state, or "オフライン" while its working server is not connected. Also in a phone's top bar (see App). */
 export function SessionState({ machine, session }: { machine: MachineInfo; session: SessionInfo }) {
   return machine.connected ? (
-    <StatusBadge status={session.status} />
+    <StatusBadge status={shownStatus(session)} />
   ) : (
     <span className="shrink-0 text-xs text-muted-foreground">オフライン</span>
   );
@@ -391,7 +401,8 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
   const { model: picked, effort: pickedEffort, ultracode: pickedUltracode } = picks;
   const current = currentModel(machine, s.model);
   const ultracode = Boolean(s.ultracode);
-  const features = machine.features ?? legacyFeatures(machine.daemonVersion);
+  const features = (machine.features ?? legacyFeatures(machine.daemonVersion)).filter((f) => canDo(machine, s, f));
+  const offersSkills = canDo(machine, s, "skills");
   const skills = useSkills(machine.id, s.sessionId);
   // Once the session runs with what was picked, follow the session again.
   useEffect(() => {
@@ -453,7 +464,7 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
   return (
     <div ref={box} className="flex min-h-0 flex-col">
       <PermissionRequests machine={machine} session={s} />
-      <BackgroundTasks machine={machine} session={s} />
+      {canDo(machine, s, "background") && <BackgroundTasks machine={machine} session={s} />}
       <PromptInput
         onSend={async ({ text, files }) => {
           setError(undefined);
@@ -539,9 +550,11 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
           </>
         }
         draft={promptDraft(key)}
-        commands={machine.canListSkills ? (skills.list ?? []) : []}
+        commands={offersSkills && machine.canListSkills ? (skills.list ?? []) : []}
         commandsNote={
-          !machine.canListSkills
+          !offersSkills
+            ? undefined
+            : !machine.canListSkills
             ? "この working server の gasho-daemon は古いため、スキルの候補を出せません。gasho-daemon を更新してください。"
             : skills.list?.length
               ? undefined
@@ -551,14 +564,14 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
                   ? "スキルを読み込んでいます…"
                   : undefined
         }
-        onCommandsOpen={machine.canListSkills ? () => loadSkills(machine.id, s.sessionId) : undefined}
+        onCommandsOpen={offersSkills && machine.canListSkills ? () => loadSkills(machine.id, s.sessionId) : undefined}
         allowAttachments={features.includes("files")}
         maxFiles={5}
         maxFileSizeMB={10}
         maxLength={20_000}
         placeholder="Agent への指示を入力…"
         showCount
-        shell
+        shell={canDo(machine, s, "shell")}
         footer={<PluginComposerFooter machine={machine} session={s} />}
         ref={input}
       />

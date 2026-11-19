@@ -200,12 +200,8 @@ test.describe("並べ替え", () => {
 });
 
 test.describe("絞り込み", () => {
-  /** Closes the menu: Esc on a computer; on a phone, a tap on the drawer beside it (Esc is tried on its own below). */
-  async function closeMenu(page: Page, isMobile: boolean) {
-    if (isMobile) {
-      const box = (await page.getByRole("dialog", { name: "サイドバー" }).boundingBox())!;
-      await page.touchscreen.tap(box.x + 20, box.y + box.height - 20);
-    } else await page.keyboard.press("Escape");
+  async function closeMenu(page: Page) {
+    await page.keyboard.press("Escape");
     await expect(page.getByRole("menu")).toHaveCount(0);
   }
 
@@ -219,11 +215,11 @@ test.describe("絞り込み", () => {
     await nav.getByRole("button", { name: "リポジトリで絞り込む" }).click();
     await page.getByRole("menuitemcheckbox", { name: "notes" }).click();
     await page.getByRole("menuitemcheckbox", { name: "gasho" }).click();
-    await closeMenu(page, isMobile);
+    await closeMenu(page);
     await expect(nav.getByText("worktree · gasho、notes", { exact: true })).toBeVisible();
     await nav.getByRole("button", { name: "リポジトリで絞り込む（gasho、notes）" }).click();
     await page.getByRole("menuitemcheckbox", { name: "notes" }).click();
-    await closeMenu(page, isMobile);
+    await closeMenu(page);
     await expect(nav.getByText("worktree · gasho", { exact: true })).toBeVisible();
     await expect.poll(() => rowLabels(nav)).toEqual(expect.arrayContaining(["feat/g1", "feat/g2"]));
     expect(await rowLabels(nav)).toHaveLength(2);
@@ -234,14 +230,13 @@ test.describe("絞り込み", () => {
     expect(await rowLabels(nav)).toHaveLength(2);
     await nav.getByRole("button", { name: "リポジトリで絞り込む（gasho）" }).click();
     await page.getByRole("menuitemcheckbox", { name: "すべて" }).click();
-    await closeMenu(page, isMobile);
+    await closeMenu(page);
     await expect(nav.getByText("worktree", { exact: true })).toBeVisible();
     await expect.poll(async () => (await rowLabels(nav)).length).toBe(3);
   });
 
   test("ドロワーの中で絞り込みのメニューを Esc で閉じても、ドロワーは開いたまま", async ({ page, hub, isMobile }) => {
     test.skip(!isMobile, "ドロワーはスマホの幅のもの");
-    test.fail(true, "Esc でメニューを閉じると、ドロワーも一緒に閉じる（ドロワーの Esc の処理が、メニューを閉じた Esc も受ける。#183）");
     await hub.fakeDaemon({ sessions: [worktreeSession("g1", { branch: "feat/g1" })] });
     await page.goto("/");
     const nav = await sidebar(page, isMobile);

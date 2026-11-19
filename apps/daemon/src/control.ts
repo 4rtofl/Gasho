@@ -7,7 +7,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
-import type { CommandResult } from "@gasho/protocol";
+import type { AgentKind, CommandResult } from "@gasho/protocol";
 
 export const CONTROL_SOCKET = "control.sock";
 
@@ -21,7 +21,7 @@ export function controlSocketOf(stateDir: string): string {
 }
 
 export type ControlRequest =
-  | { op: "session.launch"; cwd: string; name?: string; trust?: boolean }
+  | { op: "session.launch"; cwd: string; name?: string; trust?: boolean; agent?: AgentKind }
   | { op: "session.input"; sessionId: string; text: string }
   | { op: "session.rename"; sessionId: string; name: string }
   | { op: "session.list" }
@@ -38,8 +38,10 @@ export interface ControlSession {
   /** The name in Gasho, when it differs. */
   gashoName?: string;
   cwd: string;
-  /** The terminal it runs in (`gasho-daemon attach <terminal>`). */
-  terminal: string;
+  /** The agent that runs it. */
+  agent: AgentKind;
+  /** The terminal it runs in (`gasho-daemon attach <terminal>`); Codex's sessions have none. */
+  terminal?: string;
   status: string;
   pendingInputs?: number;
   /** Its folder is gone (removed with `git worktree remove`, say): only `session remove` takes it away. */
@@ -120,6 +122,12 @@ function serve(c: net.Socket, handle: (req: ControlRequest) => Promise<ControlRe
   });
 }
 
+/** The agent an option names. */
+function agentOf(value: string | undefined): AgentKind | undefined {
+  if (value === undefined || value === "claude" || value === "codex") return value;
+  throw new Error(`unknown agent: ${value} (claude or codex)`);
+}
+
 /** Checks a request's fields (it comes from another process). */
 export function parseRequest(v: unknown): ControlRequest {
   const r = (v ?? {}) as Record<string, unknown>;
@@ -132,7 +140,14 @@ export function parseRequest(v: unknown): ControlRequest {
   switch (r.op) {
     case "session.launch": {
       const name = s("name", true);
-      return { op: "session.launch", cwd: s("cwd")!, ...(name !== undefined ? { name } : {}), ...(r.trust === true ? { trust: true } : {}) };
+      const agent = agentOf(s("agent", true));
+      return {
+        op: "session.launch",
+        cwd: s("cwd")!,
+        ...(name !== undefined ? { name } : {}),
+        ...(r.trust === true ? { trust: true } : {}),
+        ...(agent ? { agent } : {}),
+      };
     }
     case "session.input":
       return { op: "session.input", sessionId: s("sessionId")!, text: s("text")! };
@@ -198,18 +213,19 @@ export function controlRequest(file: string, req: ControlRequest, timeoutMs = 12
 
 // ---- `gasho-daemon session …` ----
 
-export const SESSION_USAGE = `  session launch --cwd DIR [--name NAME] [--trust] [--prompt TEXT | --prompt-file FILE | --prompt -]
+export const SESSION_USAGE = `  session launch --cwd DIR [--name NAME] [--agent claude|codex] [--trust] [--prompt TEXT | --prompt-file FILE | --prompt -]
                                                    start a session in DIR (as Gasho does) and wait for it; with a
                                                    prompt, type it in. Prints {sessionId, name, cwd, terminal} as JSON:
                                                    "name" is the name Claude Code lists it under (ListAgents). With
                                                    --name, the session is renamed to NAME first; without it, Gasho names
                                                    it after its first message later, so its name changes then.
-                                                   --trust answers Claude Code's "trust this folder?" with yes
+                                                   --trust answers Claude Code's "trust this folder?" with yes.
+                                                   --agent codex starts Codex instead of Claude Code (it has no terminal)
   session send <NAME|ID> (--text TEXT | --file FILE | -)
                                                    type a message into a session Gasho started (it waits while the
                                                    session works)
-  session list [--json]                            list the sessions Gasho started; "(folder missing)" (cwdMissing
-                                                   in JSON) marks one whose folder is gone
+  session list [--json]                            list the sessions Gasho started, with their agents; "(folder
+                                                   missing)" (cwdMissing in JSON) marks one whose folder is gone
   session remove <NAME|ID>                         end a session Gasho started and take it away from Gasho (its
                                                    conversation is kept); also one whose folder is gone. Prints
                                                    {sessionId, name, cwd} as JSON`;
@@ -261,8 +277,15 @@ export async function sessionCommand(args: string[], io: SessionCliIO): Promise<
       const cwd = opt("--cwd");
       if (!cwd) throw new Error("session launch needs --cwd DIR");
       const name = opt("--name")?.trim() || undefined;
+      const agent = agentOf(opt("--agent"));
       const prompt = await textOf(opt("--prompt"), opt("--prompt-file"), io, "--prompt");
-      const launched = await call({ op: "session.launch", cwd: path.resolve(cwd), ...(name ? { name } : {}), ...(args.includes("--trust") ? { trust: true } : {}) });
+      const launched = await call({
+        op: "session.launch",
+        cwd: path.resolve(cwd),
+        ...(name ? { name } : {}),
+        ...(args.includes("--trust") ? { trust: true } : {}),
+        ...(agent ? { agent } : {}),
+      });
       const sessionId = launched.sessionId;
       if (!sessionId) throw new Error("gasho-daemon started no session");
       const warnings: string[] = [];
@@ -288,7 +311,14 @@ export async function sessionCommand(args: string[], io: SessionCliIO): Promise<
       }
       io.out(
         JSON.stringify(
-          { sessionId, name: session.name, cwd: session.cwd, terminal: session.terminal, ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}) },
+          {
+            sessionId,
+            name: session.name,
+            cwd: session.cwd,
+            ...(session.agent !== "claude" ? { agent: session.agent } : {}),
+            ...(session.terminal ? { terminal: session.terminal } : {}),
+            ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}),
+          },
           null,
           2,
         ),
@@ -318,7 +348,7 @@ export async function sessionCommand(args: string[], io: SessionCliIO): Promise<
         return;
       }
       if (sessions.length === 0) io.out("no sessions started by Gasho are running");
-      for (const s of sessions) io.out([s.name, s.status, s.cwd, s.sessionId, ...(s.cwdMissing ? ["(folder missing)"] : [])].join("\t"));
+      for (const s of sessions) io.out([s.name, s.status, s.cwd, s.sessionId, s.agent, ...(s.cwdMissing ? ["(folder missing)"] : [])].join("\t"));
       return;
     }
     case "remove": {

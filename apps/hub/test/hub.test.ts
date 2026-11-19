@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { HubToClient, HubToDaemon, MachineHookEvent, ServerInfo, SessionInfo } from "@gasho/protocol";
 import {
+  agentsOf,
   CLOSE_INVALID_CREDENTIALS,
   CLOSE_UNAUTHORIZED,
   Hub,
@@ -12,7 +13,7 @@ import {
   UPDATING,
   validateCommand,
 } from "../src/hub.ts";
-import { notificationFor } from "../src/notify.ts";
+import { NotificationGate, notificationFor } from "../src/notify.ts";
 import { Store } from "../src/store.ts";
 
 function fakePeer<T>(deviceId = "") {
@@ -280,6 +281,50 @@ test("notificationFor covers permission, idle and errors, and ignores other even
   assert.equal(notificationFor("m", { ...ev, event: "Stop" }, undefined, "5")?.title, "s1 の応答が終わりました");
 });
 
+test("what a plugin says of a Stop replaces Gasho's notification, and is not dropped in a turn of its own (API 1.15)", () => {
+  const ev = { sessionId: "s1", event: "Stop", at: 1, summary: "会話の中身" };
+  const said = notificationFor("m", { ...ev, notification: { plugin: "github-review", title: " #5 のレビューが終わりました ", body: "o/r" } }, undefined, "1");
+  assert.deepEqual(
+    { kind: said?.kind, title: said?.title, body: said?.body, plugin: said?.plugin },
+    { kind: "done", title: "#5 のレビューが終わりました", body: "o/r", plugin: "github-review" },
+  );
+  const empty = notificationFor("m", { ...ev, notification: { plugin: "p", title: "  " } }, undefined, "2");
+  assert.equal(empty?.title, "s1 の応答が終わりました");
+  assert.equal(empty?.plugin, undefined);
+
+  const gate = new NotificationGate();
+  gate.pass("m", { sessionId: "s1", event: "UserPromptSubmit", at: 1, automatic: true }, null, () => true);
+  const stop = { sessionId: "s1", event: "Stop", at: 2 };
+  assert.equal(gate.pass("m", stop, notificationFor("m", stop, undefined, "3"), () => false), true);
+  gate.pass("m", { sessionId: "s1", event: "UserPromptSubmit", at: 3, automatic: true }, null, () => true);
+  assert.equal(gate.pass("m", stop, notificationFor("m", stop, undefined, "4"), () => true), false);
+  gate.pass("m", { sessionId: "s1", event: "UserPromptSubmit", at: 4, automatic: true }, null, () => true);
+  assert.equal(gate.pass("m", stop, said, () => true), true);
+});
+
+test("what a plugin says of a Stop is kept and shown only as long as a notification holds it", () => {
+  const { hub, store, machineId, machineToken, browserId } = setup();
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.1.0" });
+  hub.onDaemonMessage(d, { type: "sessions", sessions: [session] });
+
+  const long = { plugin: "p".repeat(100), title: "長".repeat(1000), body: "本".repeat(1000) };
+  hub.onDaemonMessage(d, { type: "hook", event: { sessionId: "s1", event: "Stop", at: 1, notification: long } });
+  const cut = { plugin: "p".repeat(32), title: "長".repeat(120), body: "本".repeat(300) };
+  assert.deepEqual(store.recentEvents().at(-1)?.notification, cut);
+  const shown = c.sent.filter((m) => m.type === "event").at(-1);
+  assert.ok(shown?.type === "event");
+  assert.deepEqual(shown.event.notification, cut);
+
+  // What cannot be shown is not kept.
+  hub.onDaemonMessage(d, { type: "hook", event: { sessionId: "s1", event: "Stop", at: 2, notification: { plugin: "p", title: " ".repeat(1000), body: "本".repeat(1000) } } });
+  assert.equal(store.recentEvents().at(-1)?.notification, undefined);
+  hub.onDaemonMessage(d, { type: "hook", event: { sessionId: "s1", event: "PreToolUse", at: 3, notification: "長".repeat(1000) } } as never);
+  assert.equal(store.recentEvents().at(-1)?.notification, undefined);
+});
+
 test("a permission prompt for Claude's question or plan is notified as such", () => {
   const ev = { sessionId: "s1", at: 1, event: "Notification", notificationType: "permission_prompt", summary: "Claude needs your permission" };
   const waiting = (r: Record<string, unknown>) =>
@@ -520,6 +565,115 @@ test("effort and ultracode of inputs are checked, and machines carry the model n
   hub.onClientMessage(c, { type: "session.input", requestId: "e", machine: machineId, sessionId: "s1", text: "考えて", effort: "high", ultracode: false });
   const relayed = d.sent.at(-1);
   assert.ok(relayed?.type === "session.input" && relayed.effort === "high" && relayed.ultracode === false);
+});
+
+test("the agents a gasho-daemon found reach the browsers, kept to what is expected", () => {
+  const { hub, machineId, machineToken, browserId } = setup();
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.30.0" });
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const agents = () => {
+    const got = c.sent.filter((m) => m.type === "machine").at(-1);
+    assert.ok(got?.type === "machine");
+    return got.machine.agents;
+  };
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: [], agents: { codex: { status: "loginRequired", version: "0.170.0" } } });
+  assert.deepEqual(agents(), { codex: { status: "loginRequired", version: "0.170.0" } });
+  // One that no longer finds it, and one that does not look for it.
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: [], agents: {} });
+  assert.deepEqual(agents(), {});
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: [] });
+  assert.equal(agents(), undefined);
+});
+
+test("Codex is started only where gasho-daemon found it: another gasho-daemon would start Claude Code instead", () => {
+  const { hub, machineId, machineToken, browserId } = setup();
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.30.0" });
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const launch = (requestId: string, agent?: "claude" | "codex") =>
+    hub.onClientMessage(c, { type: "session.launch", requestId, machine: machineId, cwd: "/w", ...(agent ? { agent } : {}) });
+
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: [] });
+  const before = d.sent.length;
+  launch("old", "codex");
+  assert.equal(d.sent.length, before);
+  const refused = c.sent.at(-1);
+  assert.ok(refused?.type === "command.result" && !refused.result.ok);
+  assert.match(refused.result.error ?? "", /Codex を使えません/);
+
+  launch("plain");
+  assert.equal(d.sent.length, before + 1);
+
+  // Reports Codex, but does not read `agent` (gasho-daemon 0.30.0).
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: [], agents: { codex: { status: "available", version: "0.170.0" } } });
+  const reporting = d.sent.length;
+  launch("reports only", "codex");
+  assert.equal(d.sent.length, reporting);
+  const old = c.sent.at(-1);
+  assert.ok(old?.type === "command.result" && !old.result.ok);
+  assert.match(old.result.error ?? "", /gasho-daemon は古いため/);
+
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: [], agents: { codex: { status: "available", version: "0.170.0", canLaunch: true } } });
+  launch("new", "codex");
+  const relayed = d.sent.at(-1);
+  assert.ok(relayed?.type === "session.launch" && relayed.agent === "codex");
+});
+
+test("the default agent is kept by the Gasho server, and every browser hears of a change", () => {
+  const store = new Store(":memory:");
+  const first = store.createDevice("browser", "iPhone");
+  const second = store.createDevice("browser", "PC");
+  const info: ServerInfo = { version: "0.15.0", update: { canUpdate: false } };
+  const server: ServerSource = { info: () => info, update: () => ({ ok: true }), subscribe: () => () => undefined };
+  const hub = new Hub(store, { server });
+  const a = fakePeer<HubToClient>(first.device.id);
+  const b = fakePeer<HubToClient>(second.device.id);
+  hub.onClientConnect(a);
+  hub.onClientConnect(b);
+  const snapshot = a.sent.find((m) => m.type === "snapshot");
+  assert.ok(snapshot?.type === "snapshot");
+  assert.equal(snapshot.server?.defaultAgent, "claude");
+
+  hub.onClientMessage(a, { type: "defaultAgent.set", requestId: "r1", agent: "codex" });
+  assert.deepEqual(a.sent.at(-1), { type: "server.result", requestId: "r1", result: { ok: true } });
+  assert.deepEqual(b.sent.at(-1), { type: "server", server: { ...info, defaultAgent: "codex" } });
+  assert.equal(store.getMeta("default_agent"), "codex");
+
+  hub.onClientMessage(a, { type: "defaultAgent.set", requestId: "r2", agent: "gemini" as never });
+  const refused = a.sent.at(-1);
+  assert.ok(refused?.type === "server.result" && !refused.result.ok);
+  assert.equal(store.getMeta("default_agent"), "codex");
+
+  // Kept over a restart of the Gasho server.
+  const again = new Hub(store, { server });
+  const c = fakePeer<HubToClient>(first.device.id);
+  again.onClientConnect(c);
+  const kept = c.sent.find((m) => m.type === "snapshot");
+  assert.ok(kept?.type === "snapshot");
+  assert.equal(kept.server?.defaultAgent, "codex");
+});
+
+test("an agent Gasho does not know is refused", () => {
+  assert.match(validateCommand({ type: "session.launch", cwd: "/w", agent: "gemini" as never }) ?? "", /エージェント/);
+  assert.equal(validateCommand({ type: "session.launch", cwd: "/w", agent: "codex" }), undefined);
+});
+
+test("what a gasho-daemon says about its agents is dropped when it is not what is expected", () => {
+  assert.equal(agentsOf(undefined), undefined);
+  assert.equal(agentsOf("codex"), undefined);
+  assert.deepEqual(agentsOf({ codex: { status: "broken" } }), {});
+  assert.deepEqual(agentsOf({ codex: null, other: { status: "available" } }), {});
+  assert.deepEqual(agentsOf({ codex: { status: "available", version: "<b>1</b>", extra: "x" } }), { codex: { status: "available" } });
+  assert.deepEqual(agentsOf({ codex: { status: "unknown", version: "0.171.0-alpha.2" } }), { codex: { status: "unknown", version: "0.171.0-alpha.2" } });
+  assert.deepEqual(agentsOf({ codex: { status: "available", canLaunch: true } }), { codex: { status: "available", canLaunch: true } });
+  assert.deepEqual(agentsOf({ codex: { status: "available", canLaunch: "yes" } }), { codex: { status: "available" } });
+  assert.deepEqual(agentsOf({ claude: { status: "available", operations: ["model", "fork", "teleport", "model"] } }), {
+    claude: { status: "available", operations: ["model", "fork"] },
+  });
+  assert.deepEqual(agentsOf({ codex: { status: "available", operations: [] } }), { codex: { status: "available", operations: [] } });
 });
 
 test("a gasho-daemon that does not list its features gets no effort or ultracode switch, with a clear error", () => {
@@ -1100,7 +1254,7 @@ test("the Gasho server's own version and update reach browsers; hub.update goes 
   hub.onClientConnect(c);
   const snap = c.sent[0];
   assert.ok(snap?.type === "snapshot");
-  assert.deepEqual(snap.server, info);
+  assert.deepEqual(snap.server, { ...info, defaultAgent: "claude" });
 
   hub.onClientMessage(c, { type: "hub.update", requestId: "u1", version: "0.2.0" });
   assert.deepEqual(c.sent.at(-1), { type: "server.result", requestId: "u1", result: { ok: true } });
@@ -1113,7 +1267,7 @@ test("the Gasho server's own version and update reach browsers; hub.update goes 
 
   info = { ...info, update: { canUpdate: true, progress: { version: "0.2.0", step: "install", at: 1 } } };
   listener();
-  assert.deepEqual(c.sent.at(-1), { type: "server", server: info });
+  assert.deepEqual(c.sent.at(-1), { type: "server", server: { ...info, defaultAgent: "claude" } });
 
   // A Gasho server without an updater (an embedding, the tests) says so.
   const plain = setup();
@@ -1224,4 +1378,51 @@ test("a gasho-daemon that does not tell its memory replaces one that did without
   hub.onClientConnect(c);
   const s = c.sent[0];
   assert.deepEqual(s?.type === "snapshot" ? s.memory : undefined, {});
+});
+
+test("the tokens per day are kept per working server and day, and a day told again replaces its total", () => {
+  const { hub, store, machineId, machineToken, browserId } = setup();
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.30.0" });
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  c.sent.length = 0;
+
+  const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  hub.onDaemonMessage(d, { type: "token.days", days: [[today, 100]] });
+  hub.onDaemonMessage(d, { type: "token.days", days: [[today, 100]] });
+  hub.onDaemonMessage(d, { type: "token.days", days: [[today, 120]] });
+  assert.deepEqual(c.sent.at(-1), { type: "token.days.update", machine: machineId, days: [[today, 120]] });
+  assert.deepEqual(store.tokenDays(), { [machineId]: [[today, 120]] });
+
+  // Still there while the working server is offline.
+  hub.onDaemonClose(d);
+  c.sent.length = 0;
+  hub.onClientMessage(c, { type: "token.days.get" });
+  assert.deepEqual(c.sent, [{ type: "token.days", days: { [machineId]: [[today, 120]] }, reported: true }]);
+});
+
+test("what cannot be a day is not kept, and a working server with no use yet counts as telling its days", () => {
+  const { hub, store, machineId, machineToken, browserId } = setup();
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  c.sent.length = 0;
+  hub.onClientMessage(c, { type: "token.days.get" });
+  assert.deepEqual(c.sent.at(-1), { type: "token.days", days: {}, reported: false });
+
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.30.0" });
+  hub.onDaemonMessage(d, { type: "token.days", days: [["2026-13", 5], ["2026-11-18", -1], ["2026-11-18", 1.5]] as never });
+  assert.deepEqual(store.tokenDays(), {});
+  hub.onClientMessage(c, { type: "token.days.get" });
+  assert.deepEqual(c.sent.at(-1), { type: "token.days", days: {}, reported: true });
+});
+
+test("days older than the heatmap shows are forgotten, and so are a working server's when its registration is revoked", () => {
+  const { store, machineId } = setup();
+  const now = Date.parse("2026-11-18T03:00:00Z");
+  store.saveTokenDays(machineId, [["2025-11-12", 1], ["2025-11-13", 2]], now);
+  assert.deepEqual(store.tokenDays(now), { [machineId]: [["2025-11-13", 2]] });
+  store.revokeDevice(machineId);
+  assert.deepEqual(store.tokenDays(now), {});
 });

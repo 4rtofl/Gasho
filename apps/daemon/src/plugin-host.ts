@@ -14,6 +14,7 @@ interface Definition {
   methods: Record<string, (params: unknown, ctx: unknown) => unknown>;
   start?: (ctx: unknown) => unknown;
   stop?: () => unknown;
+  onSessionStop?: (ctx: unknown) => unknown;
 }
 
 const file = process.argv[2];
@@ -158,7 +159,7 @@ async function call(m: Extract<ToHost, { t: "call" }>): Promise<void> {
   takeSettings(m.settings);
   try {
     const method = def && Object.hasOwn(def.methods, m.method) ? def.methods[m.method] : undefined;
-    if (typeof method !== "function") throw userError(`${plugin} に ${m.method} という処理はありません。`);
+    if (!m.hook && typeof method !== "function") throw userError(`${plugin} に ${m.method} という処理はありません。`);
     const ctx = {
       ...baseContext(),
       session: m.session ? sessionOf(m.session) : undefined,
@@ -166,7 +167,7 @@ async function call(m: Extract<ToHost, { t: "call" }>): Promise<void> {
       exec: (c: string, a: string[], o?: ExecOptions) => exec(c, a, o, controller.signal),
       github: githubOf(m.id, controller.signal),
     };
-    const data = await method(m.params, ctx);
+    const data = m.hook ? await def?.onSessionStop?.(ctx) : await method?.(m.params, ctx);
     const json = JSON.stringify(data);
     if (json !== undefined && Buffer.byteLength(json) > MAX_RESULT_BYTES) {
       throw userError(`${m.method} の答えが大きすぎます（JSON にして ${MAX_RESULT_BYTES / 1024 / 1024}MB まで）。`);

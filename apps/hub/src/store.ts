@@ -13,6 +13,7 @@ import type {
   NotificationKind,
   PairingCode,
   SessionInfo,
+  TokenDay,
 } from "@gasho/protocol";
 import { hashSecret, newPairingCode, newToken, normalizeCode, PAIRING_CODE_TTL_MS, sameHash } from "./auth.ts";
 
@@ -23,8 +24,10 @@ import { hashSecret, newPairingCode, newToken, normalizeCode, PAIRING_CODE_TTL_M
  * cannot keep to that writes the lowest schema that may still open the database (min_schema in meta); an older Gasho
  * server then refuses it, rather than spoil it (docs/hub-setup.md).
  */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 const EVENT_TTL_MS = 7 * 24 * 3600_000;
+/** The first of the 53 weeks that the heatmap can show, as a day in Japan Standard Time. */
+const firstTokenDay = (now: number) => new Date(now + 9 * 3600_000 - 370 * 24 * 3600_000).toISOString().slice(0, 10);
 const NOTIFICATION_TTL_MS = 30 * 24 * 3600_000;
 /** The records of what the Gasho server was asked to do (relayCommand and the like name their events Gasho:…). */
 const OPERATION = "json_extract(data, '$.event') GLOB 'Gasho:*'";
@@ -138,6 +141,16 @@ export class Store {
       CREATE INDEX IF NOT EXISTS push_subscriptions_device ON push_subscriptions(device_id);
       PRAGMA user_version = 5;
     `);
+    // Version 6 adds the tokens used per day, shown also while a working server is offline.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS token_days (
+        machine TEXT NOT NULL,
+        day TEXT NOT NULL,
+        tokens INTEGER NOT NULL,
+        PRIMARY KEY (machine, day)
+      );
+      PRAGMA user_version = 6;
+    `);
   }
 
   private migrateTo2(): void {
@@ -234,6 +247,7 @@ export class Store {
     const res = this.db.prepare("UPDATE devices SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL").run(now, id);
     if (Number(res.changes) === 0) return false;
     this.db.prepare("DELETE FROM machines WHERE id = ?").run(id);
+    this.db.prepare("DELETE FROM token_days WHERE machine = ?").run(id);
     this.db.prepare("DELETE FROM push_subscriptions WHERE device_id = ?").run(id);
     return true;
   }
@@ -272,6 +286,30 @@ export class Store {
            daemon_version = excluded.daemon_version, sessions = excluded.sessions`,
       )
       .run(m.id, m.lastSeen, m.daemonVersion ?? null, JSON.stringify(m.sessions));
+  }
+
+  /** Replaces the totals of these days of a working server, and forgets the days too old to be shown. */
+  saveTokenDays(machine: string, days: readonly TokenDay[], now = Date.now()): void {
+    const put = this.db.prepare(
+      "INSERT INTO token_days (machine, day, tokens) VALUES (?, ?, ?) ON CONFLICT(machine, day) DO UPDATE SET tokens = excluded.tokens",
+    );
+    this.db.exec("BEGIN");
+    try {
+      for (const [day, tokens] of days) put.run(machine, day, tokens);
+      this.db.prepare("DELETE FROM token_days WHERE day < ?").run(firstTokenDay(now));
+      this.db.exec("COMMIT");
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
+    }
+  }
+
+  /** The last year's tokens per day, by machine id, oldest first. */
+  tokenDays(now = Date.now()): Record<string, TokenDay[]> {
+    const rows = this.db.prepare("SELECT machine, day, tokens FROM token_days WHERE day >= ? ORDER BY day").all(firstTokenDay(now)) as Row[];
+    const out: Record<string, TokenDay[]> = {};
+    for (const r of rows) (out[r.machine as string] ??= []).push([r.day as string, Number(r.tokens)]);
+    return out;
   }
 
   /** Registered machines as last seen; all of them start disconnected. */

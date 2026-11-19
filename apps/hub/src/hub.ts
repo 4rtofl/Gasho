@@ -2,6 +2,10 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type {
+  AgentInfo,
+  AgentKind,
+  AgentOperation,
+  AgentStatus,
   ClientToHub,
   CommandResult,
   DaemonToHub,
@@ -12,8 +16,10 @@ import type {
   HubToDaemon,
   InputFeature,
   MachineHookEvent,
+  MachineAgents,
   MachineInfo,
   MachineMemory,
+  TokenDay,
   MediaPart,
   PermissionRequestInfo,
   ServerInfo,
@@ -21,7 +27,7 @@ import type {
   SessionInfo,
 } from "@gasho/protocol";
 import type { LatestCheck } from "./latest.ts";
-import { NotificationGate, notificationFor, sessionLabel } from "./notify.ts";
+import { boundedHook, NotificationGate, notificationFor, sessionLabel } from "./notify.ts";
 import type { PluginCatalogSource } from "./catalog.ts";
 import { PluginHub } from "./plugin-hub.ts";
 import type { PluginRegistry } from "./plugins.ts";
@@ -122,6 +128,32 @@ const MAX_ENDS = 100;
 const MODELS = new Set(["default", "opus", "fable", "sonnet", "haiku"]);
 const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 const FEATURES = new Set<InputFeature>(["model", "effort", "ultracode", "files"]);
+const AGENT_KINDS: readonly AgentKind[] = ["claude", "codex"];
+const AGENT_STATUSES = new Set<unknown>(["available", "loginRequired", "unknown"] satisfies AgentStatus[]);
+const AGENT_OPERATIONS = new Set<unknown>(["model", "effort", "ultracode", "files", "fork", "background", "skills", "shell"] satisfies AgentOperation[]);
+/** Where the agent a new session starts with is kept (meta). */
+const DEFAULT_AGENT_KEY = "default_agent";
+/** An agent's version: x.y.z, with a pre-release after it. */
+const AGENT_VERSION_RE = /^\d{1,9}\.\d{1,9}\.\d{1,9}(?:[-+][0-9A-Za-z.+-]{1,40})?$/;
+
+/** The agents a gasho-daemon says it found, kept to what is expected (they are shown to browsers). */
+export function agentsOf(u: unknown): MachineAgents | undefined {
+  if (!u || typeof u !== "object") return undefined;
+  const agents: MachineAgents = {};
+  for (const kind of AGENT_KINDS) {
+    const a = (u as Record<string, Partial<AgentInfo> | null | undefined>)[kind];
+    if (!a || !AGENT_STATUSES.has(a.status)) continue;
+    const version = typeof a.version === "string" && AGENT_VERSION_RE.test(a.version) ? a.version : undefined;
+    const operations = Array.isArray(a.operations) ? [...new Set(a.operations.filter((o) => AGENT_OPERATIONS.has(o)))] : undefined;
+    agents[kind] = {
+      status: a.status as AgentStatus,
+      ...(version ? { version } : {}),
+      ...(a.canLaunch === true ? { canLaunch: true } : {}),
+      ...(operations ? { operations } : {}),
+    };
+  }
+  return agents;
+}
 
 /**
  * What a gasho-daemon that does not list its features (older than 0.6.0) can do with an input: 0.5 switches the model
@@ -321,6 +353,14 @@ function mediaAnswerOf(msg: Extract<DaemonToHub, { type: "media" }>, offset: num
   return { part: { mime: p.mime.toLowerCase(), size: p.size, mtime: p.mtime, offset }, bytes };
 }
 
+/** The days a working server told, without what cannot be one: no more than a year and a bit of them. */
+function tokenDaysOf(v: unknown): TokenDay[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((d): d is TokenDay => Array.isArray(d) && typeof d[0] === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d[0]) && Number.isSafeInteger(d[1]) && d[1] >= 0)
+    .slice(-400);
+}
+
 function isMemory(v: unknown): v is MachineMemory {
   const m = v as MachineMemory | undefined;
   return typeof m?.total === "number" && typeof m.used === "number" && Number.isFinite(m.total) && m.total > 0 && m.used >= 0 && m.used <= m.total;
@@ -370,6 +410,7 @@ export function validateCommand(cmd: SessionCommand): string | undefined {
       if (typeof cmd.cwd !== "string" || !cmd.cwd.startsWith("/") || cmd.cwd.length > 1024) return "フォルダーを絶対パスで指定してください。";
       if (cmd.name !== undefined && (typeof cmd.name !== "string" || cmd.name.length > 60)) return "名前は60文字までです。";
       if (cmd.trust !== undefined && typeof cmd.trust !== "boolean") return "信頼の指定が正しくありません。";
+      if (cmd.agent !== undefined && !AGENT_KINDS.includes(cmd.agent)) return "エージェントの指定が正しくありません。";
       return undefined;
     case "folder.create":
       return folderError(cmd.parent) ?? folderNameError(cmd.name);
@@ -505,6 +546,8 @@ export class Hub {
   private machines = new Map<string, MachineInfo>();
   /** The connected working servers' latest memory: never written to the database, it changes at every reading. */
   private memory = new Map<string, MachineMemory>();
+  /** The working servers that told their tokens per day since the Gasho server started. */
+  private tellTokenDays = new Set<string>();
   private daemons = new Map<string, DaemonPeer>();
   private clients = new Set<ClientPeer>();
   private pending = new Map<string, PendingRequest>();
@@ -535,7 +578,7 @@ export class Hub {
     this.server = opts.server;
     opts.latest?.subscribe((latest) => this.broadcast({ type: "latest", latest }));
     opts.server?.subscribe(() => {
-      if (this.server) this.broadcast({ type: "server", server: this.server.info() });
+      this.broadcastServer();
     });
     for (const m of store.loadMachines()) this.machines.set(m.id, m);
     if (opts.plugins) {
@@ -608,6 +651,13 @@ export class Hub {
           this.broadcast({ type: "machine.memory", machine: id, memory: msg.memory });
         } else this.forgetMemory(id);
         break;
+      case "token.days": {
+        const days = tokenDaysOf(msg.days);
+        this.tellTokenDays.add(id);
+        this.store.saveTokenDays(id, days);
+        this.broadcast({ type: "token.days.update", machine: id, days });
+        break;
+      }
       case "transcript.append":
         this.broadcast({ type: "transcript.append", machine: id, sessionId: msg.sessionId, entries: msg.entries });
         break;
@@ -626,6 +676,7 @@ export class Hub {
         m.canEnd = msg.canEnd === true || undefined;
         m.canRemoveWorktree = msg.canRemoveWorktree === true || undefined;
         m.canListSkills = msg.canListSkills === true || undefined;
+        m.agents = agentsOf(msg.agents);
         m.update = updateInfoFor(m.daemonVersion, msg.update);
         this.broadcast({ type: "machine", machine: m });
         break;
@@ -695,7 +746,7 @@ export class Hub {
         break;
       case "hook": {
         if (!isHookEvent(msg.event)) break;
-        const event: MachineHookEvent = { ...msg.event, machine: id };
+        const event: MachineHookEvent = { ...boundedHook(msg.event), machine: id };
         this.store.addEvent(event);
         this.broadcast({ type: "event", event });
         const session = m.sessions.find((s) => s.sessionId === event.sessionId);
@@ -782,7 +833,7 @@ export class Hub {
       ...(this.plugins ? { plugins: this.plugins.infos(), pluginEvents: this.plugins.retainedEvents() } : {}),
       ...(this.plugins?.catalog() ? { catalog: this.plugins.catalog() } : {}),
       ...(this.latest ? { latest: this.latest.latest() } : {}),
-      ...(this.server ? { server: this.server.info() } : {}),
+      ...(this.server ? { server: this.serverInfo(this.server) } : {}),
       ...(this.push ? { push: this.push.info(peer.deviceId) } : {}),
       heartbeat: true,
       memory: Object.fromEntries(this.memory),
@@ -819,6 +870,15 @@ export class Hub {
   /** The commands under way that an update waits for: relayed ones awaiting their answer, and the plugins'. */
   inFlight(): number {
     return this.commands.size + (this.plugins?.inFlight() ?? 0);
+  }
+
+  /** The Gasho server as browsers see it: its own information, and the settings it keeps for all of them. */
+  private serverInfo(server: ServerSource): ServerInfo {
+    return { ...server.info(), defaultAgent: this.store.getMeta(DEFAULT_AGENT_KEY) === "codex" ? "codex" : "claude" };
+  }
+
+  private broadcastServer(): void {
+    if (this.server) this.broadcast({ type: "server", server: this.serverInfo(this.server) });
   }
 
   onClientMessage(peer: ClientPeer, msg: ClientToHub): void {
@@ -905,6 +965,11 @@ export class Hub {
       case "latest.check":
         if (this.latest) void this.latest.check(true);
         break;
+      case "token.days.get": {
+        const days = this.store.tokenDays();
+        peer.send({ type: "token.days", days, reported: this.tellTokenDays.size > 0 || Object.keys(days).length > 0 });
+        break;
+      }
       case "hub.update": {
         if (typeof msg.requestId !== "string" || !msg.requestId || msg.requestId.length > 100) return;
         const result: CommandResult = this.server
@@ -923,6 +988,17 @@ export class Hub {
           this.broadcast({ type: "event", event });
         }
         peer.send({ type: "server.result", requestId: msg.requestId, result });
+        break;
+      }
+      case "defaultAgent.set": {
+        if (typeof msg.requestId !== "string" || !msg.requestId || msg.requestId.length > 100) return;
+        if (!AGENT_KINDS.includes(msg.agent)) {
+          peer.send({ type: "server.result", requestId: msg.requestId, result: { ok: false, error: "エージェントの指定が正しくありません。" } });
+          break;
+        }
+        this.store.setMeta(DEFAULT_AGENT_KEY, msg.agent);
+        this.broadcastServer();
+        peer.send({ type: "server.result", requestId: msg.requestId, result: { ok: true } });
         break;
       }
       case "plugin.catalog.get":
@@ -1041,7 +1117,7 @@ export class Hub {
           .filter(Boolean)
           .join(" ");
       case "session.launch":
-        return cmd.trust ? `${cmd.cwd} [trust]` : cmd.cwd;
+        return [cmd.cwd, cmd.trust && "[trust]", cmd.agent === "codex" && "[codex]"].filter(Boolean).join(" ");
       case "folder.create":
         return path.posix.join(cmd.parent, cmd.name);
       case "repo.clone":
@@ -1116,6 +1192,12 @@ export class Hub {
   private unsupported(machine: string, cmd: SessionCommand): string | undefined {
     const m = this.machines.get(machine);
     if (cmd.type === "daemon.update") return m?.update?.canUpdate ? undefined : (m?.update?.reason ?? UPDATE_TOO_OLD);
+    // A gasho-daemon that does not read `agent` (0.30.0 reports Codex, but cannot start it) would start Claude Code instead.
+    if (cmd.type === "session.launch" && cmd.agent === "codex" && m && !m.agents?.codex?.canLaunch) {
+      return m.agents?.codex
+        ? "この working server の gasho-daemon は古いため、Codex のセッションを起動できません。gasho-daemon を更新してください。"
+        : "この working server では Codex を使えません。Codex を入れて、gasho-daemon を更新してください。";
+    }
     if (cmd.type === "file.write") return !m || versionAtLeast(m.daemonVersion, ...FILES_SINCE) ? undefined : FILES_TOO_OLD;
     if (cmd.type === "repo.register" || cmd.type === "repo.unregister") {
       // A gasho-daemon that registers repositories sends them as soon as it connects.
@@ -1232,6 +1314,7 @@ export class Hub {
       }
       // The daemon was taken out of `daemons` before it was closed, so onDaemonClose leaves this to be done here.
       this.memory.delete(id);
+      this.tellTokenDays.delete(id);
       if (this.machines.delete(id)) {
         const error = "working server の登録が外されました。";
         this.failPending((req) => req.machine === id, error);

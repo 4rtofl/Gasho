@@ -5,6 +5,7 @@
 import { ArrowLeft, LoaderCircle, Plus } from "lucide-react";
 import { useEffect } from "react";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY } from "@/components/dialog-styles";
+import { LaunchMenu } from "@/components/launch-menu";
 import type { SessionActionRequest } from "@/components/session-menu";
 import { SessionTabs, useWorktreeLaunch } from "@/components/session-tabs";
 import { forgetWorktree } from "@/lib/remembered-worktrees";
@@ -13,15 +14,18 @@ import { hidesSessionTabs } from "@/lib/session-list";
 import { sessionToOpen, type WorktreeSessions } from "@/lib/sessions";
 import { PluginWorktreeView } from "@/plugins/parts";
 import { useSessionListMode } from "@/plugins/session-list";
+import type { LaunchInitial } from "@/views/launch";
 
 export function WorktreeView({
   worktree,
   view,
   onSessionAction,
+  onAskTrust,
 }: {
   worktree: WorktreeSessions | undefined;
   view?: PluginView;
   onSessionAction: (request: SessionActionRequest) => void;
+  onAskTrust: (initial: LaunchInitial) => void;
 }) {
   // Without a plugin's screen, once it has a session (started here, or elsewhere), that session opens instead.
   const open = worktree && !view ? sessionToOpen(worktree) : undefined;
@@ -40,7 +44,7 @@ export function WorktreeView({
   if (view) {
     return (
       <div className="flex h-full flex-col">
-        <SessionTabs worktree={worktree} view={view} onAction={onSessionAction} />
+        <SessionTabs worktree={worktree} view={view} onAction={onSessionAction} onAskTrust={onAskTrust} />
         <div className="min-h-0 flex-1 overflow-y-auto">
           <PluginWorktreeView worktree={worktree} view={view} />
         </div>
@@ -49,7 +53,7 @@ export function WorktreeView({
   }
   return (
     <div className="flex h-full flex-col">
-      <SessionTabs worktree={worktree} onAction={onSessionAction} />
+      <SessionTabs worktree={worktree} onAction={onSessionAction} onAskTrust={onAskTrust} />
       <div className="mx-auto w-full max-w-3xl space-y-4 p-6 text-sm text-muted-foreground">
         <HomeLink />
         <div className="min-w-0">
@@ -58,7 +62,7 @@ export function WorktreeView({
             {worktree.machine.name} · {worktree.path}
           </p>
         </div>
-        <NoSession worktree={worktree} />
+        <NoSession worktree={worktree} onAskTrust={onAskTrust} />
         {worktree.registered ? (
           <p>登録したリポジトリ{worktree.repo ? `（${worktree.repo}）` : ""}の worktree なので、git の一覧にあるあいだはサイドバーに出ます。</p>
         ) : (
@@ -79,24 +83,26 @@ export function WorktreeView({
 }
 
 /** What to do in a worktree without a session: start one ("＋" after the tabs, or here), or open a past conversation. */
-function NoSession({ worktree }: { worktree: WorktreeSessions }) {
+function NoSession({ worktree, onAskTrust }: { worktree: WorktreeSessions; onAskTrust: (initial: LaunchInitial) => void }) {
   const hidden = hidesSessionTabs(useSessionListMode());
-  const { canLaunch, launching, error, launch } = useWorktreeLaunch(worktree);
+  const { canLaunch, launching, error, launch } = useWorktreeLaunch(worktree, onAskTrust);
   if (!hidden) return <p>この worktree にセッションはありません。タブの右の「＋」で新しいセッションを起動するか、左の履歴から過去の会話を開き直せます。</p>;
   return (
     <>
       <p>この worktree にセッションはありません。新しいセッションを起動するか、上の行の左の履歴から過去の会話を開き直せます。</p>
       <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={() => void launch()}
-          disabled={!canLaunch || launching}
-          title={canLaunch ? undefined : "接続していて、セッションの端末を作れる working server でだけ起動できます"}
-          className={BUTTON_PRIMARY}
-        >
-          {launching ? <LoaderCircle className="mr-1.5 size-4 animate-spin" /> : <Plus className="mr-1.5 size-4" />}
-          この worktree で新しいセッションを起動
-        </button>
+        <LaunchMenu machine={worktree.machine} onPick={(agent) => void launch(agent)}>
+          <button
+            type="button"
+            onClick={() => void launch()}
+            disabled={!canLaunch || launching}
+            title={canLaunch ? undefined : "接続していて、セッションの端末を作れる working server でだけ起動できます"}
+            className={BUTTON_PRIMARY}
+          >
+            {launching ? <LoaderCircle className="mr-1.5 size-4 animate-spin" /> : <Plus className="mr-1.5 size-4" />}
+            この worktree で新しいセッションを起動
+          </button>
+        </LaunchMenu>
         {error && (
           <p role="alert" className="text-red-400">
             {error}

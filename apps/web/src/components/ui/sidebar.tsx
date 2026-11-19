@@ -61,7 +61,13 @@ export type SidebarItem = {
   wrap?: (button: React.ReactElement) => React.ReactNode;
 };
 /** Gasho: a button at the right of a section's title, such as "＋" to add an item. */
-export type SidebarAction = { label: string; icon: React.ReactNode; onClick: () => void };
+export type SidebarAction = {
+  label: string;
+  icon: React.ReactNode;
+  onClick: () => void;
+  /** Gasho: wraps the button (a menu of its own). */
+  wrap?: (button: React.ReactElement) => React.ReactElement;
+};
 /**
  * Gasho: the items of a section can be put in another order: dragged with a mouse (a click still opens them), dragged
  * by the handle at their right on a touch screen, or moved with Alt+↑/↓. `onReorder` gets the new order.
@@ -171,7 +177,10 @@ export function Sidebar({
   // drawer: Esc to close + scroll lock
   React.useEffect(() => {
     if (!mobileOpen || window.matchMedia("(min-width: 768px)").matches) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMobileOpen(false);
+    // One Esc does one thing: what takes it first marks it (preventDefault), and the drawer stays open for the next Esc.
+    // That is a menu or dialog open in the drawer, which closes, or the chat box left focused behind the drawer (opened
+    // with ⌘B), which stops the answer being written.
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !e.defaultPrevented && setMobileOpen(false);
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     window.addEventListener("keydown", onKey);
@@ -284,7 +293,7 @@ export const SECTION_BUTTON =
 
 /** Gasho: the button at the right of a section's title. In the drawer, it closes the drawer too (`onNavigate`). */
 function SectionAction({ action, onNavigate }: { action: SidebarAction; onNavigate?: () => void }) {
-  return (
+  const button = (
     <button
       type="button"
       onClick={() => {
@@ -298,6 +307,7 @@ function SectionAction({ action, onNavigate }: { action: SidebarAction; onNaviga
       {action.icon}
     </button>
   );
+  return action.wrap ? action.wrap(button) : button;
 }
 
 /** Gasho: tells the panel while something of its is dragged (each list by its own id), to keep the hover highlight away. */
@@ -732,6 +742,8 @@ function Panel({
         <div
           data-sort-row={sort ? "" : undefined}
           onPointerDown={(e) => {
+            // React passes up the presses in the action's menu too, though the menu is drawn outside the heading.
+            if (!e.currentTarget.contains(e.target as Node)) return;
             if (sort && e.pointerType === "mouse" && !(e.target as Element).closest("[data-group-action]")) sort.start(group.id, e);
           }}
           className="flex items-center gap-0.5 pt-2"

@@ -8,6 +8,7 @@ import {
   repoChoices,
   repoKeyOf,
   sessionDot,
+  shownStatus,
   tabAfterRemoval,
   unreadOfSession,
   unreadSessions,
@@ -239,6 +240,19 @@ test("a worktree's dot is its most pressing session's, gray without sessions, an
   // After /clear, what came under the id from before rings the bell of the session it went on as.
   const cleared = machine("mac", [session("a2", { cwd: "/src/app", worktree: app, previousSessionIds: ["a"] })]);
   assert.equal(dots([note("mac", "a", false)], [cleared])[0], "main /src/app: idle true");
+});
+
+test("a session idle while work it started runs on in the background shows as working; its own status stays idle", () => {
+  const task = { id: "t", kind: "shell", title: "tests" } as const;
+  const running = session("a", { status: "idle", background: [task] });
+  assert.equal(shownStatus(running), "busy");
+  assert.equal(running.status, "idle");
+  assert.equal(shownStatus(session("b", { status: "idle" })), "idle");
+  assert.equal(shownStatus(session("c", { status: "idle", background: [] })), "idle");
+  assert.equal(shownStatus(session("d", { status: "waiting", background: [task] })), "waiting");
+  const mac = machine("mac", [running]);
+  assert.equal(sessionDot(mac, running, new Set()).status, "busy");
+  assert.equal(worktreeStatus({ machine: mac, sessions: [running] }), "busy");
 });
 
 test("a page open on an id from before /clear goes to the session that had it; one on a listed or unknown id stays", () => {

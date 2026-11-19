@@ -23,10 +23,14 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      # main needs the approval of its code owner (a repository ruleset), and only the repository's deploy keys may push
+      # to it directly. The release commit goes through the write deploy key in RELEASE_DEPLOY_KEY: checkout makes origin
+      # an SSH remote with it, and release.ts pushes there. GitHub Actions itself cannot be an exception to the ruleset.
       - uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24

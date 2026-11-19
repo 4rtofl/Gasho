@@ -1,6 +1,6 @@
 import { ArrowLeft, ExternalLink, FolderOpen, GitBranch, GitPullRequest } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { CommandResult, InputFeature, MachineInfo, SessionInfo, SessionModel } from "@gasho/protocol";
+import type { InputFeature, MachineInfo, SessionInfo, SessionModel } from "@gasho/protocol";
 import { AgentMark } from "@/components/agent-mark";
 import { BackgroundTasks } from "@/components/background-tasks";
 import { HibernationNotice } from "@/components/hibernation-notice";
@@ -12,7 +12,7 @@ import { SessionTabs } from "@/components/session-tabs";
 import { StatusBadge } from "@/components/status-badge";
 import { PermissionRequests } from "@/components/permission-card";
 import { Transcript } from "@/components/transcript";
-import { PromptInput, type PromptModel } from "@/components/ui/prompt-input";
+import { PromptInput, type PromptInputHandle, type PromptModel } from "@/components/ui/prompt-input";
 import { canDo, sessionAgent, showsAgents } from "@/lib/agents";
 import {
   branchLabel,
@@ -23,13 +23,13 @@ import {
   sessionLabel,
   waitingLabel,
 } from "@/lib/format";
-import { promptDraft, useDraftBox, usePicks } from "@/lib/drafts";
-import { addPending, noneWaiting, pendingShown, removePending, sessionWorking, settlePending, usePending } from "@/lib/pending";
+import { promptDraft, useDraftBox, usePicks, useUnsent } from "@/lib/drafts";
+import { addPending, noneWaiting, notRecordedYet, pendingShown, removePending, sessionWorking, settlePending, usePending } from "@/lib/pending";
 import { go, type SessionPanel } from "@/lib/route";
 import { closeSmallSessionHeader, useSessionHeaderShown } from "@/lib/session-header";
 import { daemonAtLeast, rememberOpened, shownStatus, worktreeId, worktreesByLastUse } from "@/lib/sessions";
 import { loadSkills, useSkills } from "@/lib/skills";
-import { loadTranscript, sendCommand, transcriptKey, useAppState } from "@/lib/store";
+import { loadTranscript, sendCommand, type SentResult, transcriptKey, type TranscriptState, useAppState } from "@/lib/store";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
 import { PluginComposerFooter, PluginConversationEnd, PluginHeaderItems } from "@/plugins/parts";
@@ -229,7 +229,7 @@ export function SessionView({
           state={t}
           pending={pending}
           onLoadOlder={() => loadTranscript(machine, sessionId, true)}
-          footer={<Composer machine={m} session={s} entries={t?.total ?? 0} />}
+          footer={<Composer machine={m} session={s} transcript={t} />}
           end={<PluginConversationEnd machine={m} session={s} />}
           source={source}
         />
@@ -318,6 +318,15 @@ function modelOptions(
 }
 /** Files sent with one input, in all (the Gasho server checks it too). */
 const MAX_FILES_BYTES = 10 * 1024 * 1024;
+/**
+ * The connection closed before a message's result came. A message that comes while Claude works waits on the working
+ * server until it is done; this page may not know yet that the session works (it sends nothing while it knows).
+ */
+const UNKNOWN_SENT_HEAD =
+  "Gasho サーバーとの接続が切れたので、送れたか分かりません。Claude の作業中に届いた指示は、作業が終わってから会話に出ます。";
+const UNKNOWN_SENT = `${UNKNOWN_SENT_HEAD}出なければ、入力欄に戻して、もう一度送ってください。`;
+/** When the page read again less of the conversation than came after the message was sent: it may show in the rest. */
+const UNKNOWN_SENT_UNREAD = `${UNKNOWN_SENT_HEAD}切れているあいだに進んだ会話は、上に遡ると読み込みます。そこにも出ていなければ、入力欄に戻して、もう一度送ってください。`;
 
 /**
  * Which of the picker's models the session uses, from Claude Code's name for it: "Sonnet 5.5 (default)" (its name
@@ -348,14 +357,46 @@ function toBase64(file: File): Promise<string> {
 /**
  * The chat box. It floats over the bottom of the conversation (see the footer of Transcript). What is typed and picked
  * in it is kept per session (see lib/drafts), and a message sent shows in the conversation at once (see lib/pending).
- * `entries`: how many entries the conversation has.
+ * `transcript`: what is loaded of the conversation.
  */
-function Composer({ machine, session: s, entries }: { machine: MachineInfo; session: SessionInfo; entries: number }) {
+function Composer({ machine, session: s, transcript }: { machine: MachineInfo; session: SessionInfo; transcript?: TranscriptState }) {
   const key = transcriptKey(machine.id, s.sessionId);
+  const entries = transcript?.total ?? 0;
   const box = useRef<HTMLDivElement>(null);
   useDraftBox(key, box);
   const [error, setError] = useState<string>();
   const [warning, setWarning] = useState<string>();
+  const input = useRef<PromptInputHandle>(null);
+  // Sent when the connection closed before their results came: put back in the box only when asked (see UNKNOWN_SENT).
+  const [unsent, setUnsent] = useUnsent(key);
+  // One the conversation shows as it was sent was typed into the session after all.
+  useEffect(() => {
+    if (!transcript) return;
+    setUnsent((list) => notRecordedYet(list, transcript.entries, transcript.start));
+  }, [transcript, setUnsent]);
+  // Puts back the oldest one: each goes back as it was sent, to be sent again on its own.
+  const putBack = () => {
+    const first = unsent[0];
+    if (!first) return;
+    const draft = promptDraft(key);
+    if (first.text) {
+      // What was typed since stays, before it.
+      const typed = draft.get().text.trimEnd();
+      input.current?.setValue(typed ? `${typed}\n${first.text}` : first.text);
+    }
+    input.current?.attach(first.files);
+    // The box takes no files while the working server is offline, nor more than it holds: those stay to put back.
+    const taken = draft.get().attachments;
+    const left = first.files.filter(
+      (f) => !taken.some((a) => a.name === f.name && a.size === f.size && a.file.lastModified === f.lastModified),
+    );
+    setUnsent((list) =>
+      left.length > 0
+        ? list.map((u) => (u.id === first.id ? { ...u, text: "", files: left } : u))
+        : list.filter((u) => u.id !== first.id),
+    );
+    input.current?.focus();
+  };
   const [picks, setPicks] = usePicks(key);
   const { model: picked, effort: pickedEffort, ultracode: pickedUltracode } = picks;
   const current = currentModel(machine, s.model);
@@ -442,8 +483,9 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
           const ultra = pickedUltracode !== undefined && pickedUltracode !== ultracode ? pickedUltracode : undefined;
           // Shown at the end of the conversation at once: Claude Code records the message only once it is typed into
           // the session, after switching the model (/model) and the like.
+          const sentAt = Date.now();
           const pending = addPending(key, { text, files: files.map((f) => f.name), after: entries });
-          let r: CommandResult;
+          let r: SentResult;
           try {
             const encoded = await Promise.all(files.map(async (f) => ({ name: f.name, data: await toBase64(f) })));
             r = await sendCommand(
@@ -463,6 +505,14 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
           } catch (e) {
             removePending(key, pending);
             throw e;
+          }
+          if (r.unknown) {
+            // Not put back in the box at once: it may have been typed into the session, and could be sent twice.
+            // After /clear, it is looked for in the new conversation, from its first entry (see movePending).
+            const after = removePending(key, pending)?.after ?? entries;
+            const sent = { text, files: files.map((f) => f.name), after, at: sentAt };
+            setUnsent((list) => [...list, { id: pending, text, files, sent }]);
+            return;
           }
           if (!r.ok) {
             removePending(key, pending);
@@ -529,10 +579,34 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
         showCount
         shell={canDo(machine, s, "shell")}
         footer={<PluginComposerFooter machine={machine} session={s} />}
+        ref={input}
       />
       {(status || error || warning) && (
         <p className={cn("mt-1.5 px-3 text-xs", error ? "text-red-400" : warning ? "text-amber-400" : "text-muted-foreground")}>
           {error ?? warning ?? status}
+        </p>
+      )}
+      {unsent.length > 0 && (
+        <p className="mt-1.5 px-3 text-xs text-amber-400">
+          {transcript && (unsent[0]?.sent.after ?? 0) < transcript.start ? UNKNOWN_SENT_UNREAD : UNKNOWN_SENT}
+          <button
+            type="button"
+            onClick={putBack}
+            // Only files are left, and the box takes none now.
+            disabled={!unsent[0]?.text && (offline || !features.includes("files"))}
+            className="ml-1.5 font-medium underline decoration-amber-400/50 underline-offset-4 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+          >
+            {unsent.length > 1 ? `入力欄に戻す（残り ${unsent.length} 件）` : "入力欄に戻す"}
+          </button>
+          {/* For one that reached the session but shows in the conversation otherwise (a slash command's note). The
+              oldest only, as 入力欄に戻す takes it: the next ones may not have reached it. */}
+          <button
+            type="button"
+            onClick={() => setUnsent((list) => list.slice(1))}
+            className="ml-3 font-medium underline decoration-amber-400/50 underline-offset-4 hover:text-foreground"
+          >
+            閉じる
+          </button>
         </p>
       )}
     </div>

@@ -4,7 +4,7 @@
 // its end, from here, as being sent; the entry Claude Code records takes its place.
 import { useCallback, useSyncExternalStore } from "react";
 import type { TranscriptEntry } from "@gasho/protocol";
-import { isShellInput } from "./shell.ts";
+import { isShellInput, shellCommand } from "./shell.ts";
 
 export interface PendingMessage {
   id: string;
@@ -44,7 +44,7 @@ function entryText(e: TranscriptEntry): string {
  * tags); a slash command becomes a note that starts with it; files sent alone show as their paths under Gasho's
  * attachments folder. `start` is the index of entries[0] in the whole conversation.
  */
-export function recorded(p: PendingMessage, entries: readonly TranscriptEntry[], start: number): boolean {
+export function recorded(p: Pick<PendingMessage, "text" | "after">, entries: readonly TranscriptEntry[], start: number): boolean {
   const head = squeeze(p.text.replace(/^\s*!/, "")).slice(0, HEAD);
   const command = p.text.startsWith("/");
   for (let i = Math.max(0, p.after - start); i < entries.length; i++) {
@@ -55,6 +55,86 @@ export function recorded(p: PendingMessage, entries: readonly TranscriptEntry[],
     if (e.role === "system" && command && head && text.startsWith(head)) return true;
   }
   return false;
+}
+
+/** A file sent with a message, as gasho-daemon mentions it after the text: "@<attachments>/<session>/<time>-<n>-<name>". */
+const ATTACHED_RE = /@(\S*\/gasho\/attachments\/\S+)/g;
+
+/** A file's name as gasho-daemon saves it (safeFileName in apps/daemon/src/managed.ts). */
+export function savedName(name: string): string {
+  const base = name.split(/[\\/]/).pop() ?? "";
+  const cleaned = base.normalize("NFC").replace(/[^\p{L}\p{N}._-]+/gu, "_").replace(/^[._]+/, "");
+  return cleaned.slice(-100) || "file";
+}
+
+/** A message sent from here, as it was sent: how many entries the conversation had then, and when (this browser's clock). */
+export interface SentAs {
+  text: string;
+  files: readonly string[];
+  after: number;
+  at: number;
+}
+
+/** Whether an entry is the message as it was sent: its whole text (spaces aside) and nothing else, and its files. */
+function isAsSent(m: SentAs, e: TranscriptEntry): boolean {
+  if (e.isSidechain || (e.role !== "user" && e.role !== "system")) return false;
+  const shell = isShellInput(m.text);
+  const text = squeeze(shell ? m.text.slice(1) : m.text);
+  const raw = e.blocks.map((b) => (b.type === "text" ? b.text : "")).join("");
+  if (e.role === "system") return m.text.startsWith("/") && m.files.length === 0 && squeeze(raw) === text;
+  if (shell) return squeeze(shellCommand(raw) ?? "") === text;
+  if (squeeze(raw.replace(ATTACHED_RE, "")) !== text) return false;
+  // The files sent with it, in order, by their names.
+  const files = [...raw.matchAll(ATTACHED_RE)].map((f) => f[1]?.split("/").pop() ?? "");
+  const same = (file: string, k: number) => {
+    const name = `${k + 1}-${savedName(m.files[k] ?? "")}`;
+    return file === name || file.endsWith(`-${name}`);
+  };
+  return files.length === m.files.length && files.every(same);
+}
+
+/**
+ * Where the conversation shows each of the messages whose result never came (oldest first) as it was sent: the index
+ * of the entry in the whole conversation, or -1. Stricter than `recorded`, as the message is kept only until the
+ * conversation shows it: the entry is recorded after it was sent (after the entries the conversation had then, and not
+ * before its time), and after the entry found for an older one. The same short text ("はい", "続けて") is often sent
+ * again, and the page may not have had the entry of the one before when this one was sent. `start` is the index of
+ * entries[0] in the whole conversation.
+ */
+export function recordedAsSent(list: readonly SentAs[], entries: readonly TranscriptEntry[], start: number): number[] {
+  let from = 0;
+  return list.map((m) => {
+    for (let i = Math.max(0, m.after - start, from); i < entries.length; i++) {
+      const e = entries[i];
+      if (!e) continue;
+      // The working server's clock: should this browser's be ahead, a message that reached the session stays (閉じる
+      // removes it).
+      if (e.ts && Date.parse(e.ts) < m.at) continue;
+      if (isAsSent(m, e)) {
+        from = i + 1;
+        return start + i;
+      }
+    }
+    return -1;
+  });
+}
+
+/**
+ * The messages whose result never came (oldest first) the conversation does not show yet (see recordedAsSent), `list`
+ * itself when it shows none of them. One sent after one it shows is looked for after that entry from then on: that
+ * entry is not taken for it once the one found is no longer in the list.
+ */
+export function notRecordedYet<T extends { sent: SentAs }>(list: T[], entries: readonly TranscriptEntry[], start: number): T[] {
+  const found = recordedAsSent(list.map((u) => u.sent), entries, start);
+  if (found.every((at) => at < 0)) return list;
+  let past = -1;
+  const left: T[] = [];
+  list.forEach((u, i) => {
+    const at = found[i] ?? -1;
+    if (at >= 0) past = Math.max(past, at);
+    else left.push(past < u.sent.after ? u : { ...u, sent: { ...u.sent, after: past + 1 } });
+  });
+  return left;
 }
 
 /**
@@ -106,11 +186,15 @@ export function addPending(key: string, message: { text: string; files: string[]
   return id;
 }
 
-export function removePending(key: string, id: string): void {
+/** Returns the message removed: after /clear, its `after` is of the new conversation (see movePending). */
+export function removePending(key: string, id: string): PendingMessage | undefined {
   clearTimeout(timers.get(id));
   timers.delete(id);
   const at = holder(key, id);
-  if (at) set(at, (lists.get(at) ?? []).filter((p) => p.id !== id));
+  if (!at) return undefined;
+  const list = lists.get(at) ?? [];
+  set(at, list.filter((p) => p.id !== id));
+  return list.find((p) => p.id === id);
 }
 
 /**

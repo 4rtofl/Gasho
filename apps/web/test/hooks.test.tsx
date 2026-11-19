@@ -3,7 +3,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { CHAT_TEXT_DEFAULT, CHAT_TEXT_MAX, useChatTextSize } from "@/lib/chat-text";
-import { hasDrafts, promptDraft, useDraftBox, usePicks } from "@/lib/drafts";
+import { hasDrafts, promptDraft, useDraftBox, usePicks, useUnsent } from "@/lib/drafts";
 import { getFileDraft, hasUnsavedFiles, setFileDraft } from "@/lib/file-drafts";
 import { useChoices, useFlag } from "@/lib/flag";
 import { useSavedOrder } from "@/lib/order";
@@ -147,6 +147,10 @@ test("after /clear, a session's chat box, the messages sent from it not typed ye
   const queued = addPending(key("a"), { text: "待っている", files: [], after: 5 });
   settlePending(key("a"), queued, "queued");
   settlePending(key("a"), addPending(key("a"), { text: "打った", files: [], after: 5 }), "sent");
+  // And one whose result never came.
+  const unsent = renderHook(() => useUnsent(key("a")));
+  const lost = { id: "u1", text: "届いたか分からない", files: [], sent: { text: "届いたか分からない", files: [], after: 5, at: 0 } };
+  act(() => unsent.result.current[1]((list) => [...list, lost]));
   // The page of "a" is open, with its box being typed in.
   const before = chatBox("書きかけ");
   const open = renderHook(() => useDraftBox(key("a"), before));
@@ -169,6 +173,8 @@ test("after /clear, a session's chat box, the messages sent from it not typed ye
     ["待っている", "queued", 0],
   ]);
   expect(pendingOf(key("a"))).toEqual([]);
+  const moved = renderHook(() => useUnsent(key("b")));
+  expect(moved.result.current[0].map((u) => [u.text, u.sent.after])).toEqual([["届いたか分からない", 0]]);
   // What the working server answers later about a message sent under the id from before reaches it.
   settlePending(key("a"), sending, "queued");
   expect(pendingOf(key("b")).map((p) => p.state)).toEqual(["queued", "queued"]);
@@ -176,6 +182,7 @@ test("after /clear, a session's chat box, the messages sent from it not typed ye
   expect(pendingOf(key("b"))).toEqual([]);
   // Nothing is left under the id from before: once the boxes are sent and the file saved, no page reload waits for them.
   for (const id of ["b", "other"]) promptDraft(key(id)).set({ text: "", attachments: [], history: [] });
+  act(() => moved.result.current[1](() => []));
   setFileDraft(fileKey("m2", "b", "src/x.ts"), undefined);
   expect(hasDrafts()).toBe(false);
   expect(hasUnsavedFiles()).toBe(false);

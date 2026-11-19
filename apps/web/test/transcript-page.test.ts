@@ -1,0 +1,76 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import type { TranscriptEntry } from "@gasho/protocol";
+import { takePage } from "../src/lib/transcript-page.ts";
+
+const entry = (i: number): TranscriptEntry => ({
+  uuid: `u${i}`,
+  ts: new Date(Date.UTC(2026, 10, 17, 0, 0, i)).toISOString(),
+  role: "user",
+  blocks: [{ type: "text", text: `#${i}` }],
+});
+const range = (from: number, to: number): TranscriptEntry[] => Array.from({ length: to - from }, (_, k) => entry(from + k));
+const uuids = (entries: TranscriptEntry[]): string[] => entries.map((e) => e.uuid);
+
+test("the latest page after a new connection keeps the older entries the reader scrolled up to", () => {
+  // Entries 100–259 loaded (older pages read by scrolling up); 10 came while the connection was down.
+  const cur = { entries: range(100, 260), start: 100, total: 260, loading: true };
+  const t = takePage(cur, { entries: range(190, 270), start: 190, total: 270 });
+  assert.deepEqual(uuids(t.entries), uuids(range(100, 270)));
+  assert.equal(t.start, 100);
+  assert.equal(t.total, 270);
+});
+
+test("the latest page joins right after what is loaded", () => {
+  const cur = { entries: range(100, 190), start: 100, total: 190, loading: true };
+  const t = takePage(cur, { entries: range(190, 270), start: 190, total: 270 });
+  assert.deepEqual(uuids(t.entries), uuids(range(100, 270)));
+  assert.equal(t.start, 100);
+});
+
+test("the latest page that does not reach what is loaded replaces it", () => {
+  // More came meanwhile than a page holds: keeping the older entries would leave a hole.
+  const cur = { entries: range(100, 180), start: 100, total: 180, loading: true };
+  const t = takePage(cur, { entries: range(190, 270), start: 190, total: 270 });
+  assert.deepEqual(uuids(t.entries), uuids(range(190, 270)));
+  assert.equal(t.start, 190);
+});
+
+test("the latest page joins at its first entry even when the indexes loaded are off", () => {
+  // One entry is missing from what is loaded, so its indexes after it are one short.
+  const cur = { entries: [...range(100, 150), ...range(151, 261)], start: 100, total: 259, loading: true };
+  const t = takePage(cur, { entries: range(190, 270), start: 190, total: 270 });
+  assert.deepEqual(uuids(t.entries), uuids([...range(100, 150), ...range(151, 270)]));
+});
+
+test("live entries that came after the latest page was read stay below it", () => {
+  const cur = { entries: range(100, 272), start: 100, total: 272, loading: true };
+  const t = takePage(cur, { entries: range(190, 270), start: 190, total: 270 });
+  assert.deepEqual(uuids(t.entries), uuids(range(100, 272)));
+  assert.equal(t.total, 272);
+});
+
+test("the latest page that starts with an entry without a uuid shows no entry twice", () => {
+  // Two entries are missing from what is loaded: placed by its index, the page would start two entries too far on.
+  const plain = { ...entry(190), uuid: "" };
+  const loaded = [...range(100, 150), ...range(152, 190), plain, ...range(191, 262)];
+  const cur = { entries: loaded, start: 100, total: 260, loading: true };
+  const t = takePage(cur, { entries: [plain, ...range(191, 270)], start: 190, total: 270 });
+  assert.deepEqual(uuids(t.entries), uuids([...range(100, 150), ...range(152, 190), plain, ...range(191, 270)]));
+});
+
+test("live entries that came before the latest page do not make it join what is loaded", () => {
+  // 100–189 loaded, 190–268 missed while the connection was down, 269–271 came live before the page (192–271).
+  const cur = { entries: [...range(100, 190), ...range(269, 272)], start: 100, total: 193, loading: true };
+  const t = takePage(cur, { entries: range(192, 272), start: 192, total: 272 });
+  assert.deepEqual(uuids(t.entries), uuids(range(192, 272)));
+  assert.equal(t.start, 192);
+});
+
+test("live entries that came after the latest page was read do not make it join what is loaded", () => {
+  // 100–189 loaded, 190–270 missed while the connection was down, 271 came live after the page (191–270) was read.
+  const cur = { entries: [...range(100, 190), entry(271)], start: 100, total: 191, loading: true };
+  const t = takePage(cur, { entries: range(191, 271), start: 191, total: 271 });
+  assert.deepEqual(uuids(t.entries), uuids(range(191, 272)));
+  assert.equal(t.start, 191);
+});

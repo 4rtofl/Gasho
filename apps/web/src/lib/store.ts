@@ -31,6 +31,7 @@ import { movePending } from "./pending";
 import { type AutoReload, onOutOfDate, outOfDate } from "./server-update";
 import { movedSession, unreadOfSession } from "./sessions";
 import { mergeTokenDays } from "./token-days.ts";
+import { sameEntry, takePage } from "./transcript-page";
 
 /** Close code the Gasho server uses when this browser is not (or no longer) registered. */
 const CLOSE_UNAUTHORIZED = 4401;
@@ -263,6 +264,7 @@ function dropped(ws: WebSocket): void {
   socket = undefined;
   heartbeat = false;
   heard();
+  endWaits();
   update({ connected: false });
   backoff = 1000;
   connect();
@@ -292,6 +294,7 @@ export function becomeUnregistered(): void {
   const ws = socket;
   socket = undefined;
   ws?.close();
+  endWaits();
   state = { auth: "unregistered", ...EMPTY };
   for (const l of listeners) l();
 }
@@ -352,6 +355,7 @@ function connect(): void {
     socket = undefined;
     heartbeat = false;
     heard();
+    endWaits();
     if (ev.code === CLOSE_UNAUTHORIZED) {
       becomeUnregistered();
       return;
@@ -509,7 +513,23 @@ function send(m: ClientToHub): void {
   if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(m));
 }
 
-const pendingCommands = new Map<string, (r: CommandResult) => void>();
+/** A command's result. `unknown`: the connection closed before it came, so the command may have run. */
+export type SentResult = CommandResult & { unknown?: true };
+
+const pendingCommands = new Map<string, (r: SentResult) => void>();
+
+/**
+ * Ends the waits for results once the connection is closed: the Gasho server answers on the connection a command came
+ * on, and forgets it with that connection.
+ */
+function endWaits(): void {
+  const lost: SentResult = { ok: false, error: "Gasho サーバーとの接続が切れたので、結果が分かりません。", unknown: true };
+  for (const waits of [pendingCommands, pluginResults, serverResults]) {
+    const done = [...waits.values()];
+    waits.clear();
+    for (const d of done) d(lost);
+  }
+}
 
 /** crypto.randomUUID() is unavailable over plain HTTP on the LAN (it needs a secure context). */
 function requestId(): string {
@@ -517,7 +537,7 @@ function requestId(): string {
 }
 
 /** Sends a command to a working server through the Gasho server and waits for its result. */
-export function sendCommand(machine: string, cmd: SessionCommand, timeoutMs = 60_000): Promise<CommandResult> {
+export function sendCommand(machine: string, cmd: SessionCommand, timeoutMs = 60_000): Promise<SentResult> {
   return new Promise((resolve) => {
     if (socket?.readyState !== WebSocket.OPEN) {
       resolve({ ok: false, error: "Gasho サーバーにつながっていません。" });
@@ -534,10 +554,6 @@ export function sendCommand(machine: string, cmd: SessionCommand, timeoutMs = 60
     });
     send({ ...cmd, requestId: id, machine });
   });
-}
-
-function sameEntry(a: TranscriptEntry, b: TranscriptEntry): boolean {
-  return a.uuid !== "" && a.uuid === b.uuid;
 }
 
 /**
@@ -651,17 +667,7 @@ function handle(m: HubToClient): void {
         setTranscript(key, { entries: cur?.entries ?? [], start: cur?.start ?? 0, total: cur?.total ?? 0, loading: false, error: m.error });
         break;
       }
-      const isOlderPage = cur && cur.entries.length > 0 && m.start + m.entries.length <= cur.start;
-      if (isOlderPage) {
-        setTranscript(key, { entries: [...m.entries, ...cur.entries], start: m.start, total: m.total, loading: false });
-      } else {
-        // Keep live entries that arrived after the page was read.
-        const extra = (cur?.entries ?? []).filter((e) => e.uuid && !m.entries.some((p) => sameEntry(p, e)));
-        const lastTs = m.entries.at(-1)?.ts;
-        // With an empty page (a brand-new session) every live entry is newer than the page.
-        const tail = lastTs ? extra.filter((e) => e.ts && e.ts > lastTs) : extra;
-        setTranscript(key, { entries: [...m.entries, ...tail], start: m.start, total: m.total + tail.length, loading: false });
-      }
+      setTranscript(key, takePage(cur, m));
       break;
     }
     case "transcript.append": {

@@ -186,7 +186,7 @@ Codex のセッションは、Codex の常駐の app-server のスレッドで�
 - 画面は、gasho-daemon が知らせるエージェントごとのできる操作（`AgentInfo.operations`）を見て、モデル、Effort、Ultracode、ファイルの添付、フォーク、バックグラウンドの作業の一覧、`/` の候補、`!` のシェルを出すかを決める
 - 既定のエージェントは Gasho サーバーの `meta` に保存し、どのブラウザーでも同じにする。初めは Claude Code である。＋ボタンは既定のエージェントで起動し、その working server で Codex を使えないときは Claude Code で起動する。＋ボタンを右クリック（タッチでは長押し）すると、その場でエージェントを選べる。ここで選んでも既定は変わらない。Codex が入っていない working server では、メニューを出さない
 - 起動フォームには、Codex が入っている working server でだけエージェントの欄を出す。初めの値は既定のエージェントである
-- Codex を使える working server が1つでもあれば、サイドバーの行、タブ、セッション画面の見出しにエージェントの印（Claude Code は CC、Codex は Cx）を出す
+- Codex を使える working server が1つでもあれば、サイドバーのセッションの行、タブ、セッション画面の見出しにエージェントの印（Claude Code は CC、Codex は Cx）を出す。サイドバーの worktree の行には出さない
 - プラグインが起動するセッションは、プラグインが `agent` を指定しない限り Claude Code である
 
 ### セッションの端末

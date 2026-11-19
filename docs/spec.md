@@ -290,6 +290,32 @@ Claude Code は、Context Window の使用量と、Claude.ai のプランで決�
 - Claude が送った画像と動画（S18）は、トランスクリプトにある SendUserFile の呼び出しが送ったファイルのうち、拡張子が画像（PNG、JPEG、GIF、WebP、AVIF、BMP、SVG）か動画（MP4、M4V、MOV、WebM、OGV）のものだけを読む。作業フォルダーからの相対パスは、その記録の `cwd` から絶対パスにする。gasho-daemon は、セッションごとに送られたファイルを新しいほうから2000個まで覚え、ほかのパスは断る。Claude はスクリーンショットを作業用のフォルダー（`/tmp/claude-<uid>/…`）に置いて送るので、セッションのフォルダーの外でも読む。ふつうのファイルでないものは開かない。1回に読むのは 1MB までで、続きは Gasho サーバーが順に求める
 - スキルとカスタムコマンド（S19）は、Claude Code の資料（code.claude.com/docs/en/skills・plugins-reference）にある置き場から読む。`~/.claude/skills/<名前>/SKILL.md` と `~/.claude/commands/**/*.md`、セッションのフォルダーとその上のフォルダー（worktree の一番上まで）の `.claude/skills` と `.claude/commands`、`~/.claude/plugins/installed_plugins.json` のうちそのフォルダーで使えて設定（`enabledPlugins`）で切っていないプラグインの `skills/`・`commands/`（plugin.json の `skills`・`commands` が指すものを含む）、`~/.claude.json` のアカウントの `~/.claude/skills/synced/<組織>_<アカウント>/`。worktree の一番上に `.claude/skills` が無いときは、リポジトリの本体のものを読む。名前は Claude Code と同じく、SKILL.md の `name`（無ければフォルダーの名前）、コマンドはファイルの名前（フォルダーは `:` でつなぐ）、プラグインのものは `<プラグイン>:<名前>`、同期されたものは `anthropic-skills:<名前>`（名前だけでは、組み込みの `/help` などと重なることがあるため）にする。同じ名前は、個人のスキル、フォルダーのスキル、個人のコマンド、フォルダーのコマンドの順に先のものを残す。`user-invocable: false` のものと、設定（`~/.claude/settings.json`、フォルダーの `.claude/settings.json`・`.claude/settings.local.json`）の `skillOverrides` で `off` にしたものは出さない。読むのは各ファイルの先頭 16KB で、説明は frontmatter の `description`（無ければ本文の最初の行）を1行にして200文字で切る
 
+### セッションの休止
+
+Claude Code は、何もしていないあいだも 1 プロセスで 200MB ほどのメモリを使う。gasho-daemon は、Gasho が起動したセッションのうち使っていないものの Claude Code と端末を止め、セッションは一覧に残す。使うときに `claude --resume` で戻す（[research.md](research.md) の検証12）。
+
+- 次のすべてに当てはまるセッションを、1 分ごとに探して休止する（`apps/daemon/src/hibernate.ts` の `mayHibernate`）
+  - 状態が idle で、Claude Code の登録の状態も idle である（シェルや Monitor だけが動いている `shell` は対象外）
+  - バックグラウンドの作業、送信待ちの入力、答えを待っている確認がない
+  - gasho-daemon が入力やモデルの切り替えをしている途中ではない
+  - Claude がいまのプロセスで `CronCreate` か `ScheduleWakeup` を呼んでいない（止めると、予定した実行が消えるため）。予定は `/clear` のあともプロセスに残るので、呼んだ時刻を `managed.json` に記録して引き継ぎ、再開したら消す
+  - 入力欄に文字がなく、選択画面や確認が開いていない。`gasho-daemon attach` で端末を開いている人がいない
+  - 入力欄の下に権限モード（manual、accept edits、plan、auto、don't ask）が読み取れる。読めないときと、起動時に確認が出る bypass permissions のときは、同じモードで再開できないので休止しない
+  - 会話の記録があり、フォルダーがある（どちらかがないと再開できないため）。gasho-daemon 0.10 までが zellij で起動したセッションは対象外
+  - 最後の活動（会話の記録、Claude Code の起動、状態の変化のうち最も新しいもの）から、決めた時間以上たっている
+- 時間の既定は 90 分で、`GASHO_HIBERNATE_AFTER_MINUTES` で変える。60 分より短くはしない。Claude Code のプロンプトキャッシュは 1 時間で切れるので、それより長く置いたセッションは、止めても止めなくても次の発言で会話を読み直す。`GASHO_HIBERNATE=off` で休止を切る
+- 止め方は削除と同じで、`claude agents` がそのセッションの ID で出している PID にだけ SIGTERM を送り、端末を閉じる。添付ファイルと一時フォルダーは消さない
+- 動いているあいだ、最後に分かった Effort を `managed.json` に記録する。`/clear` のあとは、新しい会話の記録にも画面にも Effort が出ないためである
+- 休止の直前に、モデル、Effort、Ultracode、権限モードを `managed.json` に記録する。記録できなかったときは休止をやめ、Claude Code を動かし続ける。`--resume` は Effort と Ultracode を戻さず、モデルは最後の返答のものに戻り、`/clear` のあとは権限モードも既定のものに戻るためである。返答の記録には 1M コンテキストかどうかが残らないので、Claude Code がターンの初めに記録するモデルの名前（`Opus 4.6 (1M context)`）から `[1m]` を付ける
+- 休止中のセッションは、`SessionInfo.hibernation` が `hibernated`、`status` が `idle` になる。サイドバーとホームの同じ場所に同じ名前で残り、会話も読める。過去の会話（S15）の一覧には出ない
+- 再開は、発言（プラグインの `session.input`、`gasho-daemon session send` を含む）か、再開に失敗したあとの「もう一度再開」（`session.wake`）で始まる。`claude --remote-control=<名前> --resume <ID> --model <モデル> --effort <Effort> --permission-mode <権限モード>` を新しい端末で起動し、`claude agents` に同じ ID で出て入力欄が出たら、Ultracode を戻し、預かった発言を入力する。`Resume from summary` の問いは、フォークと同じく Esc で答える。再開のあいだ `hibernation` は `resuming` になる
+- 再開に失敗したら、`resumeError` に理由を入れ、発言は預かったままにする。休止中のセッションの送信待ちの入力は `managed.json` に保存するので、gasho-daemon を再起動しても失わない。再開のあとも、入力し終わるまで保存する。再起動のあとは、入力を始めていた発言だけを、始めた時刻より後の会話の記録と全文で比べ、入っていなければ入力する。入力し終わる前に Claude Code が終わったら休止に戻す
+- 休止中に名前を変えたときは、Claude Code を起こさずに記録だけを変え、再開のあとで `/rename` を送る
+- gasho-daemon を再起動・更新しても、休止中のセッションは休止中のまま残る。ただし、1 つの会話を 2 つの Claude Code が開かないよう、起動時に次のように扱う
+  - 休止の途中で再起動したときは、Claude Code が終わるのを削除と同じ時間だけ待つ。終わったら端末を閉じて休止のままにし、動き続けていれば休止を取り消す。端末の応答が遅くても、その PID が動いていて `claude agents` に同じ ID で出ていれば、動いているものとして同じように扱う。再開を始める前にも同じことを確かめる
+  - 再開の途中で再起動したときは、起動する前に `managed.json` に保存した端末（`resumingIn`）が動いていれば、それを引き継いで再開を続ける。動いていなければ休止のままにし、送信待ちの入力があれば再開し直す
+- 休止中の会話を Gasho の外（`claude --resume` など）で開くと、`claude agents` に別の PID で同じ ID が出る。2 つのプロセスが同じ会話に書き込まないよう、gasho-daemon はそのセッションを Gasho の管理から外し、Gasho の外で起動したセッションとして扱う。送信待ちの入力があるあいだは管理から外さず、外で開かれていることを `resumeError` で伝え、外の Claude Code が終わるまで再開しない
+
 ## gasho-hub（Gasho サーバー）
 
 - 各 working server からの情報を、登録した ID ごとにまとめて SQLite に保存する

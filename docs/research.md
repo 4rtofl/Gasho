@@ -216,6 +216,21 @@ Claude Code の状態の調べ方：`claude --version` は `2.1.327 (Claude Code
 - Codex を更新したときのつなぎ直し
 - Mac での動き
 
+## 検証12：セッションの休止と `--resume`
+
+2026年11月18日に、Claude Code 2.1.327 で確かめた。作業用の一時フォルダーで試し、試したあとで `claude purge` で消した。
+
+- `claude --remote-control <名前> --resume <ID>` で起動すると、セッション ID、トランスクリプトのファイル、`/rename` で付けた名前が続いた。再開のあとの返答は、休止の前の発言の内容を答えた
+- Remote Control は、再開すると同じ `bridgeSessionId` で「/remote-control is active」と表示された。公式アプリの画面からは確かめていない
+- 権限モード（manual、accept edits、plan、auto）は、再開のあとも同じだった。トランスクリプトの `permission-mode` の記録から戻る
+- Effort は戻らなかった。low や xhigh にしていても、再開すると既定の medium になった。Ultracode も戻らなかった
+- モデルは、最後の返答のモデルに戻った。`/model` でこのセッションだけ切り替えて、発言せずに止めると、切り替えは失われた
+- `--resume <ID> --model claude-sonnet-5-5 --effort high` で起動すると、次の返答は実際にそのモデルと Effort になった。`--effort ultracode` は Effort を xhigh にするので、元の Effort を保つときは `--effort` で戻してから `/effort ultracode on` を送る。どれも `~/.claude/settings.json` を変えなかった
+- SIGTERM を送ると、Claude Code は約1〜1.3秒で終了し、セッションの登録（`~/.claude/sessions/<pid>.json`）が消えた
+- 短い会話の再開では、入力欄が約0.9秒で出た。長い会話の再開にかかる時間は測っていない
+- 1セッションのメモリは、`claude` が PSS 194〜228MB（RSS 約300MB）、端末のプロセスが PSS 約41MB（RSS 約92MB）だった。休止すると、どちらのプロセスも残らなかった
+- gasho-daemon の休止と再開を、本物の Claude Code、別の hub、headless Chrome で通した。休止、gasho-daemon の再起動、画面からの発言での再開、モデル・Effort・Ultracode の復元、再開の失敗と「もう一度再開」を確かめた。バックグラウンドのシェルが動いているセッションと、質問（AskUserQuestion）に答えを待っているセッションは、休止しなかった
+
 ## 未確認の事項
 
 - 名前の変更が、公式アプリのセッション名に反映されるか

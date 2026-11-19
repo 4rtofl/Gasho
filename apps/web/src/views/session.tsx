@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CommandResult, InputFeature, MachineInfo, SessionInfo, SessionModel } from "@gasho/protocol";
 import { AgentMark } from "@/components/agent-mark";
 import { BackgroundTasks } from "@/components/background-tasks";
+import { HibernationNotice } from "@/components/hibernation-notice";
 import { RepoPicker } from "@/components/repo-picker";
 import { EffortPicker, UltracodeToggle } from "@/components/session-controls";
 import { SessionHeaderToggle } from "@/components/session-header-toggle";
@@ -240,7 +241,7 @@ export function SessionView({
 /** The session's state, or "オフライン" while its working server is not connected. Also in a phone's top bar (see App). */
 export function SessionState({ machine, session }: { machine: MachineInfo; session: SessionInfo }) {
   return machine.connected ? (
-    <StatusBadge status={shownStatus(session)} />
+    <StatusBadge status={shownStatus(session)} hibernation={session.hibernation} />
   ) : (
     <span className="shrink-0 text-xs text-muted-foreground">オフライン</span>
   );
@@ -405,11 +406,13 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
   const offline = !machine.connected;
   const status = offline
     ? "working server がオフラインです。"
-    : s.pendingInputs
-      ? `送信待ち ${s.pendingInputs} 件。作業が終わったら順に送ります。`
-      : s.status === "waiting" && !s.permissionRequests?.length
-        ? "確認を待っています。端末か公式アプリで答えてください。"
-        : undefined;
+    : s.hibernation
+      ? undefined // said above the chat box (HibernationNotice)
+      : s.pendingInputs
+        ? `送信待ち ${s.pendingInputs} 件。作業が終わったら順に送ります。`
+        : s.status === "waiting" && !s.permissionRequests?.length
+          ? "確認を待っています。端末か公式アプリで答えてください。"
+          : undefined;
 
   const stop = async () => {
     // While Claude only waits for its subagents, stopping goes through Claude Code's list of background tasks, one at a
@@ -423,6 +426,7 @@ function Composer({ machine, session: s, entries }: { machine: MachineInfo; sess
     <div ref={box} className="flex min-h-0 flex-col">
       <PermissionRequests machine={machine} session={s} />
       {canDo(machine, s, "background") && <BackgroundTasks machine={machine} session={s} />}
+      <HibernationNotice machine={machine} session={s} />
       <PromptInput
         onSend={async ({ text, files }) => {
           setError(undefined);

@@ -2,6 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { claudeTmpRoot } from "./claude-tmp.ts";
 import { credentialsPath, daemonUrl, type Credentials } from "./credentials.ts";
+import { hibernateAfterMs } from "./hibernate.ts";
 import { TRIAL_MAX_MS, TRIAL_MS } from "./self-update.ts";
 
 export interface DaemonConfig {
@@ -29,6 +30,8 @@ export interface DaemonConfig {
   pluginDataDir: string;
   /** False when GASHO_PLUGINS=none: no plugin's daemon part runs on this working server. */
   runPlugins: boolean;
+  /** After how long without activity sessions started from Gasho are hibernated; never without it (hibernate.ts). */
+  hibernateAfterMs?: number;
   /** How long a version started by an update is on trial (self-update.ts). */
   trialMs: number;
 }
@@ -52,6 +55,7 @@ export function loadConfig(creds: Credentials, env: NodeJS.ProcessEnv = process.
     pluginCacheDir: path.join(env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "gasho", "daemon-plugins"),
     pluginDataDir: path.join(env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "gasho", "plugin-data"),
     runPlugins: env.GASHO_PLUGINS !== "none",
+    hibernateAfterMs: hibernateAfterMs(env),
     trialMs: msUpTo(env.GASHO_DAEMON_PROBATION_MS, TRIAL_MAX_MS) ?? TRIAL_MS,
   };
 }

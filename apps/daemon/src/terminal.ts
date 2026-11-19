@@ -57,6 +57,8 @@ export interface HostHello {
   startedAt: number;
   /** Set once the program has exited; the host keeps its last screen for a while. */
   exited?: { code: number; signal?: number };
+  /** How many have the terminal open (`gasho-daemon attach`). Absent from a host started by an older gasho-daemon. */
+  viewers?: number;
 }
 
 /** What starts a session's terminal. */

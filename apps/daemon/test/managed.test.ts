@@ -40,6 +40,7 @@ import {
   terminalName,
   typedInBox,
 } from "../src/managed.ts";
+import { modelFlag } from "../src/hibernate.ts";
 
 test("cleanEnv keeps only what Claude Code and zellij need", () => {
   const env = cleanEnv({
@@ -568,6 +569,10 @@ test("the model in Claude Code's welcome banner is read before the transcript ha
     ["", " ▐▛███▛█   Claude Code v2.1.322", second, " ▝▝   ▝▝   ~/repos/Bobert", "", "  /remote-control is active · Continue here, on"].join("\n");
   assert.equal(bannerModel(banner("▝▜██████▀  Sonnet 5.5 · Claude Ultra")), "Sonnet 5.5");
   assert.equal(bannerModel(banner("▝▜██████▀  Opus 4.6 (1M context) · API Usage Billing")), "Opus 4.6 (1M context)");
+  // Started with --effort (as a hibernated session comes back), Claude Code 2.1.328 adds the effort level to the name.
+  assert.equal(bannerModel(banner("▝▜██████▀  Haiku 5.5 with low effort · Claude Ultra")), "Haiku 5.5");
+  assert.equal(modelFlag(bannerModel(banner("▝▜██████▀  Haiku 5.5 with low effort · Claude Ultra"))), "claude-haiku-5-5");
+  assert.equal(bannerModel(banner("▝▜██████▀  Opus 4.6 (1M context) with xhigh effort · API Usage Billing")), "Opus 4.6 (1M context)");
   // Not the banner's model line, or no banner at all.
   assert.equal(bannerModel(banner("▝▜██████▀  ~/repos/Bobert")), undefined);
   assert.equal(bannerModel(screenWith("❯ ")), undefined);

@@ -80,6 +80,7 @@ const hello = (): HostHello => ({
   cwd: cfg.cwd,
   startedAt,
   ...(exited ? { exited } : {}),
+  viewers: viewers.size,
 });
 
 /** The size of the newest viewer, or the terminal's own when nobody is attached. */

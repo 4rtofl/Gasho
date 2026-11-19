@@ -159,6 +159,14 @@ export interface SessionInfo {
    * (`session.stopTask`).
    */
   background?: BackgroundTask[];
+  /**
+   * Sessions started from Gasho that nobody used for a while: "hibernated" while their Claude Code does not run (their
+   * conversation can still be read, and `status` stays "idle"), "resuming" while it starts again. An input sent to the
+   * session brings it back and is typed then. Absent while the session runs.
+   */
+  hibernation?: "hibernated" | "resuming";
+  /** Why a hibernated session could not be brought back; `session.wake` tries again. Inputs sent to it are kept. */
+  resumeError?: string;
 }
 
 /** A permission Claude Code asks for before using a tool. */
@@ -1291,6 +1299,8 @@ export type SessionCommand =
    * (`claude --remote-control=<name> --resume <id>`). Its name is the conversation's.
    */
   | { type: "session.resume"; sessionId: string }
+  /** Brings a hibernated session back (`SessionInfo.hibernation`) without sending it anything. */
+  | { type: "session.wake"; sessionId: string }
   /**
    * Ends the Claude Codes that have these sessions open, started outside Gasho (in Orca, a terminal), as on a shutdown
    * (SIGTERM), so that their conversations can be opened again from Gasho (session.history, session.resume). Their

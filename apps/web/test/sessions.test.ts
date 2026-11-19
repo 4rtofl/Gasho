@@ -8,6 +8,7 @@ import {
   repoChoices,
   repoKeyOf,
   sessionDot,
+  sessionDotStatus,
   shownStatus,
   tabAfterRemoval,
   unreadOfSession,
@@ -271,4 +272,23 @@ test("an open session reads its unread notifications, those under an id it had b
   assert.deepEqual(unreadOfSession(notes, machines, "mac", "b").map((n) => n.id), ["1", "2"]);
   // Open on an id no session lists (the page has not gone on to the new id yet): those under that id.
   assert.deepEqual(unreadOfSession(notes, machines, "mac", "a").map((n) => n.id), ["1"]);
+});
+
+test("a hibernated session has a dot of its own, and a worktree has it only when all of its sessions are hibernated", () => {
+  const worktree = { path: "/repo", repo: "/repo", branch: "main" };
+  const asleep = session("s1", { hibernation: "hibernated", worktree });
+  const back = session("s2", { hibernation: "resuming", worktree });
+  const awake = session("s3", { worktree });
+  const m = machine("m1", [asleep, back, awake]);
+  assert.equal(sessionDot(m, asleep, new Set()).status, "hibernated");
+  assert.equal(sessionDot(m, back, new Set()).status, "busy");
+  assert.equal(sessionDot({ ...m, connected: false }, asleep, new Set()).status, "unknown");
+  assert.equal(worktreeDot({ machine: m, sessions: [asleep] } as never, new Set()).status, "hibernated");
+  assert.equal(worktreeDot({ machine: m, sessions: [asleep, awake] } as never, new Set()).status, "idle");
+});
+
+test("the dot of a session whose background work runs on says that it works, unless it is hibernated", () => {
+  const session = (extra: Partial<SessionInfo>) => ({ status: "idle", background: [{}], ...extra }) as SessionInfo;
+  assert.equal(sessionDotStatus(session({})), "busy");
+  assert.equal(sessionDotStatus(session({ hibernation: "hibernated" })), "hibernated");
 });

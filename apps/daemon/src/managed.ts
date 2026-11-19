@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { BackgroundTaskKind, EffortLevel, ModelOption, SessionModel } from "@gasho/protocol";
+import type { PermissionMode } from "./hibernate.ts";
 import { log } from "./util.ts";
 
 const execFileP = promisify(execFile);
@@ -148,7 +149,8 @@ export function bannerModel(screen: string): string | undefined {
   if (at < 0) return undefined;
   // The logo is drawn with block elements (U+2580–U+259F).
   const rest = (lines[at + 1] ?? "").replace(/^[\s\u2580-\u259f]+/, "");
-  const name = /^(.+?)\s+·\s/.exec(rest)?.[1]?.trim();
+  // Started with --effort, Claude Code adds the effort level: "Haiku 5.5 with low effort".
+  const name = /^(.+?)\s+·\s/.exec(rest)?.[1]?.replace(/\s+with\s+\S+\s+effort$/i, "").trim();
   return name && name.length <= 40 && /\d/.test(name) ? name : undefined;
 }
 
@@ -284,6 +286,30 @@ export function autoModeOfferOpen(screen: string): boolean {
 export function noticeKey(screen: string): "0" | "Esc" | undefined {
   if (surveyOpen(screen)) return "0";
   if (autoModeOfferOpen(screen)) return "Esc";
+  return undefined;
+}
+
+const PERMISSION_MODES: Record<string, PermissionMode> = {
+  "manual mode": "manual",
+  "accept edits": "acceptEdits",
+  "plan mode": "plan",
+  "auto mode": "auto",
+  "don't ask": "dontAsk",
+};
+
+/**
+ * The permission mode Claude Code shows under the prompt box ("⏸ manual mode on · ? for shortcuts", "⏵⏵ accept edits on
+ * (shift+tab to cycle)"). A status line can be drawn there too. Undefined when the screen does not show one of these:
+ * "bypass permissions" is left out on purpose, as starting in it asks for a confirmation that nobody would answer.
+ */
+export function permissionModeShown(screen: string): PermissionMode | undefined {
+  const lines = screenLines(screen);
+  const box = promptBox(lines);
+  if (!box) return undefined;
+  for (const line of lines.slice(box.bottom + 1)) {
+    const mode = /^\s*\S+\s+(manual mode|accept edits|plan mode|auto mode|don't ask) on\b/.exec(line)?.[1];
+    if (mode) return PERMISSION_MODES[mode];
+  }
   return undefined;
 }
 
@@ -566,6 +592,15 @@ export interface QueuedInput {
    * session's terminal: it waits until the box is empty. It does not count as an input waiting (`pendingInputs`).
    */
   auto?: boolean;
+  /**
+   * Sent to a hibernated session, which has come back since (when, in ms): it stays saved until it has been typed, as
+   * the answer to it said that it was kept (see ManagedSession.wokenFrom).
+   */
+  keptAt?: number;
+  /** When typing this kept input began (ms), saved before the first key: only such an input may have been typed already. */
+  typingAt?: number;
+  /** It may have been typed without Gasho knowing (see typingAt): the transcript tells, from that time on (see flushInput). */
+  recheck?: boolean;
 }
 
 /**
@@ -741,6 +776,45 @@ export interface ManagedSession {
    * but work it started in the background under them can still be writing to their temporary folders.
    */
   releasedIds?: string[];
+  /** The effort level last known of it. After /clear, neither the new transcript nor the screen says it (see Daemon.hibernate). */
+  effort?: EffortLevel;
+  /**
+   * When Claude last scheduled work in this Claude Code (CronCreate, ScheduleWakeup). The work stays in the process after
+   * /clear, while the new transcript does not mention it; it is lost when the process ends.
+   */
+  scheduledAt?: number;
+  /**
+   * The session is hibernated: its Claude Code and terminal have ended (`pid` and `terminal` are those it had), and
+   * `claude --resume` brings it back when it is used (hibernate.ts).
+   */
+  hibernated?: Hibernated;
+  /**
+   * What it has just come back from, saved with the inputs kept for it until they are typed. After a restart of
+   * gasho-daemon they are typed then; if its Claude Code has ended meanwhile, it is hibernated again.
+   */
+  wokenFrom?: Hibernated;
+}
+
+/** A hibernated session: what it goes on with once it is brought back. */
+export interface Hibernated {
+  at: number;
+  /** The model and effort level it used, as Gasho shows them; `claude --resume` does not keep them (see resumeArgs). */
+  model?: string;
+  effort?: EffortLevel;
+  ultracode?: boolean;
+  /** The permission mode it was in: after /clear, `claude --resume` would not go back to it (see resumeArgs). */
+  permissionMode?: PermissionMode;
+  /** Renamed while hibernated: Claude Code is told with /rename once it runs again. */
+  renamed?: boolean;
+  /** Why it could not be brought back the last time. */
+  resumeError?: string;
+  /**
+   * The terminal it is being brought back in, saved before that terminal starts: a restart of gasho-daemon meanwhile
+   * takes that terminal over instead of starting a second Claude Code on the conversation.
+   */
+  resumingIn?: string;
+  /** Saved only: the inputs waiting for it, kept over a restart of gasho-daemon. */
+  inputs?: QueuedInput[];
 }
 
 /** At most this many earlier ids are kept for a session (see ManagedSession.previousIds). */
@@ -905,6 +979,8 @@ export class ManagedSessions {
   private file: string;
   private sessions = new Map<string, ManagedSession>();
   private queues = new Map<string, QueuedInput[]>();
+  /** The kept input (QueuedInput.keptAt) being typed into each session: off the queue, and still saved. */
+  private typing = new Map<string, QueuedInput>();
   private saving: Promise<void> = Promise.resolve();
 
   constructor(file: string) {
@@ -926,7 +1002,13 @@ export class ManagedSessions {
       // Saved by gasho-daemon 0.10 or before, or saved for a session in zellij (see save).
       const { zellijSession, ...rest } = saved;
       const m: ManagedSession = zellijSession !== undefined ? { ...rest, terminal: zellijSession, zellij: true } : rest;
-      if (await keep(m)) this.sessions.set(m.sessionId, m);
+      if (!(await keep(m))) continue;
+      this.sessions.set(m.sessionId, m);
+      const inputs = m.hibernated?.inputs ?? m.wokenFrom?.inputs;
+      if (inputs?.length) this.queues.set(m.sessionId, inputs);
+      this.recheckTyped(m.sessionId);
+      delete m.hibernated?.inputs;
+      delete m.wokenFrom?.inputs;
     }
     await this.save();
   }
@@ -941,14 +1023,50 @@ export class ManagedSessions {
       .then(async () => {
         await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
         // A session in zellij is saved the way gasho-daemon 0.10 and before saved it (see ManagedSession.zellij).
-        const list = [...this.sessions.values()].map(({ terminal, zellij, ...rest }) =>
-          zellij ? { ...rest, zellijSession: terminal } : { ...rest, terminal },
-        );
+        const list = [...this.sessions.values()].map(({ terminal, zellij, wokenFrom, ...rest }) => {
+          // Other sessions' inputs are not kept: they are typed within moments. A hibernated one's wait for it to come back.
+          const inputs = rest.hibernated && this.queues.get(rest.sessionId)?.filter((input) => !input.auto);
+          const kept = wokenFrom ? this.keptInputs(rest.sessionId) : [];
+          const saved = inputs?.length
+            ? { ...rest, hibernated: { ...rest.hibernated!, inputs } }
+            : kept.length > 0
+              ? { ...rest, wokenFrom: { ...wokenFrom!, inputs: kept } }
+              : rest;
+          return zellij ? { ...saved, zellijSession: terminal } : { ...saved, terminal };
+        });
         const tmp = `${this.file}.${process.pid}.tmp`;
         await fs.writeFile(tmp, `${JSON.stringify(list, null, 2)}\n`, { mode: 0o600 });
         await fs.rename(tmp, this.file);
       });
     return this.saving;
+  }
+
+  /** The inputs kept for a session that has come back, the one being typed first, as they are saved. */
+  private keptInputs(sessionId: string): QueuedInput[] {
+    const typing = this.typing.get(sessionId);
+    return [...(typing ? [typing] : []), ...(this.queues.get(sessionId) ?? [])].filter((input) => input.keptAt !== undefined);
+  }
+
+  /** Whether inputs kept for a session that has come back are still to be typed. */
+  hasKept(sessionId: string): boolean {
+    return this.keptInputs(sessionId).length > 0;
+  }
+
+  /** Gasho lost sight of the session: the inputs it had begun to type are looked for in the transcript before going on. */
+  recheckTyped(sessionId: string): void {
+    for (const input of this.queues.get(sessionId) ?? []) if (input.typingAt !== undefined) input.recheck = true;
+  }
+
+  /** The session has come back: what waits for it stays saved until it is typed. Whether anything does. */
+  keepWaiting(sessionId: string): boolean {
+    const waiting = (this.queues.get(sessionId) ?? []).filter((input) => !input.auto);
+    for (const input of waiting) input.keptAt ??= Date.now();
+    return waiting.length > 0;
+  }
+
+  /** The input taken with `next` is dealt with. Whether it was one kept, so that the file changes. */
+  typed(sessionId: string): boolean {
+    return this.typing.delete(sessionId);
   }
 
   has(sessionId: string): boolean {
@@ -1026,6 +1144,7 @@ export class ManagedSessions {
   remove(sessionId: string): void {
     this.sessions.delete(sessionId);
     this.queues.delete(sessionId);
+    this.typing.delete(sessionId);
   }
 
   /**
@@ -1044,6 +1163,9 @@ export class ManagedSessions {
     const q = this.queues.get(from);
     this.queues.delete(from);
     if (q) this.queues.set(to, q);
+    const typing = this.typing.get(from);
+    this.typing.delete(from);
+    if (typing) this.typing.set(to, typing);
     return m;
   }
 
@@ -1055,11 +1177,14 @@ export class ManagedSessions {
   }
 
   next(sessionId: string): QueuedInput | undefined {
-    return this.queues.get(sessionId)?.shift();
+    const item = this.queues.get(sessionId)?.shift();
+    if (item?.keptAt !== undefined) this.typing.set(sessionId, item);
+    return item;
   }
 
   /** Puts a message back at the front, e.g. when sending it failed. */
   unshift(sessionId: string, input: QueuedInput): void {
+    this.typing.delete(sessionId);
     const q = this.queues.get(sessionId) ?? [];
     q.unshift(input);
     this.queues.set(sessionId, q);

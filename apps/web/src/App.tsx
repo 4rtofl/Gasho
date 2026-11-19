@@ -454,21 +454,14 @@ export function App() {
 
   // A worktree's row, in Gasho's list and in a grouping's categories: its state (a bell in its place while a session
   // has a notification not read), its name, the line under it (its repository, and its working server when there are
-  // several, unless the grouping gave another or none), and whether it waits for an answer or is offline.
+  // several, unless the grouping gave another or none), and whether it waits for an answer or is offline. Which agents
+  // run its sessions is not told here: the sessions' tabs tell it.
   const worktreeRow = (w: WorktreeSessions, line?: string): SidebarItem => ({
     id: w.id,
     label: w.label,
     description: line === undefined ? [w.repo, machines.length > 1 ? w.machine.name : undefined].filter(Boolean).join(" · ") || undefined : line || undefined,
     icon: <StatusDot {...worktreeDot(w, unreadOnes)} />,
     badge: !w.machine.connected ? "オフライン" : w.sessions.some((s) => s.status === "waiting") ? "確認" : undefined,
-    mark:
-      marks && w.sessions.length > 0 ? (
-        <span className="flex items-center gap-1">
-          {[...new Set(w.sessions.map(sessionAgent))].map((agent) => (
-            <AgentMark key={agent} agent={agent} />
-          ))}
-        </span>
-      ) : undefined,
     wrap: (button: ReactElement) => (
       <WorktreeContextMenu worktree={w} onPick={setRemovingWorktree}>
         {button}

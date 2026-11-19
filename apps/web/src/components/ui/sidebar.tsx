@@ -742,6 +742,8 @@ function Panel({
         <div
           data-sort-row={sort ? "" : undefined}
           onPointerDown={(e) => {
+            // React passes up the presses in the action's menu too, though the menu is drawn outside the heading.
+            if (!e.currentTarget.contains(e.target as Node)) return;
             if (sort && e.pointerType === "mouse" && !(e.target as Element).closest("[data-group-action]")) sort.start(group.id, e);
           }}
           className="flex items-center gap-0.5 pt-2"

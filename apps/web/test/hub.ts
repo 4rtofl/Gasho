@@ -71,6 +71,8 @@ export interface Hub {
   answer(result: CommandResult, request?: ClientToHub): Promise<void>;
   /** Closes the page's connection, as a network that lost it. */
   drop(): void;
+  /** Opens the connection the page makes again after drop() (its back-off is 1 s). The functions above keep to the first one. */
+  reopen(): Promise<void>;
 }
 
 /** Registers this browser with the stand-in, connects to it, and has it send `snapshot` (no machines unless given). */
@@ -95,6 +97,20 @@ export async function connectHub(snapshot: Partial<Omit<Snapshot, "type">> = {})
     commands,
     say,
     drop: () => act(() => socket.close()),
+    async reopen() {
+      const next = await vi.waitFor(
+        () => {
+          const s = sockets.at(-1);
+          if (!s || s === socket) throw new Error("the store has not connected again");
+          return s;
+        },
+        { timeout: 3000 },
+      );
+      act(() => {
+        next.readyState = FakeSocket.OPEN;
+        next.onopen?.();
+      });
+    },
     answer(result, request = socket.sent.findLast((m) => "requestId" in m)) {
       if (!request || !("requestId" in request)) throw new Error("no request was sent");
       const { requestId } = request;

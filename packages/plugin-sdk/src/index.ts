@@ -446,7 +446,11 @@ export interface RequestState<T> {
   reload: () => void;
 }
 
-export type CallResult<T> = { ok: true; data: T } | { ok: false; error: string };
+/**
+ * `unknown` (plugin API 1.17): the connection to the Gasho server closed before the result came, so it may have been
+ * done: doing it again may do it twice.
+ */
+export type CallResult<T> = { ok: true; data: T } | { ok: false; error: string; unknown?: true };
 
 /** Moving between the plugin's pages and panels. */
 export interface Navigation {
@@ -606,7 +610,10 @@ export interface GashoSdk {
   useDaemonReady(machine: string): DaemonReadiness;
   /** Calls a method of the daemon part and keeps the result; undefined `target` calls nothing. */
   useRequest<T = unknown>(target: RequestTarget | undefined, options?: RequestOptions): RequestState<T>;
-  /** A function that calls a method once (for `write` methods; `summary` goes to the operations log). */
+  /**
+   * A function that calls a method once (for `write` methods; `summary` goes to the operations log). Plugin API 1.17:
+   * `unknown` when the connection closed before the result came (the method may have run).
+   */
   useCall(): <T = unknown>(target: RequestTarget & { summary?: string }) => Promise<CallResult<T>>;
   /** A setting of gasho-plugin.json `settings` and a function that changes it. */
   useSetting<T = unknown>(key: string): [T, (value: T) => Promise<void>];
@@ -623,6 +630,7 @@ export interface GashoSdk {
   /**
    * Sends a message to a session (needs the permission "session.input"), as the chat box does. Plugin API 1.12: the
    * model, the effort level and ultracode to switch to first (SendInput), and what was not switched (SendInputResult).
+   * Plugin API 1.17: `unknown` when the connection closed before the result came (the message may have been typed).
    */
   useSendInput(): (input: SendInput) => Promise<CallResult<SendInputResult>>;
   /**

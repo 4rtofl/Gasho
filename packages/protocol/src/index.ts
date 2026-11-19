@@ -421,6 +421,9 @@ export interface PushPayload {
   badge: number;
 }
 
+/** The tokens a working server's sessions started from Gasho used on a day: [YYYY-MM-DD in Japan Standard Time, tokens]. */
+export type TokenDay = [day: string, tokens: number];
+
 /** A working server's memory as a whole, in bytes. `used` leaves out what the system can take back at once (the page cache). */
 export interface MachineMemory {
   total: number;
@@ -1016,7 +1019,12 @@ export type DaemonToHub =
    * The server's memory: sent once connected, then every 15 seconds; `memory` is absent when it could not be read. Apart
    * from `sessions` and `capabilities` because it changes every time: the Gasho server keeps it in memory only.
    */
-  | { type: "memory"; memory?: MachineMemory };
+  | { type: "memory"; memory?: MachineMemory }
+  /**
+   * The tokens used per day: the whole last year once connected, then the days whose totals changed, at most once a
+   * minute. Each is the day's total, so that telling it again changes nothing.
+   */
+  | { type: "token.days"; days: TokenDay[] };
 
 // gasho-hub -> gasho-daemon
 export type HubToDaemon =
@@ -1075,6 +1083,13 @@ export type HubToClient =
   | { type: "machine"; machine: MachineInfo }
   /** A working server's latest memory; `memory` is absent once it is no longer known (the server went offline, or cannot read it). */
   | { type: "machine.memory"; machine: string; memory?: MachineMemory }
+  /**
+   * The answer to token.days.get: the last year's tokens per day, by machine id. `reported`: a working server has told
+   * its days (an older gasho-daemon does not).
+   */
+  | { type: "token.days"; days: Record<string, TokenDay[]>; reported: boolean }
+  /** The days of a working server whose totals changed. */
+  | { type: "token.days.update"; machine: string; days: TokenDay[] }
   /** The Gasho server itself, whenever its update or the build of the screen it serves changed. */
   | { type: "server"; server: ServerInfo }
   /** The answer to hub.update: whether the update has begun (its steps follow with server). */
@@ -1119,6 +1134,8 @@ export type ClientToHub =
   | { type: "notification.read"; ids: string[] }
   /** Looks up the latest published versions now (answered with latest). */
   | { type: "latest.check" }
+  /** The last year's tokens per day (answered with token.days; token.days.update follows what changes). */
+  | { type: "token.days.get" }
   /** Updates the Gasho server to `version`, or goes back to it (answered with server.result). */
   | { type: "hub.update"; requestId: string; version: string }
   | ({ requestId: string; machine: string } & SessionCommand)

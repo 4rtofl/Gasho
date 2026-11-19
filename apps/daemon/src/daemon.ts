@@ -34,6 +34,7 @@ import { listDir, readFileAt, writeFileAt } from "./files.ts";
 import { cloneRepo, createFolder } from "./folders.ts";
 import { githubRepoOf, nestedRepos, readGitGraph, worktreeOf } from "./git.ts";
 import { GitHubProxy } from "./github.ts";
+import { TokenDays } from "./token-days.ts";
 import { TokenCounter } from "./tokens.ts";
 import { startHookServer, summarizeHook } from "./hooks.ts";
 import { isInside, statusLineLaunch, statusLineOf, userStatusLine } from "./statusline.ts";
@@ -191,6 +192,8 @@ const LATE_PICKER_WAIT_MS = 10_000;
 const PROBE_MIN_AGE_MS = 30_000;
 /** An idle session's tokens are counted again after this long (a working one at every refresh). */
 const TOKENS_IDLE_MS = 30_000;
+/** The tokens per day are told to the Gasho server and saved at most this often. */
+const TOKEN_DAYS_EVERY_MS = 60_000;
 /** How long the sessions wait to be sent after a status line report, for the reports that follow it. */
 const EMIT_DELAY_MS = 500;
 /** How long the state of the sessions is read after a change in Claude Code's files: they come several at a time. */
@@ -295,6 +298,8 @@ export class Daemon {
   /** The terminals of the sessions Gasho started (built-in; zellij for those from gasho-daemon 0.10 and before). */
   private terminals: SessionTerminals;
   private managed: ManagedSessions;
+  private tokenDays: TokenDays;
+  private tokenDaysAt = 0;
   /** Permission requests held until they are answered (in Gasho, or elsewhere). */
   private permissions = new PermissionRequests(() => this.emitSessions());
   private canLaunch = false;
@@ -384,6 +389,7 @@ export class Daemon {
       log: (...args) => log(...args),
     });
     this.registered = new RegisteredRepos(path.join(cfg.stateDir, "repos.json"));
+    this.tokenDays = new TokenDays(path.join(cfg.stateDir, "token-days.json"));
     this.hookRelay = new HookRelay({
       send: (event) => this.hub.send({ type: "hook", event }),
       asks: () => this.plugins.hearsSessionStop(),
@@ -410,6 +416,7 @@ export class Daemon {
         this.emitSessions();
         this.emitCapabilities();
         this.emitRepos();
+        this.emitAllTokenDays();
         void this.emitMemory();
         // Also tells the Gasho server that this gasho-daemon runs plugins.
         this.plugins.status(true);
@@ -435,6 +442,7 @@ export class Daemon {
     if (this.exiting) return;
     this.exiting = true;
     await this.plugins.stopAll().catch((e: unknown) => log("could not stop the plugins", e));
+    await this.tokenDays.save();
     process.exit(code);
   }
 
@@ -460,7 +468,10 @@ export class Daemon {
     // The sessions started before this daemon: those whose Claude Code and terminal still run are kept.
     const live = await this.terminals.builtIn.live();
     let inZellij: Set<string> | undefined;
+    await this.tokenDays.load();
     await this.managed.load(async (m) => {
+      // Also for a fork that ended meanwhile: it can be opened again. Under /clear, the id it was forked under is its first.
+      if (m.forkedAt !== undefined) this.tokenDays.rememberFork(m.previousIds?.[0] ?? m.sessionId, m.forkedAt);
       if (!isAlive(m.pid)) return false;
       if (!m.zellij) return live.get(m.terminal)?.pid === m.pid;
       inZellij ??= (await this.terminals.zellij.available()) ? await this.terminals.zellij.liveSessions() : new Set();
@@ -702,6 +713,7 @@ export class Daemon {
       }
       for (const id of [...this.tracked.keys()]) {
         if (seen.has(id)) continue;
+        await this.countLastTokens(id, this.tracked.get(id)?.tokens);
         this.tracked.delete(id);
         this.permissions.settleSession(id);
       }
@@ -1132,8 +1144,9 @@ export class Daemon {
     for (const m of this.managed.all()) {
       const t = this.tracked.get(m.sessionId);
       if (!t?.transcript) continue;
-      // A fork's transcript starts with a copy of the conversation it was forked from: not this session's tokens.
-      t.tokens ??= new TokenCounter(t.transcript, { since: m.forkedAt });
+      // A fork's transcript starts with a copy of the conversation it was forked from: not this session's tokens. A fork
+      // opened again from the history is known as one only by what was remembered when it was made.
+      t.tokens ??= new TokenCounter(t.transcript, { since: this.tokenDays.forkedAt(m.sessionId) ?? m.forkedAt });
       if (t.info.status !== "busy" && t.tokensAt !== undefined && now - t.tokensAt < TOKENS_IDLE_MS) continue;
       t.tokensAt = now;
       try {
@@ -1143,7 +1156,37 @@ export class Daemon {
       }
       t.info.tokens = t.tokens.totals();
       t.info.tokenHours = t.tokens.hours(now);
+      if (t.tokens.complete) this.tokenDays.record(m.sessionId, t.tokens.days(), now);
     }
+    this.emitTokenDays(now);
+  }
+
+  /** What a session that has ended wrote since it was last counted: its days stay after it is gone. */
+  private async countLastTokens(sessionId: string, tokens: TokenCounter | undefined): Promise<void> {
+    if (!tokens) return;
+    try {
+      do await tokens.update();
+      while (!tokens.complete);
+      this.tokenDays.record(sessionId, tokens.days());
+    } catch (e) {
+      log(`could not count the last tokens of ${sessionId}`, e);
+    }
+  }
+
+  /** The days whose totals changed, at most once a minute; they are saved at the same pace. */
+  private emitTokenDays(now: number): void {
+    if (now - this.tokenDaysAt < TOKEN_DAYS_EVERY_MS) return;
+    this.tokenDaysAt = now;
+    void this.tokenDays.save(now);
+    if (!this.hub.connected) return;
+    const days = this.tokenDays.takeChanged();
+    if (days.length > 0) this.hub.send({ type: "token.days", days });
+  }
+
+  /** The whole year, once connected: also what changed while the Gasho server could not be told. */
+  private emitAllTokenDays(): void {
+    this.tokenDaysAt = Date.now();
+    this.hub.send({ type: "token.days", days: this.tokenDays.all() });
   }
 
   /**
@@ -1866,6 +1909,8 @@ export class Daemon {
       return { ok: false, error };
     }
     const { sessionId: forkId, terminal, pid } = started;
+    this.tokenDays.rememberFork(forkId, forkedAt);
+    await this.tokenDays.save();
     const warnings: string[] = started.mcpDeclined ? [MCP_DECLINED] : [];
     let resumeAsked = started.resumeAsked;
     try {
@@ -2079,6 +2124,7 @@ export class Daemon {
     }
     const m = this.managed.get(sessionId);
     if (!m) return { ok: false, error: "このセッションは削除できません。削除できるのは、Gasho が起動したセッションだけです。" };
+    const tokens = this.tracked.get(sessionId)?.tokens;
     // From here on nothing is typed into it, and Gasho no longer shows it.
     this.ownPids.add(m.pid);
     this.managed.remove(sessionId);
@@ -2106,6 +2152,8 @@ export class Daemon {
       }
     }
     for (const dir of this.attachmentsOfSession(m)) await fsp.rm(dir, { recursive: true, force: true });
+    await this.countLastTokens(sessionId, tokens);
+    await this.tokenDays.save();
     log(`removed session ${m.name} (${sessionId}); closed its terminal ${m.terminal}`);
     // Not waited for: a large folder takes a while, and the session is removed whether or not this works.
     void this.removeClaudeTmp(sessionId, m.pid);

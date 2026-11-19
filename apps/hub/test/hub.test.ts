@@ -1341,3 +1341,50 @@ test("a gasho-daemon that does not tell its memory replaces one that did without
   const s = c.sent[0];
   assert.deepEqual(s?.type === "snapshot" ? s.memory : undefined, {});
 });
+
+test("the tokens per day are kept per working server and day, and a day told again replaces its total", () => {
+  const { hub, store, machineId, machineToken, browserId } = setup();
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.30.0" });
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  c.sent.length = 0;
+
+  const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  hub.onDaemonMessage(d, { type: "token.days", days: [[today, 100]] });
+  hub.onDaemonMessage(d, { type: "token.days", days: [[today, 100]] });
+  hub.onDaemonMessage(d, { type: "token.days", days: [[today, 120]] });
+  assert.deepEqual(c.sent.at(-1), { type: "token.days.update", machine: machineId, days: [[today, 120]] });
+  assert.deepEqual(store.tokenDays(), { [machineId]: [[today, 120]] });
+
+  // Still there while the working server is offline.
+  hub.onDaemonClose(d);
+  c.sent.length = 0;
+  hub.onClientMessage(c, { type: "token.days.get" });
+  assert.deepEqual(c.sent, [{ type: "token.days", days: { [machineId]: [[today, 120]] }, reported: true }]);
+});
+
+test("what cannot be a day is not kept, and a working server with no use yet counts as telling its days", () => {
+  const { hub, store, machineId, machineToken, browserId } = setup();
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  c.sent.length = 0;
+  hub.onClientMessage(c, { type: "token.days.get" });
+  assert.deepEqual(c.sent.at(-1), { type: "token.days", days: {}, reported: false });
+
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.30.0" });
+  hub.onDaemonMessage(d, { type: "token.days", days: [["2026-13", 5], ["2026-11-18", -1], ["2026-11-18", 1.5]] as never });
+  assert.deepEqual(store.tokenDays(), {});
+  hub.onClientMessage(c, { type: "token.days.get" });
+  assert.deepEqual(c.sent.at(-1), { type: "token.days", days: {}, reported: true });
+});
+
+test("days older than the heatmap shows are forgotten, and so are a working server's when its registration is revoked", () => {
+  const { store, machineId } = setup();
+  const now = Date.parse("2026-11-18T03:00:00Z");
+  store.saveTokenDays(machineId, [["2025-11-12", 1], ["2025-11-13", 2]], now);
+  assert.deepEqual(store.tokenDays(now), { [machineId]: [["2025-11-13", 2]] });
+  store.revokeDevice(machineId);
+  assert.deepEqual(store.tokenDays(now), {});
+});

@@ -4,6 +4,7 @@ import path from "node:path";
 import type {
   AgentInfo,
   AgentKind,
+  AgentOperation,
   AgentStatus,
   ClientToHub,
   CommandResult,
@@ -18,6 +19,7 @@ import type {
   MachineAgents,
   MachineInfo,
   MachineMemory,
+  TokenDay,
   MediaPart,
   PermissionRequestInfo,
   ServerInfo,
@@ -128,6 +130,9 @@ const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 const FEATURES = new Set<InputFeature>(["model", "effort", "ultracode", "files"]);
 const AGENT_KINDS: readonly AgentKind[] = ["claude", "codex"];
 const AGENT_STATUSES = new Set<unknown>(["available", "loginRequired", "unknown"] satisfies AgentStatus[]);
+const AGENT_OPERATIONS = new Set<unknown>(["model", "effort", "ultracode", "files", "fork", "background", "skills", "shell"] satisfies AgentOperation[]);
+/** Where the agent a new session starts with is kept (meta). */
+const DEFAULT_AGENT_KEY = "default_agent";
 /** An agent's version: x.y.z, with a pre-release after it. */
 const AGENT_VERSION_RE = /^\d{1,9}\.\d{1,9}\.\d{1,9}(?:[-+][0-9A-Za-z.+-]{1,40})?$/;
 
@@ -139,7 +144,13 @@ export function agentsOf(u: unknown): MachineAgents | undefined {
     const a = (u as Record<string, Partial<AgentInfo> | null | undefined>)[kind];
     if (!a || !AGENT_STATUSES.has(a.status)) continue;
     const version = typeof a.version === "string" && AGENT_VERSION_RE.test(a.version) ? a.version : undefined;
-    agents[kind] = { status: a.status as AgentStatus, ...(version ? { version } : {}), ...(a.canLaunch === true ? { canLaunch: true } : {}) };
+    const operations = Array.isArray(a.operations) ? [...new Set(a.operations.filter((o) => AGENT_OPERATIONS.has(o)))] : undefined;
+    agents[kind] = {
+      status: a.status as AgentStatus,
+      ...(version ? { version } : {}),
+      ...(a.canLaunch === true ? { canLaunch: true } : {}),
+      ...(operations ? { operations } : {}),
+    };
   }
   return agents;
 }
@@ -342,6 +353,14 @@ function mediaAnswerOf(msg: Extract<DaemonToHub, { type: "media" }>, offset: num
   return { part: { mime: p.mime.toLowerCase(), size: p.size, mtime: p.mtime, offset }, bytes };
 }
 
+/** The days a working server told, without what cannot be one: no more than a year and a bit of them. */
+function tokenDaysOf(v: unknown): TokenDay[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((d): d is TokenDay => Array.isArray(d) && typeof d[0] === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d[0]) && Number.isSafeInteger(d[1]) && d[1] >= 0)
+    .slice(-400);
+}
+
 function isMemory(v: unknown): v is MachineMemory {
   const m = v as MachineMemory | undefined;
   return typeof m?.total === "number" && typeof m.used === "number" && Number.isFinite(m.total) && m.total > 0 && m.used >= 0 && m.used <= m.total;
@@ -528,6 +547,8 @@ export class Hub {
   private machines = new Map<string, MachineInfo>();
   /** The connected working servers' latest memory: never written to the database, it changes at every reading. */
   private memory = new Map<string, MachineMemory>();
+  /** The working servers that told their tokens per day since the Gasho server started. */
+  private tellTokenDays = new Set<string>();
   private daemons = new Map<string, DaemonPeer>();
   private clients = new Set<ClientPeer>();
   private pending = new Map<string, PendingRequest>();
@@ -558,7 +579,7 @@ export class Hub {
     this.server = opts.server;
     opts.latest?.subscribe((latest) => this.broadcast({ type: "latest", latest }));
     opts.server?.subscribe(() => {
-      if (this.server) this.broadcast({ type: "server", server: this.server.info() });
+      this.broadcastServer();
     });
     for (const m of store.loadMachines()) this.machines.set(m.id, m);
     if (opts.plugins) {
@@ -631,6 +652,13 @@ export class Hub {
           this.broadcast({ type: "machine.memory", machine: id, memory: msg.memory });
         } else this.forgetMemory(id);
         break;
+      case "token.days": {
+        const days = tokenDaysOf(msg.days);
+        this.tellTokenDays.add(id);
+        this.store.saveTokenDays(id, days);
+        this.broadcast({ type: "token.days.update", machine: id, days });
+        break;
+      }
       case "transcript.append":
         this.broadcast({ type: "transcript.append", machine: id, sessionId: msg.sessionId, entries: msg.entries });
         break;
@@ -806,7 +834,7 @@ export class Hub {
       ...(this.plugins ? { plugins: this.plugins.infos(), pluginEvents: this.plugins.retainedEvents() } : {}),
       ...(this.plugins?.catalog() ? { catalog: this.plugins.catalog() } : {}),
       ...(this.latest ? { latest: this.latest.latest() } : {}),
-      ...(this.server ? { server: this.server.info() } : {}),
+      ...(this.server ? { server: this.serverInfo(this.server) } : {}),
       ...(this.push ? { push: this.push.info(peer.deviceId) } : {}),
       heartbeat: true,
       memory: Object.fromEntries(this.memory),
@@ -843,6 +871,15 @@ export class Hub {
   /** The commands under way that an update waits for: relayed ones awaiting their answer, and the plugins'. */
   inFlight(): number {
     return this.commands.size + (this.plugins?.inFlight() ?? 0);
+  }
+
+  /** The Gasho server as browsers see it: its own information, and the settings it keeps for all of them. */
+  private serverInfo(server: ServerSource): ServerInfo {
+    return { ...server.info(), defaultAgent: this.store.getMeta(DEFAULT_AGENT_KEY) === "codex" ? "codex" : "claude" };
+  }
+
+  private broadcastServer(): void {
+    if (this.server) this.broadcast({ type: "server", server: this.serverInfo(this.server) });
   }
 
   onClientMessage(peer: ClientPeer, msg: ClientToHub): void {
@@ -929,6 +966,11 @@ export class Hub {
       case "latest.check":
         if (this.latest) void this.latest.check(true);
         break;
+      case "token.days.get": {
+        const days = this.store.tokenDays();
+        peer.send({ type: "token.days", days, reported: this.tellTokenDays.size > 0 || Object.keys(days).length > 0 });
+        break;
+      }
       case "hub.update": {
         if (typeof msg.requestId !== "string" || !msg.requestId || msg.requestId.length > 100) return;
         const result: CommandResult = this.server
@@ -947,6 +989,17 @@ export class Hub {
           this.broadcast({ type: "event", event });
         }
         peer.send({ type: "server.result", requestId: msg.requestId, result });
+        break;
+      }
+      case "defaultAgent.set": {
+        if (typeof msg.requestId !== "string" || !msg.requestId || msg.requestId.length > 100) return;
+        if (!AGENT_KINDS.includes(msg.agent)) {
+          peer.send({ type: "server.result", requestId: msg.requestId, result: { ok: false, error: "エージェントの指定が正しくありません。" } });
+          break;
+        }
+        this.store.setMeta(DEFAULT_AGENT_KEY, msg.agent);
+        this.broadcastServer();
+        peer.send({ type: "server.result", requestId: msg.requestId, result: { ok: true } });
         break;
       }
       case "plugin.catalog.get":
@@ -1266,6 +1319,7 @@ export class Hub {
       }
       // The daemon was taken out of `daemons` before it was closed, so onDaemonClose leaves this to be done here.
       this.memory.delete(id);
+      this.tellTokenDays.delete(id);
       if (this.machines.delete(id)) {
         const error = "working server の登録が外されました。";
         this.failPending((req) => req.machine === id, error);

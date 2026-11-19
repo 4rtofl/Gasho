@@ -33,7 +33,7 @@ export const TILE_SHADOW = "0 1px 2px rgba(0,0,0,0.04), 0 18px 36px -28px rgba(0
 const focus = "outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/70 dark:focus-visible:ring-white/40";
 
 /** Container width via ResizeObserver. */
-function useElementWidth<T extends HTMLElement>(initial: number) {
+export function useElementWidth<T extends HTMLElement>(initial: number) {
   const ref = useRef<T>(null);
   const [width, setWidth] = useState(initial);
   useLayoutEffect(() => {
@@ -49,7 +49,7 @@ function useElementWidth<T extends HTMLElement>(initial: number) {
 }
 
 /** Clears a tap selection when the user taps outside (touch). */
-function useDismissOutside(ref: RefObject<HTMLElement | null>, open: boolean, close: () => void) {
+export function useDismissOutside(ref: RefObject<HTMLElement | null>, open: boolean, close: () => void) {
   useEffect(() => {
     if (!open) return;
     const down = (e: globalThis.PointerEvent) => {

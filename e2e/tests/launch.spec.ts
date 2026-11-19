@@ -413,6 +413,57 @@ test.describe("サイドバーのダイアログだけ", () => {
     await expect(dialogOf(page)).toHaveCount(0);
   });
 
+  test.describe("カテゴリーの「＋」のメニューの項目を、押したままマウスを動かす", () => {
+    /** Opens the menu of the first category's "＋", and presses its item for Codex without letting go. */
+    async function pressCodex(page: Page, hub: GashoHub) {
+      const daemon = await hub.fakeDaemon({
+        name: "mac",
+        capabilities: { agents: { codex: { status: "available", version: "0.170.0", canLaunch: true } } },
+        repos: [
+          {
+            path: "/work/alpha",
+            worktrees: [
+              { path: "/work/alpha", branch: "alpha" },
+              { path: "/work/bravo", branch: "bravo" },
+            ],
+          },
+        ],
+      });
+      daemon.handle("session.launch", (msg) => started(daemon, msg));
+      await openHome(page, 1);
+      const plus = (await sidebar(page)).getByRole("button", { name: /^(alpha|bravo) で新しいセッションを起動/ });
+      await expect(plus).toHaveCount(2);
+      await expect(plus.first()).toHaveAttribute("aria-label", /^alpha /);
+      await plus.first().click({ button: "right" });
+      const box = await page.getByRole("menuitem", { name: "Codex" }).boundingBox();
+      if (!box) throw new Error("the menu has no item for Codex");
+      const at = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+      await page.mouse.move(at.x, at.y);
+      await page.mouse.down();
+      return { daemon, plus, at };
+    }
+
+    test("少し動いても、選んだエージェントが起動する", async ({ page, hub, isMobile }) => {
+      test.skip(isMobile, "マウスの操作");
+      const { daemon, at } = await pressCodex(page, hub);
+      await page.mouse.move(at.x + 6, at.y, { steps: 3 });
+      await page.mouse.up();
+      await expectSessionOpen(page, daemon, "/work/alpha");
+      expect(launches(daemon).map((m) => m.agent)).toEqual(["codex"]);
+    });
+
+    test("大きく動いても、カテゴリーの並びは変わらない", async ({ page, hub, isMobile }) => {
+      test.skip(isMobile, "マウスの操作");
+      const { plus, at } = await pressCodex(page, hub);
+      await page.mouse.move(at.x, at.y + 70, { steps: 8 });
+      await page.mouse.up();
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("menu")).toHaveCount(0);
+      await expect(plus.first()).toHaveAttribute("aria-label", /^alpha /);
+      await expect(plus.last()).toHaveAttribute("aria-label", /^bravo /);
+    });
+  });
+
   test("カテゴリーの「＋」で起動できないと、その working server とフォルダーを入れたダイアログが開き、理由を出す", async ({ page, hub }) => {
     await hub.fakeDaemon({ name: "mac", capabilities: { folders: ["/work/a"] } });
     // Its folders do not list the worktree's: the form takes it as one typed in.

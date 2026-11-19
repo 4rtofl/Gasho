@@ -2,9 +2,10 @@
 // plugin's build (gasho-plugin build) replaces `import … from "@gasho/plugin-sdk"` with what Gasho puts on globalThis,
 // so this file only describes it (GashoSdk), for TypeScript. See docs/plugins.md of Gasho.
 import type { ComponentType, ReactNode } from "react";
-import type { EffortLevel, GitHubRepo, MachineInfo, PluginInfo, SessionInfo, SessionModel, SessionRepo, SessionStatus, SwitchField } from "@gasho/protocol";
+import type { AgentKind, EffortLevel, GitHubRepo, MachineInfo, PluginInfo, SessionInfo, SessionModel, SessionRepo, SessionStatus, SwitchField } from "@gasho/protocol";
 
 export type {
+  AgentKind,
   ContextWindow,
   EffortLevel,
   GitHubRepo,
@@ -625,10 +626,11 @@ export interface GashoSdk {
    */
   useSendInput(): (input: SendInput) => Promise<CallResult<SendInputResult>>;
   /**
-   * Starts a Claude Code session in a folder of a working server (needs the permission "session.launch"), as "新しい
-   * セッション" does. Plugin API 1.1.
+   * Starts a session in a folder of a working server (needs the permission "session.launch"), as "新しいセッション" does.
+   * Plugin API 1.1. `agent` (plugin API 1.16): Claude Code unless it says "codex"; the default agent of the settings is
+   * not used, because what plugins send may rely on Claude Code's skills and slash commands.
    */
-  useLaunchSession(): (input: { machine: string; cwd: string; name?: string; trust?: boolean }) => Promise<LaunchResult>;
+  useLaunchSession(): (input: { machine: string; cwd: string; name?: string; trust?: boolean; agent?: AgentKind }) => Promise<LaunchResult>;
   /**
    * Removes a session Gasho started (needs the permission "session.remove"), as "削除" of its menu does, without asking:
    * its Claude Code ends, also in the middle of its work, and Gasho lists it no more. Its conversation stays on the

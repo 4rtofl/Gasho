@@ -12,6 +12,7 @@ import { Daemon } from "../src/daemon.ts";
 import { DEFAULT_HIBERNATE_MINUTES, type HibernateFacts, hibernateAfterMs, mayHibernate, modelFlag, resumeArgs, resumeModel } from "../src/hibernate.ts";
 import { ManagedSessions, permissionModeShown, plainScreen } from "../src/managed.ts";
 import type { TerminalStart } from "../src/terminal.ts";
+import { tokenDayOf } from "../src/token-days.ts";
 import { emptyMeta, TranscriptTail } from "../src/transcript.ts";
 
 const HOUR = 3600_000;
@@ -1068,6 +1069,25 @@ test("a PID that another conversation's Claude Code has taken does not keep a se
     await again.wake(SID);
     assert.equal(started.length, 1);
     assert.equal(procs[0]!.signalCode, null);
+  } finally {
+    await done();
+  }
+});
+
+test("a restart keeps the tokens counted per day, and when each fork was made", async () => {
+  const { d, make, done } = await setup();
+  try {
+    const today = tokenDayOf(Date.now());
+    await fs.writeFile(path.join(d.cfg.stateDir, "token-days.json"), JSON.stringify({ "removed-session": { [today]: 1234 } }));
+    await fs.writeFile(path.join(d.cfg.stateDir, "token-forks.json"), JSON.stringify({ "removed-fork": Date.now() - HOUR }));
+    d.managed.get(SID).forkedAt = Date.now() - 2 * HOUR;
+    await d.managed.save();
+
+    const again = make();
+    await again.loadManaged();
+    assert.deepEqual(again.tokenDays.all(), [[today, 1234]]);
+    assert.ok(again.tokenDays.forkedAt("removed-fork"));
+    assert.equal(again.tokenDays.forkedAt(SID), d.managed.get(SID).forkedAt);
   } finally {
     await done();
   }

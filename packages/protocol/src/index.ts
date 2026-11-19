@@ -429,6 +429,9 @@ export interface PushPayload {
   badge: number;
 }
 
+/** The tokens a working server's sessions started from Gasho used on a day: [YYYY-MM-DD in Japan Standard Time, tokens]. */
+export type TokenDay = [day: string, tokens: number];
+
 /** A working server's memory as a whole, in bytes. `used` leaves out what the system can take back at once (the page cache). */
 export interface MachineMemory {
   total: number;
@@ -444,6 +447,12 @@ export type AgentKind = "claude" | "codex";
  */
 export type AgentStatus = "available" | "loginRequired" | "unknown";
 
+/**
+ * What a session of an agent can do besides talking: switch the model, the effort level and ultracode, carry files, be
+ * forked, list its work in the background, offer skills after "/", and run shell commands after "!".
+ */
+export type AgentOperation = "model" | "effort" | "ultracode" | "files" | "fork" | "background" | "skills" | "shell";
+
 /** An agent installed on a working server. */
 export interface AgentInfo {
   status: AgentStatus;
@@ -451,6 +460,8 @@ export interface AgentInfo {
   version?: string;
   /** gasho-daemon starts sessions of this agent (session.launch's `agent`). Absent from one that only reports the agent. */
   canLaunch?: boolean;
+  /** What its sessions can do. Absent from a gasho-daemon that does not tell: there, only Claude Code runs, and it can do all of it. */
+  operations?: AgentOperation[];
 }
 
 /** The agents gasho-daemon looked for and found on its working server: one that is not installed is not listed. */
@@ -494,7 +505,7 @@ export interface MachineInfo {
   canRemoveWorktree?: boolean;
   /** Whether gasho-daemon lists the skills and custom commands a session's Claude Code reads (session.skills). */
   canListSkills?: boolean;
-  /** The agents found on this working server besides Claude Code (absent from a gasho-daemon that does not look for them). */
+  /** The agents found on this working server (absent from a gasho-daemon that does not look for them). */
   agents?: MachineAgents;
   /** Whether Gasho can update this gasho-daemon, and how an update goes (absent from one older than updates from Gasho). */
   update?: DaemonUpdateInfo;
@@ -588,6 +599,8 @@ export interface ServerInfo {
    */
   web?: string;
   update: HubUpdateInfo;
+  /** The agent a new session starts with, the same for every browser (absent from an older Gasho server: Claude Code). */
+  defaultAgent?: AgentKind;
 }
 
 /** The latest published versions, as the Gasho server last looked them up on the package registry. */
@@ -997,7 +1010,7 @@ export type DaemonToHub =
       canRemoveWorktree?: boolean;
       /** Answers session.skills. */
       canListSkills?: boolean;
-      /** The agents found on the working server besides Claude Code (sent again when they change). */
+      /** The agents found on the working server (sent again when they change). */
       agents?: MachineAgents;
       /** Whether Gasho can update it, and the update under way (sent again at each step). */
       update?: DaemonUpdateInfo;
@@ -1024,7 +1037,12 @@ export type DaemonToHub =
    * The server's memory: sent once connected, then every 15 seconds; `memory` is absent when it could not be read. Apart
    * from `sessions` and `capabilities` because it changes every time: the Gasho server keeps it in memory only.
    */
-  | { type: "memory"; memory?: MachineMemory };
+  | { type: "memory"; memory?: MachineMemory }
+  /**
+   * The tokens used per day: the whole last year once connected, then the days whose totals changed, at most once a
+   * minute. Each is the day's total, so that telling it again changes nothing.
+   */
+  | { type: "token.days"; days: TokenDay[] };
 
 // gasho-hub -> gasho-daemon
 export type HubToDaemon =
@@ -1083,6 +1101,13 @@ export type HubToClient =
   | { type: "machine"; machine: MachineInfo }
   /** A working server's latest memory; `memory` is absent once it is no longer known (the server went offline, or cannot read it). */
   | { type: "machine.memory"; machine: string; memory?: MachineMemory }
+  /**
+   * The answer to token.days.get: the last year's tokens per day, by machine id. `reported`: a working server has told
+   * its days (an older gasho-daemon does not).
+   */
+  | { type: "token.days"; days: Record<string, TokenDay[]>; reported: boolean }
+  /** The days of a working server whose totals changed. */
+  | { type: "token.days.update"; machine: string; days: TokenDay[] }
   /** The Gasho server itself, whenever its update or the build of the screen it serves changed. */
   | { type: "server"; server: ServerInfo }
   /** The answer to hub.update: whether the update has begun (its steps follow with server). */
@@ -1127,8 +1152,12 @@ export type ClientToHub =
   | { type: "notification.read"; ids: string[] }
   /** Looks up the latest published versions now (answered with latest). */
   | { type: "latest.check" }
+  /** The last year's tokens per day (answered with token.days; token.days.update follows what changes). */
+  | { type: "token.days.get" }
   /** Updates the Gasho server to `version`, or goes back to it (answered with server.result). */
   | { type: "hub.update"; requestId: string; version: string }
+  /** Changes the agent a new session starts with (answered with server.result; every browser gets the new server). */
+  | { type: "defaultAgent.set"; requestId: string; agent: AgentKind }
   | ({ requestId: string; machine: string } & SessionCommand)
   /**
    * Calls a method of a plugin's daemon part on a working server (answered with plugin.response). `summary`: what the

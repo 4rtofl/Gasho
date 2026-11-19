@@ -13,8 +13,11 @@ import { SessionActionDialog, SessionContextMenu, type SessionActionRequest } fr
 import { UnusedSessionsDialog } from "@/components/unused-sessions-dialog";
 import { RemoveWorktreeDialog, WorktreeContextMenu } from "@/components/worktree-menu";
 import { showNotice, useNotice } from "@/lib/notice";
+import { AgentMark } from "@/components/agent-mark";
+import { LaunchMenu } from "@/components/launch-menu";
+import { launchAgentFor, launchTitle, sessionAgent, showsAgents } from "@/lib/agents";
 import { StatusDot } from "@/components/status-badge";
-import { Sidebar, SidebarTrigger, useSidebar, type SidebarGroup, type SidebarItem, type SidebarMove, type SidebarSection } from "@/components/ui/sidebar";
+import { Sidebar, SidebarTrigger, useSidebar, type SidebarAction, type SidebarGroup, type SidebarItem, type SidebarMove, type SidebarSection } from "@/components/ui/sidebar";
 import { updateToTell } from "@/lib/daemon-update";
 import { hubUpdateToTell } from "@/lib/server-update";
 import { useChoices } from "@/lib/flag";
@@ -365,10 +368,12 @@ export function App() {
   const folded = new Set(listPrefs.folded ?? []);
   // "＋" of a category: a session in its worktree's folder, at once (as the "＋" after a worktree's tabs). When it does
   // not start (Claude Code asks whether to trust the folder, say), "新しいセッション" opens for that folder and tells why.
-  const launchIn = async (w: SessionListWorktree) => {
+  const defaultAgent = server?.defaultAgent;
+  const marks = showsAgents(machines);
+  const launchIn = async (w: SessionListWorktree, agent = launchAgentFor(w.machine, defaultAgent)) => {
     if (launchingIn) return;
     setLaunchingIn(w.key);
-    const r = await launchSession(w.machine.id, { cwd: w.path });
+    const r = await launchSession(w.machine.id, { cwd: w.path, agent });
     setLaunchingIn(undefined);
     if (r.cancelled) return;
     if (r.ok && r.sessionId) {
@@ -376,8 +381,19 @@ export function App() {
       go({ name: "session", machine: w.machine.id, sessionId: r.sessionId });
       return;
     }
-    openLaunch({ machine: w.machine.id, folder: w.path, ...(r.needsTrust ? { trust: r.trustWarnings ?? [] } : { error: r.error ?? "起動できませんでした。" }) });
+    openLaunch({ machine: w.machine.id, folder: w.path, agent, ...(r.needsTrust ? { trust: r.trustWarnings ?? [] } : { error: r.error ?? "起動できませんでした。" }) });
   };
+  // The "＋" of a category: it starts the default agent, and its menu picks another.
+  const launchAction = (title: string, target: SessionListWorktree): SidebarAction => ({
+    label: launchTitle(target.machine, defaultAgent, `${title} で新しいセッションを起動`),
+    icon: launchingIn === target.key ? <LoaderCircle className="animate-spin" /> : <Plus />,
+    onClick: () => void launchIn(target),
+    wrap: (button) => (
+      <LaunchMenu machine={target.machine} onPick={(agent) => void launchIn(target, agent)}>
+        {button}
+      </LaunchMenu>
+    ),
+  });
   // A session's row, as the sidebar's list of sessions had them: its state, its name, waiting or offline, the work it
   // runs in the background, and its menu (rename, fork, remove).
   const sessionRow = (row: ListedSession): SidebarItem[] => {
@@ -392,11 +408,17 @@ export function App() {
         description: row.description,
         icon: <StatusDot {...sessionDot(m, s, unreadOnes)} />,
         badge: !m.connected ? "オフライン" : s.status === "waiting" ? "確認" : undefined,
-        mark: background ? (
-          <LoaderCircle role="img" aria-label={`バックグラウンドで ${background} 件実行中`} className="size-3 animate-spin text-sky-400 motion-reduce:animate-none">
-            <title>{`バックグラウンドで ${background} 件実行中`}</title>
-          </LoaderCircle>
-        ) : undefined,
+        mark:
+          background || marks ? (
+            <span className="flex items-center gap-1">
+              {marks && <AgentMark agent={sessionAgent(s)} />}
+              {background > 0 && (
+                <LoaderCircle role="img" aria-label={`バックグラウンドで ${background} 件実行中`} className="size-3 animate-spin text-sky-400 motion-reduce:animate-none">
+                  <title>{`バックグラウンドで ${background} 件実行中`}</title>
+                </LoaderCircle>
+              )}
+            </span>
+          ) : undefined,
         wrap: (button: ReactElement) => (
           <SessionContextMenu machine={m} session={s} onPick={setSessionAction}>
             {button}
@@ -421,13 +443,7 @@ export function App() {
       // Folded, a category still tells that a session in it waits for an answer.
       badge: isFolded && waiting > 0 ? `確認 ${waiting}` : undefined,
       icon: <FolderGit2 />,
-      action: canLaunch
-        ? {
-            label: `${c.title} で新しいセッションを起動`,
-            icon: launchingIn === target.key ? <LoaderCircle className="animate-spin" /> : <Plus />,
-            onClick: () => void launchIn(target),
-          }
-        : undefined,
+      action: canLaunch ? launchAction(c.title, target) : undefined,
       folded: isFolded,
       onFoldedChange: (f) => changeListPrefs((p) => withFolded(p, c.id, f)),
       // Folded, only the open session's row shows (where the person is).
@@ -445,6 +461,14 @@ export function App() {
     description: line === undefined ? [w.repo, machines.length > 1 ? w.machine.name : undefined].filter(Boolean).join(" · ") || undefined : line || undefined,
     icon: <StatusDot {...worktreeDot(w, unreadOnes)} />,
     badge: !w.machine.connected ? "オフライン" : w.sessions.some((s) => s.status === "waiting") ? "確認" : undefined,
+    mark:
+      marks && w.sessions.length > 0 ? (
+        <span className="flex items-center gap-1">
+          {[...new Set(w.sessions.map(sessionAgent))].map((agent) => (
+            <AgentMark key={agent} agent={agent} />
+          ))}
+        </span>
+      ) : undefined,
     wrap: (button: ReactElement) => (
       <WorktreeContextMenu worktree={w} onPick={setRemovingWorktree}>
         {button}
@@ -470,13 +494,7 @@ export function App() {
       // Folded, a category still tells that a worktree in it waits for an answer.
       badge: isFolded && waiting > 0 ? `確認 ${waiting}` : undefined,
       icon: <FolderGit2 />,
-      action: canLaunch
-        ? {
-            label: `${c.title} で新しいセッションを起動`,
-            icon: launchingIn === target.key ? <LoaderCircle className="animate-spin" /> : <Plus />,
-            onClick: () => void launchIn(target),
-          }
-        : undefined,
+      action: canLaunch ? launchAction(c.title, target) : undefined,
       folded: isFolded,
       onFoldedChange: (f) => changeGroupingPrefs((p) => withFolded(p, c.id, f)),
       // Folded, only the open worktree's row shows (where the person is).

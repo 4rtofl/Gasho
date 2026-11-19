@@ -1,10 +1,12 @@
 // What gasho-daemon (plugins.ts) and the process of a plugin's daemon part (plugin-host.ts) say to each other over
 // Node.js's IPC channel (docs/plugins.md). Types only.
-import type { GitHubRepo } from "@gasho/protocol";
+import type { AgentKind, GitHubRepo } from "@gasho/protocol";
 
 /** The session a call is about, as gasho-daemon tracks it. */
 export interface SessionWire {
   sessionId: string;
+  /** The agent that runs it (plugin API 1.16). */
+  agent?: AgentKind;
   cwd: string;
   name?: string;
   managed: boolean;

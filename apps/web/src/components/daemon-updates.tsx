@@ -4,9 +4,9 @@
 import { CircleArrowUp, Copy, ExternalLink, LoaderCircle, RefreshCw, RotateCcw } from "lucide-react";
 import { AlertDialog } from "radix-ui";
 import { useEffect, useRef, useState } from "react";
-import type { AgentInfo, MachineInfo, ServerInfo } from "@gasho/protocol";
+import type { AgentInfo, AgentKind, MachineInfo, ServerInfo } from "@gasho/protocol";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG_PANEL } from "@/components/dialog-styles";
-import { AGENT_STATUS_LABEL, CODEX_CHECKED_VERSION, codexOutdated } from "@/lib/agents";
+import { AGENT_LOGIN_COMMAND, AGENT_NAME, AGENT_STATUS_LABEL, CODEX_CHECKED_VERSION, codexOutdated } from "@/lib/agents";
 import {
   changesUrl,
   compareVersions,
@@ -68,20 +68,21 @@ function CommandLine({ command }: { command: string }) {
   );
 }
 
-/** Codex on a working server: its version, whether it can be used, and what to do when it cannot. */
-function CodexState({ codex }: { codex: AgentInfo }) {
+/** An agent on a working server: its version, whether it can be used, and what to do when it cannot. */
+function AgentState({ agent, info }: { agent: AgentKind; info: AgentInfo }) {
+  const name = AGENT_NAME[agent];
   return (
     <div className="mt-1">
       <p className="text-xs text-muted-foreground">
-        <span className="font-mono">{codex.version ? `Codex ${codex.version}` : "Codex"}</span>：{AGENT_STATUS_LABEL[codex.status]}
+        <span className="font-mono">{info.version ? `${name} ${info.version}` : name}</span>：{AGENT_STATUS_LABEL[info.status]}
       </p>
-      {codex.status === "loginRequired" && (
+      {info.status === "loginRequired" && (
         <>
           <p className="mt-1 text-xs text-muted-foreground">working server でこのコマンドを実行して、ログインしてください。</p>
-          <CommandLine command="codex login" />
+          <CommandLine command={AGENT_LOGIN_COMMAND[agent]} />
         </>
       )}
-      {codexOutdated(codex) && <p className="mt-1 text-xs text-amber-500">Gasho で確かめた版（{CODEX_CHECKED_VERSION}）より古いバージョンです。</p>}
+      {agent === "codex" && codexOutdated(info) && <p className="mt-1 text-xs text-amber-500">Gasho で確かめた版（{CODEX_CHECKED_VERSION}）より古いバージョンです。</p>}
     </div>
   );
 }
@@ -247,7 +248,8 @@ function MachineRow({ machine: m, now, updated, onUpdate }: { machine: MachineIn
           <span className="font-mono text-xs text-muted-foreground">{m.daemonVersion ? `gasho-daemon ${m.daemonVersion}` : "バージョンは不明"}</span>
         </p>
         <div className="mt-0.5">{status}</div>
-        {m.connected && m.agents?.codex && <CodexState codex={m.agents.codex} />}
+        {m.connected && m.agents?.claude && <AgentState agent="claude" info={m.agents.claude} />}
+        {m.connected && m.agents?.codex && <AgentState agent="codex" info={m.agents.codex} />}
         {m.connected && u?.rolledBack && (
           <p className="mt-1 text-xs text-amber-500">
             {u.rolledBack.from} がうまく起動しなかったので、{u.rolledBack.to} に自動で戻しました（{relativeTime(u.rolledBack.at, now)}）。{u.rolledBack.error}

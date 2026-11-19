@@ -1,15 +1,17 @@
 // Settings of this browser: the size of the conversation's text on the session screen, with a sample of a
-// conversation to see it by, and its notifications (Web Push). Then the versions of Gasho running now.
+// conversation to see it by, and its notifications (Web Push). The default agent is the Gasho server's, the same for
+// every browser. Then the versions of Gasho running now.
 import { Check, CircleAlert, Copy, Info, RotateCcw, Type } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { TranscriptEntry } from "@gasho/protocol";
+import type { AgentKind, TranscriptEntry } from "@gasho/protocol";
 import { PushSettingsSection } from "@/components/push-settings";
 import { TranscriptSample } from "@/components/transcript";
 import { Badge } from "@/components/ui/badge";
 import { MorphingButton, type MorphingButtonStatus } from "@/components/ui/morphing-button";
+import { AGENT_NAME, codexOffered } from "@/lib/agents";
 import { CHAT_TEXT_DEFAULT, CHAT_TEXT_MAX, CHAT_TEXT_MIN, useChatTextSize } from "@/lib/chat-text";
 import { go } from "@/lib/route";
-import { OWN_BUILD, useAppState } from "@/lib/store";
+import { OWN_BUILD, setDefaultAgent, useAppState } from "@/lib/store";
 import { copyToClipboard } from "@/lib/utils";
 import { versionRows, versionsText } from "@/lib/versions";
 import { PluginSettingsSections } from "@/plugins/parts";
@@ -132,6 +134,8 @@ export function SettingsView() {
         </div>
       </section>
 
+      <DefaultAgentSection />
+
       <PushSettingsSection />
 
       {/* The settings of the enabled plugins (docs/plugins.md, P5). */}
@@ -144,6 +148,48 @@ export function SettingsView() {
 
 /** How long the copy button says how the copy went. */
 const COPIED_MS = 2000;
+
+/** The agent a new session starts with. Shown once Codex is installed on some working server. */
+export function DefaultAgentSection() {
+  const { server, machines } = useAppState();
+  const [error, setError] = useState<string>();
+  const current = server?.defaultAgent;
+  if (!current || !machines.some(codexOffered)) return null;
+  const pick = async (agent: AgentKind) => {
+    setError(undefined);
+    const r = await setDefaultAgent(agent);
+    if (!r.ok) setError(r.error ?? "変えられませんでした。");
+  };
+  return (
+    <section aria-labelledby="default-agent" className="space-y-3 rounded-2xl border border-border bg-surface/40 p-4">
+      <div>
+        <h2 id="default-agent" className="text-sm font-medium">既定のエージェント</h2>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          「＋」で起動するエージェントです。どのブラウザーでも同じです。Codex を使えない working server では、Claude Code を起動します。
+        </p>
+      </div>
+      <div role="radiogroup" aria-labelledby="default-agent" className="flex flex-wrap gap-2">
+        {(["claude", "codex"] as const).map((agent) => (
+          <button
+            key={agent}
+            type="button"
+            role="radio"
+            aria-checked={current === agent}
+            onClick={() => void pick(agent)}
+            className={
+              current === agent
+                ? "rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground"
+                : "rounded-lg border border-border px-3 py-1.5 text-sm hover:border-border-hover"
+            }
+          >
+            {AGENT_NAME[agent]}
+          </button>
+        ))}
+      </div>
+      {error && <p className="text-xs text-red-400">{error}</p>}
+    </section>
+  );
+}
 
 /** The versions running now, a newer one published taking to the updates on the 端末 screen, and a copy of them all. */
 function VersionsSection() {

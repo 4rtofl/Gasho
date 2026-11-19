@@ -2,8 +2,9 @@
 // a plugin's useLaunchSession. Before it starts, the person is asked once whether to remove the unused sessions of that
 // working server (components/unused-sessions-dialog.tsx shows the question). Launches that come while the question is
 // open wait for the same answer.
-import type { CommandResult, SessionInfo } from "@gasho/protocol";
+import type { AgentKind, CommandResult, SessionInfo } from "@gasho/protocol";
 import { useSyncExternalStore } from "react";
+import { launchAgentField } from "./agents.ts";
 import { sessionLabel } from "./format.ts";
 import { showNotice } from "./notice.ts";
 import { parseHash } from "./route.ts";
@@ -23,6 +24,8 @@ export interface LaunchInput {
   cwd: string;
   name?: string;
   trust?: boolean;
+  /** The agent to start: Claude Code when absent. */
+  agent?: AgentKind;
 }
 
 /** `cancelled`: the person chose not to start it, which needs no message. */
@@ -157,7 +160,7 @@ async function launchSession(machine: string, input: LaunchInput, { fromPlugin =
   if (held) held.running++;
   const r = await sendCommand(
     machine,
-    { type: "session.launch", cwd: input.cwd, name: input.name, ...(input.trust ? { trust: true } : {}) },
+    { type: "session.launch", cwd: input.cwd, name: input.name, ...(input.trust ? { trust: true } : {}), ...launchAgentField(input.agent ?? "claude") },
     LAUNCH_WAIT_MS,
   );
   if (held) {

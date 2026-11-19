@@ -4,14 +4,16 @@
 // them only with the answers, or the plan, so that "allow" alone would leave its dialog open.
 import { ChevronRight, ClipboardList, MessageCircleQuestion, ShieldAlert } from "lucide-react";
 import { useEffect, useId, useState } from "react";
-import type { AskedQuestion, MachineInfo, PermissionRequestInfo, QuestionAnswer, SessionCommand, SessionInfo } from "@gasho/protocol";
+import type { AgentKind, AskedQuestion, MachineInfo, PermissionRequestInfo, QuestionAnswer, SessionCommand, SessionInfo } from "@gasho/protocol";
 import { MarkdownText } from "@/components/markdown";
+import { AGENT_SPEAKER, sessionAgent } from "@/lib/agents";
 import { sendCommand } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 export function PermissionRequests({ machine, session }: { machine: MachineInfo; session: SessionInfo }) {
   const requests = session.permissionRequests ?? [];
   if (requests.length === 0) return null;
+  const agent = sessionAgent(session);
   // Shrinks, and scrolls, when the cards and the chat box would be taller than the conversation's box (a phone on its
   // side, several requests at once); the chat box keeps its height. The questions and the plan scroll in their cards
   // and, at their end, this list scrolls on: they can be taller than it.
@@ -19,11 +21,11 @@ export function PermissionRequests({ machine, session }: { machine: MachineInfo;
     <div className="mb-2 min-h-0 space-y-2 overflow-y-auto">
       {requests.map((r) =>
         r.questions ? (
-          <QuestionCard key={r.id} machine={machine} sessionId={session.sessionId} request={r} questions={r.questions} />
+          <QuestionCard key={r.id} machine={machine} sessionId={session.sessionId} request={r} questions={r.questions} agent={agent} />
         ) : r.plan !== undefined ? (
           <PlanCard key={r.id} machine={machine} sessionId={session.sessionId} request={r} plan={r.plan} />
         ) : (
-          <PermissionCard key={r.id} machine={machine} sessionId={session.sessionId} request={r} />
+          <PermissionCard key={r.id} machine={machine} sessionId={session.sessionId} request={r} agent={agent} />
         ),
       )}
     </div>
@@ -75,9 +77,10 @@ interface CardProps {
   machine: MachineInfo;
   sessionId: string;
   request: PermissionRequestInfo;
+  agent?: AgentKind;
 }
 
-function PermissionCard({ machine, sessionId, request: r }: CardProps) {
+function PermissionCard({ machine, sessionId, request: r, agent = "claude" }: CardProps) {
   const { sending, error, send, disabled } = useAnswer(machine, sessionId, r.id);
   // A question or a plan from a gasho-daemon that cannot pass the answer on: "allow" would spend the request.
   const unanswerable = r.toolName === "AskUserQuestion" || r.toolName === "ExitPlanMode";
@@ -87,7 +90,7 @@ function PermissionCard({ machine, sessionId, request: r }: CardProps) {
       <div className="flex items-start gap-2 px-3 pt-2.5">
         <ShieldAlert className="mt-0.5 size-4 shrink-0 text-amber-400" />
         <div className="min-w-0 flex-1">
-          <div className="text-xs text-amber-300">{r.toolName === "AskUserQuestion" ? "Claude からの質問" : r.toolName === "ExitPlanMode" ? "計画の承認" : "権限の確認"}</div>
+          <div className="text-xs text-amber-300">{r.toolName === "AskUserQuestion" ? `${AGENT_SPEAKER[agent]} からの質問` : r.toolName === "ExitPlanMode" ? "計画の承認" : "権限の確認"}</div>
           <div className="mt-0.5 flex min-w-0 items-baseline gap-2">
             <span className="shrink-0 font-mono font-medium text-foreground">{r.toolName}</span>
             {r.summary && <span className="truncate font-mono text-xs text-muted-foreground">{r.summary}</span>}
@@ -129,7 +132,7 @@ function PermissionCard({ machine, sessionId, request: r }: CardProps) {
           type="button"
           disabled={disabled}
           onClick={() => void send("deny", { decision: "deny" })}
-          title="Claude は作業を止めて、次の指示を待ちます"
+          title={agent === "codex" ? "Codex に拒否を伝えます。Codex は、拒否されたことを受けて応答します" : "Claude は作業を止めて、次の指示を待ちます"}
           className={cn(BUTTON, "text-red-400 hover:bg-red-500/10")}
         >
           {sending === "deny" ? "送信中…" : r.toolName === "AskUserQuestion" ? "答えずに止める" : "拒否"}
@@ -155,7 +158,7 @@ function answerOf(c: Choice): QuestionAnswer | undefined {
 }
 
 /** Claude's questions, each with its options and room to answer in one's own words, as in the terminal. */
-function QuestionCard({ machine, sessionId, request: r, questions }: CardProps & { questions: AskedQuestion[] }) {
+function QuestionCard({ machine, sessionId, request: r, questions, agent = "claude" }: CardProps & { questions: AskedQuestion[] }) {
   const { sending, sent, error, send, disabled } = useAnswer(machine, sessionId, r.id);
   const [choices, setChoices] = useState<Choice[]>(() => questions.map(() => ({ picked: [], other: false, text: "" })));
   const answers = questions.map((_, i) => answerOf(choices[i] ?? { picked: [], other: false, text: "" }));
@@ -166,7 +169,7 @@ function QuestionCard({ machine, sessionId, request: r, questions }: CardProps &
     <div className={cn(CARD, "border-sky-500/40")}>
       <div className="flex items-center gap-2 px-3 pt-2.5 text-xs text-sky-300">
         <MessageCircleQuestion className="size-4 shrink-0 text-sky-400" />
-        Claude からの質問
+        {AGENT_SPEAKER[agent]} からの質問
       </div>
       {r.answerAsMessage && (
         <p className="px-3 pt-1 text-xs text-muted-foreground">
@@ -198,7 +201,7 @@ function QuestionCard({ machine, sessionId, request: r, questions }: CardProps &
           type="button"
           disabled={disabled}
           onClick={() => void send("stop", { decision: "deny" })}
-          title="質問に答えずに、Claude の作業を止めます。Claude は次の指示を待ちます"
+          title={agent === "codex" ? "質問に答えずに、Codex に返します" : "質問に答えずに、Claude の作業を止めます。Claude は次の指示を待ちます"}
           className={QUIET}
         >
           {sending === "stop" ? "送信中…" : "答えずに止める"}

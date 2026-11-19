@@ -313,8 +313,9 @@ test.describe("gasho-daemon を更新できない working server", () => {
 
     await test.step("時計を進めると、失敗した時刻と最後に接続した時刻が変わる", async () => {
       await moveClock(page, 10 * 60_000);
-      await expect(machineRow(page, "offline")).toContainText("オフライン・最後の接続 10 分前");
-      await expect(failed).toContainText(`${NEWER} への更新に失敗しました（10 分前）。`);
+      // Rounded to the minute: 11 once the steps above have taken 30 s.
+      await expect(machineRow(page, "offline")).toContainText(/オフライン・最後の接続 1[01] 分前/);
+      await expect(failed).toContainText(/への更新に失敗しました（1[01] 分前）。/);
     });
   });
 });
@@ -438,13 +439,16 @@ test.describe("Gasho から更新できる Gasho サーバー", () => {
 
     // The badge once updated is seen in the next test: in WebKit, with the page's clock installed, the sidebar's
     // drawer does not close on the page loaded again.
-    await test.step("「0.90.0 に戻す」で、入っている前のバージョンへ戻し始める", async () => {
+    await test.step("「0.90.0 に戻す」で、入っている前のバージョンへ切り替えて起動し直し、0.90.0 で確定して、また 0.90.1 に更新できる", async () => {
       await row.getByRole("button", { name: "0.90.0 に戻す" }).click();
       await expect(dialog.getByRole("heading")).toHaveText("Gasho サーバーを 0.90.0 に戻しますか？");
       await expect(dialog).toContainText("入っている 0.90.0 に切り替えて、Gasho サーバーを起動し直します。");
       await expect(dialog.getByRole("link")).toHaveCount(0);
       await dialog.getByRole("button", { name: "戻す", exact: true }).click();
       await expect(row).toContainText(/0\.90\.0 に更新しています：/);
+      await expect(row).toContainText("gasho-hub 0.90.0", AFTER_RESTART);
+      await expect.poll(() => hub.proc.log(), AFTER_RESTART).toContain("0.90.0 started well; it is no longer on trial");
+      await expect(row.getByRole("button", { name: "0.90.1 に更新" })).toBeVisible();
     });
   });
 

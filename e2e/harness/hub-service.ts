@@ -51,6 +51,12 @@ function compiledHub(): Promise<string> {
   return compiled;
 }
 
+/** What the package of the Gasho server depends on, as apps/hub/scripts/pack.ts lists it (the workspace's are only types). */
+function hubDependencies(): string[] {
+  const own = JSON.parse(fs.readFileSync(path.join(GASHO_DIR, "apps/hub/package.json"), "utf8")) as { dependencies?: Record<string, string> };
+  return Object.keys(own.dependencies ?? {}).filter((name) => !name.startsWith("@gasho/"));
+}
+
 const screens = new Map<string, Promise<string>>();
 
 /**
@@ -79,7 +85,7 @@ const packages = new Map<string, Promise<string>>();
 
 /**
  * The npm prefix of `version`, as npm installs it there: node_modules with the package (its lib/ says it is `version`,
- * its web/ is the screen built for it) and the one it needs (ws, this checkout's).
+ * its web/ is the screen built for it) and the ones it depends on (this checkout's).
  */
 function hubPackage(version: string): Promise<string> {
   let made = packages.get(version);
@@ -94,7 +100,11 @@ function hubPackage(version: string): Promise<string> {
       await fsp.writeFile(file, said);
       await fsp.symlink(web, path.join(pkg, "web"));
       await fsp.writeFile(path.join(pkg, "package.json"), `${JSON.stringify({ name: HUB_PACKAGE, version, type: "module" }, null, 2)}\n`);
-      await fsp.symlink(await fsp.realpath(path.join(GASHO_DIR, "node_modules/ws")), path.join(prefix, "node_modules", "ws"));
+      for (const name of hubDependencies()) {
+        const to = path.join(prefix, "node_modules", ...name.split("/"));
+        await fsp.mkdir(path.dirname(to), { recursive: true });
+        await fsp.symlink(await fsp.realpath(path.join(GASHO_DIR, "node_modules", name)), to);
+      }
       return prefix;
     })();
     packages.set(version, made);

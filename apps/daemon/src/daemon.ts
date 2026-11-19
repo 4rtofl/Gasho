@@ -140,7 +140,7 @@ import { npmOf, Updater } from "./self-update.ts";
 import { log, str } from "./util.ts";
 import { CLAUDE_TMP_SWEEP_MS, prepareClaudeTmp, removeSessionTmp, sessionOfTmpFile, sweepClaudeTmp } from "./claude-tmp.ts";
 
-export const DAEMON_VERSION = "0.35.0";
+export const DAEMON_VERSION = "0.36.0";
 const GITHUB_CACHE_MS = 5 * 60_000;
 /** How long the worktree a folder is in, or the repositories inside it, and their branches are reused. */
 const REPOS_CACHE_MS = 60_000;

@@ -1,0 +1,7 @@
+{
+  "paths": ["apps/web/src/**/*.tsx", "apps/web/src/**/*.ts", "apps/web/src/**/*.css", "apps/web/index.html"],
+  "exclude": ["**/*.test.*", "apps/web/src/env.d.ts"],
+  "context": ["apps/web/src/index.css"],
+  "inventory": ["apps/web/src/components/**/*.tsx"],
+  "taste": ".github/uiux-taste.md"
+}

@@ -425,8 +425,8 @@ export function sendPluginCommand(cmd: PluginCommand, timeoutMs = 20_000): Promi
 
 const serverResults = new Map<string, (r: CommandResult) => void>();
 
-/** Updates the Gasho server to `version`, or takes it back to it (hub.update); the result says whether it has begun. */
-export function updateServer(version: string, timeoutMs = 20_000): Promise<CommandResult> {
+/** Asks the Gasho server itself (`make` gets the request's id), and waits for its server.result. */
+function askServer(make: (requestId: string) => ClientToHub, timeoutMs: number): Promise<CommandResult> {
   return new Promise((resolve) => {
     const id = requestId();
     const timer = setTimeout(() => {
@@ -437,7 +437,7 @@ export function updateServer(version: string, timeoutMs = 20_000): Promise<Comma
       clearTimeout(timer);
       resolve(r);
     });
-    if (!sendToHub({ type: "hub.update", requestId: id, version })) {
+    if (!sendToHub(make(id))) {
       clearTimeout(timer);
       serverResults.delete(id);
       resolve({ ok: false, error: "Gasho サーバーにつながっていません。" });
@@ -445,24 +445,20 @@ export function updateServer(version: string, timeoutMs = 20_000): Promise<Comma
   });
 }
 
+/** Updates the Gasho server to `version`, or takes it back to it (hub.update); the result says whether it has begun. */
+export function updateServer(version: string, timeoutMs = 20_000): Promise<CommandResult> {
+  return askServer((id) => ({ type: "hub.update", requestId: id, version }), timeoutMs);
+}
+
 /** Changes the agent a new session starts with, for every browser. */
 export function setDefaultAgent(agent: AgentKind, timeoutMs = 20_000): Promise<CommandResult> {
-  return new Promise((resolve) => {
-    const id = requestId();
-    const timer = setTimeout(() => {
-      serverResults.delete(id);
-      resolve({ ok: false, error: "応答がありませんでした。" });
-    }, timeoutMs);
-    serverResults.set(id, (r) => {
-      clearTimeout(timer);
-      resolve(r);
-    });
-    if (!sendToHub({ type: "defaultAgent.set", requestId: id, agent })) {
-      clearTimeout(timer);
-      serverResults.delete(id);
-      resolve({ ok: false, error: "Gasho サーバーにつながっていません。" });
-    }
-  });
+  return askServer((id) => ({ type: "defaultAgent.set", requestId: id, agent }), timeoutMs);
+}
+
+/** Names a worktree for every browser, or takes its name away (`name` empty): it shows its branch again. */
+export function setWorktreeName(machine: string, path: string, name: string, timeoutMs = 20_000): Promise<CommandResult> {
+  const given = name.trim();
+  return askServer((id) => ({ type: "worktree.name", requestId: id, machine, path, ...(given ? { name: given } : {}) }), timeoutMs);
 }
 
 /** This page's build (vite.config.ts). */

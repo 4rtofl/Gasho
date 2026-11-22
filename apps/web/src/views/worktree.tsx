@@ -11,7 +11,7 @@ import { SessionTabs, useWorktreeLaunch } from "@/components/session-tabs";
 import { forgetWorktree } from "@/lib/remembered-worktrees";
 import { go, type WorktreeView as PluginView } from "@/lib/route";
 import { hidesSessionTabs } from "@/lib/session-list";
-import { sessionToOpen, type WorktreeSessions } from "@/lib/sessions";
+import { sessionToOpen, worktreeOrigin, worktreeTitle, type WorktreeSessions } from "@/lib/sessions";
 import { PluginWorktreeView } from "@/plugins/parts";
 import { useSessionListMode } from "@/plugins/session-list";
 import type { LaunchInitial } from "@/views/launch";
@@ -57,8 +57,9 @@ export function WorktreeView({
       <div className="mx-auto w-full max-w-3xl space-y-4 p-6 text-sm text-muted-foreground">
         <HomeLink />
         <div className="min-w-0">
-          <h1 className="truncate text-lg font-semibold tracking-tight text-foreground">{worktree.label}</h1>
+          <h1 className="truncate text-lg font-semibold tracking-tight text-foreground">{worktreeTitle(worktree)}</h1>
           <p className="truncate text-xs">
+            {worktree.name && `${worktreeOrigin(worktree)} · `}
             {worktree.machine.name} · {worktree.path}
           </p>
         </div>

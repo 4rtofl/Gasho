@@ -2,7 +2,8 @@
 // which `gasho-daemon session …` and `gasho-daemon worktree …` start sessions, type into them, list and remove them, and
 // remove worktrees, without the Gasho server. One line of JSON per request, one line of JSON back, then the connection
 // closes. What it does is what the same commands from the Gasho server do (Daemon.launch, input, rename, remove,
-// removeWorktree): nothing of its own.
+// removeWorktree): nothing of its own. Naming a worktree is the exception: the Gasho server keeps the names, and the
+// daemon asks it.
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import net from "node:net";
@@ -26,7 +27,9 @@ export type ControlRequest =
   | { op: "session.rename"; sessionId: string; name: string }
   | { op: "session.list" }
   | { op: "session.remove"; sessionId: string }
-  | { op: "worktree.remove"; path: string; force?: boolean };
+  | { op: "worktree.remove"; path: string; force?: boolean }
+  /** No `name`: takes the worktree's name away. */
+  | { op: "worktree.name"; path: string; name?: string };
 
 /** A session Gasho started, as `session list` shows it. */
 export interface ControlSession {
@@ -57,9 +60,10 @@ export interface EndedSession {
 
 /**
  * session.list: `sessions`. worktree.remove: the worktree's folder (`path`), the branch it had checked out (`branch`),
- * and the sessions it ended (`endedSessions`, also when it then failed). The rest as from the Gasho server.
+ * and the sessions it ended (`endedSessions`, also when it then failed). worktree.name: the worktree's top folder
+ * (`path`) and the name it has now (`name`, absent once taken away). The rest as from the Gasho server.
  */
-export type ControlReply = CommandResult & { sessions?: ControlSession[]; branch?: string; endedSessions?: EndedSession[] };
+export type ControlReply = CommandResult & { sessions?: ControlSession[]; branch?: string; endedSessions?: EndedSession[]; name?: string };
 
 /**
  * Listens on `file` and answers each request with `handle`. A socket left there by a daemon that ended is replaced;
@@ -159,6 +163,10 @@ export function parseRequest(v: unknown): ControlRequest {
       return { op: "session.remove", sessionId: s("sessionId")! };
     case "worktree.remove":
       return { op: "worktree.remove", path: s("path")!, ...(r.force === true ? { force: true } : {}) };
+    case "worktree.name": {
+      const name = s("name", true);
+      return { op: "worktree.name", path: s("path")!, ...(name !== undefined ? { name } : {}) };
+    }
     default:
       throw new Error(`unknown op: ${String(r.op)}`);
   }
@@ -233,7 +241,11 @@ export const SESSION_USAGE = `  session launch --cwd DIR [--name NAME] [--agent 
 export const WORKTREE_USAGE = `  worktree remove <DIR> [--force]                  remove a worktree with the sessions in it, as Gasho's screen does:
                                                    its sessions end first; with uncommitted changes or commits no remote
                                                    has, nothing is removed (unless --force). The branch is kept. Prints
-                                                   {path, branch, ended: [{sessionId, name}]} as JSON`;
+                                                   {path, branch, ended: [{sessionId, name}]} as JSON
+  worktree name <DIR> (<NAME> | --clear)           give the worktree DIR is in a name, which Gasho's sidebar shows in
+                                                   place of its branch (quote a name with spaces or "#"), or take it away
+                                                   (--clear). The Gasho server keeps the names, so the daemon must be
+                                                   connected to it. Prints {path, name} as JSON`;
 
 /** How long a worktree.remove may take: its sessions end (some seconds each) and git removes the folder (up to 90 s). */
 const WORKTREE_REMOVE_WAIT_MS = 180_000;
@@ -400,6 +412,7 @@ export interface WorktreeCliIO {
 
 /** Runs `gasho-daemon worktree <args>`. Throws (with a message to show) on failure. */
 export async function worktreeCommand(args: string[], io: WorktreeCliIO): Promise<void> {
+  if (args[0] === "name") return nameCommand(args.slice(1), io);
   if (args[0] !== "remove") throw new Error(`usage: gasho-daemon\n${WORKTREE_USAGE}`);
   const dir = args.slice(1).find((a) => !a.startsWith("--"));
   const unknown = args.slice(1).filter((a) => a.startsWith("--") && a !== "--force");
@@ -419,4 +432,19 @@ export async function worktreeCommand(args: string[], io: WorktreeCliIO): Promis
       2,
     ),
   );
+}
+
+/** `gasho-daemon worktree name <DIR> (<NAME> | --clear)`. */
+async function nameCommand(args: string[], io: WorktreeCliIO): Promise<void> {
+  const unknown = args.filter((a) => a.startsWith("--") && a !== "--clear");
+  if (unknown.length > 0) throw new Error(`worktree name does not take ${unknown.join(" ")}`);
+  const clear = args.includes("--clear");
+  const given = args.filter((a) => a !== "--clear");
+  if (given.length !== (clear ? 1 : 2)) {
+    throw new Error('worktree name needs the folder and one name (quote a name with spaces or "#"), or the folder and --clear');
+  }
+  const [dir, name] = given as [string, string | undefined];
+  const r = await io.request({ op: "worktree.name", path: (io.resolve ?? path.resolve)(dir), ...(name !== undefined ? { name } : {}) });
+  if (!r.ok) throw new Error(r.error ?? "worktree.name failed");
+  io.out(JSON.stringify({ path: r.path, ...(r.name ? { name: r.name } : {}) }, null, 2));
 }

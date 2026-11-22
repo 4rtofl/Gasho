@@ -5,7 +5,8 @@
 // items of a section can be put in another order by dragging them (`sort`), a section can hold groups of items under
 // headings of their own that fold (`groups`, a plugin's categories of sessions), which can be dragged too
 // (`groupSort`), whose items can be dragged from one group into another (`itemMove`), and the width on a computer can
-// be changed by dragging the right edge (`ResizeHandle`, lib/widths). On a Mac, iPhone and iPad, Ctrl+B in a box that
+// be changed by dragging the right edge (`ResizeHandle`, lib/widths), and an item's tooltip can show while the sidebar
+// is open too (`tip`, for the branch of a worktree that has a name). On a Mac, iPhone and iPad, Ctrl+B in a box that
 // text is written in is left to the box (it moves the cursor back), and only ⌘B folds the sidebar there.
 
 import * as React from "react";
@@ -59,6 +60,11 @@ export type SidebarItem = {
   mark?: React.ReactNode;
   /** Gasho: wraps the item's button, for a session's context menu (the wrapper passes the button's props on). */
   wrap?: (button: React.ReactElement) => React.ReactNode;
+  /**
+   * Gasho: the tooltip while the sidebar is open, on the mouse's hover or the keyboard's focus (in the icon-only
+   * sidebar, the label and the description show there as before).
+   */
+  tip?: string;
 };
 /** Gasho: a button at the right of a section's title, such as "＋" to add an item. */
 export type SidebarAction = {
@@ -470,6 +476,8 @@ function Panel({
   const [hoverBox, setHoverBox] = React.useState<{ y: number; h: number } | null>(null);
   const [hovering, setHovering] = React.useState(false);
   const [tip, setTip] = React.useState<{ label: string; x: number; y: number } | null>(null);
+  // Gasho: a tooltip shows also while open (`tip`): one of the icon-only sidebar goes once it opens, and back.
+  React.useEffect(() => setTip(null), [collapsed]);
   const [open, setOpen] = React.useState<Set<string>>(
     () =>
       new Set(
@@ -518,7 +526,7 @@ function Panel({
     return () => document.removeEventListener("mouseover", over);
   }, [leave]);
 
-  const enter = (e: React.MouseEvent<HTMLElement> | React.FocusEvent<HTMLElement>, label: string) => {
+  const enter = (e: React.MouseEvent<HTMLElement> | React.FocusEvent<HTMLElement>, label: string, openTip?: string) => {
     if (sorting.current.size > 0) return;
     const el = e.currentTarget;
     // Gasho: measured from the list, not from offsetTop, as a draggable item is positioned itself.
@@ -526,9 +534,11 @@ function Panel({
     const y = list ? el.getBoundingClientRect().top - list.getBoundingClientRect().top - list.clientTop + list.scrollTop : el.offsetTop;
     setHoverBox({ y, h: el.offsetHeight });
     setHovering(true);
-    if (collapsed) {
+    // Gasho: while open, not for a tap's focus on a touch screen, which navigates and closes the drawer.
+    const shown = collapsed ? label : e.type === "focus" && !el.matches(":focus-visible") ? undefined : openTip;
+    if (shown) {
       const r = el.getBoundingClientRect();
-      setTip({ label, x: r.right + 10, y: r.top + r.height / 2 });
+      setTip({ label: shown, x: r.right + 10, y: r.top + r.height / 2 });
     } else setTip(null);
   };
 
@@ -560,9 +570,11 @@ function Panel({
       <button
         type="button"
         onClick={onClick}
-        onMouseEnter={(e) => enter(e, tipLabel)}
-        onFocus={(e) => enter(e, tipLabel)}
+        onMouseEnter={(e) => enter(e, tipLabel, item.tip)}
+        onFocus={(e) => enter(e, tipLabel, item.tip)}
+        onBlur={() => setTip(null)}
         aria-label={collapsed ? tipLabel : undefined}
+        aria-description={!collapsed ? item.tip : undefined}
         aria-expanded={hasChildren ? isOpen : undefined}
         aria-current={isActive ? "page" : undefined}
         className={cn(
@@ -977,7 +989,7 @@ function Panel({
       </div>
 
       <AnimatePresence>
-        {collapsed && tip && (
+        {tip && (
           <div
             key="tip"
             role="tooltip"

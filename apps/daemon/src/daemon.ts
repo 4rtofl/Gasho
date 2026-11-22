@@ -292,6 +292,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export class Daemon {
   private cfg: DaemonConfig;
   private hub: HubClient;
+  /** The answers to worktree.name that the Gasho server is to give, by request id. */
+  private namings = new Map<string, (r: CommandResult) => void>();
   private tracked = new Map<string, Tracked>();
   /** How long a Claude Code started outside Gasho may take to end after SIGTERM (see end). */
   private endWaitMs = REMOVE_WAIT_MS;
@@ -1518,6 +1520,9 @@ export class Daemon {
         return;
       case "plugin.request":
         return this.plugins.request(m);
+      case "worktree.name.result":
+        this.namings.get(m.requestId)?.(m.result);
+        return;
       case "transcript.get":
         return this.sendTranscriptPage(m);
       case "git.graph.get":
@@ -1661,6 +1666,8 @@ export class Daemon {
         case "worktree.remove":
           log(`worktree.remove of ${req.path}${req.force ? " (forced)" : ""} from the control socket`);
           return await this.controlRemoveWorktree(req.path, req.force === true, requestId);
+        case "worktree.name":
+          return await this.controlNameWorktree(req.path, req.name);
       }
     } catch (e) {
       log(`${req.op} from the control socket failed`, e);
@@ -1683,6 +1690,41 @@ export class Daemon {
     const r = await this.removeWorktree({ type: "worktree.remove", requestId, path: w.path, ...(force ? { force: true } : {}) });
     const endedSessions = (r.ended ?? []).map((sessionId) => ({ sessionId, ...(names.has(sessionId) ? { name: names.get(sessionId)! } : {}) }));
     return { ...r, path: w.path, ...(w.branch ? { branch: w.branch } : {}), ...(endedSessions.length > 0 ? { endedSessions } : {}) };
+  }
+
+  /**
+   * worktree.name from the control socket: names the worktree `dir` is in, by its top folder as the sidebar knows it (a
+   * folder outside any repository by itself), or takes its name away.
+   */
+  private async controlNameWorktree(dir: string, name: string | undefined): Promise<ControlReply> {
+    if (!path.isAbsolute(dir)) return { ok: false, error: "フォルダーを絶対パスで指定してください。" };
+    const real = await fsp.realpath(dir).catch(() => undefined);
+    if (!real) return { ok: false, error: `フォルダーがありません：${dir}` };
+    const top = (await worktreeOf(real))?.path ?? real;
+    const r = await this.nameWorktree(top, name);
+    const given = name?.trim();
+    return { ...r, path: top, ...(r.ok && given ? { name: given } : {}) };
+  }
+
+  /** Asks the Gasho server, which keeps the names of worktrees, to name the one whose top folder is `top` (or to take its name away). */
+  private nameWorktree(top: string, name: string | undefined, timeoutMs = 10_000): Promise<CommandResult> {
+    if (!this.hub.connected) {
+      return Promise.resolve({ ok: false, error: "Gasho サーバーにつながっていません。worktree の名前は Gasho サーバーに保存するので、つながってから試してください。" });
+    }
+    const requestId = randomUUID();
+    return new Promise((resolve) => {
+      const done = (r: CommandResult) => {
+        clearTimeout(timer);
+        this.namings.delete(requestId);
+        resolve(r);
+      };
+      const timer = setTimeout(
+        () => done({ ok: false, error: "Gasho サーバーが答えませんでした。worktree の名前を保存できない古い版かもしれません（Gasho の「端末」の画面から更新できます）。" }),
+        timeoutMs,
+      );
+      this.namings.set(requestId, done);
+      this.hub.send({ type: "worktree.name", requestId, path: top, ...(name !== undefined ? { name } : {}) });
+    });
   }
 
   /** The sessions Gasho started, under the names `claude agents` (and so ListAgents) shows. */
@@ -2839,6 +2881,8 @@ export class Daemon {
     );
     if (warning) log(warning);
     this.repos.delete(w.path);
+    // A worktree made later in the same folder is another one: it does not get this one's name.
+    if (this.hub.connected) void this.nameWorktree(w.path, undefined);
     await this.refreshRepos();
     void this.refreshFolders();
     return { ok: true, ended, ...(warning ? { warning } : {}) };

@@ -24,7 +24,7 @@ import { hashSecret, newPairingCode, newToken, normalizeCode, PAIRING_CODE_TTL_M
  * cannot keep to that writes the lowest schema that may still open the database (min_schema in meta); an older Gasho
  * server then refuses it, rather than spoil it (docs/hub-setup.md).
  */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 const EVENT_TTL_MS = 7 * 24 * 3600_000;
 /** The first of the 53 weeks that the heatmap can show, as a day in Japan Standard Time. */
 const firstTokenDay = (now: number) => new Date(now + 9 * 3600_000 - 370 * 24 * 3600_000).toISOString().slice(0, 10);
@@ -151,6 +151,16 @@ export class Store {
       );
       PRAGMA user_version = 6;
     `);
+    // Version 7 adds the names given to worktrees, shown in the sidebar in place of the branch.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS worktree_names (
+        machine TEXT NOT NULL,
+        path TEXT NOT NULL,
+        name TEXT NOT NULL,
+        PRIMARY KEY (machine, path)
+      );
+      PRAGMA user_version = 7;
+    `);
   }
 
   private migrateTo2(): void {
@@ -248,6 +258,7 @@ export class Store {
     if (Number(res.changes) === 0) return false;
     this.db.prepare("DELETE FROM machines WHERE id = ?").run(id);
     this.db.prepare("DELETE FROM token_days WHERE machine = ?").run(id);
+    this.db.prepare("DELETE FROM worktree_names WHERE machine = ?").run(id);
     this.db.prepare("DELETE FROM push_subscriptions WHERE device_id = ?").run(id);
     return true;
   }
@@ -321,14 +332,36 @@ export class Store {
          WHERE d.kind = 'machine' AND d.revoked_at IS NULL ORDER BY d.name`,
       )
       .all() as Row[];
-    return rows.map((r) => ({
-      id: String(r.id),
-      name: String(r.name),
-      connected: false,
-      lastSeen: r.last_seen == null ? 0 : Number(r.last_seen),
-      daemonVersion: r.daemon_version == null ? undefined : String(r.daemon_version),
-      sessions: r.sessions == null ? [] : (JSON.parse(String(r.sessions)) as SessionInfo[]),
-    }));
+    return rows.map((r) => {
+      const worktreeNames = this.worktreeNames(String(r.id));
+      return {
+        id: String(r.id),
+        name: String(r.name),
+        connected: false,
+        lastSeen: r.last_seen == null ? 0 : Number(r.last_seen),
+        daemonVersion: r.daemon_version == null ? undefined : String(r.daemon_version),
+        sessions: r.sessions == null ? [] : (JSON.parse(String(r.sessions)) as SessionInfo[]),
+        ...(worktreeNames ? { worktreeNames } : {}),
+      };
+    });
+  }
+
+  /** The names given to a working server's worktrees, by their folder; undefined when none is named. */
+  worktreeNames(machine: string): Record<string, string> | undefined {
+    const rows = this.db.prepare("SELECT path, name FROM worktree_names WHERE machine = ? ORDER BY path").all(machine) as Row[];
+    if (rows.length === 0) return undefined;
+    return Object.fromEntries(rows.map((r) => [String(r.path), String(r.name)]));
+  }
+
+  /** Names a worktree, or takes its name away (`name` undefined). */
+  setWorktreeName(machine: string, path: string, name: string | undefined): void {
+    if (name === undefined) {
+      this.db.prepare("DELETE FROM worktree_names WHERE machine = ? AND path = ?").run(machine, path);
+      return;
+    }
+    this.db
+      .prepare("INSERT INTO worktree_names (machine, path, name) VALUES (?, ?, ?) ON CONFLICT(machine, path) DO UPDATE SET name = excluded.name")
+      .run(machine, path, name);
   }
 
   // ---- plugins ----

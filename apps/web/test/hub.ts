@@ -57,16 +57,19 @@ class FakeSocket {
   }
 }
 
+/** What the Gasho server answers itself, with server.result. */
+const SERVER_REQUESTS = new Set<ClientToHub["type"]>(["hub.update", "defaultAgent.set", "worktree.name"]);
+
 export interface Hub {
   /** Every message the page sent, in order. */
   readonly sent: ClientToHub[];
-  /** The commands for working servers among them. */
+  /** The commands for working servers among them (not those the Gasho server answers itself, such as worktree.name). */
   commands(): SentCommand[];
   /** Tells the page something, as the Gasho server does. */
   say(m: HubToClient): Promise<void>;
   /**
    * Answers a request as the Gasho server does: a command for a working server, a plugin's command (plugin.result) or
-   * an update of the Gasho server (server.result). The last one sent, unless one is given.
+   * one the Gasho server answers itself (server.result). The last one sent, unless one is given.
    */
   answer(result: CommandResult, request?: ClientToHub): Promise<void>;
   /** Closes the page's connection, as a network that lost it. */
@@ -90,7 +93,8 @@ export async function connectHub(snapshot: Partial<Omit<Snapshot, "type">> = {})
     act(async () => {
       socket.onmessage?.({ data: JSON.stringify(m) });
     });
-  const commands = () => socket.sent.filter((m): m is ClientToHub & SentCommand => "machine" in m && "requestId" in m && m.type !== "plugin.request");
+  const commands = () =>
+    socket.sent.filter((m): m is ClientToHub & SentCommand => "machine" in m && "requestId" in m && m.type !== "plugin.request" && !SERVER_REQUESTS.has(m.type));
   await say({ type: "snapshot", machines: [], notifications: [], events: [], ...snapshot });
   return {
     sent: socket.sent,
@@ -114,7 +118,7 @@ export async function connectHub(snapshot: Partial<Omit<Snapshot, "type">> = {})
     answer(result, request = socket.sent.findLast((m) => "requestId" in m)) {
       if (!request || !("requestId" in request)) throw new Error("no request was sent");
       const { requestId } = request;
-      if (request.type === "hub.update") return say({ type: "server.result", requestId, result });
+      if (SERVER_REQUESTS.has(request.type)) return say({ type: "server.result", requestId, result });
       if (!("machine" in request)) return say({ type: "plugin.result", requestId, result });
       return say({ type: "command.result", requestId, machine: request.machine, result });
     },

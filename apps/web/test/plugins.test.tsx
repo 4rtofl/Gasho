@@ -1,14 +1,10 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { PluginInfo } from "@gasho/protocol";
-import { MotionGlobalConfig } from "framer-motion";
 import { beforeEach, expect, test, vi } from "vitest";
 import { UnusedSessionsDialog } from "@/components/unused-sessions-dialog";
 import { PluginConversationEnd, PluginHeaderItems, PluginPageView, PluginPanelView, PluginSettingsSections } from "@/plugins/parts";
 import { connectHub, machine, session } from "./hub";
-
-// The test DOM rejects the animations that are cancelled when a part goes away (the settings' sections that unfold).
-MotionGlobalConfig.skipAnimations = true;
 
 beforeEach(() => {
   location.hash = "";
@@ -262,16 +258,16 @@ test("the settings of a plugin are kept on the Gasho server or in this browser, 
   expect(hub.sent.at(-1)).toMatchObject({ type: "plugin.setting", plugin: "notes", key: "shown", value: false });
   await hub.answer({ ok: true });
 
+  const limit = within(section).getByRole("spinbutton", { name: "上限" });
+  await user.clear(limit);
+  await user.tab();
+  expect(within(section).getByText("数を入れてください。")).toBeTruthy();
   // Folded and opened again, what was typed and not saved stays, and so does what went wrong with it.
   const heading = within(section).getByRole("button", { name: "メモ" });
   await user.click(heading);
   await waitFor(() => expect(within(section).queryByRole("spinbutton")).toBeNull());
   await user.click(heading);
   expect(within(section).getByRole("spinbutton", { name: "上限" })).toHaveProperty("value", "");
-  expect(within(section).getByText("数を入れてください。")).toBeTruthy();
-  const limit = within(section).getByRole("spinbutton", { name: "上限" });
-  await user.clear(limit);
-  await user.tab();
   expect(within(section).getByText("数を入れてください。")).toBeTruthy();
   await user.type(limit, "7{Enter}");
   expect(hub.sent.at(-1)).toMatchObject({ type: "plugin.setting", key: "limit", value: 7 });

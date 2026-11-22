@@ -2,7 +2,6 @@
 import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { AgentInfo, MachineInfo } from "@gasho/protocol";
-import { MotionGlobalConfig } from "framer-motion";
 import { expect, test, vi } from "vitest";
 import { LaunchMenu } from "@/components/launch-menu";
 import { useWorktreeLaunch } from "@/components/session-tabs";
@@ -12,9 +11,6 @@ import type { LaunchInitial } from "@/views/launch";
 import { LaunchDialog } from "@/views/launch";
 import { DefaultAgentSection } from "@/views/settings";
 import { connectHub, machine, session } from "./hub";
-
-// The test DOM rejects the animations that are cancelled when a part goes away (the settings' section that unfolds).
-MotionGlobalConfig.skipAnimations = true;
 
 const codex = (extra: Partial<AgentInfo> = {}): AgentInfo => ({ status: "available", version: "0.170.0", canLaunch: true, operations: [], ...extra });
 const withCodex = (info: AgentInfo = codex()): MachineInfo => machine("m", [], { name: "Linux", canLaunch: true, agents: { codex: info } });

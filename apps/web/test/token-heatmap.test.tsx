@@ -1,5 +1,4 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { MotionGlobalConfig } from "framer-motion";
 import { afterEach, expect, test, vi } from "vitest";
 import { ActivityHeatmap } from "@/components/ui/activity-heatmap";
 import { arrangeTiles } from "@/lib/order";
@@ -7,9 +6,6 @@ import { useAppState } from "@/lib/store";
 import { mergeTokenDays, sumTokenDays, tokenDayOf } from "@/lib/token-days";
 import { TokenHeatmap } from "@/views/home";
 import { connectHub, machine } from "./hub";
-
-// The test DOM rejects the animations that are cancelled when a part goes away.
-MotionGlobalConfig.skipAnimations = true;
 
 afterEach(() => {
   vi.restoreAllMocks();

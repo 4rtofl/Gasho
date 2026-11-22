@@ -262,6 +262,13 @@ test("the settings of a plugin are kept on the Gasho server or in this browser, 
   expect(hub.sent.at(-1)).toMatchObject({ type: "plugin.setting", plugin: "notes", key: "shown", value: false });
   await hub.answer({ ok: true });
 
+  // Folded and opened again, what was typed and not saved stays, and so does what went wrong with it.
+  const heading = within(section).getByRole("button", { name: "メモ" });
+  await user.click(heading);
+  await waitFor(() => expect(within(section).queryByRole("spinbutton")).toBeNull());
+  await user.click(heading);
+  expect(within(section).getByRole("spinbutton", { name: "上限" })).toHaveProperty("value", "");
+  expect(within(section).getByText("数を入れてください。")).toBeTruthy();
   const limit = within(section).getByRole("spinbutton", { name: "上限" });
   await user.clear(limit);
   await user.tab();

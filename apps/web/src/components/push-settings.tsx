@@ -3,7 +3,9 @@ import { Bell } from "lucide-react";
 import { useState } from "react";
 import type { NotificationKind } from "@gasho/protocol";
 import { Switch } from "@/components/ui/switch";
+import { AccordionSection } from "@/components/ui/unfold-accordion";
 import { DEFAULT_KINDS, disablePush, enablePush, iosOutsideApp, NOTIFICATION_KINDS, pushSupported, useSubscriptionEndpoint } from "@/lib/push";
+import { useSettingsSectionOpen } from "@/lib/settings-sections";
 import { useAppState } from "@/lib/store";
 
 export function PushSettingsSection() {
@@ -11,6 +13,7 @@ export function PushSettingsSection() {
   const endpoint = useSubscriptionEndpoint(push);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [open, setOpen] = useSettingsSectionOpen("push");
   const mine = endpoint ? push?.subscriptions.find((s) => s.endpoint === endpoint) : undefined;
   const on = Boolean(mine);
 
@@ -25,7 +28,13 @@ export function PushSettingsSection() {
   };
   const toggle = (next: boolean) => {
     if (!push) return;
-    void run(() => (next ? enablePush(push, DEFAULT_KINDS) : disablePush()));
+    void run(async () => {
+      if (!next) return disablePush();
+      const failed = await enablePush(push, DEFAULT_KINDS);
+      // Turned on while it is folded, it opens to show the kinds to notify.
+      if (!failed) setOpen(true);
+      return failed;
+    });
   };
   const toggleKind = (kind: NotificationKind, next: boolean) => {
     if (!push || !mine) return;
@@ -48,24 +57,21 @@ export function PushSettingsSection() {
   const disabled = Boolean(why) || !push || !connected || busy || endpoint === null;
 
   return (
-    <section aria-labelledby="push" className="space-y-3 rounded-2xl border border-border bg-surface/40 p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h2 id="push" className="flex items-center gap-2 text-sm font-medium">
-            <Bell className="size-4" />
-            この端末に通知する
-          </h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Gasho を開いていないときも、セッションの名前と通知の種類だけを通知します。会話の中身は出しません。Gasho を前面に出しているあいだは、この端末には通知しません。
-          </p>
-        </div>
-        <Switch checked={on} disabled={disabled} onCheckedChange={toggle} aria-label="この端末に通知する" title="この端末に通知する" />
-      </div>
-
-      {why && <p className="text-xs text-amber-400">{why}</p>}
-      {error && <p className="text-xs text-red-400">{error}</p>}
-
-      {on && mine && (
+    <AccordionSection
+      icon={<Bell className="size-4" />}
+      title="この端末に通知する"
+      description="Gasho を開いていないときも、セッションの名前と通知の種類だけを通知します。会話の中身は出しません。Gasho を前面に出しているあいだは、この端末には通知しません。"
+      open={open}
+      onOpenChange={setOpen}
+      actions={<Switch checked={on} disabled={disabled} onCheckedChange={toggle} aria-label="この端末に通知する" title="この端末に通知する" />}
+      notes={
+        <>
+          {why && <p className="text-xs text-amber-400">{why}</p>}
+          {error && <p className="text-xs text-red-400">{error}</p>}
+        </>
+      }
+    >
+      {on && mine ? (
         <ul className="divide-y divide-border rounded-xl border border-border bg-background">
           {NOTIFICATION_KINDS.map(({ kind, label, note }) => (
             <li key={kind}>
@@ -79,7 +85,9 @@ export function PushSettingsSection() {
             </li>
           ))}
         </ul>
+      ) : (
+        <p className="text-xs text-muted-foreground">オンにすると、通知する種類を選べます。</p>
       )}
-    </section>
+    </AccordionSection>
   );
 }

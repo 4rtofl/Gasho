@@ -73,7 +73,7 @@ export type Route =
   | { name: "home" }
   /** `section`: the section to scroll to once it is shown (#/devices/updates). */
   | { name: "devices"; section?: "updates" }
-  /** `plugin`: the plugin whose section to scroll to once it is shown (#/settings/p/<plugin>). */
+  /** `plugin`: the plugin whose section to open and scroll to once it is shown (#/settings/p/<plugin>). */
   | { name: "settings"; plugin?: string }
   /** The plugins screen (docs/plugins.md). */
   | { name: "plugins" }

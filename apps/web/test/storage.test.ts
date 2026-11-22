@@ -1,6 +1,7 @@
 // What this browser keeps in localStorage beside the hooks that read it: the worktrees kept in the sidebar
-// (lib/remembered-worktrees), the grouping of the worktrees picked and the plugin list shown last (lib/session-list-prefs).
-// Each module reads the storage once, so each case loads it afresh over a storage of its own. npm run test:coverage
+// (lib/remembered-worktrees), the grouping of the worktrees picked and the plugin list shown last (lib/session-list-prefs),
+// the sections of the settings screen kept open (lib/settings-sections). Each module keeps what it read, so each case
+// loads it afresh over a storage of its own. npm run test:coverage
 // counts only one of these loads of a file, so it shows the two modules less covered than they are.
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -37,6 +38,7 @@ async function fresh<T>(relative: string): Promise<T> {
 
 type Worktrees = typeof import("../src/lib/remembered-worktrees.ts");
 type Prefs = typeof import("../src/lib/session-list-prefs.ts");
+type Sections = typeof import("../src/lib/settings-sections.ts");
 
 const wt = (n: string, more: Partial<RememberedWorktree> = {}): RememberedWorktree => ({ machine: "mac", path: `/src/${n}`, label: n, subfolders: false, ...more });
 const saved = (s: { items: Map<string, string> }) => JSON.parse(s.items.get("gasho.worktrees") ?? "null") as RememberedWorktree[] | null;
@@ -125,4 +127,36 @@ test("the plugin list shown last is saved when it changes, and forgotten when no
   assert.equal(s.items.has("gasho.sessionList"), false);
   rememberList(undefined);
   assert.equal(s.writes.length, 3);
+});
+
+test("the sections kept open are read again when another tab changed them, not opened from what this page read before", async () => {
+  const s = storage({ "gasho.settingsOpen": JSON.stringify(["push"]) });
+  const { setSettingsSectionOpen } = await fresh<Sections>("../src/lib/settings-sections.ts");
+  setSettingsSectionOpen("versions", true);
+  assert.equal(s.items.get("gasho.settingsOpen"), JSON.stringify(["push", "versions"]));
+  // Another tab folded both and opened one of a plugin.
+  s.items.set("gasho.settingsOpen", JSON.stringify(["plugin:notes"]));
+  setSettingsSectionOpen("push", true);
+  assert.equal(s.items.get("gasho.settingsOpen"), JSON.stringify(["plugin:notes", "push"]));
+  setSettingsSectionOpen("plugin:notes", false);
+  setSettingsSectionOpen("push", false);
+  assert.equal(s.items.has("gasho.settingsOpen"), false);
+});
+
+test("where storage is blocked, or cannot be written, the sections are kept open for this page view", async () => {
+  const blocked = storage({}, true);
+  const { setSettingsSectionOpen } = await fresh<Sections>("../src/lib/settings-sections.ts");
+  setSettingsSectionOpen("push", true);
+  setSettingsSectionOpen("versions", true);
+  assert.equal(blocked.writes.at(-1)?.[1], JSON.stringify(["push", "versions"]));
+
+  const s = storage({ "gasho.settingsOpen": JSON.stringify(["push"]) });
+  const full = await fresh<Sections>("../src/lib/settings-sections.ts");
+  localStorage.setItem = () => {
+    throw new Error("QuotaExceededError");
+  };
+  full.setSettingsSectionOpen("versions", true);
+  localStorage.setItem = (k: string, v: string) => void s.items.set(k, v);
+  full.setSettingsSectionOpen("chat-text", true);
+  assert.equal(s.items.get("gasho.settingsOpen"), JSON.stringify(["push", "versions", "chat-text"]));
 });

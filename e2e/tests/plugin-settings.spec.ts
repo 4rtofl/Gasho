@@ -13,11 +13,14 @@ test("4 つの型の設定を変えられ、このブラウザーだけの値と
   await other.addCookies([await hub.browserCookie("e2e-other")]);
   const page2 = await other.newPage();
   await page2.goto("/#/settings");
-  const values2 = page2.getByRole("region", { name: "E2E 部品" }).getByText(/^出す:/);
+  const section2 = page2.getByRole("region", { name: "E2E 部品" });
+  await section2.getByRole("button", { name: "E2E 部品", exact: true }).click();
+  const values2 = section2.getByText(/^出す:/);
   await expect(values2).toHaveText("出す:false 色:red 数:3 見出し:");
 
   await page.goto("/#/settings");
   const section = page.getByRole("region", { name: "E2E 部品" });
+  await section.getByRole("button", { name: "E2E 部品", exact: true }).click();
   const values = section.getByText(/^出す:/);
   await expect(values).toHaveText("出す:false 色:red 数:3 見出し:");
 

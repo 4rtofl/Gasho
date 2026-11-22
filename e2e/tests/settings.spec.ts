@@ -1,14 +1,51 @@
-// The settings screen: the size of the conversation's text (its buttons, slider, default, sample, another tab and a
-// reload), and a page that does not scroll past its end (#94).
+// The settings screen: its sections, folded at first and opened from their headings, kept open in this browser; the
+// size of the conversation's text (its buttons, slider, default, sample, another tab and a reload), and a page that
+// does not scroll past its end (#94).
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
 
 const sizeShown = (page: Page) => page.getByText(/^\d+px(（標準）)?$/);
 /** The sample's request, whose text is the conversation's body text. */
 const sampleText = (page: Page) => page.getByText("ログインのボタンが押せないことがある。原因を調べて直して", { exact: true });
+const chatTextHeading = (page: Page) => page.getByRole("button", { name: "会話の文字の大きさ" });
+
+test("区切りは初めは畳んであり、見出しをキーボードでも押して開け、開いた区切りは読み込み直しても開いていて、別のタブで開閉すると追いかける", async ({ page, context }) => {
+  await page.goto("/#/settings");
+  const heading = chatTextHeading(page);
+  const versions = page.getByRole("button", { name: "バージョン", exact: true });
+  await expect(heading).toHaveAttribute("aria-expanded", "false");
+  await expect(versions).toHaveAttribute("aria-expanded", "false");
+  // Folded, the text's size and the copy of the versions beside the headings still show.
+  await expect(sizeShown(page)).toHaveText("14px（標準）");
+  await expect(page.getByRole("button", { name: "バージョンをコピー" })).toBeVisible();
+  await expect(page.getByRole("slider", { name: "会話の文字の大きさ" })).toHaveCount(0);
+
+  await heading.focus();
+  await page.keyboard.press("Enter");
+  await expect(heading).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByRole("slider", { name: "会話の文字の大きさ" })).toBeVisible();
+  await page.keyboard.press("Space");
+  await expect(heading).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("slider", { name: "会話の文字の大きさ" })).toHaveCount(0);
+
+  await versions.click();
+  await page.reload();
+  await expect(versions).toHaveAttribute("aria-expanded", "true");
+  await expect(heading).toHaveAttribute("aria-expanded", "false");
+
+  // Opened and folded in another tab of this browser, they follow here.
+  const other = await context.newPage();
+  await other.goto("/#/settings");
+  await chatTextHeading(other).click();
+  await other.getByRole("button", { name: "バージョン", exact: true }).click();
+  await expect(heading).toHaveAttribute("aria-expanded", "true");
+  await expect(versions).toHaveAttribute("aria-expanded", "false");
+  await other.close();
+});
 
 test("会話の文字の大きさ: ボタンは 12px・20px で押せなくなり、スライダーと「標準に戻す」で変わり、見本の大きさも変わる", async ({ page }) => {
   await page.goto("/#/settings");
+  await chatTextHeading(page).click();
   const smaller = page.getByRole("button", { name: "小さくする" });
   const larger = page.getByRole("button", { name: "大きくする" });
   const slider = page.getByRole("slider", { name: "会話の文字の大きさ" });
@@ -36,6 +73,7 @@ test("会話の文字の大きさ: ボタンは 12px・20px で押せなくな�
 
 test("会話の文字の大きさ: 別のタブで変えると追いかけ、読み込み直しても残る", async ({ page, context }) => {
   await page.goto("/#/settings");
+  await chatTextHeading(page).click();
   await expect(sizeShown(page)).toHaveText("14px（標準）");
 
   const other = await context.newPage();

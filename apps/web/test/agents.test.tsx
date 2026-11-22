@@ -140,12 +140,14 @@ test("the form starts the agent it shows", async () => {
 test("the default agent is set for every browser, and the choice shows only where Codex is installed", async () => {
   const hub = await connectHub({ machines: [withCodex()], server: server("claude") });
   const { unmount } = render(<DefaultAgentSection />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "既定のエージェント" }));
   expect(screen.getByRole("radio", { name: "Claude Code" }).getAttribute("aria-checked")).toBe("true");
-  await userEvent.setup().click(screen.getByRole("radio", { name: "Codex" }));
+  await user.click(screen.getByRole("radio", { name: "Codex" }));
   expect(hub.sent.at(-1)).toMatchObject({ type: "defaultAgent.set", agent: "codex" });
   unmount();
 
   await connectHub({ machines: [claudeOnly], server: server("claude") });
   render(<DefaultAgentSection />);
-  expect(screen.queryByRole("radio")).toBeNull();
+  expect(screen.queryByRole("heading", { name: "既定のエージェント" })).toBeNull();
 });

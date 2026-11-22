@@ -261,11 +261,14 @@ test.describe("操作", () => {
     });
   });
 
-  test("「設定」を押すと、設定の画面のそのプラグインの欄が見える位置で開く", async ({ page, hub }) => {
+  test("「設定」を押すと、設定の画面のそのプラグインの欄が開き、見える位置に出る", async ({ page, hub }) => {
     await addPlugin(hub, plugin("e2e-parts"), { link: true });
     await page.goto("/#/plugins");
     await card(page.getByRole("region", { name: "入れたもの" }), "E2E 部品").getByRole("button", { name: "設定" }).click();
     await expect(page.getByRole("heading", { name: "E2E 部品" })).toBeInViewport();
+    const section = page.getByRole("region", { name: "E2E 部品" });
+    await expect(section.getByRole("button", { name: "E2E 部品", exact: true })).toHaveAttribute("aria-expanded", "true");
+    await expect(section.getByText(/^出す:/)).toBeVisible();
   });
 });
 

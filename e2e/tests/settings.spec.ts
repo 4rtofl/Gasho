@@ -9,7 +9,7 @@ const sizeShown = (page: Page) => page.getByText(/^\d+px(（標準）)?$/);
 const sampleText = (page: Page) => page.getByText("ログインのボタンが押せないことがある。原因を調べて直して", { exact: true });
 const chatTextHeading = (page: Page) => page.getByRole("button", { name: "会話の文字の大きさ" });
 
-test("区切りは初めは畳んであり、見出しをキーボードでも押して開け、開いた区切りは読み込み直しても開いている", async ({ page }) => {
+test("区切りは初めは畳んであり、見出しをキーボードでも押して開け、開いた区切りは読み込み直しても開いていて、別のタブで開閉すると追いかける", async ({ page, context }) => {
   await page.goto("/#/settings");
   const heading = chatTextHeading(page);
   const versions = page.getByRole("button", { name: "バージョン", exact: true });
@@ -32,6 +32,15 @@ test("区切りは初めは畳んであり、見出しをキーボードでも�
   await page.reload();
   await expect(versions).toHaveAttribute("aria-expanded", "true");
   await expect(heading).toHaveAttribute("aria-expanded", "false");
+
+  // Opened and folded in another tab of this browser, they follow here.
+  const other = await context.newPage();
+  await other.goto("/#/settings");
+  await chatTextHeading(other).click();
+  await other.getByRole("button", { name: "バージョン", exact: true }).click();
+  await expect(heading).toHaveAttribute("aria-expanded", "true");
+  await expect(versions).toHaveAttribute("aria-expanded", "false");
+  await other.close();
 });
 
 test("会話の文字の大きさ: ボタンは 12px・20px で押せなくなり、スライダーと「標準に戻す」で変わり、見本の大きさも変わる", async ({ page }) => {

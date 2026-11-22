@@ -427,7 +427,7 @@ function useIssueTab({ worktree, daemon }: WorktreeContext): WorktreeTab[] {
 
 セッションが無くなってサイドバーに残した worktree では、`sessions` が空で、`branch` と `github` は、最後にセッションがあったときのものになる。
 
-登録したリポジトリ（README の「Gasho からセッションを起動して、入力する」）の worktree でセッションの無いものも、`sessions` が空になる。`branch` は `git worktree list` で読んだもの、`github` はリポジトリのものになる。
+登録したリポジトリ（[usage.md](usage.md) の「リポジトリを登録する」）の worktree でセッションの無いものも、`sessions` が空になる。`branch` は `git worktree list` で読んだもの、`github` はリポジトリのものになる。
 
 画面から daemon の部分のメソッドを呼ぶときは、セッションを指さなくてよい。GitHub の Issue や Pull request を読むだけなら、`worktree.github` と `worktree.branch` を引数で渡し、daemon の部分が `ctx.github.read` に `--repo` で渡す。worktree のフォルダーで git などを動かすときは、`worktree.sessions` のセッションを指して呼ぶ（daemon の部分の `ctx.session` になる）か、daemon の部分が `ctx.folders()` でフォルダーを確かめる。ブラウザーから来たパスを信用しないのは、ほかの呼び出しと同じである。
 

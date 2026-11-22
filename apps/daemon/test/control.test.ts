@@ -328,6 +328,42 @@ test("worktree remove sends the folder as an absolute path, waits long enough, a
   assert.equal(sent.length, before);
 });
 
+test("worktree name sends the folder as an absolute path with one name, or --clear, and prints the worktree's folder", async () => {
+  const sent: ControlRequest[] = [];
+  const out: string[] = [];
+  let answer: ControlReply = { ok: true, path: "/repo-wt/255", name: "#255 name" };
+  const cli = {
+    request: async (req: ControlRequest) => {
+      sent.push(req);
+      return answer;
+    },
+    out: (s: string) => out.push(s),
+    resolve: (p: string) => path.resolve("/here", p),
+  };
+  await worktreeCommand(["name", "src", "#255 name"], cli);
+  answer = { ok: true, path: "/repo-wt/255" };
+  await worktreeCommand(["name", "--clear", "/repo-wt/255"], cli);
+  assert.deepEqual(sent, [
+    { op: "worktree.name", path: "/here/src", name: "#255 name" },
+    { op: "worktree.name", path: "/repo-wt/255" },
+  ]);
+  assert.deepEqual(out.map((s) => JSON.parse(s)), [{ path: "/repo-wt/255", name: "#255 name" }, { path: "/repo-wt/255" }]);
+
+  answer = { ok: false, error: "Gasho サーバーにつながっていません。" };
+  await assert.rejects(worktreeCommand(["name", "/repo-wt/255", "x"], cli), /つながっていません/);
+
+  const before = sent.length;
+  // Unquoted, "#255 name" would reach it as two words (or none, after a shell's "#").
+  await assert.rejects(worktreeCommand(["name", "/repo-wt/255", "255", "name"], cli), /one name/);
+  await assert.rejects(worktreeCommand(["name", "/repo-wt/255"], cli), /one name/);
+  await assert.rejects(worktreeCommand(["name", "/repo-wt/255", "x", "--clear"], cli), /one name/);
+  await assert.rejects(worktreeCommand(["name", "/repo-wt/255", "--force"], cli), /does not take --force/);
+  assert.equal(sent.length, before);
+  assert.deepEqual(parseRequest({ op: "worktree.name", path: "/w", name: "n", force: true }), { op: "worktree.name", path: "/w", name: "n" });
+  assert.deepEqual(parseRequest({ op: "worktree.name", path: "/w" }), { op: "worktree.name", path: "/w" });
+  assert.throws(() => parseRequest({ op: "worktree.name", path: "/w", name: 1 }), /name must be a string/);
+});
+
 const REPL = ["─".repeat(50), "❯ ", "─".repeat(50), ""].join("\n");
 
 test("through the socket, a launch is Daemon.launch, and the rename and the prompt wait on its input queue in that order", async () => {

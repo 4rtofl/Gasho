@@ -17,6 +17,7 @@ import {
   worktreeLastUsed,
   worktreesByLastUse,
   worktreeStatus,
+  worktreeTitle,
 } from "../src/lib/sessions.ts";
 
 const session = (sessionId: string, extra: Partial<SessionInfo> = {}): SessionInfo => ({
@@ -74,6 +75,29 @@ test("a worktree is named by its branch, else its folder, and its repository by 
   assert.deepEqual([notes.branch, notes.repoFolder, notes.github], [undefined, undefined, undefined]);
   const [kept] = worktreesByLastUse([machine("mac", [])], [rememberedOf(gasho)]);
   assert.deepEqual([kept?.branch, kept?.repoFolder, kept?.github], ["main", "/w/gasho", github]);
+});
+
+test("a worktree shows the name given to it by its folder, a session's, a registered repository's or a remembered one, and the browser does not keep it", () => {
+  const withSession = session("a", { cwd: "/w/a/src", worktree: { path: "/w/a", repo: "/w/repo", branch: "feat/a" } });
+  const m: MachineInfo = {
+    ...machine("mac", [withSession]),
+    repos: [{ path: "/w/repo", worktrees: [{ path: "/w/repo", branch: "main" }, { path: "/w/b", branch: "feat/b" }] }],
+    worktreeNames: { "/w/a": "#1 a", "/w/b": "#2 b", "/w/c": "#3 c" },
+  };
+  const remembered = { machine: "mac", path: "/w/c", label: "feat/c", subfolders: true };
+  const list = worktreesByLastUse([m], [remembered]);
+  assert.deepEqual(
+    list.map((w) => [w.path, worktreeTitle(w), w.label]),
+    [
+      ["/w/a", "#1 a", "feat/a"],
+      ["/w/repo", "main", "main"],
+      ["/w/b", "#2 b", "feat/b"],
+      ["/w/c", "#3 c", "feat/c"],
+    ],
+  );
+  // Kept by the Gasho server: once taken away there, the branch shows again in every browser.
+  assert.equal(rememberedOf(list[0]!).label, "feat/a");
+  assert.equal("name" in rememberedOf(list[0]!), false);
 });
 
 test("remembered worktrees without sessions come last, once each; the tab after a removed one is the next, else the one before", () => {

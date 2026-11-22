@@ -81,7 +81,7 @@ gasho-daemon は GitHub Packages の npm パッケージ `@4rtofl/gasho-daemon` 
 
 セッションの一覧に出すのは、こうして Gasho が起動したセッションだけ。端末や `claude rc` で起動したセッションは、一覧にも通知にも出さず、サイドバーにある worktree のものだけ、タブの上に件数を出す（後述の「Gasho に移す」）。
 
-サイドバーには、これらのセッションがある worktree を、working server に分けずに1つの一覧で出す。どの worktree のセッションかは、gasho-daemon がセッションの作業フォルダーで git を流して調べる。各行にはブランチ名（ブランチが無いときはフォルダー名）とリポジトリ名を出し、working server が2台以上あるときはその名前も出す。最後に会話があったセッションの worktree から並べ、まだ会話がないセッションは起動した時刻で数える。確認を待っているセッションがある worktree には「確認」、オフラインの working server の worktree には「オフライン」と出す。リポジトリの外のフォルダーのセッションと、worktree を調べない前の版の gasho-daemon のセッションは、作業フォルダーごとに1行にする。セッションがまだないときも、一覧の見出しは出す。
+サイドバーには、これらのセッションがある worktree を、working server に分けずに1つの一覧で出す。どの worktree のセッションかは、gasho-daemon がセッションの作業フォルダーで git を流して調べる。各行にはブランチ名（ブランチが無いときはフォルダー名。名前を付けた worktree はその名前。後述の「worktree の名前」）とリポジトリ名を出し、working server が2台以上あるときはその名前も出す。最後に会話があったセッションの worktree から並べ、まだ会話がないセッションは起動した時刻で数える。確認を待っているセッションがある worktree には「確認」、オフラインの working server の worktree には「オフライン」と出す。リポジトリの外のフォルダーのセッションと、worktree を調べない前の版の gasho-daemon のセッションは、作業フォルダーごとに1行にする。セッションがまだないときも、一覧の見出しは出す。
 
 セッションがすべて無くなった worktree も、ブラウザーが覚えていて、一覧の最後に残す。その worktree を押すと、セッションの無い worktree の画面が開き、そこの「サイドバーから外す」で一覧から外せる。覚えるのはそのブラウザーだけなので、スマホと PC では別になる。登録したリポジトリ（次の段落）の worktree は、覚えずに git の一覧に合わせて出し入れする。
 
@@ -151,6 +151,12 @@ clone したリポジトリは、親のフォルダーを信頼していても�
 - 信頼のあとで、フォルダーの `.mcp.json` にある MCP サーバーを使うかを Claude Code が尋ねたときは、Esc で答えて、使わずに起動する。Claude Code は、この答えをフォルダーの `.claude/settings.local.json` に保存する。起動したあとで、そのことを知らせる。使うときは、端末で `claude` を起動し、`/mcp` から有効にする
 - 信頼しているフォルダーの中に作ったフォルダー（リポジトリでないもの）は、その信頼を引き継ぐので、確認は出ない
 
+### worktree の名前
+
+サイドバーの worktree の行には、ブランチ名の代わりに、自分で付けた名前（`#254 accordion` など）を出せる。行を右クリックして（スマホでは長押し）「名前を変更…」で名前を入れる。「名前を消す」か、空にして「変更する」を押すと、ブランチ名に戻る。名前を付けた行は、ポインターを乗せるか、キーボードでフォーカスすると、横にブランチ名（リポジトリの外のフォルダーではフォルダー名）が出る。メニューの見出しと worktree の画面にも、名前とブランチ名を出す。
+
+名前は Gasho サーバーに保存するので、どのブラウザーにも同じ名前が出る。working server がオフラインのあいだも付けられる。Gasho の画面やコマンドで worktree を削除すると、その名前も消す。working server のコマンド（`gasho-daemon worktree name`、後述）でも付けられるので、Claude やスクリプトが worktree を作ったときに名前を付けられる。
+
 ### worktree の削除
 
 使い終わった worktree は、サイドバーの行を右クリックして（スマホでは長押し）「削除…」で、中のセッションとまとめて消せる。確認のダイアログには、フォルダー・ブランチ・working server と、一緒に終わるセッションが出る。「ローカルのブランチ <ブランチ> も消す」は既定でチェックが付いている。未コミットの変更や push していない commit があるときは、件数を出して止まり、「変更を捨てて削除」をもう一度押したときだけ消す。リポジトリの main の worktree は消せない。プラグインも、`useRemoveWorktree`（[docs/plugins.md](docs/plugins.md)、API 1.10）で同じ削除を使える。
@@ -212,7 +218,7 @@ clone したリポジトリは、親のフォルダーを信頼していても�
 
 ### working server のコマンドからセッションを起動する・片付ける
 
-working server の上では、Gasho の画面を通さずに、`gasho-daemon session` でセッションを起動し、入力し、消せる。`gasho-daemon worktree remove` で、ワークツリーを中のセッションごと消せる。Claude Code のセッションから別のセッションを立ち上げて作業させるときや、終わった作業を片付けるときに使う（リポジトリの Skill `.claude/skills/launch-gasho-session` が、ワークツリーを作るところから起動を、`.claude/skills/remove-gasho-worktree` が片付けを、これで行う）。
+working server の上では、Gasho の画面を通さずに、`gasho-daemon session` でセッションを起動し、入力し、消せる。`gasho-daemon worktree remove` で、ワークツリーを中のセッションごと消せる。`gasho-daemon worktree name` で、ワークツリーにサイドバーで出す名前を付けられる。Claude Code のセッションから別のセッションを立ち上げて作業させるときや、終わった作業を片付けるときに使う（リポジトリの Skill `.claude/skills/launch-gasho-session` が、ワークツリーを作るところから起動を、`.claude/skills/remove-gasho-worktree` が片付けを、これで行う）。
 
 ```bash
 gasho-daemon session launch --cwd <フォルダー> --name <名前> [--agent claude|codex] [--trust] [--prompt <文> | --prompt-file <ファイル> | --prompt -]
@@ -220,6 +226,7 @@ gasho-daemon session send <名前か ID> (--text <文> | --file <ファイル> |
 gasho-daemon session list [--json]
 gasho-daemon session remove <名前か ID>
 gasho-daemon worktree remove <フォルダー> [--force]
+gasho-daemon worktree name <フォルダー> (<名前> | --clear)
 ```
 
 - 動いている gasho-daemon に、その置き場（`~/.config/gasho/`、`GASHO_DAEMON_CONFIG` で変わる）の Unix ソケット `control.sock` で頼む。ソケットは本人だけが使える（0600）。Gasho サーバーを通らないので、ペアリングも要らず、Gasho サーバーが止まっていても使える
@@ -231,6 +238,7 @@ gasho-daemon worktree remove <フォルダー> [--force]
 - `list` は、セッションの ID の次にエージェント（`claude` か `codex`）を出す。作業フォルダーが無くなったセッションに、行末の `(folder missing)`（`--json` では `"cwdMissing": true`）を付ける
 - `session remove` は、Gasho の画面のセッションの削除と同じ。Claude Code を終わらせて Gasho から外し、`{sessionId, name, cwd}` を JSON で出す。会話は残る。名前と ID の探し方は `send` と同じ。フォルダーが先に消えたセッションも消せる
 - `worktree remove` は、Gasho の画面のワークツリーの削除と同じ。中のセッションを終わらせてからフォルダーを消し（`git worktree remove`）、`{path, branch, ended}` を JSON で出す。`ended` は終わらせたセッション（`{sessionId, name}`）。未コミットの変更や、どのリモートにも無いコミットがあれば、何もせずにその件数を理由として返す。`--force` はそれでも消す。ブランチは消さない。`git worktree remove` で直接消すと、中のセッションは消えたフォルダーで動き続け、「リポジトリ外」に残る
+- `worktree name` は、Gasho の画面の「名前を変更…」と同じ。指定したフォルダーのワークツリー（ワークツリーの中のフォルダーを指定しても、そのワークツリー）に名前を付け、`{path, name}` を JSON で出す。`path` はワークツリーの最上位のフォルダー。`--clear` で名前を消し、ブランチ名に戻す。名前に空白や `#` が入るときは、`"#254 accordion"` のように引用符で囲む（囲まないと、シェルが `#` から後ろを読まない）。名前は Gasho サーバーに保存するので、gasho-daemon が Gasho サーバーにつながっていないときは、そう伝えて失敗する。名前を保存できない古い Gasho サーバーは答えないので、10 秒待って失敗する
 - 失敗したときは、gasho-daemon が返した理由をエラーとして出す（終了コード 1）
 - gasho-daemon が動いていないとき（ソケットが無い古い版のときも）は、そう伝えて起動の仕方を示す
 - `service install` で入れたときは PATH に `gasho-daemon` が無いので、`node ~/.local/share/gasho/daemon/current/node_modules/@4rtofl/gasho-daemon/lib/cli.js session …` で呼ぶ

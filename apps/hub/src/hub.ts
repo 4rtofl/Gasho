@@ -277,6 +277,19 @@ function nameError(name: unknown, required: boolean): string | undefined {
   return undefined;
 }
 
+/**
+ * The name given to a worktree (worktree.name): the name to keep, undefined to take it away (none given, or only
+ * spaces), or an error message.
+ */
+export function worktreeNameOf(name: unknown): { name: string | undefined } | { error: string } {
+  if (name === undefined) return { name: undefined };
+  if (typeof name !== "string") return { error: "名前が正しくありません。" };
+  const trimmed = name.trim();
+  if (trimmed.length > MAX_NAME) return { error: `名前は${MAX_NAME}文字までです。` };
+  if (/\p{Cc}/u.test(trimmed)) return { error: "名前に改行や制御文字は使えません。" };
+  return { name: trimmed || undefined };
+}
+
 /** An absolute path on a working server: an error message, or undefined. */
 function folderError(dir: unknown): string | undefined {
   if (typeof dir !== "string" || !dir.startsWith("/") || dir.length > MAX_PATH || /\p{Cc}/u.test(dir)) return "フォルダーを絶対パスで指定してください。";
@@ -745,6 +758,10 @@ export class Hub {
       case "plugin.event":
         this.plugins?.onDaemonMessage(id, peer, msg);
         break;
+      case "worktree.name":
+        if (typeof msg.requestId !== "string" || msg.requestId.length > 100) break;
+        peer.send({ type: "worktree.name.result", requestId: msg.requestId, result: this.nameWorktree(m, msg.path, msg.name) });
+        break;
       case "hook": {
         if (!isHookEvent(msg.event)) break;
         const event: MachineHookEvent = { ...boundedHook(msg.event), machine: id };
@@ -1000,6 +1017,13 @@ export class Hub {
         this.store.setMeta(DEFAULT_AGENT_KEY, msg.agent);
         this.broadcastServer();
         peer.send({ type: "server.result", requestId: msg.requestId, result: { ok: true } });
+        break;
+      }
+      case "worktree.name": {
+        if (typeof msg.requestId !== "string" || !msg.requestId || msg.requestId.length > 100) return;
+        const m = typeof msg.machine === "string" ? this.machines.get(msg.machine) : undefined;
+        const result: CommandResult = m ? this.nameWorktree(m, msg.path, msg.name) : { ok: false, error: "working server が見つかりません。" };
+        peer.send({ type: "server.result", requestId: msg.requestId, result });
         break;
       }
       case "plugin.catalog.get":
@@ -1332,6 +1356,20 @@ export class Hub {
   }
 
   // ---- helpers ----
+
+  /** Names a worktree of `m`, or takes its name away, for every browser (worktree.name, from a browser or gasho-daemon). */
+  private nameWorktree(m: MachineInfo, dir: unknown, name: unknown): CommandResult {
+    const wrong = folderError(dir);
+    if (wrong) return { ok: false, error: wrong };
+    const given = worktreeNameOf(name);
+    if ("error" in given) return { ok: false, error: given.error };
+    this.store.setWorktreeName(m.id, dir as string, given.name);
+    const names = this.store.worktreeNames(m.id);
+    if (names) m.worktreeNames = names;
+    else delete m.worktreeNames;
+    this.broadcast({ type: "machine", machine: m });
+    return { ok: true };
+  }
 
   private machine(id: string, name: string): MachineInfo {
     let m = this.machines.get(id);

@@ -514,6 +514,12 @@ export interface MachineInfo {
    * that cannot register them, and until gasho-daemon has sent them since the Gasho server started.
    */
   repos?: RegisteredRepo[];
+  /**
+   * The names given to its worktrees, shown in the sidebar in place of the branch (worktree.name), by the worktree's top
+   * folder (SessionWorktree.path; for a folder outside any repository, the session's folder). The Gasho server keeps
+   * them, also while the working server is offline. Absent when none is named, and from an older Gasho server.
+   */
+  worktreeNames?: Record<string, string>;
 }
 
 /**
@@ -1042,7 +1048,12 @@ export type DaemonToHub =
    * The tokens used per day: the whole last year once connected, then the days whose totals changed, at most once a
    * minute. Each is the day's total, so that telling it again changes nothing.
    */
-  | { type: "token.days"; days: TokenDay[] };
+  | { type: "token.days"; days: TokenDay[] }
+  /**
+   * Names a worktree of this working server (MachineInfo.worktreeNames), or takes its name away (no `name`), for
+   * `gasho-daemon worktree name`; answered with worktree.name.result. An older Gasho server does not answer.
+   */
+  | { type: "worktree.name"; requestId: string; path: string; name?: string };
 
 // gasho-hub -> gasho-daemon
 export type HubToDaemon =
@@ -1066,7 +1077,9 @@ export type HubToDaemon =
    * A call of a method of a plugin's daemon part, from a browser. `sessionId`: the session it is about, if any. `write`:
    * a write method (gasho-plugin.json), recorded in the operations log; only it may change GitHub (ctx.github.write).
    */
-  | { type: "plugin.request"; requestId: string; plugin: string; sessionId?: string; method: string; params?: unknown; timeoutMs: number; write?: boolean };
+  | { type: "plugin.request"; requestId: string; plugin: string; sessionId?: string; method: string; params?: unknown; timeoutMs: number; write?: boolean }
+  /** The answer to worktree.name. */
+  | { type: "worktree.name.result"; requestId: string; result: CommandResult };
 
 // gasho-hub -> browser
 export type HubToClient =
@@ -1158,6 +1171,11 @@ export type ClientToHub =
   | { type: "hub.update"; requestId: string; version: string }
   /** Changes the agent a new session starts with (answered with server.result; every browser gets the new server). */
   | { type: "defaultAgent.set"; requestId: string; agent: AgentKind }
+  /**
+   * Names a worktree of a working server, for every browser (MachineInfo.worktreeNames), or takes its name away (no
+   * `name`, or only spaces): it shows its branch again. Answered with server.result. Also while the working server is offline.
+   */
+  | { type: "worktree.name"; requestId: string; machine: string; path: string; name?: string }
   | ({ requestId: string; machine: string } & SessionCommand)
   /**
    * Calls a method of a plugin's daemon part on a working server (answered with plugin.response). `summary`: what the

@@ -83,6 +83,8 @@ export interface WorktreeSessions {
   machine: MachineInfo;
   /** The branch, or the folder's name when no branch is checked out or the folder is not in a repository. */
   label: string;
+  /** The name given to it (MachineInfo.worktreeNames), which shows in place of `label` (worktreeTitle). */
+  name?: string;
   /** The repository's name: its GitHub repository's, or its folder's. Absent outside a repository. */
   repo?: string;
   /** Its top folder: where "＋" starts a session and whose past conversations are listed. */
@@ -202,8 +204,20 @@ export function worktreesByLastUse(machines: MachineInfo[], remembered: Remember
       if (!s.managed && s.pid) byId.get(worktreeId(machine.id, s))?.outside.push(s);
     }
   }
-  for (const w of worktrees) w.outside.sort(byStart);
+  for (const w of worktrees) {
+    w.outside.sort(byStart);
+    const name = w.machine.worktreeNames?.[w.path];
+    if (name) w.name = name;
+  }
   return worktrees;
+}
+
+/** What a worktree shows as: the name given to it, or its branch (or its folder's name). */
+export const worktreeTitle = (w: Pick<WorktreeSessions, "label" | "name">): string => w.name ?? w.label;
+
+/** What the name given to a worktree stands in for: its branch, or its folder. */
+export function worktreeOrigin(w: Pick<WorktreeSessions, "label" | "branch">): string {
+  return w.branch ? `ブランチ ${w.branch}` : `フォルダー ${w.label}`;
 }
 
 /**

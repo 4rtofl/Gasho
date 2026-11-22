@@ -11,7 +11,7 @@ import { CloneRepoButton, RegisterRepos, RepoFilter } from "@/components/repo-fi
 import { ReposDialog } from "@/components/repos-dialog";
 import { SessionActionDialog, SessionContextMenu, type SessionActionRequest } from "@/components/session-menu";
 import { UnusedSessionsDialog } from "@/components/unused-sessions-dialog";
-import { RemoveWorktreeDialog, WorktreeContextMenu } from "@/components/worktree-menu";
+import { WorktreeActionDialog, WorktreeContextMenu, type WorktreeActionRequest } from "@/components/worktree-menu";
 import { showNotice, useNotice } from "@/lib/notice";
 import { AgentMark } from "@/components/agent-mark";
 import { LaunchMenu } from "@/components/launch-menu";
@@ -60,7 +60,9 @@ import {
   worktreeDot,
   worktreeId,
   worktreeKey,
+  worktreeOrigin,
   worktreesByLastUse,
+  worktreeTitle,
   type WorktreeSessions,
 } from "@/lib/sessions";
 import { reloadToNewBuild, useAppState, useReadWhileOpen } from "@/lib/store";
@@ -240,8 +242,8 @@ export function App() {
   const [gassho, setGassho] = useState<GasshoFrom | null>(null);
   // What was picked from a session tab's menu (rename, fork, remove); its dialog is open meanwhile.
   const [sessionAction, setSessionAction] = useState<SessionActionRequest | null>(null);
-  // The worktree whose row's menu picked "削除…"; its dialog is open meanwhile.
-  const [removingWorktree, setRemovingWorktree] = useState<WorktreeSessions | null>(null);
+  // What was picked from a worktree row's menu (rename, remove); its dialog is open meanwhile.
+  const [worktreeAction, setWorktreeAction] = useState<WorktreeActionRequest | null>(null);
   // What to tell once the screen it belonged to went away (a worktree removed with a warning).
   const notice = useNotice();
   // The dialog that starts a new session, opened from the "＋" of the sidebar's worktree list.
@@ -453,17 +455,19 @@ export function App() {
   });
 
   // A worktree's row, in Gasho's list and in a grouping's categories: its state (a bell in its place while a session
-  // has a notification not read), its name, the line under it (its repository, and its working server when there are
-  // several, unless the grouping gave another or none), and whether it waits for an answer or is offline. Which agents
-  // run its sessions is not told here: the sessions' tabs tell it.
+  // has a notification not read), its name (the one given to it, whose branch the tooltip tells, or its branch), the
+  // line under it (its repository, and its working server when there are several, unless the grouping gave another or
+  // none), and whether it waits for an answer or is offline. Which agents run its sessions is not told here: the
+  // sessions' tabs tell it.
   const worktreeRow = (w: WorktreeSessions, line?: string): SidebarItem => ({
     id: w.id,
-    label: w.label,
+    label: worktreeTitle(w),
+    tip: w.name ? worktreeOrigin(w) : undefined,
     description: line === undefined ? [w.repo, machines.length > 1 ? w.machine.name : undefined].filter(Boolean).join(" · ") || undefined : line || undefined,
     icon: <StatusDot {...worktreeDot(w, unreadOnes)} />,
     badge: !w.machine.connected ? "オフライン" : w.sessions.some((s) => s.status === "waiting") ? "確認" : undefined,
     wrap: (button: ReactElement) => (
-      <WorktreeContextMenu worktree={w} onPick={setRemovingWorktree}>
+      <WorktreeContextMenu worktree={w} onPick={setWorktreeAction}>
         {button}
       </WorktreeContextMenu>
     ),
@@ -513,7 +517,8 @@ export function App() {
     setMoveError(undefined);
     const settled = () => setMoves((prev) => prev.filter((x) => x !== pending));
     const plugins = (id: string) => (id === OTHER_CATEGORY ? null : id);
-    const label = byId.get(m.id)?.label ?? m.id;
+    const moved = byId.get(m.id);
+    const label = moved ? worktreeTitle(moved) : m.id;
     move({ worktree: m.id, from: plugins(m.from), to: plugins(m.to), index }).then(settled, (e: unknown) => {
       settled();
       setHeldWorktrees((h) => (h?.grouping === grouping ? moveHeldWorktree(h, m.id, m.from, back) : h));
@@ -772,7 +777,7 @@ export function App() {
             : undefined
         }
       />
-      <RemoveWorktreeDialog worktree={removingWorktree} onClose={() => setRemovingWorktree(null)} />
+      <WorktreeActionDialog request={worktreeAction} onClose={() => setWorktreeAction(null)} />
       <UnusedSessionsDialog />
       <LaunchDialog
         open={launchOpen}

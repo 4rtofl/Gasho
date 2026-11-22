@@ -656,6 +656,48 @@ test("the default agent is kept by the Gasho server, and every browser hears of 
   assert.equal(kept.server?.defaultAgent, "codex");
 });
 
+test("a worktree's name is kept by the Gasho server for every browser, from a browser or gasho-daemon, until it is taken away", () => {
+  const { store, hub, machineId, machineToken, browserId } = setup();
+  const other = store.createDevice("browser", "PC");
+  const a = fakePeer<HubToClient>(browserId);
+  const b = fakePeer<HubToClient>(other.device.id);
+  hub.onClientConnect(a);
+  hub.onClientConnect(b);
+  const namesOf = (m: HubToClient | undefined) => (m?.type === "machine" ? m.machine.worktreeNames : "not a machine");
+
+  // Also while the working server is offline.
+  hub.onClientMessage(a, { type: "worktree.name", requestId: "r1", machine: machineId, path: "/w/issue-254", name: "  #254 accordion " });
+  assert.deepEqual(a.sent.at(-1), { type: "server.result", requestId: "r1", result: { ok: true } });
+  assert.deepEqual(namesOf(b.sent.at(-1)), { "/w/issue-254": "#254 accordion" });
+
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.37.0" });
+  hub.onDaemonMessage(d, { type: "worktree.name", requestId: "d1", path: "/w/issue-255", name: "#255 name" });
+  assert.deepEqual(d.sent.at(-1), { type: "worktree.name.result", requestId: "d1", result: { ok: true } });
+  assert.deepEqual(namesOf(b.sent.at(-1)), { "/w/issue-254": "#254 accordion", "/w/issue-255": "#255 name" });
+
+  // Only spaces takes it away, as no name does: the branch shows again.
+  hub.onClientMessage(a, { type: "worktree.name", requestId: "r2", machine: machineId, path: "/w/issue-254", name: "  " });
+  hub.onDaemonMessage(d, { type: "worktree.name", requestId: "d2", path: "/w/issue-255" });
+  assert.equal(namesOf(b.sent.at(-1)), undefined);
+
+  hub.onClientMessage(a, { type: "worktree.name", requestId: "r3", machine: machineId, path: "relative", name: "x" });
+  hub.onClientMessage(a, { type: "worktree.name", requestId: "r4", machine: machineId, path: "/w/x", name: "x".repeat(61) });
+  hub.onClientMessage(a, { type: "worktree.name", requestId: "r5", machine: "unknown", path: "/w/x", name: "x" });
+  assert.deepEqual(
+    a.sent.slice(-3).map((m) => m.type === "server.result" && m.result.ok),
+    [false, false, false],
+  );
+
+  // Kept over a restart of the Gasho server.
+  hub.onClientMessage(a, { type: "worktree.name", requestId: "r6", machine: machineId, path: "/w/issue-254", name: "#254 accordion" });
+  const c = fakePeer<HubToClient>(browserId);
+  new Hub(store).onClientConnect(c);
+  const kept = c.sent.find((m) => m.type === "snapshot");
+  assert.ok(kept?.type === "snapshot");
+  assert.deepEqual(kept.machines.find((m) => m.id === machineId)?.worktreeNames, { "/w/issue-254": "#254 accordion" });
+});
+
 test("an agent Gasho does not know is refused", () => {
   assert.match(validateCommand({ type: "session.launch", cwd: "/w", agent: "gemini" as never }) ?? "", /エージェント/);
   assert.equal(validateCommand({ type: "session.launch", cwd: "/w", agent: "codex" }), undefined);

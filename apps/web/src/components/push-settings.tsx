@@ -28,7 +28,13 @@ export function PushSettingsSection() {
   };
   const toggle = (next: boolean) => {
     if (!push) return;
-    void run(() => (next ? enablePush(push, DEFAULT_KINDS) : disablePush()));
+    void run(async () => {
+      if (!next) return disablePush();
+      const failed = await enablePush(push, DEFAULT_KINDS);
+      // Turned on while it is folded, it opens to show the kinds to notify.
+      if (!failed) setOpen(true);
+      return failed;
+    });
   };
   const toggleKind = (kind: NotificationKind, next: boolean) => {
     if (!push || !mine) return;
@@ -65,7 +71,7 @@ export function PushSettingsSection() {
         </>
       }
     >
-      {on && mine && (
+      {on && mine ? (
         <ul className="divide-y divide-border rounded-xl border border-border bg-background">
           {NOTIFICATION_KINDS.map(({ kind, label, note }) => (
             <li key={kind}>
@@ -79,6 +85,8 @@ export function PushSettingsSection() {
             </li>
           ))}
         </ul>
+      ) : (
+        <p className="text-xs text-muted-foreground">オンにすると、通知する種類を選べます。</p>
       )}
     </AccordionSection>
   );

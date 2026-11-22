@@ -169,6 +169,7 @@ export function DefaultAgentSection() {
       description="「＋」で起動するエージェントです。どのブラウザーでも同じです。Codex を使えない working server では、Claude Code を起動します。"
       open={open}
       onOpenChange={setOpen}
+      actions={<span className="text-sm">{AGENT_NAME[current]}</span>}
     >
       <div role="radiogroup" aria-label="既定のエージェント" className="flex flex-wrap gap-2">
         {(["claude", "codex"] as const).map((agent) => (

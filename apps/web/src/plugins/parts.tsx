@@ -20,8 +20,10 @@ import type {
 } from "@gasho/plugin-sdk";
 import type { MachineInfo, PluginInfo, PluginSettingSpec, SessionInfo } from "@gasho/protocol";
 import { SidePanel } from "@/components/side-panel";
+import { AccordionSection } from "@/components/ui/unfold-accordion";
 import { go, hrefOf, useRoute, type PagePanel, type Route, type SessionPanel, type WorktreeView } from "@/lib/route";
 import type { WorktreeSessions } from "@/lib/sessions";
+import { setSettingsSectionOpen, useSettingsSectionOpen } from "@/lib/settings-sections";
 import { useAppState } from "@/lib/store";
 import { composing } from "@/lib/text-input";
 import { cn } from "@/lib/utils";
@@ -573,46 +575,55 @@ export function PluginSettingsSections() {
   const shown = infos
     .filter((info) => info.enabled && (Object.keys(info.manifest.settings ?? {}).length > 0 || parts.find((p) => p.info.id === info.id)?.def.settings))
     .sort((a, b) => a.manifest.name.localeCompare(b.manifest.name, "ja"));
-  // Opened for one of them (its "設定" on the plugins screen): scrolled to once it is drawn, also after the Gasho
-  // server's first snapshot when the page was reloaded there.
+  // Opened for one of them (its "設定" on the plugins screen): its section is opened and scrolled to once it is drawn,
+  // also after the Gasho server's first snapshot when the page was reloaded there. It is drawn open at its full height
+  // at once, so that the page is long enough to scroll to it; then it folds as any other.
   const route = useRoute();
   const opened = route.name === "settings" ? route.plugin : undefined;
-  const drawn = shown.some((info) => info.id === opened);
+  const [handled, setHandled] = useState<string>();
+  const pending = opened !== handled && shown.some((info) => info.id === opened) ? opened : undefined;
   useEffect(() => {
-    if (opened && drawn) document.getElementById(`plugin-settings-${opened}`)?.scrollIntoView({ block: "start" });
-  }, [opened, drawn]);
+    if (!pending) return;
+    setSettingsSectionOpen(pluginSection(pending), true);
+    setHandled(pending);
+    document.getElementById(`plugin-settings-${pending}`)?.scrollIntoView({ block: "start" });
+  }, [pending]);
   return (
     <>
-      {shown.map((info) => {
-        const part = parts.find((p) => p.info.id === info.id);
-        const Custom = part?.def.settings;
-        return (
-          <section
-            key={info.id}
-            id={`plugin-settings-${info.id}`}
-            aria-labelledby={`plugin-settings-title-${info.id}`}
-            className="scroll-mt-4 space-y-4 rounded-2xl border border-border bg-surface/40 p-4"
-          >
-            <div>
-              <h2 id={`plugin-settings-title-${info.id}`} className="text-sm font-medium">
-                {info.manifest.name}
-              </h2>
-              <p className="mt-0.5 text-xs text-muted-foreground">プラグインの設定です。</p>
-            </div>
-            <PluginScope id={info.id}>
-              {Object.entries(info.manifest.settings ?? {}).map(([key, spec]) => (
-                <SettingRow key={key} settingKey={key} spec={spec} />
-              ))}
-            </PluginScope>
-            {part && Custom && (
-              <Part part={part}>
-                <Custom />
-              </Part>
-            )}
-          </section>
-        );
-      })}
+      {shown.map((info) => (
+        <PluginSettingsSection key={info.id} info={info} part={parts.find((p) => p.info.id === info.id)} pending={info.id === pending} />
+      ))}
     </>
+  );
+}
+
+const pluginSection = (plugin: string) => `plugin:${plugin}`;
+
+function PluginSettingsSection({ info, part, pending }: { info: PluginInfo; part: PluginPart | undefined; pending: boolean }) {
+  const [open, setOpen] = useSettingsSectionOpen(pluginSection(info.id));
+  const Custom = part?.def.settings;
+  return (
+    <AccordionSection
+      id={`plugin-settings-${info.id}`}
+      title={info.manifest.name}
+      description="プラグインの設定です。"
+      open={open || pending}
+      instant={pending}
+      onOpenChange={setOpen}
+      className="scroll-mt-4"
+      bodyClassName="space-y-4"
+    >
+      <PluginScope id={info.id}>
+        {Object.entries(info.manifest.settings ?? {}).map(([key, spec]) => (
+          <SettingRow key={key} settingKey={key} spec={spec} />
+        ))}
+      </PluginScope>
+      {part && Custom && (
+        <Part part={part}>
+          <Custom />
+        </Part>
+      )}
+    </AccordionSection>
   );
 }
 

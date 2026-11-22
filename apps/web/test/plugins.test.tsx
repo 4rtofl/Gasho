@@ -1,10 +1,14 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { PluginInfo } from "@gasho/protocol";
+import { MotionGlobalConfig } from "framer-motion";
 import { beforeEach, expect, test, vi } from "vitest";
 import { UnusedSessionsDialog } from "@/components/unused-sessions-dialog";
 import { PluginConversationEnd, PluginHeaderItems, PluginPageView, PluginPanelView, PluginSettingsSections } from "@/plugins/parts";
 import { connectHub, machine, session } from "./hub";
+
+// The test DOM rejects the animations that are cancelled when a part goes away (the settings' sections that unfold).
+MotionGlobalConfig.skipAnimations = true;
 
 beforeEach(() => {
   location.hash = "";
@@ -231,7 +235,7 @@ test("a part that throws shows an error in its place, and the session's other pa
   expect(screen.getByRole("button", { name: "メモ" })).toBeTruthy();
 });
 
-test("the settings screen opened for a plugin scrolls to its section once it is drawn, also when opened before the snapshot", async () => {
+test("the settings screen opened for a plugin opens its section and scrolls to it once it is drawn, also when opened before the snapshot", async () => {
   const scrolled: Element[] = [];
   vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (this: Element) {
     scrolled.push(this);
@@ -240,7 +244,10 @@ test("the settings screen opened for a plugin scrolls to its section once it is 
   render(<PluginSettingsSections />);
   expect(scrolled).toEqual([]);
   await connectHub({ machines: [m1], plugins: [info({ id: "aaa", manifest: { ...info().manifest, id: "aaa", name: "前のプラグイン" } }), info()] });
-  expect(scrolled).toEqual([screen.getByRole("region", { name: "メモ" })]);
+  const section = screen.getByRole("region", { name: "メモ" });
+  expect(scrolled).toEqual([section]);
+  expect(within(section).getByRole("checkbox", { name: "表示する" })).toBeTruthy();
+  expect(within(screen.getByRole("region", { name: "前のプラグイン" })).queryByRole("checkbox")).toBeNull();
   vi.restoreAllMocks();
 });
 
@@ -249,6 +256,7 @@ test("the settings of a plugin are kept on the Gasho server or in this browser, 
   const hub = await connectHub({ machines: [m1], plugins: [info()] });
   render(<PluginSettingsSections />);
   const section = screen.getByRole("region", { name: "メモ" });
+  await user.click(within(section).getByRole("button", { name: "メモ" }));
 
   await user.click(within(section).getByRole("checkbox", { name: "表示する" }));
   expect(hub.sent.at(-1)).toMatchObject({ type: "plugin.setting", plugin: "notes", key: "shown", value: false });

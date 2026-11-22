@@ -281,6 +281,7 @@ test("設定で選んだ文字の大きさが、会話の文字に出る", async
   await expect(reply).toHaveCSS("font-size", "14px");
 
   await page.goto("/#/settings");
+  await page.getByRole("button", { name: "会話の文字の大きさ" }).click();
   await page.getByRole("button", { name: "大きくする" }).click();
   await page.getByRole("button", { name: "大きくする" }).click();
   await expect(page.getByText("16px")).toBeVisible();

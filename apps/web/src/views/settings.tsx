@@ -1,16 +1,18 @@
 // Settings of this browser: the size of the conversation's text on the session screen, with a sample of a
 // conversation to see it by, and its notifications (Web Push). The default agent is the Gasho server's, the same for
-// every browser. Then the versions of Gasho running now.
+// every browser. Then the versions of Gasho running now. Each is a section that folds (lib/settings-sections).
 import { Check, CircleAlert, Copy, Info, RotateCcw, Type } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { AgentKind, TranscriptEntry } from "@gasho/protocol";
 import { PushSettingsSection } from "@/components/push-settings";
 import { TranscriptSample } from "@/components/transcript";
 import { Badge } from "@/components/ui/badge";
+import { AccordionSection } from "@/components/ui/unfold-accordion";
 import { MorphingButton, type MorphingButtonStatus } from "@/components/ui/morphing-button";
 import { AGENT_NAME, codexOffered } from "@/lib/agents";
 import { CHAT_TEXT_DEFAULT, CHAT_TEXT_MAX, CHAT_TEXT_MIN, useChatTextSize } from "@/lib/chat-text";
 import { go } from "@/lib/route";
+import { useSettingsSectionOpen } from "@/lib/settings-sections";
 import { OWN_BUILD, setDefaultAgent, useAppState } from "@/lib/store";
 import { copyToClipboard } from "@/lib/utils";
 import { versionRows, versionsText } from "@/lib/versions";
@@ -71,6 +73,7 @@ const SAMPLE: TranscriptEntry[] = [
 
 export function SettingsView() {
   const [size, setSize] = useChatTextSize();
+  const [open, setOpen] = useSettingsSectionOpen("chat-text");
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 p-4 md:p-6">
       <div>
@@ -78,15 +81,14 @@ export function SettingsView() {
         <p className="text-sm text-muted-foreground">このブラウザで使う設定です。スマホと PC で別々に決められます。</p>
       </div>
 
-      <section aria-labelledby="chat-text-size" className="space-y-4 rounded-2xl border border-border bg-surface/40 p-4">
-        <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
-          <div className="min-w-0">
-            <h2 id="chat-text-size" className="flex items-center gap-2 text-sm font-medium">
-              <Type className="size-4" />
-              会話の文字の大きさ
-            </h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">セッション画面の会話の文字です。入力欄の文字は変わりません。</p>
-          </div>
+      <AccordionSection
+        icon={<Type className="size-4" />}
+        title="会話の文字の大きさ"
+        description="セッション画面の会話の文字です。入力欄の文字は変わりません。"
+        open={open}
+        onOpenChange={setOpen}
+        bodyClassName="space-y-4"
+        actions={
           <div className="flex items-center gap-3 text-sm">
             <span className="tabular-nums">
               {size}px{size === CHAT_TEXT_DEFAULT && <span className="text-muted-foreground">（標準）</span>}
@@ -102,8 +104,8 @@ export function SettingsView() {
               </button>
             )}
           </div>
-        </div>
-
+        }
+      >
         <div className="flex items-center gap-3">
           <button type="button" aria-label="小さくする" title="小さくする" disabled={size <= CHAT_TEXT_MIN} onClick={() => setSize(size - 1)} className={STEP}>
             <span aria-hidden className="text-xs font-medium">
@@ -117,7 +119,7 @@ export function SettingsView() {
             step={1}
             value={size}
             onChange={(e) => setSize(Number(e.currentTarget.value))}
-            aria-labelledby="chat-text-size"
+            aria-label="会話の文字の大きさ"
             aria-valuetext={`${size}px`}
             className="h-6 min-w-0 flex-1 cursor-pointer accent-foreground"
           />
@@ -132,7 +134,7 @@ export function SettingsView() {
           <p className="text-xs text-muted-foreground">見本</p>
           <TranscriptSample entries={SAMPLE} textSize={size} />
         </div>
-      </section>
+      </AccordionSection>
 
       <DefaultAgentSection />
 
@@ -153,6 +155,7 @@ const COPIED_MS = 2000;
 export function DefaultAgentSection() {
   const { server, machines } = useAppState();
   const [error, setError] = useState<string>();
+  const [open, setOpen] = useSettingsSectionOpen("default-agent");
   const current = server?.defaultAgent;
   if (!current || !machines.some(codexOffered)) return null;
   const pick = async (agent: AgentKind) => {
@@ -161,14 +164,13 @@ export function DefaultAgentSection() {
     if (!r.ok) setError(r.error ?? "変えられませんでした。");
   };
   return (
-    <section aria-labelledby="default-agent" className="space-y-3 rounded-2xl border border-border bg-surface/40 p-4">
-      <div>
-        <h2 id="default-agent" className="text-sm font-medium">既定のエージェント</h2>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          「＋」で起動するエージェントです。どのブラウザーでも同じです。Codex を使えない working server では、Claude Code を起動します。
-        </p>
-      </div>
-      <div role="radiogroup" aria-labelledby="default-agent" className="flex flex-wrap gap-2">
+    <AccordionSection
+      title="既定のエージェント"
+      description="「＋」で起動するエージェントです。どのブラウザーでも同じです。Codex を使えない working server では、Claude Code を起動します。"
+      open={open}
+      onOpenChange={setOpen}
+    >
+      <div role="radiogroup" aria-label="既定のエージェント" className="flex flex-wrap gap-2">
         {(["claude", "codex"] as const).map((agent) => (
           <button
             key={agent}
@@ -187,7 +189,7 @@ export function DefaultAgentSection() {
         ))}
       </div>
       {error && <p className="text-xs text-red-400">{error}</p>}
-    </section>
+    </AccordionSection>
   );
 }
 
@@ -203,17 +205,16 @@ function VersionsSection() {
     return () => clearTimeout(timer);
   }, [copied]);
   const openUpdates = () => go({ name: "devices", section: "updates" });
+  const [open, setOpen] = useSettingsSectionOpen("versions");
 
   return (
-    <section aria-labelledby="versions" className="space-y-3 rounded-2xl border border-border bg-surface/40 p-4">
-      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
-        <div className="min-w-0">
-          <h2 id="versions" className="flex items-center gap-2 text-sm font-medium">
-            <Info className="size-4" />
-            バージョン
-          </h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">いま動いている Gasho のバージョンです。不具合を伝えるときは、まとめてコピーして貼ってください。</p>
-        </div>
+    <AccordionSection
+      icon={<Info className="size-4" />}
+      title="バージョン"
+      description="いま動いている Gasho のバージョンです。不具合を伝えるときは、まとめてコピーして貼ってください。"
+      open={open}
+      onOpenChange={setOpen}
+      actions={
         <MorphingButton
           status={copied.status}
           idleText="バージョンをコピー"
@@ -224,8 +225,8 @@ function VersionsSection() {
           errorIcon={<CircleAlert className="size-3.5" />}
           onClick={() => void copyToClipboard(versionsText(rows)).then((ok) => setCopied({ status: ok ? "success" : "error" }))}
         />
-      </div>
-
+      }
+    >
       <ul className="divide-y divide-border rounded-xl border border-border bg-background">
         {rows.map((r) => (
           <li key={r.key} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 p-3">
@@ -255,6 +256,6 @@ function VersionsSection() {
           </li>
         ))}
       </ul>
-    </section>
+    </AccordionSection>
   );
 }

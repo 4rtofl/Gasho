@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { PermissionRequestInfo } from "@gasho/protocol";
 import { afterEach, expect, test, vi } from "vitest";
@@ -101,6 +101,41 @@ test("Claude's questions are answered once each has an option or words of one's 
   });
 });
 
+test("words of one's own are sent with ⌘/Ctrl+Enter once every question has an answer, and Enter adds a line", async () => {
+  const user = userEvent.setup();
+  const hub = await connectHub();
+  show(
+    request({
+      toolName: "AskUserQuestion",
+      questions: [
+        { question: "どの方式にしますか？", header: "方式", options: [{ label: "A 案" }] },
+        { question: "どれを足しますか？", header: "追加", options: [{ label: "テスト" }] },
+      ],
+    }),
+  );
+  const field = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "方式：自分の言葉で答える" });
+  await user.type(field, "C 案{Enter}も");
+  expect(field.value).toBe("C 案\nも");
+  // The second question has no answer yet, as when 回答する cannot be pressed.
+  await user.keyboard("{Meta>}{Enter}{/Meta}");
+  expect(hub.commands()).toEqual([]);
+
+  await user.click(screen.getByRole("radio", { name: "テスト" }));
+  // The Enter that ends a conversion: Chrome sends it while composing, Safari after, with keyCode 229.
+  fireEvent.keyDown(field, { key: "Enter", metaKey: true, isComposing: true });
+  fireEvent.keyDown(field, { key: "Enter", ctrlKey: true, keyCode: 229 });
+  expect(hub.commands()).toEqual([]);
+
+  await user.click(field);
+  await user.keyboard("{Control>}{Enter}{/Control}");
+  expect(hub.commands()).toEqual([
+    expect.objectContaining({ decision: "allow", answers: [{ picked: [], text: "C 案\nも" }, { picked: [0] }] }),
+  ]);
+  // Not again while it is being sent.
+  fireEvent.keyDown(field, { key: "Enter", metaKey: true });
+  expect(hub.commands()).toHaveLength(1);
+});
+
 test("a question answered waits to leave, and can be answered again if it is still there after a while", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
@@ -132,7 +167,17 @@ test("a plan is approved in the mode chosen, or sent back with what to change", 
   await user.click(screen.getByRole("button", { name: "直してほしいところを伝える" }));
   const send = screen.getByRole<HTMLButtonElement>("button", { name: "送る" });
   expect(send.disabled).toBe(true);
-  await user.type(screen.getByRole("textbox", { name: "計画の直してほしいところ" }), "  テストを先に書く  ");
+  const field = screen.getByRole("textbox", { name: "計画の直してほしいところ" });
+  // Nothing written: nothing to send, as with 送る.
+  await user.keyboard("{Meta>}{Enter}{/Meta}");
+  expect(hub.commands()).toHaveLength(1);
+  await user.type(field, "  テストを先に書く  ");
   await user.click(send);
   expect(hub.commands().at(-1)).toMatchObject({ permissionId: "plan-1", decision: "deny", message: "テストを先に書く" });
+
+  await hub.answer({ ok: false, error: "送れませんでした。" });
+  await user.type(field, "{Enter}型も足す");
+  await user.keyboard("{Meta>}{Enter}{/Meta}");
+  expect(hub.commands()).toHaveLength(3);
+  expect(hub.commands().at(-1)).toMatchObject({ permissionId: "plan-1", decision: "deny", message: "テストを先に書く  \n型も足す" });
 });

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import fsp from "node:fs/promises";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
@@ -11,10 +12,13 @@ import { commandOf, installOf, layoutOf, serviceCommand } from "../src/install.t
 import {
   activateCommands,
   atLeast,
+  CHROME_HOST,
+  chromeHostCheck,
   type Check,
   doctor,
   formatChecks,
   launchdPlist,
+  nativeHostDirs,
   serviceFile,
   servicePath,
   systemdUnit,
@@ -248,4 +252,38 @@ test("doctor tells a Gasho server that refuses this machine from one it cannot r
   await saveCredentials(f.creds, { server: `http://127.0.0.1:${gone.port}`, machineId: "m1", token: "t", name: "ubuntu" });
   const unreachable = await runDoctor({ claudeBin: f.claude, ghBin: f.gh, hookPort: gone.port, settingsFile: f.settings }, f.creds);
   assert.deepEqual([unreachable.get("Gasho サーバー")?.level, unreachable.get("Gasho サーバー")?.detail], ["fail", `http://127.0.0.1:${gone.port} につながりません`]);
+});
+
+test("Claude in Chrome: the native messaging host is looked for in each browser's folder, and the program it names must run", async () => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "gasho-chrome-host-"));
+  try {
+    const chrome = path.join(dir, "chrome");
+    const edge = path.join(dir, "edge");
+    const dirs: [string, string][] = [["Chrome", chrome], ["Edge", edge]];
+    // Without one here, a Chrome on another computer is still reached through the account: no warning.
+    assert.equal((await chromeHostCheck(dirs)).level, "ok");
+    assert.match((await chromeHostCheck(dirs)).detail, /このマシンの Chrome にはつながりません.*別のコンピューターの Chrome/);
+
+    await fsp.mkdir(edge, { recursive: true });
+    await fsp.writeFile(path.join(edge, CHROME_HOST), JSON.stringify({ path: path.join(dir, "gone.sh") }));
+    const broken = await chromeHostCheck(dirs);
+    assert.equal(broken.level, "warn");
+    assert.match(broken.detail, /Edge の native messaging host が起動するプログラムがありません/);
+
+    const program = path.join(dir, "host.sh");
+    await fsp.writeFile(program, "#!/bin/sh\n", { mode: 0o755 });
+    await fsp.mkdir(chrome, { recursive: true });
+    await fsp.writeFile(path.join(chrome, CHROME_HOST), JSON.stringify({ path: program }));
+    const ok = await chromeHostCheck(dirs);
+    assert.equal(ok.level, "ok");
+    assert.match(ok.detail, /^Chrome の native messaging host があります/);
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("the browsers' folders of native messaging hosts are those of macOS and Linux", () => {
+  assert.deepEqual(nativeHostDirs("/h", "darwin")[0], ["Chrome", "/h/Library/Application Support/Google/Chrome/NativeMessagingHosts"]);
+  assert.deepEqual(nativeHostDirs("/h", "linux")[0], ["Chrome", "/h/.config/google-chrome/NativeMessagingHosts"]);
+  assert.deepEqual(nativeHostDirs("/h", "win32"), []);
 });

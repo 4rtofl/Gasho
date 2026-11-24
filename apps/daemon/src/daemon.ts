@@ -76,6 +76,7 @@ import {
   launchableFolders,
   ManagedSessions,
   mcpQuestionOpen,
+  chromeOnboardingOpen,
   type ManagedSession,
   type QueuedInput,
   modelPickerOptions,
@@ -187,6 +188,7 @@ const NO_TERMINAL =
 const MCP_DECLINED =
   "このフォルダーの .mcp.json にある MCP サーバーは、使わない設定にして起動しました（Claude Code の確認に「使わない」と答えました）。使うときは、端末で claude を起動して /mcp から有効にしてください。";
 const CODEX_NO_FORK = "Codex のセッションは、Gasho からはフォークできません。";
+const CODEX_NO_CHROME = "Claude in Chrome（--chrome）は、Claude Code のセッションでだけ使えます。";
 const MODEL_NAMES: Record<SessionModel, string> = { default: "既定のモデル", opus: "Opus", fable: "Fable", sonnet: "Sonnet", haiku: "Haiku" };
 const EFFORT_NAMES: Record<EffortLevel, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "xHigh", max: "Max" };
 /** What this gasho-daemon can switch or carry with an input (MachineInfo.features). */
@@ -271,6 +273,8 @@ interface ClaudeStart {
   accept?: (row: AgentRow) => boolean;
   resuming?: boolean;
   trust?: boolean;
+  /** Start it with `--chrome` (Claude in Chrome); its first explanation of it is closed with Enter (see chromeOnboardingOpen). */
+  chrome?: boolean;
 }
 
 type ClaudeStarted =
@@ -1652,7 +1656,10 @@ export class Daemon {
       switch (req.op) {
         case "session.launch":
           log(`session.launch in ${req.cwd} from the control socket`);
-          return await this.launch(req.cwd, req.name, req.trust === true, req.agent);
+          return await this.launch(req.cwd, req.name, req.trust === true, req.agent, req.chrome === true);
+        case "session.fork":
+          log(`session.fork of ${req.sessionId}${req.chrome ? " with Claude in Chrome" : ""} from the control socket`);
+          return await this.fork(req.sessionId, req.name, req.chrome ? { chrome: true } : {});
         case "session.input":
           return await this.input({ type: "session.input", requestId, sessionId: req.sessionId, text: req.text });
         case "session.rename":
@@ -1752,6 +1759,7 @@ export class Daemon {
         cwd: m.cwd,
         agent: "claude" as const,
         terminal: m.terminal,
+        ...(m.chrome ? { chrome: true } : {}),
         status: info?.status ?? "unknown",
         ...(pending > 0 ? { pendingInputs: pending } : {}),
         ...(fs.existsSync(m.cwd) ? {} : { cwdMissing: true }),
@@ -1870,8 +1878,8 @@ export class Daemon {
    * Starts `claude --remote-control` in `cwd` in a terminal of its own and waits for its session id. With `trust`,
    * Claude Code's question whether to trust the folder is answered with yes; without it, the launch stops there.
    */
-  private async launch(cwd: string, name: string | undefined, trust = false, agent: AgentKind = "claude"): Promise<CommandResult> {
-    if (agent === "codex") return this.launchCodex(cwd, name);
+  private async launch(cwd: string, name: string | undefined, trust = false, agent: AgentKind = "claude", chrome = false): Promise<CommandResult> {
+    if (agent === "codex") return chrome ? { ok: false, error: CODEX_NO_CHROME } : this.launchCodex(cwd, name);
     if (!this.canLaunch) return { ok: false, error: NO_TERMINAL };
     const dir = path.resolve(cwd);
     const stat = await fsp.stat(dir).catch(() => undefined);
@@ -1879,13 +1887,22 @@ export class Daemon {
     // Without a name, "<folder>-gasho" until the first message names it (see nameAfterTitle).
     const autoName = !name?.trim();
     const rcName = name?.trim() || `${path.basename(dir)}-gasho`;
-    const started = await this.startClaude(dir, rcName, { trust });
+    const started = await this.startClaude(dir, rcName, { trust, chrome });
     if ("error" in started) {
       const { error, needsTrust, trustWarnings } = started;
       return needsTrust ? { ok: false, error, needsTrust, trustWarnings } : { ok: false, error };
     }
     const { sessionId, terminal, pid } = started;
-    this.managed.add({ sessionId, terminal, pid, cwd: dir, name: rcName, launchedAt: Date.now(), ...(autoName ? { autoName } : {}) });
+    this.managed.add({
+      sessionId,
+      terminal,
+      pid,
+      cwd: dir,
+      name: rcName,
+      launchedAt: Date.now(),
+      ...(autoName ? { autoName } : {}),
+      ...(chrome ? { chrome } : {}),
+    });
     await this.managed.save();
     await this.refresh();
     // A folder trusted just now is one to offer from now on.
@@ -1954,9 +1971,11 @@ export class Daemon {
       accept = () => true,
       resuming = false,
       trust = false,
+      chrome = false,
       terminal = terminalName(rcName),
     }: ClaudeStart & { claudeArgs?: string[]; terminal?: string } = {},
   ): Promise<ClaudeStarted> {
+    if (chrome) claudeArgs = [...claudeArgs, "--chrome"];
     // Until `claude agents` lists it, nothing says that the folder of a conversation being opened again is in use.
     const resumed = claudeArgs.indexOf("--resume");
     if (resumed >= 0) this.claudeTmpOpening.set(claudeArgs[resumed + 1]!, Date.now() + LAUNCH_TIMEOUT_MS);
@@ -1990,7 +2009,7 @@ export class Daemon {
     }
     this.ownPids.add(pid);
     log(`launching "${rcName}" in ${dir} (terminal ${terminal})${claudeArgs.length > 0 ? ` with ${claudeArgs.join(" ")}` : ""}`);
-    return this.claudeListed(terminal, pid, dir, rcName, { accept, resuming, trust });
+    return this.claudeListed(terminal, pid, dir, rcName, { accept, resuming, trust, chrome });
   }
 
   /** Answers what a Claude Code asks while it starts, until `claude agents` lists it (see startClaude). */
@@ -1999,7 +2018,7 @@ export class Daemon {
     pid: number,
     dir: string,
     rcName: string,
-    { accept = () => true, resuming = false, trust = false }: ClaudeStart,
+    { accept = () => true, resuming = false, trust = false, chrome = false }: ClaudeStart,
   ): Promise<ClaudeStarted> {
     const deadline = Date.now() + LAUNCH_TIMEOUT_MS;
     let resumeAsked = false;
@@ -2037,6 +2056,14 @@ export class Daemon {
         }
         mcpDeclined = true;
         log(`"${rcName}": started without the new MCP servers of ${dir}`);
+        continue;
+      }
+      if (chrome && chromeOnboardingOpen(screen)) {
+        if (!(await this.answerChromeOnboarding(terminal).then(() => true, () => false))) {
+          await this.terminals.kill(terminal);
+          return { error: "Claude Code が Claude in Chrome の説明を出したまま、Enter を受け付けませんでした。" };
+        }
+        log(`"${rcName}": closed the explanation of Claude in Chrome`);
         continue;
       }
       if (resuming && resumeQuestionOpen(screen)) {
@@ -2094,6 +2121,15 @@ export class Daemon {
     throw new Error("the question about MCP servers did not close");
   }
 
+  /** Enter to Claude Code's first explanation of Claude in Chrome (see chromeOnboardingOpen); throws if it stays open. */
+  private async answerChromeOnboarding(session: string): Promise<void> {
+    for (let i = 0; i < 3; i++) {
+      await this.terminals.keys(session, "Enter");
+      if (await this.waitForScreen(session, (r) => !chromeOnboardingOpen(r.screen))) return;
+    }
+    throw new Error("the explanation of Claude in Chrome did not close");
+  }
+
   /** Esc to the question about resuming an old, long session (see resumeQuestionOpen); throws if it stays open. */
   private async answerResumeQuestion(session: string): Promise<void> {
     for (let i = 0; i < 3; i++) {
@@ -2108,8 +2144,10 @@ export class Daemon {
    * a new terminal. The copy starts with the conversation so far; the session itself goes on as it was. Claude
    * Code writes a fork's transcript only once something is recorded, so the copy is named with /rename right away:
    * that names it in Claude Code too (the Remote Control name is set already), and its conversation can be read at once.
+   * The copy has Claude in Chrome when the session has it, or when `chrome` asks for it (a session forks itself to have
+   * its work checked in the browser: gasho-daemon session fork --chrome).
    */
-  private async fork(sessionId: string, name: string | undefined): Promise<CommandResult> {
+  private async fork(sessionId: string, name: string | undefined, { chrome }: { chrome?: boolean } = {}): Promise<CommandResult> {
     if (this.codexSessions.has(sessionId)) return { ok: false, error: CODEX_NO_FORK };
     const source = this.managed.get(sessionId);
     if (!source) return { ok: false, error: "このセッションはフォークできません。フォークできるのは、Gasho が起動したセッションだけです。" };
@@ -2120,8 +2158,10 @@ export class Daemon {
       return { ok: false, error: "このセッションには、まだ会話がありません。最初の発言のあとでフォークしてください。" };
     }
     const forkedAt = Date.now();
+    const withChrome = chrome ?? source.chrome === true;
     const started = await this.startClaude(source.cwd, checked.name, {
       claudeArgs: ["--resume", sessionId, "--fork-session"],
+      chrome: withChrome,
       // The copy gets its own id; never take the session it was forked from for it.
       accept: (row) => row.sessionId !== sessionId,
       resuming: true,
@@ -2165,7 +2205,17 @@ export class Daemon {
         const t = this.tracked.get(forkId);
         if (t && !t.transcript) t.sawWithoutTranscript = false;
       }
-      this.managed.add({ sessionId: forkId, terminal, pid, cwd: source.cwd, name: checked.name, launchedAt: Date.now(), forkOf: sessionId, forkedAt });
+      this.managed.add({
+        sessionId: forkId,
+        terminal,
+        pid,
+        cwd: source.cwd,
+        name: checked.name,
+        launchedAt: Date.now(),
+        forkOf: sessionId,
+        forkedAt,
+        ...(withChrome ? { chrome: true } : {}),
+      });
       if (typed !== "sent") {
         // Until Claude Code records something, the copy shows no conversation in Gasho.
         this.managed.enqueue(forkId, { text: rename, ...(typed === "unsure" ? { entered: true, enteredAt: Date.now() } : {}) });
@@ -2696,7 +2746,7 @@ export class Daemon {
     await this.hibernating.get(sessionId)?.catch(() => undefined);
     // Its hibernation was called off meanwhile (see hibernate): the Claude Code it has still runs.
     if (m.hibernated !== h) return { ok: true, sessionId };
-    const start: ClaudeStart = { accept: (row) => row.sessionId === sessionId, resuming: true };
+    const start: ClaudeStart = { accept: (row) => row.sessionId === sessionId, resuming: true, ...(m.chrome ? { chrome: true } : {}) };
     const running = this.interrupted.get(sessionId);
     this.interrupted.delete(sessionId);
     let started: ClaudeStarted;

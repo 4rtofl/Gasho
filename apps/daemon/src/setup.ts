@@ -164,10 +164,84 @@ export async function doctor(o: {
       ? { level: "ok", name: "daemon", detail: `動いています（127.0.0.1:${o.hookPort}）` }
       : { level: "warn", name: "daemon", detail: "動いていません", hint: `${DAEMON} run で動かすか、常駐させてください（${DAEMON} service install）` },
   );
+  checks.push(await chromeHostCheck());
   const service = o.serviceFile ? await fs.readFile(o.serviceFile, "utf8").catch(() => undefined) : undefined;
   const serviceCheck = service === undefined ? undefined : serviceNodeCheck(service, DAEMON);
   if (serviceCheck) checks.push(serviceCheck);
   return checks;
+}
+
+/** The native messaging host through which the Claude extension in Chrome reaches Claude Code (Claude in Chrome). */
+export const CHROME_HOST = "com.anthropic.claude_code_browser_extension.json";
+
+/** The folders of NativeMessagingHosts of the browsers Claude in Chrome works with, on this platform, by name. */
+export function nativeHostDirs(home: string = os.homedir(), platform: NodeJS.Platform = process.platform): [string, string][] {
+  const mac = (...p: string[]) => path.join(home, "Library", "Application Support", ...p, "NativeMessagingHosts");
+  const linux = (...p: string[]) => path.join(home, ".config", ...p, "NativeMessagingHosts");
+  if (platform === "darwin") {
+    return [
+      ["Chrome", mac("Google", "Chrome")],
+      ["Chromium", mac("Chromium")],
+      ["Edge", mac("Microsoft Edge")],
+      ["Brave", mac("BraveSoftware", "Brave-Browser")],
+    ];
+  }
+  if (platform === "linux") {
+    return [
+      ["Chrome", linux("google-chrome")],
+      ["Chromium", linux("chromium")],
+      ["Edge", linux("microsoft-edge")],
+      ["Brave", linux("BraveSoftware", "Brave-Browser")],
+    ];
+  }
+  return [];
+}
+
+/**
+ * Whether a Chrome on this machine can reach Claude Code (Claude in Chrome): the native messaging host's file, which
+ * Claude Code writes the first time it starts with --chrome, in one of the browsers' folders, and the program it names.
+ * Without one, Claude in Chrome still reaches a Chrome on another computer whose Claude extension is signed in to the
+ * same claude.ai account, so a missing one is no warning. Whether the extension is installed cannot be seen from here.
+ */
+export async function chromeHostCheck(dirs: [string, string][] = nativeHostDirs()): Promise<Check> {
+  const name = "Claude in Chrome";
+  const why = "セッションが Chrome を操作して Web アプリを確かめるのに使います（gasho-daemon session fork --chrome）";
+  if (dirs.length === 0) return { level: "warn", name, detail: `このマシン（${process.platform}）では確かめられません`, hint: why };
+  const found: string[] = [];
+  const broken: string[] = [];
+  for (const [browser, dir] of dirs) {
+    const text = await fs.readFile(path.join(dir, CHROME_HOST), "utf8").catch(() => undefined);
+    if (text === undefined) continue;
+    let program: unknown;
+    try {
+      program = (JSON.parse(text) as { path?: unknown }).path;
+    } catch {
+      program = undefined;
+    }
+    const runs = typeof program === "string" && (await fs.access(program, fs.constants.X_OK).then(() => true, () => false));
+    (runs ? found : broken).push(browser);
+  }
+  if (found.length > 0) {
+    return {
+      level: "ok",
+      name,
+      detail: `${found.join("・")} の native messaging host があります（拡張機能が入っているかは、ここからは確かめられません）`,
+    };
+  }
+  if (broken.length > 0) {
+    return {
+      level: "warn",
+      name,
+      detail: `${broken.join("・")} の native messaging host が起動するプログラムがありません`,
+      hint: `${why}。端末で一度 claude --chrome を起動すると、作り直されます`,
+    };
+  }
+  return {
+    level: "ok",
+    name,
+    detail:
+      "このマシンの Chrome にはつながりません（native messaging host なし）。同じ claude.ai アカウントでサインインした、別のコンピューターの Chrome の拡張機能にはつながります",
+  };
 }
 
 /**

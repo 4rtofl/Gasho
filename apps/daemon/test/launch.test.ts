@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { Daemon } from "../src/daemon.ts";
-import { dialogOpen, mcpQuestionOpen, plainScreen, trustQuestion, typedInBox } from "../src/managed.ts";
+import { chromeOnboardingOpen, dialogOpen, mcpQuestionOpen, plainScreen, trustQuestion, typedInBox } from "../src/managed.ts";
 import { RELAY_FILE, shellQuote } from "../src/statusline.ts";
 import type { TerminalStart } from "../src/terminal.ts";
 
@@ -72,6 +72,30 @@ const MCP_SCREEN = [
   "",
 ].join("\n");
 
+/**
+ * Claude Code's explanation the first time it starts with --chrome, drawn from its words in 2.1.331 (its source; the
+ * screen itself was not captured: starting with --chrome on a test machine would use that explanation up).
+ */
+const CHROME_SCREEN = [
+  RULE,
+  "  Claude in Chrome",
+  "",
+  "  Claude can use Chrome through its extension: open",
+  "  sites, fill forms, take screenshots, record GIFs,",
+  "  and read console logs and network requests.",
+  "",
+  "  Claude Code asks before Claude browses, clicks, or",
+  "  types on a site, unless your permission mode or a",
+  "  rule in /permissions answers for you. Sites you",
+  "  approved in the extension don't carry over.",
+  "",
+  "  For more info, use /chrome or visit",
+  "  https://code.claude.com/docs/en/chrome",
+  "",
+  "  Enter to continue · Esc to close",
+  "",
+].join("\n");
+
 function replScreen(above: string[] = []): string {
   return [
     " ▐▛███▛█   Claude Code v2.1.323",
@@ -105,6 +129,15 @@ test("what Claude Code points out about the folder's settings comes with the que
   ]);
 });
 
+test("the explanation of Claude in Chrome is open only while it has the keys", () => {
+  assert.ok(chromeOnboardingOpen(CHROME_SCREEN));
+  assert.ok(dialogOpen(CHROME_SCREEN));
+  assert.equal(typedInBox(plainScreen(CHROME_SCREEN)), undefined);
+  assert.equal(chromeOnboardingOpen(replScreen()), false);
+  assert.equal(chromeOnboardingOpen(replScreen(["● It said: Claude can use Chrome through its extension: open sites"])), false);
+  assert.equal(chromeOnboardingOpen(MCP_SCREEN), false);
+});
+
 test("the question about a folder's new MCP servers is open only while it has the keys", () => {
   assert.ok(mcpQuestionOpen(MCP_SCREEN));
   assert.ok(dialogOpen(MCP_SCREEN));
@@ -116,13 +149,15 @@ test("the question about a folder's new MCP servers is open only while it has th
 
 /** Claude Code starting in a folder it does not trust, as far as the daemon sees and drives it. */
 class FakeStart {
-  state: "trust" | "mcp" | "repl" | "exited" = "trust";
+  state: "trust" | "mcp" | "chrome" | "repl" | "exited" = "trust";
   /** 0: "No, exit", 1: "Yes, I trust this folder". */
   cursor = 0;
   keys: string[] = [];
-  private readonly o: { mcp?: boolean; warnings?: string[]; agentsFile: string; registryFile?: string; sessionId: string };
+  private readonly o: { mcp?: boolean; chrome?: boolean; warnings?: string[]; agentsFile: string; registryFile?: string; sessionId: string };
+  /** The explanation of Claude in Chrome has been shown (it is shown once, before the prompt). */
+  private chromeShown = false;
 
-  constructor(o: { mcp?: boolean; warnings?: string[]; agentsFile: string; registryFile?: string; sessionId: string }) {
+  constructor(o: { mcp?: boolean; chrome?: boolean; warnings?: string[]; agentsFile: string; registryFile?: string; sessionId: string }) {
     this.o = o;
   }
 
@@ -134,9 +169,14 @@ class FakeStart {
       else if (k === "Enter") this.to(this.cursor === 1 ? (this.o.mcp ? "mcp" : "repl") : "exited");
       else if (k === "Esc") this.to("exited");
     } else if (this.state === "mcp" && (k === "Esc" || k === "Enter")) this.to("repl");
+    else if (this.state === "chrome" && (k === "Esc" || k === "Enter")) this.to("repl");
   }
 
   private to(state: FakeStart["state"]): void {
+    if (state === "repl" && this.o.chrome && !this.chromeShown) {
+      this.chromeShown = true;
+      state = "chrome";
+    }
     this.state = state;
     // Once its prompt is up, `claude agents` lists the session, and Claude Code's file has its id.
     if (state !== "repl") return;
@@ -147,6 +187,7 @@ class FakeStart {
   screen(): string {
     if (this.state === "trust") return trustScreen(this.cursor === 1, this.o.warnings);
     if (this.state === "mcp") return MCP_SCREEN;
+    if (this.state === "chrome") return CHROME_SCREEN;
     return this.state === "repl" ? replScreen() : "";
   }
 }
@@ -158,7 +199,7 @@ const SID = "11111111-2222-3333-4444-666666666666";
  * `claude agents` prints nothing, as it did when stopped at its time limit on a busy machine, and Claude Code's file
  * (~/.claude/sessions/<pid>.json) has the session id.
  */
-async function setup(o: { mcp?: boolean; warnings?: string[]; emptyList?: boolean } = {}) {
+async function setup(o: { mcp?: boolean; chrome?: boolean; warnings?: string[]; emptyList?: boolean } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-launch-"));
   const agentsFile = path.join(dir, "agents.json");
   await fs.writeFile(agentsFile, "[]");
@@ -295,6 +336,69 @@ test("the question about the folder's MCP servers that follows is answered with 
     assert.equal(r.sessionId, SID);
     assert.match(r.warning, /MCP サーバーは、使わない設定にして起動しました/);
     assert.deepEqual(fake.keys, ["Down", "Enter", "Esc"]);
+  } finally {
+    await done();
+  }
+});
+
+test("with chrome, Claude Code starts with --chrome, its explanation is closed with Enter, and the session keeps it", async () => {
+  const { d, fake, folder, started, done } = await setup({ chrome: true });
+  try {
+    const r = await d.launch(folder, "browse", true, "claude", true);
+    assert.deepEqual(r, { ok: true, sessionId: SID });
+    assert.deepEqual(fake.keys, ["Down", "Enter", "Enter"]);
+    assert.deepEqual(started[0]?.args.slice(0, 2), ["--remote-control=browse", "--chrome"]);
+    assert.equal(d.managed.get(SID)?.chrome, true);
+    assert.equal(d.controlSessions().find((s: { sessionId: string }) => s.sessionId === SID)?.chrome, true);
+  } finally {
+    await done();
+  }
+});
+
+test("without chrome, Claude Code starts as before, and an explanation of Claude in Chrome is not answered", async () => {
+  const { d, fake, folder, started, done } = await setup();
+  try {
+    assert.equal((await d.launch(folder, "plain", true)).ok, true);
+    assert.equal(started[0]?.args.includes("--chrome"), false);
+    assert.equal(d.managed.get(SID)?.chrome, undefined);
+    assert.equal("chrome" in d.controlSessions()[0], false);
+    assert.deepEqual(fake.keys, ["Down", "Enter"]);
+  } finally {
+    await done();
+  }
+});
+
+test("Codex is not started with Claude in Chrome", async () => {
+  const { d, folder, started, done } = await setup();
+  try {
+    const r = await d.launch(folder, "x", true, "codex", true);
+    assert.equal(r.ok, false);
+    assert.match(r.error, /Claude Code のセッションでだけ/);
+    assert.deepEqual(started, []);
+  } finally {
+    await done();
+  }
+});
+
+test("a fork of a session with Claude in Chrome has it, and a fork can ask for it", async () => {
+  const { d, folder, done } = await setup();
+  try {
+    await fs.mkdir(path.join(d.cfg.claudeDir, "projects", "p"), { recursive: true });
+    for (const id of ["plain", "browsing"]) {
+      await fs.writeFile(path.join(d.cfg.claudeDir, "projects", "p", `${id}.jsonl`), "");
+      d.managed.add({ sessionId: id, terminal: `t-${id}`, pid: process.pid, cwd: folder, name: id, launchedAt: Date.now(), ...(id === "browsing" ? { chrome: true } : {}) });
+    }
+    const asked: { chrome?: boolean; claudeArgs?: string[] }[] = [];
+    // Only what the copy is started with matters here: it then fails, and nothing is kept.
+    d.startClaude = async (_dir: string, _name: string, o: { chrome?: boolean; claudeArgs?: string[] }) => {
+      asked.push(o);
+      return { error: "stop" };
+    };
+    for (const [id, opts] of [["plain", {}], ["plain", { chrome: true }], ["browsing", {}], ["browsing", { chrome: false }]] as const) {
+      assert.equal((await d.fork(id, undefined, opts)).ok, false);
+    }
+    assert.deepEqual(asked.map((o) => o.chrome), [false, true, true, false]);
+    assert.deepEqual(asked[0]?.claudeArgs, ["--resume", "plain", "--fork-session"]);
   } finally {
     await done();
   }

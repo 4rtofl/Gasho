@@ -524,6 +524,20 @@ test("a session comes back in the permission mode it was in", async () => {
   }
 });
 
+test("a session started with Claude in Chrome comes back with it", async () => {
+  const { d, started, agents, done } = await setup();
+  try {
+    d.managed.get(SID).chrome = true;
+    await d.hibernateIdle();
+    assert.equal(d.managed.get(SID).chrome, true);
+    agents([]);
+    await d.wake(SID);
+    assert.equal(started[0]!.args.includes("--chrome"), true);
+  } finally {
+    await done();
+  }
+});
+
 test("a session whose permission mode cannot be told or gone back to keeps running", async () => {
   const { d, term, procs, done } = await setup();
   try {

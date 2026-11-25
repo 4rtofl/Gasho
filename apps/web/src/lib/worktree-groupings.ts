@@ -177,6 +177,25 @@ export function withMoves(categories: readonly ListedWorktreeCategory[], moves: 
   return out.filter((c) => c.id !== OTHER_CATEGORY || c.worktrees.length > 0);
 }
 
+/**
+ * The rows that a row dropped in another category (`drop.to`) takes there: itself, or, when it is one of the rows
+ * `selected` (several, in the order they show), those of them that show in other categories too, in that order, where
+ * it was dropped. `drop.ids`: the rows of `to` once it is dropped; `categoryOf`: the category a row shows in. Each move
+ * comes with where it goes among the rows of `to` then (`ids`).
+ */
+export function movesOfDrop(
+  drop: { id: string; from: string; ids: readonly string[] },
+  selected: readonly string[],
+  categoryOf: (key: string) => string | undefined,
+): { ids: string[]; moves: { worktree: string; from: string; index: number }[] } {
+  const moving =
+    selected.length > 1 && selected.includes(drop.id)
+      ? selected.filter((k) => k === drop.id || (!drop.ids.includes(k) && categoryOf(k) !== undefined))
+      : [drop.id];
+  const ids = drop.ids.flatMap((k) => (k === drop.id ? moving : [k]));
+  return { ids, moves: moving.map((k) => ({ worktree: k, from: k === drop.id ? drop.from : categoryOf(k)!, index: ids.indexOf(k) })) };
+}
+
 /** The held list with the worktree `key` in the category `to`, at `index` there (dropped while the list is held). */
 export function moveHeldWorktree(held: HeldWorktreeList, key: string, to: string, index: number): HeldWorktreeList {
   let row: ListedWorktree = { key };

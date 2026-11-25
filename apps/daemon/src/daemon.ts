@@ -327,6 +327,8 @@ export class Daemon {
   private followingNewIds = false;
   private refreshing = false;
   private refreshAgain = false;
+  /** The callers waiting for the refresh that refreshAgain asks for (see refresh). */
+  private refreshWaiters: (() => void)[] = [];
   private refreshTimer: NodeJS.Timeout | undefined;
   private statusTimer: NodeJS.Timeout | undefined;
   private emitTimer: NodeJS.Timeout | undefined;
@@ -785,12 +787,18 @@ export class Daemon {
     }
   }
 
+  /**
+   * Reads the sessions again and sends them. Called while a refresh runs, it waits for the next one to end: the one
+   * running may have read `claude agents` before what the caller changed, and a session just started would then reach
+   * the browser after the answer that opens its page (which would say it is gone).
+   */
   async refresh(): Promise<void> {
     if (this.refreshing) {
       this.refreshAgain = true;
-      return;
+      return new Promise((resolve) => this.refreshWaiters.push(resolve));
     }
     this.refreshing = true;
+    const waiters = this.refreshWaiters.splice(0);
     try {
       const rows = await listAgents(this.cfg.claudeBin);
       await this.followNewIds(rows);
@@ -836,6 +844,7 @@ export class Daemon {
         this.refreshed = true;
         this.emitSessions();
       }
+      for (const resolve of waiters) resolve();
       if (this.refreshAgain) {
         this.refreshAgain = false;
         void this.refresh();
@@ -2315,9 +2324,9 @@ export class Daemon {
       );
     }
     await this.refresh();
-    // Before the answer, also when that refresh only asked the one running to go again: a session /clear took away from
-    // this conversation has it among its earlier ids no longer (see ManagedSessions.add), and a page still told it does
-    // goes on to that session instead (see the web's movedSession).
+    // Also when that refresh failed: a session /clear took away from this conversation has it among its earlier ids no
+    // longer (see ManagedSessions.add), and a page still told it does goes on to that session instead (see the web's
+    // movedSession).
     this.emitSessions();
     return { ok: true, sessionId: id, ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}) };
   }

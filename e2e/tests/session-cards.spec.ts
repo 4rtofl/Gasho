@@ -264,7 +264,7 @@ test("確認カードが会話の欄より高くても、上の部分と入力�
   await expect(chatBox(page)).toBeInViewport();
 });
 
-test("バックグラウンドの一覧に、件数・種類ごとの行・経過時間が出て、1 件ずつか、すべてを止められる", async ({ page, hub }) => {
+test("バックグラウンドの一覧に、種類ごとの行・経過時間が出て、1 件ずつか、すべてを止められる。Effort の右のボタンが件数を出し、一覧を隠したり出したりする", async ({ page, hub }) => {
   await page.clock.install();
   // The page's clock stops here once the session is open: the times below are from it.
   const now = Date.now() + 60 * 60_000;
@@ -281,7 +281,9 @@ test("バックグラウンドの一覧に、件数・種類ごとの行・経�
 
   const list = page.getByRole("region", { name: "バックグラウンドで実行中" });
   const row = (title: string) => list.getByRole("listitem").filter({ hasText: title });
-  await expect(list.getByText("バックグラウンドで実行中（4）")).toBeVisible();
+  const toggle = page.getByRole("button", { name: /^バックグラウンドで実行中（/ });
+  await expect(toggle).toHaveAccessibleName("バックグラウンドで実行中（4 件）");
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("img", { name: "バックグラウンドで 4 件実行中" })).toBeVisible();
   const detail = (title: string, kind: string) => row(title).getByText(new RegExp(`^${kind} · `));
   await expect(detail("テストを流す", "シェル")).toHaveText("シェル · 30秒前から · npm test");
@@ -292,6 +294,13 @@ test("バックグラウンドの一覧に、件数・種類ごとの行・経�
   await page.clock.fastForward("02:00");
   await expect(detail("テストを流す", "シェル")).toHaveText("シェル · 2分前から · npm test");
   await expect(detail("原因を調べる", "サブエージェント")).toHaveText("サブエージェント · 1時間7分前から");
+
+  // The button next to Effort hides the list, and shows it again.
+  await toggle.click();
+  await expect(list).toHaveCount(0);
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await toggle.click();
+  await expect(list).toBeVisible();
 
   daemon.handle("session.stopTask", (m) => commandResult(m, { ok: true, warning: "Claude Code の一覧で見つからなかったので、止めたかは分かりません。" }));
   await row("原因を調べる").getByRole("button", { name: "止める" }).click();
@@ -305,8 +314,10 @@ test("バックグラウンドの一覧に、件数・種類ごとの行・経�
 
   // With one left, there is nothing to stop all of.
   daemon.updateSession(SESSION_ID, { background: [{ id: "b1", kind: "shell", title: "テストを流す", command: "npm test", startedAt: now - 30_000 }] });
-  await expect(list.getByText("バックグラウンドで実行中（1）")).toBeVisible();
+  await expect(toggle).toHaveAccessibleName("バックグラウンドで実行中（1 件）");
   await expect(list.getByRole("button", { name: "すべて止める" })).toHaveCount(0);
+  // With nothing running, neither the list nor its button is there.
   daemon.updateSession(SESSION_ID, { status: "idle", background: undefined });
   await expect(list).toHaveCount(0);
+  await expect(toggle).toHaveCount(0);
 });

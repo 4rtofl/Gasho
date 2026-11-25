@@ -574,3 +574,35 @@ function unanswered(page: Page): () => number {
 function names(daemon: FakeDaemon, type: "folder.create"): string[] {
   return daemon.received.flatMap((m) => (m.type === type ? [m.name] : []));
 }
+
+test("設定の「既定のモデル」で選んだモデルと「既定の Effort」が、起動に付いて daemon に届き、既定に戻すと付かない", async ({ page, hub }) => {
+  const daemon = await hub.fakeDaemon({ name: "mac", capabilities: { folders: ["/work/a"] } });
+  daemon.handle("session.launch", (msg) => started(daemon, msg));
+
+  await page.goto("/#/settings");
+  await page.getByRole("button", { name: "既定のモデル" }).click();
+  const model = page.getByRole("combobox", { name: "既定のモデル" });
+  await expect(model).toHaveValue("default");
+  await model.selectOption("opus");
+  await expect(page.getByText("Opus", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "既定の Effort" }).click();
+  await page.getByRole("radio", { name: "xHigh" }).click();
+
+  await openHome(page, 1);
+  await page.getByRole("main").getByRole("button", { name: "新しいセッション", exact: true }).click();
+  await page.getByRole("main").getByRole("button", LAUNCH).click();
+  await expectSessionOpen(page, daemon, "/work/a");
+  expect(launches(daemon).at(-1)).toMatchObject({ cwd: "/work/a", model: "opus", effort: "xhigh" });
+
+  // Back to Claude Code's own default model: no --model.
+  await page.goto("/#/settings");
+  await page.getByRole("combobox", { name: "既定のモデル" }).selectOption("default");
+  await expect(page.getByRole("combobox", { name: "既定のモデル" })).toHaveValue("default");
+  await openHome(page, 1);
+  await page.getByRole("main").getByRole("button", { name: "新しいセッション", exact: true }).click();
+  await page.getByRole("main").getByRole("button", LAUNCH).click();
+  await expect.poll(() => launches(daemon).length).toBe(2);
+  const last = launches(daemon).at(-1)!;
+  expect("model" in last).toBe(false);
+  expect(last).toMatchObject({ effort: "xhigh" });
+});

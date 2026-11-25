@@ -22,6 +22,7 @@ import type {
   PushInfo,
   ServerInfo,
   SessionCommand,
+  SessionModel,
   TranscriptEntry,
 } from "@gasho/protocol";
 import { fetchMe } from "./api";
@@ -454,6 +455,11 @@ export function updateServer(version: string, timeoutMs = 20_000): Promise<Comma
 /** Changes the agent a new session starts with, for every browser. */
 export function setDefaultAgent(agent: AgentKind, timeoutMs = 20_000): Promise<CommandResult> {
   return askServer((id) => ({ type: "defaultAgent.set", requestId: id, agent }), timeoutMs);
+}
+
+/** Changes the model a new session of Claude Code starts with, for every browser ("default": Claude Code's own default). */
+export function setDefaultModel(model: SessionModel, timeoutMs = 20_000): Promise<CommandResult> {
+  return askServer((id) => ({ type: "defaultModel.set", requestId: id, ...(model !== "default" ? { model } : {}) }), timeoutMs);
 }
 
 /** Changes the effort level a new session of Claude Code starts with, for every browser (undefined: Claude Code's own default). */

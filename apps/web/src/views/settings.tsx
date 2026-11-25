@@ -1,12 +1,12 @@
 // Settings of this browser: the size of the conversation's text on the session screen, with a sample of a
-// conversation to see it by, and its notifications (Web Push). The default agent and effort level are the Gasho
+// conversation to see it by, and its notifications (Web Push). The default agent, model and effort level are the Gasho
 // server's, the same for every browser. Then the versions of Gasho running now. Each is a section that folds
 // (lib/settings-sections).
-import { Check, CircleAlert, Copy, Gauge, Info, RotateCcw, Type } from "lucide-react";
+import { Check, CircleAlert, Copy, Cpu, Gauge, Info, RotateCcw, Type } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { AgentKind, EffortLevel, TranscriptEntry } from "@gasho/protocol";
+import type { AgentKind, EffortLevel, SessionModel, TranscriptEntry } from "@gasho/protocol";
 import { PushSettingsSection } from "@/components/push-settings";
-import { EFFORTS } from "@/components/session-controls";
+import { EFFORTS, MODELS } from "@/components/session-controls";
 import { TranscriptSample } from "@/components/transcript";
 import { Badge } from "@/components/ui/badge";
 import { AccordionSection } from "@/components/ui/unfold-accordion";
@@ -16,7 +16,7 @@ import { AGENT_NAME, codexOffered } from "@/lib/agents";
 import { CHAT_TEXT_DEFAULT, CHAT_TEXT_MAX, CHAT_TEXT_MIN, useChatTextSize } from "@/lib/chat-text";
 import { go } from "@/lib/route";
 import { useSettingsSectionOpen } from "@/lib/settings-sections";
-import { OWN_BUILD, setDefaultAgent, setDefaultEffort, useAppState } from "@/lib/store";
+import { OWN_BUILD, setDefaultAgent, setDefaultEffort, setDefaultModel, useAppState } from "@/lib/store";
 import { copyToClipboard } from "@/lib/utils";
 import { versionRows, versionsText } from "@/lib/versions";
 import { PluginSettingsSections } from "@/plugins/parts";
@@ -141,6 +141,8 @@ export function SettingsView() {
 
       <DefaultAgentSection />
 
+      <DefaultModelSection />
+
       <DefaultEffortSection />
 
       <PushSettingsSection />
@@ -200,6 +202,45 @@ export function DefaultAgentSection() {
 }
 
 const CLAUDE_DEFAULT = "Claude Code の既定";
+
+const FIELD =
+  "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-border-hover disabled:opacity-60";
+
+/** The model a new session of Claude Code starts with, picked from a combobox. */
+export function DefaultModelSection() {
+  const { server } = useAppState();
+  const [error, setError] = useState<string>();
+  const [open, setOpen] = useSettingsSectionOpen("default-model");
+  if (!server) return null;
+  const current: SessionModel = server.defaultModel ?? "default";
+  const pick = async (model: SessionModel) => {
+    setError(undefined);
+    const r = await setDefaultModel(model);
+    if (!r.ok) setError(r.error ?? "変えられませんでした。");
+  };
+  return (
+    <AccordionSection
+      icon={<Cpu className="size-4" />}
+      title="既定のモデル"
+      description="「＋」で起動する Claude Code のセッションのモデルです。どのブラウザーでも同じです。起動したあとは、入力欄でそのセッションだけ切り替えられます。Codex のセッションと、開き直し・フォークには使いません。"
+      open={open}
+      onOpenChange={setOpen}
+      actions={<span className="text-sm">{current === "default" ? CLAUDE_DEFAULT : (MODELS.find((m) => m.id === current)?.name ?? current)}</span>}
+    >
+      <label className="block max-w-sm space-y-1.5">
+        <span className="text-xs text-muted-foreground">既定のモデル</span>
+        <select value={current} onChange={(e) => void pick(e.target.value as SessionModel)} className={FIELD}>
+          {MODELS.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.id === "default" ? `${CLAUDE_DEFAULT}（working server の Claude Code の設定のまま）` : `${m.name}（${m.description}）`}
+            </option>
+          ))}
+        </select>
+      </label>
+      {error && <p className="text-xs text-red-400">{error}</p>}
+    </AccordionSection>
+  );
+}
 
 /** The effort level a new session of Claude Code starts with. */
 export function DefaultEffortSection() {

@@ -26,6 +26,7 @@ import type {
   ServerInfo,
   SessionCommand,
   SessionInfo,
+  SessionModel,
 } from "@gasho/protocol";
 import type { LatestCheck } from "./latest.ts";
 import { boundedHook, NotificationGate, notificationFor, sessionLabel } from "./notify.ts";
@@ -136,6 +137,8 @@ const AGENT_OPERATIONS = new Set<unknown>(["model", "effort", "ultracode", "file
 const DEFAULT_AGENT_KEY = "default_agent";
 /** Where the effort level a new session of Claude Code starts with is kept (meta; "" for Claude Code's own default). */
 const DEFAULT_EFFORT_KEY = "default_effort";
+/** Where the model a new session of Claude Code starts with is kept (meta; "" for Claude Code's own default). */
+const DEFAULT_MODEL_KEY = "default_model";
 /** An agent's version: x.y.z, with a pre-release after it. */
 const AGENT_VERSION_RE = /^\d{1,9}\.\d{1,9}\.\d{1,9}(?:[-+][0-9A-Za-z.+-]{1,40})?$/;
 
@@ -428,6 +431,7 @@ export function validateCommand(cmd: SessionCommand): string | undefined {
       if (cmd.trust !== undefined && typeof cmd.trust !== "boolean") return "信頼の指定が正しくありません。";
       if (cmd.agent !== undefined && !AGENT_KINDS.includes(cmd.agent)) return "エージェントの指定が正しくありません。";
       if (cmd.effort !== undefined && !EFFORTS.has(cmd.effort)) return "Effort の指定が正しくありません。";
+      if (cmd.model !== undefined && !MODELS.has(cmd.model)) return "モデルの指定が正しくありません。";
       return undefined;
     case "folder.create":
       return folderError(cmd.parent) ?? folderNameError(cmd.name);
@@ -897,11 +901,19 @@ export class Hub {
   /** The Gasho server as browsers see it: its own information, and the settings it keeps for all of them. */
   private serverInfo(server: ServerSource): ServerInfo {
     const effort = this.defaultEffort();
+    const model = this.defaultModel();
     return {
       ...server.info(),
       defaultAgent: this.store.getMeta(DEFAULT_AGENT_KEY) === "codex" ? "codex" : "claude",
       ...(effort ? { defaultEffort: effort } : {}),
+      ...(model ? { defaultModel: model } : {}),
     };
+  }
+
+  /** Undefined for Claude Code's own default model ("default" is not kept). */
+  private defaultModel(): SessionModel | undefined {
+    const model = this.store.getMeta(DEFAULT_MODEL_KEY);
+    return model && model !== "default" && MODELS.has(model) ? (model as SessionModel) : undefined;
   }
 
   private defaultEffort(): EffortLevel | undefined {
@@ -1044,6 +1056,17 @@ export class Hub {
         peer.send({ type: "server.result", requestId: msg.requestId, result: { ok: true } });
         break;
       }
+      case "defaultModel.set": {
+        if (typeof msg.requestId !== "string" || !msg.requestId || msg.requestId.length > 100) return;
+        if (msg.model !== undefined && !MODELS.has(msg.model)) {
+          peer.send({ type: "server.result", requestId: msg.requestId, result: { ok: false, error: "モデルの指定が正しくありません。" } });
+          break;
+        }
+        this.store.setMeta(DEFAULT_MODEL_KEY, msg.model && msg.model !== "default" ? msg.model : "");
+        this.broadcastServer();
+        peer.send({ type: "server.result", requestId: msg.requestId, result: { ok: true } });
+        break;
+      }
       case "worktree.name": {
         if (typeof msg.requestId !== "string" || !msg.requestId || msg.requestId.length > 100) return;
         const m = typeof msg.machine === "string" ? this.machines.get(msg.machine) : undefined;
@@ -1099,9 +1122,13 @@ export class Hub {
     if (this.holding !== undefined && !listing) return reply({ ok: false, error: this.holding });
     const invalid = validateCommand(cmd) ?? this.unsupported(machine, cmd);
     if (invalid) return reply({ ok: false, error: invalid });
-    // Every launch of Claude Code from Gasho (the screen's, a plugin's) starts with the default effort level.
-    const effort = this.defaultEffort();
-    if (cmd.type === "session.launch" && cmd.agent !== "codex" && cmd.effort === undefined && effort) cmd = { ...cmd, effort };
+    // Every launch of Claude Code from Gasho (the screen's, a plugin's) starts with the default effort level and model.
+    if (cmd.type === "session.launch" && cmd.agent !== "codex") {
+      const effort = this.defaultEffort();
+      const model = this.defaultModel();
+      if (cmd.effort === undefined && effort) cmd = { ...cmd, effort };
+      if (cmd.model === undefined && model) cmd = { ...cmd, model };
+    }
     const daemon = this.daemons.get(machine);
     if (!daemon) return reply({ ok: false, error: "この working server はオフラインです。" });
     // Audit trail of what browsers asked working servers to do (a listing changes nothing).
@@ -1173,7 +1200,15 @@ export class Hub {
           .filter(Boolean)
           .join(" ");
       case "session.launch":
-        return [cmd.cwd, cmd.trust && "[trust]", cmd.agent === "codex" && "[codex]", cmd.effort && `[effort: ${cmd.effort}]`].filter(Boolean).join(" ");
+        return [
+          cmd.cwd,
+          cmd.trust && "[trust]",
+          cmd.agent === "codex" && "[codex]",
+          cmd.model && cmd.model !== "default" && `[model: ${cmd.model}]`,
+          cmd.effort && `[effort: ${cmd.effort}]`,
+        ]
+          .filter(Boolean)
+          .join(" ");
       case "folder.create":
         return path.posix.join(cmd.parent, cmd.name);
       case "repo.clone":

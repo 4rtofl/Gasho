@@ -612,6 +612,11 @@ export interface ServerInfo {
    * browser. Absent: Claude Code's own default (the working server's effortLevel).
    */
   defaultEffort?: EffortLevel;
+  /**
+   * The model a new session of Claude Code starts with (`--model`, for that session only), the same for every browser.
+   * Absent: Claude Code's own default model.
+   */
+  defaultModel?: SessionModel;
 }
 
 /** The latest published versions, as the Gasho server last looked them up on the package registry. */
@@ -1178,6 +1183,8 @@ export type ClientToHub =
   | { type: "defaultAgent.set"; requestId: string; agent: AgentKind }
   /** Changes the effort level a new session of Claude Code starts with; without `effort`, Claude Code's own default (as defaultAgent.set). */
   | { type: "defaultEffort.set"; requestId: string; effort?: EffortLevel }
+  /** Changes the model a new session of Claude Code starts with; without `model` (or "default"), Claude Code's own default. */
+  | { type: "defaultModel.set"; requestId: string; model?: SessionModel }
   /**
    * Names a worktree of a working server, for every browser (MachineInfo.worktreeNames), or takes its name away (no
    * `name`, or only spaces): it shows its branch again. Answered with server.result. Also while the working server is offline.
@@ -1253,9 +1260,9 @@ export type SessionCommand =
    * `agent`: the agent to start; Claude Code when absent. `trust` is about Claude Code's question only. `effort`: Claude
    * Code starts with it (`--effort`, for this session only); the Gasho server gives its default effort level
    * (ServerInfo.defaultEffort) to a launch of Claude Code without one. A model that does not have it starts with one it
-   * has, or none.
+   * has, or none. `model`: likewise (`--model`, ServerInfo.defaultModel); "default" passes nothing.
    */
-  | { type: "session.launch"; cwd: string; name?: string; trust?: boolean; agent?: AgentKind; effort?: EffortLevel }
+  | { type: "session.launch"; cwd: string; name?: string; trust?: boolean; agent?: AgentKind; effort?: EffortLevel; model?: SessionModel }
   /** Makes the folder `name` inside the folder `parent` (gasho-daemon 0.10.0 and later). */
   | { type: "folder.create"; parent: string; name: string }
   /**

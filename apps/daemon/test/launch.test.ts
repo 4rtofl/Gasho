@@ -379,6 +379,16 @@ test("with an effort level, Claude Code starts with --effort", async () => {
   }
 });
 
+test("with a model, Claude Code starts with --model, before --effort", async () => {
+  const { d, folder, started, done } = await setup();
+  try {
+    assert.equal((await d.launch(folder, "tuned", true, "claude", false, "high", "opus")).ok, true);
+    assert.deepEqual(started[0]?.args.slice(0, 5), ["--remote-control=tuned", "--model", "opus", "--effort", "high"]);
+  } finally {
+    await done();
+  }
+});
+
 test("Codex is not started with Claude in Chrome", async () => {
   const { d, folder, started, done } = await setup();
   try {

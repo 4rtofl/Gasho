@@ -1581,7 +1581,15 @@ export class Daemon {
         try {
           switch (m.type) {
             case "session.launch":
-              result = await this.launch(m.cwd, m.name, m.trust === true, m.agent, false, m.effort && EFFORT_LEVELS.includes(m.effort) ? m.effort : undefined);
+              result = await this.launch(
+                m.cwd,
+                m.name,
+                m.trust === true,
+                m.agent,
+                false,
+                m.effort && EFFORT_LEVELS.includes(m.effort) ? m.effort : undefined,
+                m.model && m.model !== "default" && Object.hasOwn(MODEL_NAMES, m.model) ? m.model : undefined,
+              );
               break;
             case "session.input":
               result = await this.input(m);
@@ -1898,7 +1906,8 @@ export class Daemon {
    * Starts `claude --remote-control` in `cwd` in a terminal of its own and waits for its session id. With `trust`,
    * Claude Code's question whether to trust the folder is answered with yes; without it, the launch stops there. With
    * `effort`, Claude Code starts with that effort level, for this session only: a model that does not have it starts
-   * with one it has, or none, and the settings keep their effortLevel.
+   * with one it has, or none, and the settings keep their effortLevel. Likewise with `model` (`--model`, the /model
+   * picker's alias): the settings keep their model.
    */
   private async launch(
     cwd: string,
@@ -1907,6 +1916,7 @@ export class Daemon {
     agent: AgentKind = "claude",
     chrome = false,
     effort?: EffortLevel,
+    model?: SessionModel,
   ): Promise<CommandResult> {
     if (agent === "codex") return chrome ? { ok: false, error: CODEX_NO_CHROME } : this.launchCodex(cwd, name);
     if (!this.canLaunch) return { ok: false, error: NO_TERMINAL };
@@ -1916,7 +1926,7 @@ export class Daemon {
     // Without a name, "<folder>-gasho" until the first message names it (see nameAfterTitle).
     const autoName = !name?.trim();
     const rcName = name?.trim() || `${path.basename(dir)}-gasho`;
-    const started = await this.startClaude(dir, rcName, { trust, chrome, claudeArgs: effort ? ["--effort", effort] : [] });
+    const started = await this.startClaude(dir, rcName, { trust, chrome, claudeArgs: [...(model ? ["--model", model] : []), ...(effort ? ["--effort", effort] : [])] });
     if ("error" in started) {
       const { error, needsTrust, trustWarnings } = started;
       return needsTrust ? { ok: false, error, needsTrust, trustWarnings } : { ok: false, error };

@@ -743,6 +743,36 @@ test("the conversation from before /clear, opened again while a refresh runs, is
   }
 });
 
+test("the conversation from before /clear, opened again when `claude agents` fails, is no longer sent among the session's earlier ids", async () => {
+  const { d, agentsFile, folder, done } = await setup();
+  const claude = await child('process.on("SIGTERM", () => process.exit(0))');
+  const OLD = "aaaaaaaa-0000-4000-8000-000000000031";
+  const NEW = "aaaaaaaa-0000-4000-8000-000000000032";
+  const launchedAt = Date.now();
+  writeFileSync(agentsFile, JSON.stringify([{ pid: claude.pid, sessionId: NEW, cwd: folder, status: "idle", startedAt: launchedAt - 1000 }]));
+  const sent: { sessionId: string; previousSessionIds?: string[] }[][] = [];
+  try {
+    d.cfg.pluginDataDir = path.join(folder, "plugin-data");
+    d.refresh = Object.getPrototypeOf(d).refresh;
+    d.readManagedScreens = async () => undefined;
+    d.countTokens = async () => undefined;
+    d.flushInput = async () => undefined;
+    d.hub = { connected: true, send: (m: { type: string; sessions?: [] }) => m.type === "sessions" && sent.push(m.sessions!) };
+    d.managed.add({ sessionId: OLD, terminal: "t-old", pid: claude.pid, cwd: folder, name: "-wip", launchedAt });
+    await d.refresh();
+    const project = path.join(d.cfg.claudeDir, "projects", "p");
+    await fs.mkdir(project, { recursive: true });
+    await fs.writeFile(path.join(project, `${OLD}.jsonl`), `${JSON.stringify({ type: "user", cwd: folder, message: { role: "user", content: "前の会話" } })}\n`);
+    d.startClaude = async () => ({ sessionId: OLD, terminal: "t-resumed", pid: process.pid });
+    writeFileSync(agentsFile, "not json");
+    assert.equal((await d.resume(OLD)).ok, true);
+    assert.deepEqual(sent.at(-1)?.map((s) => [s.sessionId, s.previousSessionIds]), [[NEW, undefined]]);
+  } finally {
+    claude.kill("SIGKILL");
+    await done();
+  }
+});
+
 /** A session's temporary folder as Claude Code leaves it, last changed long ago. */
 async function oldTmpFolder(root: string, sessionId: string): Promise<string> {
   const dir = path.join(root, `claude-${process.getuid!()}`, "-home-rg-repo", sessionId);

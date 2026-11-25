@@ -214,6 +214,16 @@ export function mcpQuestionOpen(screen: string): boolean {
   return atBottom(screen, /\bnew MCP servers? found in this project\b/i, 20);
 }
 
+/**
+ * Claude Code's explanation the first time it starts with `--chrome`: a dialog titled "Claude in Chrome" that says
+ * "Claude can use Chrome through its extension: open sites, fill forms, …", with Enter to continue (2.1.331). It asks
+ * nothing: Enter only closes it, and Claude Code does not show it again.
+ */
+export function chromeOnboardingOpen(screen: string): boolean {
+  if (promptBoxAtBottom(screenLines(screen))) return false;
+  return atBottom(screen, /\bClaude can use Chrome through its extension\b/, 20);
+}
+
 /** Whether the output of the latest /model on the screen says the model was switched for this session only. */
 export function switchedForSession(screen: string): boolean {
   const flat = screen.replace(/\s+/g, " ");
@@ -384,8 +394,8 @@ export function permissionDialogText(screen: string): DialogText | undefined {
 
 /**
  * Whether something at the bottom of the screen has the keys instead of the prompt box: the /model picker, the
- * question before a switch, a permission dialog, the trust dialog, the question about a folder's MCP servers or the
- * question when resuming an old session.
+ * question before a switch, a permission dialog, the trust dialog, the question about a folder's MCP servers, the
+ * question when resuming an old session or the explanation of Claude in Chrome.
  */
 export function dialogOpen(screen: string): boolean {
   if (promptBoxAtBottom(screenLines(screen))) return false;
@@ -396,7 +406,8 @@ export function dialogOpen(screen: string): boolean {
     permissionDialog(screen) !== undefined ||
     atBottom(screen, TRUST_PROMPT_RE) ||
     mcpQuestionOpen(screen) ||
-    resumeQuestionOpen(screen)
+    resumeQuestionOpen(screen) ||
+    chromeOnboardingOpen(screen)
   );
 }
 
@@ -768,6 +779,11 @@ export interface ManagedSession {
   /** A fork: the session it was forked from, and when (its transcript starts with a copy of that conversation). */
   forkOf?: string;
   forkedAt?: number;
+  /**
+   * Started with `--chrome` (Claude in Chrome): its Claude Code has the browser tools of the Chrome extension. It is
+   * brought back from hibernation with it, and a fork of it gets it too. Only a launch or fork that asks for it sets it.
+   */
+  chrome?: boolean;
   /**
    * Started without a name (so named "<folder>-gasho" for now): it is named after its first message, with the title
    * Claude Code gives the conversation from it (`ai-title`). Cleared once Claude Code records a name for it (the

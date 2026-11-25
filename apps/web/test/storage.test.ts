@@ -1,6 +1,7 @@
 // What this browser keeps in localStorage beside the hooks that read it: the worktrees kept in the sidebar
 // (lib/remembered-worktrees), the grouping of the worktrees picked and the plugin list shown last (lib/session-list-prefs),
-// the sections of the settings screen kept open (lib/settings-sections). Each module keeps what it read, so each case
+// the sections of the settings screen kept open (lib/settings-sections), the conversations open outside Gasho whose
+// banner was closed (lib/outside-dismissed). Each module keeps what it read, so each case
 // loads it afresh over a storage of its own. npm run test:coverage
 // counts only one of these loads of a file, so it shows the two modules less covered than they are.
 import assert from "node:assert/strict";
@@ -39,6 +40,7 @@ async function fresh<T>(relative: string): Promise<T> {
 type Worktrees = typeof import("../src/lib/remembered-worktrees.ts");
 type Prefs = typeof import("../src/lib/session-list-prefs.ts");
 type Sections = typeof import("../src/lib/settings-sections.ts");
+type Dismissed = typeof import("../src/lib/outside-dismissed.ts");
 
 const wt = (n: string, more: Partial<RememberedWorktree> = {}): RememberedWorktree => ({ machine: "mac", path: `/src/${n}`, label: n, subfolders: false, ...more });
 const saved = (s: { items: Map<string, string> }) => JSON.parse(s.items.get("gasho.worktrees") ?? "null") as RememberedWorktree[] | null;
@@ -159,4 +161,22 @@ test("where storage is blocked, or cannot be written, the sections are kept open
   localStorage.setItem = (k: string, v: string) => void s.items.set(k, v);
   full.setSettingsSectionOpen("chat-text", true);
   assert.equal(s.items.get("gasho.settingsOpen"), JSON.stringify(["push", "versions", "chat-text"]));
+});
+
+test("a closed banner stays closed over the conversations open then, worktree by worktree, after the page is loaded again", async () => {
+  storage();
+  const page = await fresh<Dismissed>("../src/lib/outside-dismissed.ts");
+  page.dismissOutside("mac\u001f/src/app", ["o1", "o2"]);
+  page.dismissOutside("mac\u001f/src/lib", ["x"]);
+  page.dismissOutside("mac\u001f/src/app", ["o2", "o3"]);
+  const next = await fresh<Dismissed>("../src/lib/outside-dismissed.ts");
+  assert.deepEqual(next.dismissedOutside("mac\u001f/src/app"), ["o2", "o3"]);
+  assert.deepEqual(next.dismissedOutside("mac\u001f/src/lib"), ["x"]);
+  assert.deepEqual(next.dismissedOutside("ubuntu\u001f/src/app"), []);
+
+  // 100 worktrees at most: the one closed longest ago goes first.
+  for (let i = 0; i < 99; i++) next.dismissOutside(`mac\u001f/src/n${i}`, ["s"]);
+  const last = await fresh<Dismissed>("../src/lib/outside-dismissed.ts");
+  assert.deepEqual(last.dismissedOutside("mac\u001f/src/app"), ["o2", "o3"]);
+  assert.deepEqual(last.dismissedOutside("mac\u001f/src/lib"), []);
 });

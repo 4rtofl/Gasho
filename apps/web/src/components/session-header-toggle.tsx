@@ -1,12 +1,15 @@
 import { PanelTopClose, PanelTopOpen } from "lucide-react";
+import { MorphingIcon } from "@/components/ui/morphing-icon";
 import { toggleSessionHeader, useSessionHeaderShown } from "@/lib/session-header";
 import { cn } from "@/lib/utils";
 
-/** Shows or hides the session screen's header. On phones it sits in the top bar, on wider screens in the header. */
+/**
+ * Shows or hides the session screen's header. On phones it sits in the top bar, on wider screens at the right end of
+ * the session's tabs (see session-tabs).
+ */
 export function SessionHeaderToggle({ className }: { className?: string }) {
   const shown = useSessionHeaderShown();
   const label = shown ? "ヘッダーを隠す" : "ヘッダーを表示";
-  const Icon = shown ? PanelTopClose : PanelTopOpen;
   return (
     <button
       type="button"
@@ -19,7 +22,7 @@ export function SessionHeaderToggle({ className }: { className?: string }) {
         className,
       )}
     >
-      <Icon className="size-4" />
+      <MorphingIcon from={<PanelTopClose className="size-4" />} to={<PanelTopOpen className="size-4" />} active={!shown} />
     </button>
   );
 }

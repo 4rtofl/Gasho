@@ -9,9 +9,10 @@ import { AlertDialog, Dialog } from "radix-ui";
 import { useEffect, useState } from "react";
 import type { CatalogPlugin, MachineInfo, PluginCatalog, PluginDaemonState, PluginInfo } from "@gasho/protocol";
 import { BUTTON_DANGER, BUTTON_PRIMARY, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG_PANEL } from "@/components/dialog-styles";
+import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { relativeTime } from "@/lib/format";
-import { updatesOf } from "@/lib/plugin-catalog";
+import { notInCatalog, updatesOf } from "@/lib/plugin-catalog";
 import { byGenre, genreName, genreOf } from "@/lib/plugin-genres";
 import { go } from "@/lib/route";
 import { requestCatalog, sendPluginCommand, useAppState } from "@/lib/store";
@@ -55,6 +56,7 @@ export function PluginsView() {
   }, [connected]);
   const sorted = [...infos].sort((a, b) => a.manifest.name.localeCompare(b.manifest.name, "ja"));
   const updates = updatesOf(infos, catalog);
+  const missing = notInCatalog(infos, catalog);
   const installed = new Set(infos.map((i) => i.id));
   const available = (catalog?.plugins ?? []).filter((p) => !installed.has(p.id)).sort((a, b) => a.name.localeCompare(b.name, "ja"));
   const groups = byGenre(available, catalog?.genres);
@@ -103,6 +105,7 @@ export function PluginsView() {
                 loadError={errors[info.id]}
                 loading={Boolean(loading[info.id])}
                 update={updates.get(info.id)}
+                missing={missing.has(info.id)}
                 note={noteOf(info)}
                 onRemove={() => setRemoving(info)}
               />
@@ -181,6 +184,7 @@ function PluginCard({
   loadError,
   loading,
   update,
+  missing,
   note,
   onRemove,
 }: {
@@ -192,6 +196,8 @@ function PluginCard({
   loading: boolean;
   /** The catalog's newer version of it. */
   update?: CatalogPlugin;
+  /** The catalog no longer lists it (renamed or removed in GashoPlugins). */
+  missing: boolean;
   /** Why this enabled plugin is not used in full: a theme or a session list that another one's stands in for. */
   note?: string;
   onRemove: () => void;
@@ -226,6 +232,11 @@ function PluginCard({
             {/* A theme that names no genre the catalog lists still says it is one. */}
             {genre ? <span className={CHIP}>{genre}</span> : m.theme && <span className={CHIP}>テーマ</span>}
             {info.dev && <span className="rounded-full border border-sky-500/40 px-1.5 py-px text-[11px] font-normal text-sky-300">開発中</span>}
+            {missing && (
+              <Badge variant="outline" tone="warning" className="h-auto px-1.5 py-px text-[11px] font-normal">
+                GashoPlugins の一覧にない
+              </Badge>
+            )}
             {info.enabled && loading && <span className="text-[11px] font-normal text-muted-foreground">読み込み中…</span>}
           </p>
           {m.description && <p className="mt-1 text-xs text-muted-foreground">{m.description}</p>}

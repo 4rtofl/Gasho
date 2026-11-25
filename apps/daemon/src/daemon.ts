@@ -76,6 +76,7 @@ import {
   launchableFolders,
   ManagedSessions,
   mcpQuestionOpen,
+  chromeOnboardingOpen,
   type ManagedSession,
   type QueuedInput,
   modelPickerOptions,
@@ -140,7 +141,7 @@ import { npmOf, Updater } from "./self-update.ts";
 import { log, str } from "./util.ts";
 import { CLAUDE_TMP_SWEEP_MS, prepareClaudeTmp, removeSessionTmp, sessionOfTmpFile, sweepClaudeTmp } from "./claude-tmp.ts";
 
-export const DAEMON_VERSION = "0.36.2";
+export const DAEMON_VERSION = "0.36.5";
 const GITHUB_CACHE_MS = 5 * 60_000;
 /** How long the worktree a folder is in, or the repositories inside it, and their branches are reused. */
 const REPOS_CACHE_MS = 60_000;
@@ -187,6 +188,7 @@ const NO_TERMINAL =
 const MCP_DECLINED =
   "このフォルダーの .mcp.json にある MCP サーバーは、使わない設定にして起動しました（Claude Code の確認に「使わない」と答えました）。使うときは、端末で claude を起動して /mcp から有効にしてください。";
 const CODEX_NO_FORK = "Codex のセッションは、Gasho からはフォークできません。";
+const CODEX_NO_CHROME = "Claude in Chrome（--chrome）は、Claude Code のセッションでだけ使えます。";
 const MODEL_NAMES: Record<SessionModel, string> = { default: "既定のモデル", opus: "Opus", fable: "Fable", sonnet: "Sonnet", haiku: "Haiku" };
 const EFFORT_NAMES: Record<EffortLevel, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "xHigh", max: "Max" };
 /** What this gasho-daemon can switch or carry with an input (MachineInfo.features). */
@@ -205,7 +207,7 @@ const AUTO_RETRY_MS = 30_000;
 const LATE_PICKER_WAIT_MS = 10_000;
 /** A session is used to read the model names only once it has run this long (Claude Code has finished starting). */
 const PROBE_MIN_AGE_MS = 30_000;
-/** An idle session's tokens are counted again after this long (a working one at every refresh). */
+/** An idle session's tokens are counted again after this long (a working one at every refresh, and once it stops). */
 const TOKENS_IDLE_MS = 30_000;
 /** The tokens per day are told to the Gasho server and saved at most this often. */
 const TOKEN_DAYS_EVERY_MS = 60_000;
@@ -247,9 +249,16 @@ interface Tracked {
   opening?: Promise<void>;
   /** Sessions started from Gasho: the model in Claude Code's welcome banner, until the transcript records one. */
   bannerModel?: string;
+  /**
+   * Sessions started from Gasho: the effort level last shown above the prompt box. Claude Code shows it only for a while
+   * (a /model picker opened and closed takes it away), and the transcript records none before the first message.
+   */
+  shownEffort?: EffortLevel;
   /** Sessions started from Gasho: the tokens they used, and when they were last counted. */
   tokens?: TokenCounter;
   tokensAt?: number;
+  /** It has stopped working since they were counted: its last reply, written just before, is counted without waiting. */
+  tokensDue?: boolean;
   /** Claude Code's own state of the session, as its registry has it (see RegistryInfo.status), else as its list does. */
   claude?: ClaudeState;
   /** Sessions started from Gasho: the permission dialog on the screen when it was last read (see openPermission). */
@@ -271,6 +280,8 @@ interface ClaudeStart {
   accept?: (row: AgentRow) => boolean;
   resuming?: boolean;
   trust?: boolean;
+  /** Start it with `--chrome` (Claude in Chrome); its first explanation of it is closed with Enter (see chromeOnboardingOpen). */
+  chrome?: boolean;
 }
 
 type ClaudeStarted =
@@ -316,6 +327,8 @@ export class Daemon {
   private followingNewIds = false;
   private refreshing = false;
   private refreshAgain = false;
+  /** The callers waiting for the refresh that refreshAgain asks for (see refresh). */
+  private refreshWaiters: (() => void)[] = [];
   private refreshTimer: NodeJS.Timeout | undefined;
   private statusTimer: NodeJS.Timeout | undefined;
   private emitTimer: NodeJS.Timeout | undefined;
@@ -737,9 +750,10 @@ export class Daemon {
     const read = await Promise.all(
       [...this.tracked.values()].map(async (t) => ({ t, reg: t.info.pid === undefined ? undefined : await readRegistry(this.cfg.claudeDir, t.info.pid) })),
     );
-    let changed = false;
-    for (const { t, reg } of read) if (reg?.status && this.applyStatus(t, undefined, reg)) changed = true;
-    if (!changed) return;
+    const changed = read.filter(({ t, reg }) => reg?.status && this.applyStatus(t, undefined, reg));
+    if (changed.length === 0) return;
+    // The tokens of the last reply go in the same list as the end of the work.
+    if (changed.some(({ t }) => t.tokensDue)) await this.countTokens();
     this.emitSessions();
     this.flushWaitingInputs();
   }
@@ -752,8 +766,10 @@ export class Daemon {
     info.waitingFor = waitingForOf(row, reg);
     this.permissions.status(info.sessionId, info.status);
     if (info.status === before) return false;
-    // For the sessions started from Gasho (those it stops), when Claude Code wrote a state and when Gasho showed it.
     const m = this.managed.get(info.sessionId);
+    // Only the sessions started from Gasho have their tokens counted (see countTokens).
+    if (m && before === "busy") t.tokensDue = true;
+    // For the sessions started from Gasho (those it stops), when Claude Code wrote a state and when Gasho showed it.
     if (m && before !== "unknown") {
       const written = reg?.statusAt ? `${Math.round((Date.now() - reg.statusAt) / 100) / 10} s ago` : "-";
       log(`${m.name}: ${before} → ${info.status} (Claude Code's file: ${reg?.status ?? "-"}, written ${written}; list: ${row ? mapStatus(row) : "-"})`);
@@ -771,12 +787,18 @@ export class Daemon {
     }
   }
 
+  /**
+   * Reads the sessions again and sends them. Called while a refresh runs, it waits for the next one to end: the one
+   * running may have read `claude agents` before what the caller changed, and a session just started would then reach
+   * the browser after the answer that opens its page (which would say it is gone).
+   */
   async refresh(): Promise<void> {
     if (this.refreshing) {
       this.refreshAgain = true;
-      return;
+      return new Promise((resolve) => this.refreshWaiters.push(resolve));
     }
     this.refreshing = true;
+    const waiters = this.refreshWaiters.splice(0);
     try {
       const rows = await listAgents(this.cfg.claudeBin);
       await this.followNewIds(rows);
@@ -822,6 +844,7 @@ export class Daemon {
         this.refreshed = true;
         this.emitSessions();
       }
+      for (const resolve of waiters) resolve();
       if (this.refreshAgain) {
         this.refreshAgain = false;
         void this.refresh();
@@ -975,7 +998,7 @@ export class Daemon {
     info.costUSD = meta.costUSD;
     info.lastActivityAt = meta.lastActivityAt;
     info.model = meta.model ?? t.bannerModel;
-    info.effort = meta.effort;
+    info.effort = meta.effort ?? t.shownEffort;
     info.ultracode = meta.ultracode;
     this.remember(info.sessionId, meta);
   }
@@ -1268,7 +1291,7 @@ export class Daemon {
       t.dialog = permissionDialogText(screen);
       const state = statusLine(screen);
       if (state) {
-        t.info.effort = state.effort;
+        t.info.effort = t.shownEffort = state.effort;
         t.info.ultracode = state.ultracode;
         this.rememberEffort(m.sessionId, state.effort);
       }
@@ -1308,8 +1331,9 @@ export class Daemon {
       // A fork's transcript starts with a copy of the conversation it was forked from: not this session's tokens. A fork
       // opened again from the history is known as one only by what was remembered when it was made.
       t.tokens ??= new TokenCounter(t.transcript, { since: this.tokenDays.forkedAt(m.sessionId) ?? m.forkedAt });
-      if (t.info.status !== "busy" && t.tokensAt !== undefined && now - t.tokensAt < TOKENS_IDLE_MS) continue;
+      if (t.info.status !== "busy" && !t.tokensDue && t.tokensAt !== undefined && now - t.tokensAt < TOKENS_IDLE_MS) continue;
       t.tokensAt = now;
+      t.tokensDue = false;
       try {
         await t.tokens.update();
       } catch (e) {
@@ -1557,7 +1581,7 @@ export class Daemon {
         try {
           switch (m.type) {
             case "session.launch":
-              result = await this.launch(m.cwd, m.name, m.trust === true, m.agent);
+              result = await this.launch(m.cwd, m.name, m.trust === true, m.agent, false, m.effort && EFFORT_LEVELS.includes(m.effort) ? m.effort : undefined);
               break;
             case "session.input":
               result = await this.input(m);
@@ -1652,7 +1676,10 @@ export class Daemon {
       switch (req.op) {
         case "session.launch":
           log(`session.launch in ${req.cwd} from the control socket`);
-          return await this.launch(req.cwd, req.name, req.trust === true, req.agent);
+          return await this.launch(req.cwd, req.name, req.trust === true, req.agent, req.chrome === true);
+        case "session.fork":
+          log(`session.fork of ${req.sessionId}${req.chrome ? " with Claude in Chrome" : ""} from the control socket`);
+          return await this.fork(req.sessionId, req.name, req.chrome ? { chrome: true } : {});
         case "session.input":
           return await this.input({ type: "session.input", requestId, sessionId: req.sessionId, text: req.text });
         case "session.rename":
@@ -1752,6 +1779,7 @@ export class Daemon {
         cwd: m.cwd,
         agent: "claude" as const,
         terminal: m.terminal,
+        ...(m.chrome ? { chrome: true } : {}),
         status: info?.status ?? "unknown",
         ...(pending > 0 ? { pendingInputs: pending } : {}),
         ...(fs.existsSync(m.cwd) ? {} : { cwdMissing: true }),
@@ -1868,10 +1896,19 @@ export class Daemon {
 
   /**
    * Starts `claude --remote-control` in `cwd` in a terminal of its own and waits for its session id. With `trust`,
-   * Claude Code's question whether to trust the folder is answered with yes; without it, the launch stops there.
+   * Claude Code's question whether to trust the folder is answered with yes; without it, the launch stops there. With
+   * `effort`, Claude Code starts with that effort level, for this session only: a model that does not have it starts
+   * with one it has, or none, and the settings keep their effortLevel.
    */
-  private async launch(cwd: string, name: string | undefined, trust = false, agent: AgentKind = "claude"): Promise<CommandResult> {
-    if (agent === "codex") return this.launchCodex(cwd, name);
+  private async launch(
+    cwd: string,
+    name: string | undefined,
+    trust = false,
+    agent: AgentKind = "claude",
+    chrome = false,
+    effort?: EffortLevel,
+  ): Promise<CommandResult> {
+    if (agent === "codex") return chrome ? { ok: false, error: CODEX_NO_CHROME } : this.launchCodex(cwd, name);
     if (!this.canLaunch) return { ok: false, error: NO_TERMINAL };
     const dir = path.resolve(cwd);
     const stat = await fsp.stat(dir).catch(() => undefined);
@@ -1879,13 +1916,22 @@ export class Daemon {
     // Without a name, "<folder>-gasho" until the first message names it (see nameAfterTitle).
     const autoName = !name?.trim();
     const rcName = name?.trim() || `${path.basename(dir)}-gasho`;
-    const started = await this.startClaude(dir, rcName, { trust });
+    const started = await this.startClaude(dir, rcName, { trust, chrome, claudeArgs: effort ? ["--effort", effort] : [] });
     if ("error" in started) {
       const { error, needsTrust, trustWarnings } = started;
       return needsTrust ? { ok: false, error, needsTrust, trustWarnings } : { ok: false, error };
     }
     const { sessionId, terminal, pid } = started;
-    this.managed.add({ sessionId, terminal, pid, cwd: dir, name: rcName, launchedAt: Date.now(), ...(autoName ? { autoName } : {}) });
+    this.managed.add({
+      sessionId,
+      terminal,
+      pid,
+      cwd: dir,
+      name: rcName,
+      launchedAt: Date.now(),
+      ...(autoName ? { autoName } : {}),
+      ...(chrome ? { chrome } : {}),
+    });
     await this.managed.save();
     await this.refresh();
     // A folder trusted just now is one to offer from now on.
@@ -1954,9 +2000,11 @@ export class Daemon {
       accept = () => true,
       resuming = false,
       trust = false,
+      chrome = false,
       terminal = terminalName(rcName),
     }: ClaudeStart & { claudeArgs?: string[]; terminal?: string } = {},
   ): Promise<ClaudeStarted> {
+    if (chrome) claudeArgs = [...claudeArgs, "--chrome"];
     // Until `claude agents` lists it, nothing says that the folder of a conversation being opened again is in use.
     const resumed = claudeArgs.indexOf("--resume");
     if (resumed >= 0) this.claudeTmpOpening.set(claudeArgs[resumed + 1]!, Date.now() + LAUNCH_TIMEOUT_MS);
@@ -1990,7 +2038,7 @@ export class Daemon {
     }
     this.ownPids.add(pid);
     log(`launching "${rcName}" in ${dir} (terminal ${terminal})${claudeArgs.length > 0 ? ` with ${claudeArgs.join(" ")}` : ""}`);
-    return this.claudeListed(terminal, pid, dir, rcName, { accept, resuming, trust });
+    return this.claudeListed(terminal, pid, dir, rcName, { accept, resuming, trust, chrome });
   }
 
   /** Answers what a Claude Code asks while it starts, until `claude agents` lists it (see startClaude). */
@@ -1999,7 +2047,7 @@ export class Daemon {
     pid: number,
     dir: string,
     rcName: string,
-    { accept = () => true, resuming = false, trust = false }: ClaudeStart,
+    { accept = () => true, resuming = false, trust = false, chrome = false }: ClaudeStart,
   ): Promise<ClaudeStarted> {
     const deadline = Date.now() + LAUNCH_TIMEOUT_MS;
     let resumeAsked = false;
@@ -2037,6 +2085,14 @@ export class Daemon {
         }
         mcpDeclined = true;
         log(`"${rcName}": started without the new MCP servers of ${dir}`);
+        continue;
+      }
+      if (chrome && chromeOnboardingOpen(screen)) {
+        if (!(await this.answerChromeOnboarding(terminal).then(() => true, () => false))) {
+          await this.terminals.kill(terminal);
+          return { error: "Claude Code が Claude in Chrome の説明を出したまま、Enter を受け付けませんでした。" };
+        }
+        log(`"${rcName}": closed the explanation of Claude in Chrome`);
         continue;
       }
       if (resuming && resumeQuestionOpen(screen)) {
@@ -2094,6 +2150,15 @@ export class Daemon {
     throw new Error("the question about MCP servers did not close");
   }
 
+  /** Enter to Claude Code's first explanation of Claude in Chrome (see chromeOnboardingOpen); throws if it stays open. */
+  private async answerChromeOnboarding(session: string): Promise<void> {
+    for (let i = 0; i < 3; i++) {
+      await this.terminals.keys(session, "Enter");
+      if (await this.waitForScreen(session, (r) => !chromeOnboardingOpen(r.screen))) return;
+    }
+    throw new Error("the explanation of Claude in Chrome did not close");
+  }
+
   /** Esc to the question about resuming an old, long session (see resumeQuestionOpen); throws if it stays open. */
   private async answerResumeQuestion(session: string): Promise<void> {
     for (let i = 0; i < 3; i++) {
@@ -2108,8 +2173,10 @@ export class Daemon {
    * a new terminal. The copy starts with the conversation so far; the session itself goes on as it was. Claude
    * Code writes a fork's transcript only once something is recorded, so the copy is named with /rename right away:
    * that names it in Claude Code too (the Remote Control name is set already), and its conversation can be read at once.
+   * The copy has Claude in Chrome when the session has it, or when `chrome` asks for it (a session forks itself to have
+   * its work checked in the browser: gasho-daemon session fork --chrome).
    */
-  private async fork(sessionId: string, name: string | undefined): Promise<CommandResult> {
+  private async fork(sessionId: string, name: string | undefined, { chrome }: { chrome?: boolean } = {}): Promise<CommandResult> {
     if (this.codexSessions.has(sessionId)) return { ok: false, error: CODEX_NO_FORK };
     const source = this.managed.get(sessionId);
     if (!source) return { ok: false, error: "このセッションはフォークできません。フォークできるのは、Gasho が起動したセッションだけです。" };
@@ -2120,8 +2187,10 @@ export class Daemon {
       return { ok: false, error: "このセッションには、まだ会話がありません。最初の発言のあとでフォークしてください。" };
     }
     const forkedAt = Date.now();
+    const withChrome = chrome ?? source.chrome === true;
     const started = await this.startClaude(source.cwd, checked.name, {
       claudeArgs: ["--resume", sessionId, "--fork-session"],
+      chrome: withChrome,
       // The copy gets its own id; never take the session it was forked from for it.
       accept: (row) => row.sessionId !== sessionId,
       resuming: true,
@@ -2165,7 +2234,17 @@ export class Daemon {
         const t = this.tracked.get(forkId);
         if (t && !t.transcript) t.sawWithoutTranscript = false;
       }
-      this.managed.add({ sessionId: forkId, terminal, pid, cwd: source.cwd, name: checked.name, launchedAt: Date.now(), forkOf: sessionId, forkedAt });
+      this.managed.add({
+        sessionId: forkId,
+        terminal,
+        pid,
+        cwd: source.cwd,
+        name: checked.name,
+        launchedAt: Date.now(),
+        forkOf: sessionId,
+        forkedAt,
+        ...(withChrome ? { chrome: true } : {}),
+      });
       if (typed !== "sent") {
         // Until Claude Code records something, the copy shows no conversation in Gasho.
         this.managed.enqueue(forkId, { text: rename, ...(typed === "unsure" ? { entered: true, enteredAt: Date.now() } : {}) });
@@ -2245,9 +2324,9 @@ export class Daemon {
       );
     }
     await this.refresh();
-    // Before the answer, also when that refresh only asked the one running to go again: a session /clear took away from
-    // this conversation has it among its earlier ids no longer (see ManagedSessions.add), and a page still told it does
-    // goes on to that session instead (see the web's movedSession).
+    // Also when that refresh failed: a session /clear took away from this conversation has it among its earlier ids no
+    // longer (see ManagedSessions.add), and a page still told it does goes on to that session instead (see the web's
+    // movedSession).
     this.emitSessions();
     return { ok: true, sessionId: id, ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}) };
   }
@@ -2696,7 +2775,7 @@ export class Daemon {
     await this.hibernating.get(sessionId)?.catch(() => undefined);
     // Its hibernation was called off meanwhile (see hibernate): the Claude Code it has still runs.
     if (m.hibernated !== h) return { ok: true, sessionId };
-    const start: ClaudeStart = { accept: (row) => row.sessionId === sessionId, resuming: true };
+    const start: ClaudeStart = { accept: (row) => row.sessionId === sessionId, resuming: true, ...(m.chrome ? { chrome: true } : {}) };
     const running = this.interrupted.get(sessionId);
     this.interrupted.delete(sessionId);
     let started: ClaudeStarted;

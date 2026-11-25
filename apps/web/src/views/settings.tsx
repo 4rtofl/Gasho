@@ -1,19 +1,22 @@
 // Settings of this browser: the size of the conversation's text on the session screen, with a sample of a
-// conversation to see it by, and its notifications (Web Push). The default agent is the Gasho server's, the same for
-// every browser. Then the versions of Gasho running now. Each is a section that folds (lib/settings-sections).
-import { Check, CircleAlert, Copy, Info, RotateCcw, Type } from "lucide-react";
+// conversation to see it by, and its notifications (Web Push). The default agent and effort level are the Gasho
+// server's, the same for every browser. Then the versions of Gasho running now. Each is a section that folds
+// (lib/settings-sections).
+import { Check, CircleAlert, Copy, Gauge, Info, RotateCcw, Type } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { AgentKind, TranscriptEntry } from "@gasho/protocol";
+import type { AgentKind, EffortLevel, TranscriptEntry } from "@gasho/protocol";
 import { PushSettingsSection } from "@/components/push-settings";
+import { EFFORTS } from "@/components/session-controls";
 import { TranscriptSample } from "@/components/transcript";
 import { Badge } from "@/components/ui/badge";
 import { AccordionSection } from "@/components/ui/unfold-accordion";
 import { MorphingButton, type MorphingButtonStatus } from "@/components/ui/morphing-button";
+import { SemiGauge } from "@/components/ui/semi-gauge";
 import { AGENT_NAME, codexOffered } from "@/lib/agents";
 import { CHAT_TEXT_DEFAULT, CHAT_TEXT_MAX, CHAT_TEXT_MIN, useChatTextSize } from "@/lib/chat-text";
 import { go } from "@/lib/route";
 import { useSettingsSectionOpen } from "@/lib/settings-sections";
-import { OWN_BUILD, setDefaultAgent, useAppState } from "@/lib/store";
+import { OWN_BUILD, setDefaultAgent, setDefaultEffort, useAppState } from "@/lib/store";
 import { copyToClipboard } from "@/lib/utils";
 import { versionRows, versionsText } from "@/lib/versions";
 import { PluginSettingsSections } from "@/plugins/parts";
@@ -138,6 +141,8 @@ export function SettingsView() {
 
       <DefaultAgentSection />
 
+      <DefaultEffortSection />
+
       <PushSettingsSection />
 
       {/* The settings of the enabled plugins (docs/plugins.md, P5). */}
@@ -189,6 +194,55 @@ export function DefaultAgentSection() {
           </button>
         ))}
       </div>
+      {error && <p className="text-xs text-red-400">{error}</p>}
+    </AccordionSection>
+  );
+}
+
+const CLAUDE_DEFAULT = "Claude Code の既定";
+
+/** The effort level a new session of Claude Code starts with. */
+export function DefaultEffortSection() {
+  const { server } = useAppState();
+  const [error, setError] = useState<string>();
+  const [open, setOpen] = useSettingsSectionOpen("default-effort");
+  if (!server) return null;
+  const current = server.defaultEffort;
+  const pick = async (effort: EffortLevel | undefined) => {
+    setError(undefined);
+    const r = await setDefaultEffort(effort);
+    if (!r.ok) setError(r.error ?? "変えられませんでした。");
+  };
+  return (
+    <AccordionSection
+      icon={<Gauge className="size-4" />}
+      title="既定の Effort"
+      description="「＋」で起動する Claude Code のセッションの Effort です。どのブラウザーでも同じです。モデルにその Effort が無いときは、そのモデルにある近い Effort で起動します。Codex のセッションと、開き直し・フォークには使いません。"
+      open={open}
+      onOpenChange={setOpen}
+      actions={<span className="text-sm">{EFFORTS.find((e) => e.id === current)?.name ?? CLAUDE_DEFAULT}</span>}
+    >
+      <SemiGauge
+        steps={EFFORTS}
+        value={current}
+        onChange={(effort) => void pick(effort)}
+        label="既定の Effort"
+        empty={{ name: "既定", description: "working server の Claude Code の設定（effortLevel）のまま起動します" }}
+      >
+        <button
+          type="button"
+          role="radio"
+          aria-checked={current === undefined}
+          onClick={() => current !== undefined && void pick(undefined)}
+          className={
+            current === undefined
+              ? "rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground"
+              : "rounded-lg border border-border px-3 py-1.5 text-sm hover:border-border-hover"
+          }
+        >
+          {CLAUDE_DEFAULT}
+        </button>
+      </SemiGauge>
       {error && <p className="text-xs text-red-400">{error}</p>}
     </AccordionSection>
   );

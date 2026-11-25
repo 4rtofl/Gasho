@@ -26,7 +26,7 @@ import { prepareClap } from "@/lib/clap";
 import { TAPS, countTap, type GasshoFrom, type Taps } from "@/lib/gassho";
 import { DESKTOP, useMediaQuery, useWindowWidth } from "@/lib/media";
 import { arrangeSessions, rememberSessions, reorderShown, useSavedOrder } from "@/lib/order";
-import { updateCount } from "@/lib/plugin-catalog";
+import { notInCatalog, updateCount } from "@/lib/plugin-catalog";
 import { go, isOldGitHubLink, pageOf, useRoute, type SessionPanel } from "@/lib/route";
 import { rememberWorktrees, useRememberedWorktrees } from "@/lib/remembered-worktrees";
 import {
@@ -66,12 +66,14 @@ import {
   type WorktreeSessions,
 } from "@/lib/sessions";
 import { reloadToNewBuild, useAppState, useReadWhileOpen } from "@/lib/store";
+import { typingIn } from "@/lib/text-input";
 import { cn } from "@/lib/utils";
 import {
   arrangeWorktreeCategories,
   groupingKey,
   holdWorktreeList,
   moveHeldWorktree,
+  movesOfDrop,
   withMoves,
   worktreeListContext,
   type HeldWorktreeList,
@@ -244,6 +246,21 @@ export function App() {
   const [sessionAction, setSessionAction] = useState<SessionActionRequest | null>(null);
   // What was picked from a worktree row's menu (rename, remove); its dialog is open meanwhile.
   const [worktreeAction, setWorktreeAction] = useState<WorktreeActionRequest | null>(null);
+  // The worktrees' rows selected together (pressed with Shift), and the row pressed last without it, which a range of
+  // them starts from. Esc lets them go, unless something else took it (a menu or a dialog closes) or it is typed.
+  const [selectedRows, setSelectedRows] = useState<ReadonlySet<string>>(new Set());
+  const rangeStart = useRef<string>(undefined);
+  const selecting = selectedRows.size > 0;
+  useEffect(() => {
+    if (!selecting) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented || typingIn(e.target)) return;
+      e.preventDefault();
+      setSelectedRows(new Set());
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selecting]);
   // What to tell once the screen it belonged to went away (a worktree removed with a warning).
   const notice = useNotice();
   // The dialog that starts a new session, opened from the "＋" of the sidebar's worktree list.
@@ -454,11 +471,38 @@ export function App() {
     };
   });
 
+  // A grouping's categories show in place of the rows (none yet while waiting for them); the order dragged into and
+  // "最後に使った順に戻す" are then the grouping's.
+  const grouped = groupings.mode.kind !== "flat";
+  const groupingFolded = new Set(groupingPrefs.folded ?? []);
+  // Each category's rows, and those that show: folded, only the open worktree's (where the person is).
+  const categoryRows = worktreeCategories.map((c) => {
+    const isFolded = groupingFolded.has(c.id);
+    const rows = c.worktrees.flatMap((item) => {
+      const w = byId.get(item.key);
+      return w ? [{ item, w }] : [];
+    });
+    return { c, isFolded, rows, shown: rows.filter(({ w }) => !isFolded || w.id === openWorktree) };
+  });
+  // The worktrees' rows in the order they show, and those of them selected together (a menu or a drag of one of them
+  // does the same to all, when they are several).
+  const shownRows = grouped ? categoryRows.flatMap((x) => x.shown.map(({ w }) => w.id)) : listed.map((w) => w.id);
+  const selection = shownRows.filter((id) => selectedRows.has(id));
+  const selectedShown = new Set(selection);
+  const together = selection.length > 1 ? selection.flatMap((id) => byId.get(id) ?? []) : undefined;
+  // A row pressed with Shift: the rows from the one pressed last without it (or the open one) to it are selected.
+  const selectRange = (id: string) => {
+    const start = [rangeStart.current, openWorktree].find((x) => x !== undefined && shownRows.includes(x)) ?? id;
+    rangeStart.current = start;
+    const [a, b] = [shownRows.indexOf(start), shownRows.indexOf(id)].sort((x, y) => x - y);
+    setSelectedRows(new Set(shownRows.slice(a, b! + 1)));
+  };
+
   // A worktree's row, in Gasho's list and in a grouping's categories: its state (a bell in its place while a session
   // has a notification not read), its name (the one given to it, whose branch the tooltip tells, or its branch), the
   // line under it (its repository, and its working server when there are several, unless the grouping gave another or
-  // none), and whether it waits for an answer or is offline. Which agents run its sessions is not told here: the
-  // sessions' tabs tell it.
+  // none), whether it waits for an answer or is offline, and whether it is selected. Which agents run its sessions is
+  // not told here: the sessions' tabs tell it.
   const worktreeRow = (w: WorktreeSessions, line?: string): SidebarItem => ({
     id: w.id,
     label: worktreeTitle(w),
@@ -466,20 +510,16 @@ export function App() {
     description: line === undefined ? [w.repo, machines.length > 1 ? w.machine.name : undefined].filter(Boolean).join(" · ") || undefined : line || undefined,
     icon: <StatusDot {...worktreeDot(w, unreadOnes)} />,
     badge: !w.machine.connected ? "オフライン" : w.sessions.some((s) => s.status === "waiting") ? "確認" : undefined,
+    selected: selectedShown.has(w.id),
+    onShiftClick: () => selectRange(w.id),
     wrap: (button: ReactElement) => (
-      <WorktreeContextMenu worktree={w} onPick={setWorktreeAction}>
+      <WorktreeContextMenu worktree={w} selection={together && selectedShown.has(w.id) ? together : undefined} onPick={setWorktreeAction}>
         {button}
       </WorktreeContextMenu>
     ),
   });
   const groupingWorktrees = new Map(groupingContext.worktrees.map((w) => [w.key, w]));
-  const groupingFolded = new Set(groupingPrefs.folded ?? []);
-  const worktreeGroups: SidebarGroup[] = worktreeCategories.map((c) => {
-    const isFolded = groupingFolded.has(c.id);
-    const rows = c.worktrees.flatMap((item) => {
-      const w = byId.get(item.key);
-      return w ? [{ item, w }] : [];
-    });
+  const worktreeGroups: SidebarGroup[] = categoryRows.map(({ c, isFolded, rows, shown }) => {
     const waiting = rows.filter(({ w }) => w.machine.connected && w.sessions.some((s) => s.status === "waiting")).length;
     const target = c.launch ? groupingWorktrees.get(c.launch) : undefined;
     const canLaunch = target !== undefined && target.machine.connected && target.machine.canLaunch === true;
@@ -494,40 +534,50 @@ export function App() {
       action: canLaunch ? launchAction(c.title, target) : undefined,
       folded: isFolded,
       onFoldedChange: (f) => changeGroupingPrefs((p) => withFolded(p, c.id, f)),
-      // Folded, only the open worktree's row shows (where the person is).
-      items: rows.filter(({ w }) => !isFolded || w.id === openWorktree).map(({ item, w }) => worktreeRow(w, item.description)),
+      items: shown.map(({ item, w }) => worktreeRow(w, item.description)),
       sort: isFolded
         ? undefined
         : { onReorder: (keys) => changeGroupingPrefs((p) => withSessionOrder(p, c.id, keys, worktreeCategories.map((x) => x.id))) },
     };
   });
-  // A row dropped in another category of a grouping with useOnMove: it shows there at once, where it was dropped, until
-  // the plugin's function settles; then the plugin's categories decide (while the list is held, from when the pointer
-  // leaves it). When the function fails, the row goes back and the list tells why for a while.
+  // A row dropped in another category of a grouping with useOnMove, with the rows selected together when it is one of
+  // them: they show there at once, where it was dropped, until the plugin's function settles for each; then the
+  // plugin's categories decide (while the list is held, from when the pointer leaves it). When the function fails for
+  // one, it goes back and the list tells why for a while.
   const moveRow = (m: SidebarMove) => {
     const move = groupings.move;
     if (!move || !shownGrouping) return;
     const grouping = shownGrouping;
-    const index = m.ids.indexOf(m.id);
-    const back = worktreeCategories.find((c) => c.id === m.from)?.worktrees.findIndex((w) => w.key === m.id) ?? 0;
-    const pending: PendingMove = { grouping, worktree: m.id, to: m.to };
-    changeGroupingPrefs((p) => withSessionOrder(p, m.to, m.ids, worktreeCategories.map((x) => x.id)));
-    setMoves((prev) => [...prev.filter((x) => x.grouping !== grouping || x.worktree !== m.id), pending]);
-    setHeldWorktrees((h) => (h?.grouping === grouping ? moveHeldWorktree(h, m.id, m.to, index) : h));
+    const categoryOf = (key: string) => worktreeCategories.find((c) => c.worktrees.some((w) => w.key === key))?.id;
+    const { ids, moves: rows } = movesOfDrop(m, selection, categoryOf);
+    const backTo = (r: { worktree: string; from: string }) =>
+      Math.max(0, worktreeCategories.find((c) => c.id === r.from)?.worktrees.findIndex((w) => w.key === r.worktree) ?? 0);
+    const keys = new Set(rows.map((r) => r.worktree));
+    const pending = rows.map((r): PendingMove => ({ grouping, worktree: r.worktree, to: m.to }));
+    changeGroupingPrefs((p) => withSessionOrder(p, m.to, ids, worktreeCategories.map((x) => x.id)));
+    setMoves((prev) => [...prev.filter((x) => x.grouping !== grouping || !keys.has(x.worktree)), ...pending]);
+    setHeldWorktrees((h) => (h?.grouping === grouping ? rows.reduce((held, r) => moveHeldWorktree(held, r.worktree, m.to, r.index), h) : h));
     setMoveError(undefined);
-    const settled = () => setMoves((prev) => prev.filter((x) => x !== pending));
     const plugins = (id: string) => (id === OTHER_CATEGORY ? null : id);
-    const moved = byId.get(m.id);
-    const label = moved ? worktreeTitle(moved) : m.id;
-    move({ worktree: m.id, from: plugins(m.from), to: plugins(m.to), index }).then(settled, (e: unknown) => {
-      settled();
-      setHeldWorktrees((h) => (h?.grouping === grouping ? moveHeldWorktree(h, m.id, m.from, back) : h));
-      setMoveError(`「${label}」を移せませんでした（${e instanceof Error ? e.message : String(e)}）。`);
-    });
+    void (async () => {
+      const failed: { label: string; reason: string }[] = [];
+      // One after another, in the order they show (each `index` counts those before it), as the plugin may keep where
+      // each goes in one value that every call changes.
+      for (const [i, r] of rows.entries()) {
+        try {
+          await move({ worktree: r.worktree, from: plugins(r.from), to: plugins(m.to), index: r.index });
+        } catch (e) {
+          setHeldWorktrees((h) => (h?.grouping === grouping ? moveHeldWorktree(h, r.worktree, r.from, backTo(r)) : h));
+          const w = byId.get(r.worktree);
+          failed.push({ label: w ? worktreeTitle(w) : r.worktree, reason: e instanceof Error ? e.message : String(e) });
+        }
+        setMoves((prev) => prev.filter((x) => x !== pending[i]));
+      }
+      if (failed.length > 0) {
+        setMoveError(`${failed.map((f) => `「${f.label}」`).join("")}を移せませんでした（${[...new Set(failed.map((f) => f.reason))].join("、")}）。`);
+      }
+    })();
   };
-  // A grouping's categories show in place of the rows (none yet while waiting for them); the order dragged into and
-  // "最後に使った順に戻す" are then the grouping's.
-  const grouped = groupings.mode.kind !== "flat";
   const notices = [
     listMode.kind === "gasho" && listMode.failed ? `${listMode.failed} の一覧を出せないので、worktree を並べています（理由はプラグインの画面に）。` : undefined,
     groupings.mode.kind === "flat" && groupings.mode.failed
@@ -605,8 +655,8 @@ export function App() {
           // gasho-daemon on a working server, or the Gasho server itself, can be updated.
           badge: machines.some((m) => updateToTell(m, latest)) || hubUpdateToTell(server, latest) ? "更新" : undefined,
         },
-        // The plugins that the catalog has a newer version of.
-        { id: "plugins", label: "プラグイン", icon: <Puzzle />, badge: updateCount(plugins, catalog) || undefined },
+        // The plugins that the catalog has a newer version of, or no longer lists.
+        { id: "plugins", label: "プラグイン", icon: <Puzzle />, badge: updateCount(plugins, catalog) + notInCatalog(plugins, catalog).size || undefined },
         { id: "settings", label: "設定", icon: <Settings /> },
       ],
     },
@@ -649,6 +699,9 @@ export function App() {
           if (row) return go({ name: "session", machine: row.m.id, sessionId: row.s.sessionId });
           const w = worktrees.find((x) => x.id === id);
           if (!w) return;
+          // Pressed without Shift: the rows selected together are let go, and a range starts from this one.
+          rangeStart.current = w.id;
+          setSelectedRows(new Set());
           const s = sessionToOpen(w);
           go(s ? { name: "session", machine: w.machine.id, sessionId: s.sessionId } : { name: "worktree", machine: w.machine.id, path: w.path });
         }}

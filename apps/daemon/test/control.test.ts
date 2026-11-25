@@ -445,3 +445,106 @@ test("through the socket, a launch is Daemon.launch, and the rename and the prom
     await done();
   }
 });
+
+test("the control socket takes chrome only as true, on a launch and on a fork", () => {
+  assert.deepEqual(parseRequest({ op: "session.launch", cwd: "/a", chrome: true }), { op: "session.launch", cwd: "/a", chrome: true });
+  assert.deepEqual(parseRequest({ op: "session.launch", cwd: "/a", chrome: "yes" }), { op: "session.launch", cwd: "/a" });
+  assert.deepEqual(parseRequest({ op: "session.fork", sessionId: "s", name: "n", chrome: true, extra: 1 }), {
+    op: "session.fork",
+    sessionId: "s",
+    name: "n",
+    chrome: true,
+  });
+  assert.deepEqual(parseRequest({ op: "session.fork", sessionId: "s" }), { op: "session.fork", sessionId: "s" });
+  assert.throws(() => parseRequest({ op: "session.fork" }), /sessionId must be a string/);
+});
+
+test("launch --chrome asks for Claude in Chrome, and the answer says the session has it", async () => {
+  const calls: ControlRequest[] = [];
+  const { io: cli, out } = io(async (req) => {
+    calls.push(req);
+    if (req.op === "session.launch") return { ok: true, sessionId: SID };
+    return { ok: true, sessions: [{ sessionId: SID, name: "wt", cwd: "/repo/wt", terminal: "t", agent: "claude", status: "idle", chrome: true }] };
+  });
+  await sessionCommand(["launch", "--cwd", "/repo/wt", "--chrome"], cli);
+  assert.deepEqual(calls[0], { op: "session.launch", cwd: "/repo/wt", chrome: true });
+  assert.deepEqual(JSON.parse(out.join("\n")), { sessionId: SID, name: "wt", cwd: "/repo/wt", terminal: "t", chrome: true });
+});
+
+test("fork finds the session as send does, forks it by its id with --chrome, then types the prompt into the copy", async () => {
+  const COPY = "ffffffff-0000-1111-2222-333333333333";
+  const sessions: ControlSession[] = [{ sessionId: SID, name: "impl-79", cwd: "/repo/wt", terminal: "t1", agent: "claude", status: "busy" }];
+  const calls: ControlRequest[] = [];
+  const { io: cli, out } = io(async (req) => {
+    calls.push(req);
+    switch (req.op) {
+      case "session.list":
+        return { ok: true, sessions: JSON.parse(JSON.stringify(sessions)) as ControlSession[] };
+      case "session.fork":
+        sessions.push({ sessionId: COPY, name: req.name ?? "impl-79-fork", cwd: "/repo/wt", terminal: "t2", agent: "claude", status: "idle", chrome: true });
+        return { ok: true, sessionId: COPY, warning: "w" };
+      case "session.input":
+        return { ok: true, queued: false };
+      default:
+        return { ok: false, error: `unexpected ${req.op}` };
+    }
+  });
+  await sessionCommand(["fork", "impl-79", "--name", "impl-79-chrome", "--chrome", "--prompt", "check it"], cli);
+  assert.deepEqual(calls.map((c) => c.op), ["session.list", "session.fork", "session.list", "session.input"]);
+  assert.deepEqual(calls[1], { op: "session.fork", sessionId: SID, name: "impl-79-chrome", chrome: true });
+  assert.deepEqual(calls[3], { op: "session.input", sessionId: COPY, text: "check it" });
+  assert.deepEqual(JSON.parse(out.join("\n")), {
+    sessionId: COPY,
+    name: "impl-79-chrome",
+    cwd: "/repo/wt",
+    terminal: "t2",
+    chrome: true,
+    forkOf: SID,
+    warning: "w",
+  });
+});
+
+test("a fork that fails says why, and nothing is typed; fork needs a session", async () => {
+  const calls: string[] = [];
+  const { io: cli } = io(async (req) => {
+    calls.push(req.op);
+    if (req.op === "session.list") return { ok: true, sessions: [{ sessionId: SID, name: "s", cwd: "/x", agent: "claude", status: "idle" }] };
+    return { ok: false, error: "このセッションには、まだ会話がありません。" };
+  });
+  await assert.rejects(sessionCommand(["fork", "s", "--chrome", "--prompt", "hi"], cli), /まだ会話がありません/);
+  assert.deepEqual(calls, ["session.list", "session.fork"]);
+  await assert.rejects(sessionCommand(["fork", "--chrome"], cli), /needs the session's name or id/);
+  await assert.rejects(sessionCommand(["fork", "nobody"], cli), /no session started by Gasho is named "nobody"/);
+});
+
+test("fork waits until Claude Code lists the copy under its own name, and says so when it does not in time", async () => {
+  const COPY = "ffffffff-0000-1111-2222-444444444444";
+  for (const shows of [true, false]) {
+    let lists = 0;
+    const { io: cli, out } = io(
+      async (req) => {
+        if (req.op === "session.fork") return { ok: true, sessionId: COPY };
+        lists++;
+        // Until Claude Code shows the /rename, the copy is listed under the source's name.
+        const renamed = shows && lists >= 4;
+        return {
+          ok: true,
+          sessions: [
+            { sessionId: SID, name: "src", cwd: "/w", agent: "claude", status: "idle" },
+            { sessionId: COPY, name: renamed ? "src-chrome" : "src", ...(renamed ? {} : { gashoName: "src-chrome" }), cwd: "/w", agent: "claude", status: "idle" },
+          ],
+        };
+      },
+      { renameWaitMs: shows ? 60_000 : 0 },
+    );
+    await sessionCommand(["fork", SID, "--name", "src-chrome"], cli);
+    const r = JSON.parse(out.join("\n"));
+    if (shows) {
+      assert.equal(r.name, "src-chrome");
+      assert.equal(r.warning, undefined);
+    } else {
+      assert.equal(r.name, "src");
+      assert.match(r.warning, /does not list the copy as "src-chrome" yet/);
+    }
+  }
+});

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
 import { WorktreeActionDialog, WorktreeContextMenu, type WorktreeActionRequest } from "@/components/worktree-menu";
@@ -55,4 +55,96 @@ test("a name is given to a worktree with the dialog open until the Gasho server 
   expect(cleared).toMatchObject({ type: "worktree.name", machine: "mac", path: "/w/issue-255" });
   expect(cleared && "name" in cleared).toBe(false);
   expect(hub.commands()).toEqual([]);
+});
+
+const inRepo = (id: string, path: string, branch: string) => session(id, { cwd: path, worktree: { path, repo: "/w/gasho", branch } });
+/** Two worktrees and the repository's main one, in that order. */
+const selectedOf = (names?: Record<string, string>) => {
+  const all = worktreesByLastUse([
+    machine("mac", [inRepo("s1", "/w/issue-255", "feat/255-worktree-name"), inRepo("s2", "/w/issue-264", "feat/264-sidebar-sticky-menu"), inRepo("s3", "/w/gasho", "main")], {
+      name: "Mac",
+      daemonVersion: "0.37.0",
+      canRemoveWorktree: true,
+      ...(names ? { worktreeNames: names } : {}),
+    }),
+  ]);
+  return ["/w/issue-255", "/w/issue-264", "/w/gasho"].map((p) => all.find((w) => w.path === p)!);
+};
+
+test("on a row of the worktrees selected together, the menu is theirs and picks for all of them", async () => {
+  const user = userEvent.setup();
+  const onPick = vi.fn<(r: WorktreeActionRequest) => void>();
+  const selected = selectedOf();
+  render(
+    <WorktreeContextMenu worktree={selected[1]!} selection={selected} onPick={onPick}>
+      <button type="button">#264</button>
+    </WorktreeContextMenu>,
+  );
+  await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("button", { name: "#264" }) });
+  expect(screen.getByText("選んだ 3 件の worktree")).toBeTruthy();
+  await user.click(screen.getByRole("menuitem", { name: "削除…" }));
+  expect(onPick).toHaveBeenCalledWith({ action: "remove", worktree: selected[1], worktrees: selected });
+});
+
+test("the worktrees selected together are removed one by one; those that cannot be are left out, and those with changes stay until pressed again", async () => {
+  const user = userEvent.setup();
+  const selected = selectedOf();
+  const hub = await connectHub({ machines: [selected[0]!.machine] });
+  const onClose = vi.fn();
+  render(<WorktreeActionDialog request={{ action: "remove", worktree: selected[0]!, worktrees: selected }} onClose={onClose} />);
+
+  expect(screen.getByRole("heading", { name: "2 件の worktree を削除しますか？" })).toBeTruthy();
+  expect(within(screen.getByRole("list", { name: "削除しない worktree" })).getByText(/main の worktree/)).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "2 件を削除する" }));
+  expect(hub.commands()).toMatchObject([{ type: "worktree.remove", path: "/w/issue-255", branch: "feat/255-worktree-name" }]);
+  await hub.answer({ ok: true, ended: ["s1"] });
+  await vi.waitFor(() => expect(hub.commands()).toHaveLength(2));
+  expect(hub.commands()[1]).toMatchObject({ type: "worktree.remove", path: "/w/issue-264" });
+  expect(hub.commands()[1] && "force" in hub.commands()[1]!).toBe(false);
+  await hub.answer({ ok: false, error: "未コミットの変更が 2 件あります。", changes: { uncommitted: 2, unpushed: 0 } });
+
+  expect(screen.getByRole("alert").textContent).toMatch(/1 件の worktree は、未コミットの変更か push していない commit があるため/);
+  expect(screen.getByText("未コミットの変更 2 件があります")).toBeTruthy();
+  expect(screen.getByText("削除しました")).toBeTruthy();
+  expect(onClose).not.toHaveBeenCalled();
+  // The second press removes only the one left, its changes and all.
+  await user.click(screen.getByRole("button", { name: "変更を捨てて削除" }));
+  expect(hub.commands()).toHaveLength(3);
+  expect(hub.commands()[2]).toMatchObject({ type: "worktree.remove", path: "/w/issue-264", force: true });
+  await hub.answer({ ok: true, ended: ["s2"] });
+  await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+});
+
+test("the worktrees selected together are renamed by replacing a text, each one's name before and after shown first", async () => {
+  const user = userEvent.setup();
+  const selected = selectedOf({ "/w/gasho": "本体" });
+  const hub = await connectHub({ machines: [selected[0]!.machine] });
+  const onClose = vi.fn();
+  render(<WorktreeActionDialog request={{ action: "rename", worktree: selected[0]!, worktrees: selected }} onClose={onClose} />);
+  const search = screen.getByRole("textbox", { name: "検索文字列" });
+  const replacement = screen.getByRole("textbox", { name: "置換文字列" });
+  const rows = () => within(screen.getByRole("list", { name: "変更前と変更後" })).getAllByRole("listitem").map((li) => li.textContent);
+
+  // Every match, as text: "." and "(" are no regex.
+  await user.click(search);
+  await user.paste("e");
+  await user.click(replacement);
+  await user.paste("(.)");
+  expect(rows()).toEqual(["feat/255-worktree-nameはf(.)at/255-worktr(.)(.)-nam(.)", "feat/264-sidebar-sticky-menuはf(.)at/264-sid(.)bar-sticky-m(.)nu", "本体は変わりません"]);
+  // A name that comes to nothing is taken away.
+  await user.clear(search);
+  await user.paste("本体");
+  await user.clear(replacement);
+  expect(rows()[2]).toBe("本体はmain（名前を消す）");
+  await user.clear(search);
+  await user.paste("feat/");
+
+  await user.click(screen.getByRole("button", { name: "2 件を変更する" }));
+  const names = hub.sent.filter((m) => m.type === "worktree.name");
+  expect(names).toMatchObject([
+    { machine: "mac", path: "/w/issue-255", name: "255-worktree-name" },
+    { machine: "mac", path: "/w/issue-264", name: "264-sidebar-sticky-menu" },
+  ]);
+  for (const request of names) await hub.answer({ ok: true }, request);
+  await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
 });

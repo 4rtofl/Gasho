@@ -2,12 +2,14 @@
 // plugin's build (gasho-plugin build) replaces `import … from "@gasho/plugin-sdk"` with what Gasho puts on globalThis,
 // so this file only describes it (GashoSdk), for TypeScript. See docs/plugins.md of Gasho.
 import type { ComponentType, ReactNode } from "react";
-import type { AgentKind, EffortLevel, GitHubRepo, MachineInfo, PluginInfo, SessionInfo, SessionModel, SessionRepo, SessionStatus, SwitchField } from "@gasho/protocol";
+import type { AgentKind, DirEntry, EffortLevel, FileContent, GitHubRepo, MachineInfo, PluginInfo, SessionInfo, SessionModel, SessionRepo, SessionStatus, SwitchField } from "@gasho/protocol";
 
 export type {
   AgentKind,
   ContextWindow,
+  DirEntry,
   EffortLevel,
+  FileContent,
   GitHubRepo,
   MachineInfo,
   PlanLimits,
@@ -392,6 +394,35 @@ export interface WorktreeGrouping {
   useOnMove?: (ctx: WorktreeListContext) => (move: WorktreeMove) => void | Promise<void>;
 }
 
+/** The file a file viewer shows in a session's file panel (P20), and what it may do there. Plugin API 1.18. */
+export interface FileViewerProps {
+  machine: MachineInfo;
+  session: SessionInfo;
+  /** The file, from the session's folder, "/"-separated ("docs/shot.png"). */
+  path: string;
+  /** The file as gasho-daemon read it: also one too large to send (`tooLarge`), or neither text nor an image (`binary`). */
+  file: FileContent;
+  /**
+   * The entries of the file's folder, as the file list shows them (folders first, then by name). Undefined until they
+   * are read, and when they cannot be.
+   */
+  entries?: DirEntry[];
+  /** Shows another file of the session's folder (its path from there) in the panel, as pressing it in the file list does. */
+  openFile: (path: string) => void;
+}
+
+/**
+ * What shows the files of some extensions in a session's file panel, in place of Gasho's view of them (P20): below the
+ * panel's header, the folders on the way and the line of the file's size, which stay Gasho's. Gasho's editor stays for
+ * editing a text file. When several plugins show an extension, the first in the plugins' order does. Plugin API 1.18.
+ */
+export interface FileViewer {
+  id: string;
+  /** The extensions it shows ("png", "tar.gz"), with or without the dot; upper and lower case are the same. */
+  extensions: string[];
+  component: ComponentType<FileViewerProps>;
+}
+
 /** What the web part of a plugin adds to Gasho's screen (its web.js exports it as default). */
 export interface PluginDefinition {
   sidebar?: SidebarItem[];
@@ -415,6 +446,8 @@ export interface PluginDefinition {
   sessionList?: SessionListDefinition;
   /** Ways to put the sidebar's worktrees in categories, picked in the menu of the list (P18). Plugin API 1.8. */
   worktreeGroupings?: WorktreeGrouping[];
+  /** Views of files in a session's file panel, in place of Gasho's (P20). Plugin API 1.18. */
+  fileViewers?: FileViewer[];
 }
 
 /** A call of a method of the plugin's daemon part (P7). */

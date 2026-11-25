@@ -6,8 +6,11 @@
 // headings of their own that fold (`groups`, a plugin's categories of sessions), which can be dragged too
 // (`groupSort`), whose items can be dragged from one group into another (`itemMove`), and the width on a computer can
 // be changed by dragging the right edge (`ResizeHandle`, lib/widths), and an item's tooltip can show while the sidebar
-// is open too (`tip`, for the branch of a worktree that has a name). On a Mac, iPhone and iPad, Ctrl+B in a box that
-// text is written in is left to the box (it moves the cursor back), and only ⌘B folds the sidebar there.
+// is open too (`tip`, for the branch of a worktree that has a name), and items can be selected together (`selected`,
+// `onShiftClick`, for the worktrees pressed with Shift). On a Mac, iPhone and iPad, Ctrl+B in a box that text is
+// written in is left to the box (it moves the cursor back), and only ⌘B folds the sidebar there. Only the items of the
+// last section scroll, under the rest (the other sections and that section's title), which stays, as the list of
+// conversations does under the top row in EasyUI's Chat (with Data Table's shadow under it once scrolled).
 
 import * as React from "react";
 import { AnimatePresence, motion, useDragControls, type PanInfo } from "framer-motion";
@@ -65,6 +68,10 @@ export type SidebarItem = {
    * sidebar, the label and the description show there as before).
    */
   tip?: string;
+  /** Gasho: one of the items selected together, which shows so (with DataTable's look of a selected row). */
+  selected?: boolean;
+  /** Gasho: called in place of `onActiveChange` when the item is pressed with Shift (it selects the items up to it). */
+  onShiftClick?: () => void;
 };
 /** Gasho: a button at the right of a section's title, such as "＋" to add an item. */
 export type SidebarAction = {
@@ -455,6 +462,11 @@ function MovableGroupItems({
   );
 }
 
+/** Gasho: the part of the panel that stays (`fixed`), or the list that scrolls under it. */
+type Part = "fixed" | "list";
+/** Gasho: the height the list keeps at least (px), for about 4 rows, or else the panel scrolls as one. */
+const LIST_MIN = 144;
+
 type PanelProps = Pick<SidebarProps, "sections" | "activeId" | "onActiveChange" | "header" | "footer" | "onPointerInside"> & {
   collapsed: boolean;
   onToggle?: () => void;
@@ -473,8 +485,10 @@ function Panel({
   onNavigate,
 }: PanelProps) {
   const uid = React.useId();
-  const [hoverBox, setHoverBox] = React.useState<{ y: number; h: number } | null>(null);
-  const [hovering, setHovering] = React.useState(false);
+  // Gasho: the part that stays and the list under it each have a hover highlight, which goes with what it is under:
+  // the list's scrolls with the list, and is hidden with the item that scrolls out of it.
+  const [hoverBoxes, setHoverBoxes] = React.useState<Partial<Record<Part, { y: number; h: number }>>>({});
+  const [hovering, setHovering] = React.useState<Part | null>(null);
   const [tip, setTip] = React.useState<{ label: string; x: number; y: number } | null>(null);
   // Gasho: a tooltip shows also while open (`tip`): one of the icon-only sidebar goes once it opens, and back.
   React.useEffect(() => setTip(null), [collapsed]);
@@ -497,10 +511,28 @@ function Panel({
       return;
     }
     sorting.current.add(list);
-    setHovering(false);
+    setHovering(null);
     setTip(null);
   }, []);
   const nav = React.useRef<HTMLElement>(null);
+  const fixedPart = React.useRef<HTMLDivElement>(null);
+  const listPart = React.useRef<HTMLDivElement>(null);
+  // Gasho: the part that stays leaves the list less than LIST_MIN (a phone held sideways, or many pages of plugins):
+  // the two scroll together as one, as they all did before, and none of it is out of reach.
+  const [together, setTogether] = React.useState(false);
+  React.useEffect(() => {
+    const box = nav.current;
+    const top = fixedPart.current;
+    if (!box || !top) return;
+    const observer = new ResizeObserver(() => setTogether(box.clientHeight - top.offsetHeight < LIST_MIN));
+    observer.observe(box);
+    observer.observe(top);
+    return () => observer.disconnect();
+  }, []);
+  // Gasho: the list is scrolled down, and some of its items are under the part that stays. Read again when the list
+  // stops or starts scrolling by itself, as its scrollTop changes then without a scroll event.
+  const [scrolled, setScrolled] = React.useState(false);
+  React.useLayoutEffect(() => setScrolled((listPart.current?.scrollTop ?? 0) > 2), [together]);
 
   // Gasho: the mouse is over the list, and the last mouse event that reached the list through React's tree (a row's
   // menu, drawn outside the list, is in it). The list's onMouseLeave did not come once a category's "＋" failed to
@@ -514,7 +546,7 @@ function Panel({
   });
   const leave = React.useCallback(() => {
     inside.current = false;
-    setHovering(false);
+    setHovering(null);
     setTip(null);
     pointerInside.current?.(false);
   }, []);
@@ -529,11 +561,12 @@ function Panel({
   const enter = (e: React.MouseEvent<HTMLElement> | React.FocusEvent<HTMLElement>, label: string, openTip?: string) => {
     if (sorting.current.size > 0) return;
     const el = e.currentTarget;
-    // Gasho: measured from the list, not from offsetTop, as a draggable item is positioned itself.
-    const list = nav.current;
-    const y = list ? el.getBoundingClientRect().top - list.getBoundingClientRect().top - list.clientTop + list.scrollTop : el.offsetTop;
-    setHoverBox({ y, h: el.offsetHeight });
-    setHovering(true);
+    const part: Part = listPart.current?.contains(el) ? "list" : "fixed";
+    // Gasho: measured from its part, not from offsetTop, as a draggable item is positioned itself.
+    const box = (part === "list" ? listPart : fixedPart).current;
+    const y = box ? el.getBoundingClientRect().top - box.getBoundingClientRect().top - box.clientTop + box.scrollTop : el.offsetTop;
+    setHoverBoxes((b) => ({ ...b, [part]: { y, h: el.offsetHeight } }));
+    setHovering(part);
     // Gasho: while open, not for a tap's focus on a touch screen, which navigates and closes the drawer.
     const shown = collapsed ? label : e.type === "focus" && !el.matches(":focus-visible") ? undefined : openTip;
     if (shown) {
@@ -549,8 +582,9 @@ function Panel({
     const isActive = !hasChildren && activeId === item.id;
     const tipLabel = item.description ? `${item.label} · ${item.description}` : item.label;
 
-    const onClick = () => {
-      if (!hasChildren) {
+    const onClick = (e: React.MouseEvent) => {
+      if (e.shiftKey && item.onShiftClick) item.onShiftClick();
+      else if (!hasChildren) {
         onActiveChange(item.id);
         onNavigate?.();
       } else if (collapsed) {
@@ -570,10 +604,14 @@ function Panel({
       <button
         type="button"
         onClick={onClick}
+        // Gasho: Shift and a press would select the text from the last press to this one.
+        onMouseDown={(e) => {
+          if (e.shiftKey && item.onShiftClick) e.preventDefault();
+        }}
         onMouseEnter={(e) => enter(e, tipLabel, item.tip)}
         onFocus={(e) => enter(e, tipLabel, item.tip)}
         onBlur={() => setTip(null)}
-        aria-label={collapsed ? tipLabel : undefined}
+        aria-label={collapsed ? `${tipLabel}${item.selected ? "（選択中）" : ""}` : undefined}
         aria-description={!collapsed ? item.tip : undefined}
         aria-expanded={hasChildren ? isOpen : undefined}
         aria-current={isActive ? "page" : undefined}
@@ -592,6 +630,12 @@ function Panel({
             className="absolute inset-0 rounded-lg bg-neutral-200/70 dark:bg-neutral-800"
           />
         )}
+        {item.selected && (
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-0 rounded-lg bg-neutral-900/[0.04] ring-1 ring-inset ring-neutral-900/25 dark:bg-white/[0.045] dark:ring-white/25"
+          />
+        )}
         <span className="relative grid size-5 shrink-0 place-items-center [&>svg]:size-[18px]">{item.icon}</span>
         <motion.span
           initial={false}
@@ -599,7 +643,10 @@ function Panel({
           transition={{ duration: 0.15 }}
           className="relative min-w-0 flex-1 whitespace-nowrap text-left"
         >
-          <span className="block truncate">{item.label}</span>
+          <span className="block truncate">
+            {item.label}
+            {item.selected && <span className="sr-only">（選択中）</span>}
+          </span>
           {item.description && (
             <span className="block truncate text-[11px] leading-4 text-neutral-400 dark:text-neutral-500">{item.description}</span>
           )}
@@ -647,7 +694,7 @@ function Panel({
                       onNavigate?.();
                     }}
                     onMouseEnter={() => {
-                      setHovering(false);
+                      setHovering(null);
                       setTip(null);
                     }}
                     aria-current={active ? "page" : undefined}
@@ -864,6 +911,75 @@ function Panel({
       (section.groups ?? []).map((group) => renderGroup(group, undefined, movable))
     );
 
+  // Gasho: a section's title, with its buttons and notice, apart from its items: the last section's stays above them.
+  const renderTitle = (section: SidebarSection) => (
+    <>
+      {section.title &&
+        (collapsed ? (
+          <div className="mx-2.5 my-2 h-px bg-neutral-200 dark:bg-neutral-800" />
+        ) : (
+          <div className="flex items-center gap-1 pb-1 pl-2.5 pr-1 pt-4">
+            <p className="min-w-0 flex-1 truncate text-xs text-neutral-400 dark:text-neutral-500">{section.title}</p>
+            {section.tools}
+            {/* Changes the list in place: the drawer stays open to show it. */}
+            {section.secondaryAction && <SectionAction action={section.secondaryAction} />}
+            {section.action && <SectionAction action={section.action} onNavigate={onNavigate} />}
+          </div>
+        ))}
+      {!collapsed && section.notice && <p className="px-2.5 pb-1 text-[11px] leading-4 text-amber-500 dark:text-amber-400">{section.notice}</p>}
+      {/* Icon only: the action takes a row of its own under the divider, named by the tooltip. */}
+      {collapsed && section.action && (
+        <button
+          type="button"
+          onClick={section.action.onClick}
+          onMouseEnter={(e) => enter(e, section.action!.label)}
+          onFocus={(e) => enter(e, section.action!.label)}
+          aria-label={section.action.label}
+          className="relative flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-sm text-neutral-500 outline-none transition-colors hover:text-neutral-900 focus-visible:ring-2 focus-visible:ring-ring/50 dark:text-neutral-400 dark:hover:text-white"
+        >
+          <span className="relative grid size-5 shrink-0 place-items-center [&>svg]:size-[18px]">{section.action.icon}</span>
+        </button>
+      )}
+    </>
+  );
+
+  const renderItems = (section: SidebarSection) => (
+    <>
+      {section.sort ? (
+        <SortableItems items={section.items} sort={section.sort} onSorting={onSorting}>
+          {renderItem}
+        </SortableItems>
+      ) : (
+        section.items.map((item) => renderItem(item))
+      )}
+      {section.groups &&
+        (section.itemMove ? (
+          <MovableGroupItems groups={section.groups} move={section.itemMove} onSorting={onSorting}>
+            {(movable) => renderGroups(section, movable)}
+          </MovableGroupItems>
+        ) : (
+          renderGroups(section)
+        ))}
+    </>
+  );
+
+  const highlight = (part: Part) => {
+    const box = hoverBoxes[part];
+    return (
+      box && (
+        <motion.span
+          aria-hidden
+          initial={false}
+          animate={{ y: box.y, height: box.h, opacity: hovering === part ? 1 : 0 }}
+          transition={{ y: spring, height: spring, opacity: { duration: 0.15 } }}
+          className="pointer-events-none absolute inset-x-2 top-0 rounded-lg bg-neutral-100 dark:bg-neutral-900"
+        />
+      )
+    );
+  };
+
+  const last = sections[sections.length - 1];
+
   return (
     <SidebarContext.Provider value={{ collapsed }}>
       <div className="flex h-full flex-col">
@@ -879,7 +995,8 @@ function Panel({
           </div>
         )}
 
-        {/* Gasho: layoutScroll, for the items that slide to new places inside it, also while it scrolls. */}
+        {/* Gasho: the part that stays, and the list under it, which alone scrolls (or, `together`, the nav scrolls them
+            as one). layoutScroll on both, for the items that slide to new places inside them, also while they scroll. */}
         <motion.nav
           ref={nav}
           layoutScroll
@@ -891,63 +1008,38 @@ function Panel({
             onPointerInside?.(true);
           }}
           onMouseLeave={leave}
-          className="relative flex-1 space-y-1 overflow-y-auto overflow-x-hidden p-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
-          {hoverBox && (
-            <motion.span
-              aria-hidden
-              initial={false}
-              animate={{ y: hoverBox.y, height: hoverBox.h, opacity: hovering ? 1 : 0 }}
-              transition={{ y: spring, height: spring, opacity: { duration: 0.15 } }}
-              className="pointer-events-none absolute inset-x-2 top-0 rounded-lg bg-neutral-100 dark:bg-neutral-900"
-            />
-          )}
-
-          {sections.map((section, i) => (
-            <div key={i} className="space-y-0.5">
-              {section.title &&
-                (collapsed ? (
-                  <div className="mx-2.5 my-2 h-px bg-neutral-200 dark:bg-neutral-800" />
-                ) : (
-                  <div className="flex items-center gap-1 pb-1 pl-2.5 pr-1 pt-4">
-                    <p className="min-w-0 flex-1 truncate text-xs text-neutral-400 dark:text-neutral-500">{section.title}</p>
-                    {section.tools}
-                    {/* Changes the list in place: the drawer stays open to show it. */}
-                    {section.secondaryAction && <SectionAction action={section.secondaryAction} />}
-                    {section.action && <SectionAction action={section.action} onNavigate={onNavigate} />}
-                  </div>
-                ))}
-              {!collapsed && section.notice && <p className="px-2.5 pb-1 text-[11px] leading-4 text-amber-500 dark:text-amber-400">{section.notice}</p>}
-              {/* Icon only: the action takes a row of its own under the divider, named by the tooltip. */}
-              {collapsed && section.action && (
-                <button
-                  type="button"
-                  onClick={section.action.onClick}
-                  onMouseEnter={(e) => enter(e, section.action!.label)}
-                  onFocus={(e) => enter(e, section.action!.label)}
-                  aria-label={section.action.label}
-                  className="relative flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-sm text-neutral-500 outline-none transition-colors hover:text-neutral-900 focus-visible:ring-2 focus-visible:ring-ring/50 dark:text-neutral-400 dark:hover:text-white"
-                >
-                  <span className="relative grid size-5 shrink-0 place-items-center [&>svg]:size-[18px]">{section.action.icon}</span>
-                </button>
-              )}
-              {section.sort ? (
-                <SortableItems items={section.items} sort={section.sort} onSorting={onSorting}>
-                  {renderItem}
-                </SortableItems>
-              ) : (
-                section.items.map((item) => renderItem(item))
-              )}
-              {section.groups &&
-                (section.itemMove ? (
-                  <MovableGroupItems groups={section.groups} move={section.itemMove} onSorting={onSorting}>
-                    {(movable) => renderGroups(section, movable)}
-                  </MovableGroupItems>
-                ) : (
-                  renderGroups(section)
-                ))}
-            </div>
-          ))}
+          <div
+            ref={fixedPart}
+            className={cn(
+              "relative z-10 shrink-0 space-y-1 px-2 pt-2 transition-shadow",
+              scrolled &&
+                !together &&
+                "shadow-[0_1px_0_rgba(0,0,0,0.06),0_8px_16px_-12px_rgba(0,0,0,0.25)] dark:shadow-[0_1px_0_rgba(255,255,255,0.07),0_8px_16px_-12px_rgba(0,0,0,0.25)]"
+            )}
+          >
+            {highlight("fixed")}
+            {sections.slice(0, -1).map((section, i) => (
+              <div key={i} className="space-y-0.5">
+                {renderTitle(section)}
+                {renderItems(section)}
+              </div>
+            ))}
+            {last && <div className="space-y-0.5">{renderTitle(last)}</div>}
+          </div>
+          <motion.div
+            ref={listPart}
+            layoutScroll
+            onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 2)}
+            className={cn(
+              "relative space-y-0.5 px-2 pt-0.5 pb-2",
+              together ? "shrink-0" : "min-h-0 flex-1 overflow-y-auto overflow-x-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            )}
+          >
+            {highlight("list")}
+            {last && renderItems(last)}
+          </motion.div>
         </motion.nav>
 
         {(footer || onToggle) && (

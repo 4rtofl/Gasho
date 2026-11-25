@@ -1,0 +1,28 @@
+# Brings main into open pull requests and has Claude Code resolve their conflicts, and the mismatches that break the
+# verify commands (.github/chusai.json) only once merged with main (https://github.com/4rtofl/Chusai). Copied from
+# examples/chusai.yml there, with Claude reached through sigw instead of Workload Identity Federation.
+name: Chusai
+
+on:
+  # Every merge to main can make open pull requests conflict, or break them without a conflict.
+  push:
+    branches: [main]
+  # A branch made from an old main may conflict as soon as it is opened or pushed to.
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  chusai:
+    uses: 4rtofl/Chusai/.github/workflows/resolve.yml@main
+    with:
+      # true: push and comment nothing; write what Chusai would do to the job summary.
+      dry-run: true
+      # The secret CHUSAI_ANTHROPIC_API_KEY holds `sgk_….sgu_…`, so that sigw records who spent what.
+      anthropic-base-url: https://si.sigw.4rtofl.org/anthropic
+    secrets:
+      anthropic-api-key: ${{ secrets.CHUSAI_ANTHROPIC_API_KEY }}
+      app-id: ${{ secrets.CHUSAI_APP_ID }}
+      app-private-key: ${{ secrets.CHUSAI_APP_PRIVATE_KEY }}

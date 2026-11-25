@@ -6,6 +6,7 @@ import type {
   CommandResult,
   DeviceInfo,
   DirListing,
+  EffortLevel,
   FileContent,
   GashoNotification,
   GitGraph,
@@ -453,6 +454,11 @@ export function updateServer(version: string, timeoutMs = 20_000): Promise<Comma
 /** Changes the agent a new session starts with, for every browser. */
 export function setDefaultAgent(agent: AgentKind, timeoutMs = 20_000): Promise<CommandResult> {
   return askServer((id) => ({ type: "defaultAgent.set", requestId: id, agent }), timeoutMs);
+}
+
+/** Changes the effort level a new session of Claude Code starts with, for every browser (undefined: Claude Code's own default). */
+export function setDefaultEffort(effort: EffortLevel | undefined, timeoutMs = 20_000): Promise<CommandResult> {
+  return askServer((id) => ({ type: "defaultEffort.set", requestId: id, ...(effort ? { effort } : {}) }), timeoutMs);
 }
 
 /** Names a worktree for every browser, or takes its name away (`name` empty): it shows its branch again. */

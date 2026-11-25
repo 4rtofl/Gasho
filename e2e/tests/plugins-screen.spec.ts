@@ -111,7 +111,7 @@ test.describe("入れたもの", () => {
     },
   });
 
-  test("カードに版・更新できる版・札・問題と注意・権限・working server ごとの状態を出す", async ({ page, hub }) => {
+  test("カードに版・更新できる版・札・一覧にないこと・問題と注意・権限・working server ごとの状態を出す", async ({ page, hub }) => {
     await page.goto("/#/plugins");
     const installed = page.getByRole("region", { name: "入れたもの" });
 
@@ -123,10 +123,13 @@ test.describe("入れたもの", () => {
     await addPlugin(hub, plugin("e2e-theme-a"));
     await addPlugin(hub, plugin("e2e-theme-b"), { link: true });
     await addPlugin(hub, plugin("e2e-broken"), { link: true });
+    // Not in the catalog, like a plugin renamed in GashoPlugins.
+    await addPlugin(hub, plugin("e2e-reload"));
     const daemon = card(installed, "E2E daemon");
     const night = card(installed, "E2E 夜");
     const morning = card(installed, "E2E 朝");
     const broken = card(installed, "E2E 壊れた");
+    const gone = card(installed, "E2E 入れ替え");
 
     await test.step("版、カタログの新しい版、ジャンル、権限を出す", async () => {
       await expect(daemon).toContainText("1.0.0");
@@ -150,7 +153,24 @@ test.describe("入れたもの", () => {
       await expect(broken.getByText("読み込めませんでした：読み込みで壊れました")).toBeVisible();
     });
 
-    await test.step("サイドバーの「プラグイン」に、更新できるプラグインの数を出す", async () => {
+    await test.step("カタログにないプラグインにはそう出し、開発中のものには出さない", async () => {
+      await expect(gone.getByText("GashoPlugins の一覧にない")).toBeVisible();
+      await expect(installed.getByText("GashoPlugins の一覧にない")).toHaveCount(1);
+    });
+
+    await test.step("サイドバーの「プラグイン」に、更新できるプラグインとカタログにないプラグインの数を出す", async () => {
+      const nav = await sidebar(page);
+      await expect(nav.getByRole("button", { name: "プラグイン 2" })).toBeVisible();
+      await page.keyboard.press("Escape");
+    });
+
+    await test.step("カタログを読めなかったときは、カタログにないことを出さない", async () => {
+      await hub.gh.set({ answers: [{ args: READ_CATALOG, stderr: "HTTP 502: Bad Gateway\n", exitCode: 1 }] });
+      await page.getByRole("main").getByRole("button", { name: "再読み込み" }).click();
+      await expect(page.getByText("一覧を読めませんでした：HTTP 502: Bad Gateway")).toBeVisible({ timeout: 30_000 });
+      await expect(installed.getByText("GashoPlugins の一覧にない")).toHaveCount(0);
+      // The catalog read before still has the newer version.
+      await expect(daemon.getByText("（1.1.0 に更新できる）")).toBeVisible();
       const nav = await sidebar(page);
       await expect(nav.getByRole("button", { name: "プラグイン 1" })).toBeVisible();
       await page.keyboard.press("Escape");

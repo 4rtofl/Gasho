@@ -1,9 +1,10 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { PluginInfo } from "@gasho/protocol";
+import type { FileContent, PluginInfo } from "@gasho/protocol";
 import { beforeEach, expect, test, vi } from "vitest";
 import { UnusedSessionsDialog } from "@/components/unused-sessions-dialog";
 import { PluginConversationEnd, PluginHeaderItems, PluginPageView, PluginPanelView, PluginSettingsSections } from "@/plugins/parts";
+import { FilePanel } from "@/views/files";
 import { connectHub, machine, session } from "./hub";
 
 beforeEach(() => {
@@ -229,6 +230,48 @@ test("a part that throws shows an error in its place, and the session's other pa
   expect(await screen.findByText(/メモ の表示でエラーが起きました。/)).toBeTruthy();
   expect(screen.getByRole("button", { name: "もう一度" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "メモ" })).toBeTruthy();
+});
+
+const shot = (path: string): FileContent => ({ path, size: 120, mtime: 0, image: { mime: "image/png", data: "iVBORw0KGgo=" }, writable: true });
+
+test("a plugin shows the files of its extensions in the file panel, with the entries of their folder, and opens another there (P20)", async () => {
+  const user = userEvent.setup();
+  const hub = await connectHub({ machines: [m1], plugins: [info()] });
+  render(<FilePanel machine="m1" sessionId="s1" path="shots/a.png" docked onClose={() => {}} />);
+  await hub.say({ type: "file", machine: "m1", sessionId: "s1", path: "shots/a.png", file: shot("shots/a.png") });
+  expect(await screen.findByText("shots/a.png（120 バイト、s1）")).toBeTruthy();
+  expect(screen.queryByRole("img", { name: "a.png" })).toBeNull();
+
+  expect(hub.sent).toContainEqual({ type: "dir.get", machine: "m1", sessionId: "s1", path: "shots" });
+  expect(screen.getByText("同じフォルダーを読み込み中")).toBeTruthy();
+  const entries = [{ name: "old", kind: "dir" as const }, { name: "a.png", kind: "file" as const }, { name: "b.png", kind: "file" as const }];
+  await hub.say({ type: "dir", machine: "m1", sessionId: "s1", path: "shots", dir: { path: "shots", entries, truncated: false } });
+  expect(screen.getByText("同じフォルダー：a.png・b.png")).toBeTruthy();
+
+  await user.click(screen.getByRole("button", { name: "次のファイル" }));
+  expect(location.hash).toBe("#/s/m1/s1/file/shots/b.png");
+});
+
+test("the file panel shows a file as Gasho does when the plugin's view of it throws, and once the plugin is disabled (P20)", async () => {
+  const hub = await connectHub({ machines: [m1], plugins: [info()] });
+  const { unmount } = render(
+    <>
+      <PluginHeaderItems machine={m1} session={s1} panel={undefined} from={-Infinity} to={Infinity} />
+      <FilePanel machine="m1" sessionId="s1" path="boom.png" docked onClose={() => {}} />
+    </>,
+  );
+  await hub.say({ type: "file", machine: "m1", sessionId: "s1", path: "boom.png", file: shot("boom.png") });
+  // Drawn once the plugin has loaded.
+  await screen.findByRole("button", { name: "メモ" });
+  expect(screen.getByRole("img", { name: "boom.png" })).toBeTruthy();
+  unmount();
+
+  render(<FilePanel machine="m1" sessionId="s1" path="a.png" docked onClose={() => {}} />);
+  await hub.say({ type: "file", machine: "m1", sessionId: "s1", path: "a.png", file: shot("a.png") });
+  expect(await screen.findByText("a.png（120 バイト、s1）")).toBeTruthy();
+  await hub.say({ type: "plugins", plugins: [info({ enabled: false })] });
+  expect(screen.getByRole("img", { name: "a.png" })).toBeTruthy();
+  expect(screen.queryByText("a.png（120 バイト、s1）")).toBeNull();
 });
 
 test("the settings screen opened for a plugin opens its section and scrolls to it once it is drawn, also when opened before the snapshot", async () => {

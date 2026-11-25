@@ -311,6 +311,33 @@ export function sessionToOpen(w: WorktreeSessions): SessionInfo | undefined {
   return w.sessions.find((s) => s.sessionId === id) ?? [...w.sessions].sort((a, b) => lastUsed(b) - lastUsed(a))[0];
 }
 
+/**
+ * How long a session just started may be missing from its working server's list before its page says it is not found
+ * (ms). An older gasho-daemon answers before it sends the list that has the session: that list comes with the refresh
+ * after the one running, and each reads `claude agents`, which takes 3 s and more on a busy Mac.
+ */
+const STARTING_MS = 30_000;
+/** The sessions started from this page that their working server has not listed yet, and when they were started. */
+const starting = new Map<string, number>();
+const startingKey = (machine: string, sessionId: string) => `${machine}\u0000${sessionId}`;
+
+/** A session that session.launch, session.fork or session.resume answered with, before its working server lists it. */
+export function rememberStarting(machine: string, sessionId: string, now = Date.now()): void {
+  for (const [key, at] of starting) if (now - at >= STARTING_MS) starting.delete(key);
+  starting.set(startingKey(machine, sessionId), now);
+}
+
+/** The sessions a working server lists are started: one of them missing later has ended. */
+export function forgetStarting(m: Pick<MachineInfo, "id" | "sessions">): void {
+  for (const s of m.sessions) starting.delete(startingKey(m.id, s.sessionId));
+}
+
+/** Whether the page of a session its working server does not list is to say that the session is starting. */
+export function startingSession(machine: string, sessionId: string, now: number): boolean {
+  const at = starting.get(startingKey(machine, sessionId));
+  return at !== undefined && now - at < STARTING_MS;
+}
+
 /** Whether a working server's gasho-daemon is at least `major.minor` (older ones lack what came later). */
 export function daemonAtLeast(m: MachineInfo, major: number, minor: number): boolean {
   const [a = 0, b = 0] = (m.daemonVersion ?? "").split(".").map((n) => Number.parseInt(n, 10) || 0);

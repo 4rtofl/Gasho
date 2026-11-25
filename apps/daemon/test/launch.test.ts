@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { Daemon } from "../src/daemon.ts";
-import { dialogOpen, mcpQuestionOpen, plainScreen, trustQuestion, typedInBox } from "../src/managed.ts";
+import { chromeOnboardingOpen, dialogOpen, mcpQuestionOpen, plainScreen, trustQuestion, typedInBox } from "../src/managed.ts";
 import { RELAY_FILE, shellQuote } from "../src/statusline.ts";
 import type { TerminalStart } from "../src/terminal.ts";
 
@@ -72,6 +72,30 @@ const MCP_SCREEN = [
   "",
 ].join("\n");
 
+/**
+ * Claude Code's explanation the first time it starts with --chrome, drawn from its words in 2.1.331 (its source; the
+ * screen itself was not captured: starting with --chrome on a test machine would use that explanation up).
+ */
+const CHROME_SCREEN = [
+  RULE,
+  "  Claude in Chrome",
+  "",
+  "  Claude can use Chrome through its extension: open",
+  "  sites, fill forms, take screenshots, record GIFs,",
+  "  and read console logs and network requests.",
+  "",
+  "  Claude Code asks before Claude browses, clicks, or",
+  "  types on a site, unless your permission mode or a",
+  "  rule in /permissions answers for you. Sites you",
+  "  approved in the extension don't carry over.",
+  "",
+  "  For more info, use /chrome or visit",
+  "  https://code.claude.com/docs/en/chrome",
+  "",
+  "  Enter to continue · Esc to close",
+  "",
+].join("\n");
+
 function replScreen(above: string[] = []): string {
   return [
     " ▐▛███▛█   Claude Code v2.1.323",
@@ -105,6 +129,15 @@ test("what Claude Code points out about the folder's settings comes with the que
   ]);
 });
 
+test("the explanation of Claude in Chrome is open only while it has the keys", () => {
+  assert.ok(chromeOnboardingOpen(CHROME_SCREEN));
+  assert.ok(dialogOpen(CHROME_SCREEN));
+  assert.equal(typedInBox(plainScreen(CHROME_SCREEN)), undefined);
+  assert.equal(chromeOnboardingOpen(replScreen()), false);
+  assert.equal(chromeOnboardingOpen(replScreen(["● It said: Claude can use Chrome through its extension: open sites"])), false);
+  assert.equal(chromeOnboardingOpen(MCP_SCREEN), false);
+});
+
 test("the question about a folder's new MCP servers is open only while it has the keys", () => {
   assert.ok(mcpQuestionOpen(MCP_SCREEN));
   assert.ok(dialogOpen(MCP_SCREEN));
@@ -116,13 +149,15 @@ test("the question about a folder's new MCP servers is open only while it has th
 
 /** Claude Code starting in a folder it does not trust, as far as the daemon sees and drives it. */
 class FakeStart {
-  state: "trust" | "mcp" | "repl" | "exited" = "trust";
+  state: "trust" | "mcp" | "chrome" | "repl" | "exited" = "trust";
   /** 0: "No, exit", 1: "Yes, I trust this folder". */
   cursor = 0;
   keys: string[] = [];
-  private readonly o: { mcp?: boolean; warnings?: string[]; agentsFile: string; registryFile?: string; sessionId: string };
+  private readonly o: { mcp?: boolean; chrome?: boolean; warnings?: string[]; agentsFile: string; registryFile?: string; sessionId: string };
+  /** The explanation of Claude in Chrome has been shown (it is shown once, before the prompt). */
+  private chromeShown = false;
 
-  constructor(o: { mcp?: boolean; warnings?: string[]; agentsFile: string; registryFile?: string; sessionId: string }) {
+  constructor(o: { mcp?: boolean; chrome?: boolean; warnings?: string[]; agentsFile: string; registryFile?: string; sessionId: string }) {
     this.o = o;
   }
 
@@ -134,9 +169,14 @@ class FakeStart {
       else if (k === "Enter") this.to(this.cursor === 1 ? (this.o.mcp ? "mcp" : "repl") : "exited");
       else if (k === "Esc") this.to("exited");
     } else if (this.state === "mcp" && (k === "Esc" || k === "Enter")) this.to("repl");
+    else if (this.state === "chrome" && (k === "Esc" || k === "Enter")) this.to("repl");
   }
 
   private to(state: FakeStart["state"]): void {
+    if (state === "repl" && this.o.chrome && !this.chromeShown) {
+      this.chromeShown = true;
+      state = "chrome";
+    }
     this.state = state;
     // Once its prompt is up, `claude agents` lists the session, and Claude Code's file has its id.
     if (state !== "repl") return;
@@ -147,6 +187,7 @@ class FakeStart {
   screen(): string {
     if (this.state === "trust") return trustScreen(this.cursor === 1, this.o.warnings);
     if (this.state === "mcp") return MCP_SCREEN;
+    if (this.state === "chrome") return CHROME_SCREEN;
     return this.state === "repl" ? replScreen() : "";
   }
 }
@@ -158,7 +199,7 @@ const SID = "11111111-2222-3333-4444-666666666666";
  * `claude agents` prints nothing, as it did when stopped at its time limit on a busy machine, and Claude Code's file
  * (~/.claude/sessions/<pid>.json) has the session id.
  */
-async function setup(o: { mcp?: boolean; warnings?: string[]; emptyList?: boolean } = {}) {
+async function setup(o: { mcp?: boolean; chrome?: boolean; warnings?: string[]; emptyList?: boolean } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-launch-"));
   const agentsFile = path.join(dir, "agents.json");
   await fs.writeFile(agentsFile, "[]");
@@ -295,6 +336,80 @@ test("the question about the folder's MCP servers that follows is answered with 
     assert.equal(r.sessionId, SID);
     assert.match(r.warning, /MCP サーバーは、使わない設定にして起動しました/);
     assert.deepEqual(fake.keys, ["Down", "Enter", "Esc"]);
+  } finally {
+    await done();
+  }
+});
+
+test("with chrome, Claude Code starts with --chrome, its explanation is closed with Enter, and the session keeps it", async () => {
+  const { d, fake, folder, started, done } = await setup({ chrome: true });
+  try {
+    const r = await d.launch(folder, "browse", true, "claude", true);
+    assert.deepEqual(r, { ok: true, sessionId: SID });
+    assert.deepEqual(fake.keys, ["Down", "Enter", "Enter"]);
+    assert.deepEqual(started[0]?.args.slice(0, 2), ["--remote-control=browse", "--chrome"]);
+    assert.equal(d.managed.get(SID)?.chrome, true);
+    assert.equal(d.controlSessions().find((s: { sessionId: string }) => s.sessionId === SID)?.chrome, true);
+  } finally {
+    await done();
+  }
+});
+
+test("without chrome, Claude Code starts as before, and an explanation of Claude in Chrome is not answered", async () => {
+  const { d, fake, folder, started, done } = await setup();
+  try {
+    assert.equal((await d.launch(folder, "plain", true)).ok, true);
+    assert.equal(started[0]?.args.includes("--chrome"), false);
+    assert.equal(started[0]?.args.includes("--effort"), false);
+    assert.equal(d.managed.get(SID)?.chrome, undefined);
+    assert.equal("chrome" in d.controlSessions()[0], false);
+    assert.deepEqual(fake.keys, ["Down", "Enter"]);
+  } finally {
+    await done();
+  }
+});
+
+test("with an effort level, Claude Code starts with --effort", async () => {
+  const { d, folder, started, done } = await setup();
+  try {
+    assert.equal((await d.launch(folder, "deep", true, "claude", false, "high")).ok, true);
+    assert.deepEqual(started[0]?.args.slice(0, 3), ["--remote-control=deep", "--effort", "high"]);
+  } finally {
+    await done();
+  }
+});
+
+test("Codex is not started with Claude in Chrome", async () => {
+  const { d, folder, started, done } = await setup();
+  try {
+    const r = await d.launch(folder, "x", true, "codex", true);
+    assert.equal(r.ok, false);
+    assert.match(r.error, /Claude Code のセッションでだけ/);
+    assert.deepEqual(started, []);
+  } finally {
+    await done();
+  }
+});
+
+test("a fork of a session with Claude in Chrome has it, and a fork can ask for it", async () => {
+  const { d, folder, done } = await setup();
+  try {
+    await fs.mkdir(path.join(d.cfg.claudeDir, "projects", "p"), { recursive: true });
+    for (const id of ["plain", "browsing"]) {
+      await fs.writeFile(path.join(d.cfg.claudeDir, "projects", "p", `${id}.jsonl`), "");
+      d.managed.add({ sessionId: id, terminal: `t-${id}`, pid: process.pid, cwd: folder, name: id, launchedAt: Date.now(), ...(id === "browsing" ? { chrome: true } : {}) });
+    }
+    const asked: { chrome?: boolean; claudeArgs?: string[] }[] = [];
+    // Only what the copy is started with matters here: it then fails, and nothing is kept.
+    d.startClaude = async (_dir: string, _name: string, o: { chrome?: boolean; claudeArgs?: string[] }) => {
+      asked.push(o);
+      return { error: "stop" };
+    };
+    for (const [id, opts] of [["plain", {}], ["plain", { chrome: true }], ["browsing", {}], ["browsing", { chrome: false }]] as const) {
+      assert.equal((await d.fork(id, undefined, opts)).ok, false);
+    }
+    assert.deepEqual(asked.map((o) => o.chrome), [false, true, true, false]);
+    assert.deepEqual(asked[0]?.claudeArgs, ["--resume", "plain", "--fork-session"]);
   } finally {
     await done();
   }
@@ -543,6 +658,63 @@ test("an input or a rename that waits while /clear gives the session a new id wa
   }
 });
 
+/**
+ * Starts a refresh that reads `claude agents` and then stays running until `release`, as one with a slow `claude agents`
+ * does. `asked` counts the refreshes asked for from then on, that one included.
+ */
+async function holdRefresh(d: Record<string, any>) {
+  const refresh = d.refresh;
+  let asked = 0;
+  d.refresh = () => {
+    asked++;
+    return refresh.call(d);
+  };
+  const screens = d.readManagedScreens;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let reached!: () => void;
+  const reading = new Promise<void>((resolve) => (reached = resolve));
+  d.readManagedScreens = async () => {
+    d.readManagedScreens = screens;
+    reached();
+    await held;
+  };
+  const running = d.refresh();
+  await reading;
+  return { running, asked: () => asked, release };
+}
+
+test("a new session is answered with only after a list of sessions that has it is sent, also while a refresh runs", async () => {
+  const { d, agentsFile, folder, done } = await setup();
+  const sent: { sessionId: string; managed?: boolean }[][] = [];
+  try {
+    d.cfg.pluginDataDir = path.join(folder, "plugin-data");
+    d.refresh = Object.getPrototypeOf(d).refresh;
+    d.readManagedScreens = async () => undefined;
+    d.countTokens = async () => undefined;
+    d.hub = { connected: true, send: (m: { type: string; sessions?: [] }) => m.type === "sessions" && sent.push(m.sessions!) };
+    d.terminals.start = async () => {
+      writeFileSync(agentsFile, JSON.stringify([{ pid: process.pid, sessionId: SID, cwd: folder, status: "idle" }]));
+      return process.pid;
+    };
+    d.terminals.screen = async () => plainScreen(replScreen());
+    // It read `claude agents` before the session started.
+    const refresh = await holdRefresh(d);
+    let answeredAfter: (string | undefined)[][] | undefined;
+    const launching = d.launch(folder, "x").then((r: unknown) => {
+      answeredAfter = sent.map((list) => list.filter((s) => s.managed).map((s) => s.sessionId));
+      return r;
+    });
+    while (refresh.asked() < 2) await new Promise((resolve) => setTimeout(resolve, 20));
+    refresh.release();
+    await refresh.running;
+    assert.deepEqual(await launching, { ok: true, sessionId: SID });
+    assert.deepEqual(answeredAfter?.at(-1), [SID]);
+  } finally {
+    await done();
+  }
+});
+
 test("the conversation from before /clear, opened again while a refresh runs, is no longer sent among the session's earlier ids", async () => {
   const { d, agentsFile, folder, done } = await setup();
   const claude = await child('process.on("SIGTERM", () => process.exit(0))');
@@ -566,8 +738,44 @@ test("the conversation from before /clear, opened again while a refresh runs, is
     await fs.mkdir(project, { recursive: true });
     await fs.writeFile(path.join(project, `${OLD}.jsonl`), `${JSON.stringify({ type: "user", cwd: folder, message: { role: "user", content: "前の会話" } })}\n`);
     d.startClaude = async () => ({ sessionId: OLD, terminal: "t-resumed", pid: process.pid });
-    // `claude agents` is slow, and the refresh resume asks for only has the one running go again.
-    d.refreshing = true;
+    const refresh = await holdRefresh(d);
+    let answeredAfter: (string | string[] | undefined)[][] | undefined;
+    const resuming = d.resume(OLD).then((r: { ok: boolean }) => {
+      answeredAfter = sent.at(-1)?.map((s) => [s.sessionId, s.previousSessionIds]);
+      return r;
+    });
+    while (refresh.asked() < 2) await new Promise((resolve) => setTimeout(resolve, 20));
+    refresh.release();
+    assert.equal((await resuming).ok, true);
+    assert.deepEqual(answeredAfter, [[NEW, undefined]]);
+  } finally {
+    claude.kill("SIGKILL");
+    await done();
+  }
+});
+
+test("the conversation from before /clear, opened again when `claude agents` fails, is no longer sent among the session's earlier ids", async () => {
+  const { d, agentsFile, folder, done } = await setup();
+  const claude = await child('process.on("SIGTERM", () => process.exit(0))');
+  const OLD = "aaaaaaaa-0000-4000-8000-000000000031";
+  const NEW = "aaaaaaaa-0000-4000-8000-000000000032";
+  const launchedAt = Date.now();
+  writeFileSync(agentsFile, JSON.stringify([{ pid: claude.pid, sessionId: NEW, cwd: folder, status: "idle", startedAt: launchedAt - 1000 }]));
+  const sent: { sessionId: string; previousSessionIds?: string[] }[][] = [];
+  try {
+    d.cfg.pluginDataDir = path.join(folder, "plugin-data");
+    d.refresh = Object.getPrototypeOf(d).refresh;
+    d.readManagedScreens = async () => undefined;
+    d.countTokens = async () => undefined;
+    d.flushInput = async () => undefined;
+    d.hub = { connected: true, send: (m: { type: string; sessions?: [] }) => m.type === "sessions" && sent.push(m.sessions!) };
+    d.managed.add({ sessionId: OLD, terminal: "t-old", pid: claude.pid, cwd: folder, name: "-wip", launchedAt });
+    await d.refresh();
+    const project = path.join(d.cfg.claudeDir, "projects", "p");
+    await fs.mkdir(project, { recursive: true });
+    await fs.writeFile(path.join(project, `${OLD}.jsonl`), `${JSON.stringify({ type: "user", cwd: folder, message: { role: "user", content: "前の会話" } })}\n`);
+    d.startClaude = async () => ({ sessionId: OLD, terminal: "t-resumed", pid: process.pid });
+    writeFileSync(agentsFile, "not json");
     assert.equal((await d.resume(OLD)).ok, true);
     assert.deepEqual(sent.at(-1)?.map((s) => [s.sessionId, s.previousSessionIds]), [[NEW, undefined]]);
   } finally {

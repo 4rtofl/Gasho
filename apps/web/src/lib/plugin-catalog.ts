@@ -1,5 +1,5 @@
 // The catalog of GashoPlugins (docs/plugins.md, P10) as the plugins screen and the sidebar use it: which installed
-// plugins it has a newer version of.
+// plugins it has a newer version of, and which it no longer lists.
 import type { CatalogPlugin, PluginCatalog, PluginInfo } from "@gasho/protocol";
 import { apiSupported } from "@/plugins/registry";
 
@@ -32,7 +32,18 @@ export function updatesOf(infos: PluginInfo[], catalog: PluginCatalog | undefine
   return out;
 }
 
-/** How many installed plugins can be updated now (the sidebar's badge): a newer version that this Gasho can run. */
+/** How many installed plugins can be updated now: a newer version that this Gasho can run. */
 export function updateCount(infos: PluginInfo[], catalog: PluginCatalog | undefined): number {
   return [...updatesOf(infos, catalog).values()].filter((p) => apiSupported(p.api)).length;
+}
+
+/**
+ * The ids of installed plugins that the catalog does not list (renamed or removed in GashoPlugins), only while the
+ * catalog's last reading went well; plugins being developed are left out. They are never removed for this: the Gasho
+ * server leaves out an entry of the catalog that is not of the right form, and the plugin in use would go with it.
+ */
+export function notInCatalog(infos: PluginInfo[], catalog: PluginCatalog | undefined): Set<string> {
+  if (!catalog?.checkedAt || catalog.error) return new Set();
+  const listed = new Set(catalog.plugins.map((p) => p.id));
+  return new Set(infos.filter((i) => !i.dev && !listed.has(i.id)).map((i) => i.id));
 }

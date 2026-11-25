@@ -6,7 +6,7 @@
 // selected together (pressed with Shift), the menu does the same to all of them (BatchNameDialog, BatchRemoveDialog).
 import { ArrowRight, Pencil, Trash2 } from "lucide-react";
 import { AlertDialog, ContextMenu, Dialog } from "radix-ui";
-import { useRef, useState, type FormEvent, type ReactElement } from "react";
+import { useRef, useState, type ChangeEvent, type FormEvent, type ReactElement } from "react";
 import type { RemoveWorktreeInput, RemoveWorktreeResult, WorktreeChanges } from "@gasho/plugin-sdk";
 import { BUTTON_DANGER, BUTTON_PRIMARY, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG_PANEL, MENU, MENU_ITEM } from "@/components/dialog-styles";
 import { StatusDot } from "@/components/status-badge";
@@ -14,7 +14,6 @@ import { sessionLabel } from "@/lib/format";
 import { showNotice } from "@/lib/notice";
 import { forgetWorktree } from "@/lib/remembered-worktrees";
 import { go, parseHash } from "@/lib/route";
-import { parseSubstitution } from "@/lib/sed";
 import { MAX_SESSION_NAME, nameProblem } from "@/lib/session-names";
 import { sessionDotStatus, shownStatus, worktreeOrigin, worktreeTitle, type WorktreeSessions } from "@/lib/sessions";
 import { getAppState, sendCommand, setWorktreeName, useAppState } from "@/lib/store";
@@ -366,42 +365,49 @@ function RemoveDialog({ worktree, onClose }: { worktree: WorktreeSessions; onClo
   );
 }
 
-/** What a sed s command makes of a worktree's name. */
+/** What replacing a text makes of a worktree's name. */
 interface PlannedName {
   worktree: WorktreeSessions;
   /** The name it shows now: the one given to it, or its branch. */
   before: string;
   /** The name to give it; "": its name is taken away (its branch shows again); absent: it stays as it is. */
   name?: string;
-  /** What the command made of it, when the Gasho server would not take that as a name, and why. */
+  /** What the replacing made of it, when the Gasho server would not take that as a name, and why. */
   refused?: { after: string; error: string };
 }
 
-function planName(w: WorktreeSessions, name: string | undefined, apply: (text: string) => string): PlannedName {
+/** `search` replaced with `replacement` wherever it is in the name the worktree shows, as Finder renames files. */
+function planName(w: WorktreeSessions, name: string | undefined, search: string, replacement: string): PlannedName {
   const before = name ?? w.label;
-  const after = apply(before).trim();
+  const after = before.split(search).join(replacement).trim();
   if (after === before || (!after && !name)) return { worktree: w, before };
   if (!after) return { worktree: w, before, name: "" };
   const error = nameProblem(after);
   return error ? { worktree: w, before, refused: { after, error } } : { worktree: w, before, name: after };
 }
 
+const FIELD =
+  "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground/60 focus:border-border-hover disabled:opacity-60";
+
 /**
- * Renaming the worktrees selected together with a sed s command (lib/sed), over the name each shows (its branch when it
- * has none). Each one's name now and what it becomes show before anything is sent; only those that change are.
+ * Renaming the worktrees selected together by replacing a text in the name each shows (its branch when it has none).
+ * Each one's name now and what it becomes show before anything is sent; only those that change are.
  */
 function BatchNameDialog({ worktrees, onClose }: { worktrees: WorktreeSessions[]; onClose: () => void }) {
   // The names as the Gasho server has them now: once some were given and others failed, those given show as they are.
   const { machines } = useAppState();
-  const [command, setCommand] = useState("");
+  const [search, setSearch] = useState("");
+  const [replacement, setReplacement] = useState("");
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<ReadonlyMap<string, string>>(new Map());
   const input = useRef<HTMLInputElement>(null);
-  const given = command.trim();
-  const substitution = given ? parseSubstitution(given) : undefined;
   const nameOf = (w: WorktreeSessions) => machines.find((m) => m.id === w.machine.id)?.worktreeNames?.[w.path];
-  const plan = worktrees.map((w): PlannedName => (substitution?.ok ? planName(w, nameOf(w), substitution.apply) : { worktree: w, before: nameOf(w) ?? w.label }));
+  const plan = worktrees.map((w): PlannedName => (search ? planName(w, nameOf(w), search, replacement) : { worktree: w, before: nameOf(w) ?? w.label }));
   const changes = plan.filter((p) => p.name !== undefined);
+  const edit = (set: (value: string) => void) => (e: ChangeEvent<HTMLInputElement>) => {
+    set(e.target.value);
+    setFailed(new Map());
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -435,28 +441,36 @@ function BatchNameDialog({ worktrees, onClose }: { worktrees: WorktreeSessions[]
           <Dialog.Title className="text-base font-semibold tracking-tight">{worktrees.length} 件の worktree の名前を変更</Dialog.Title>
           <form onSubmit={(e) => void submit(e)}>
             <Dialog.Description className="mt-2 text-sm text-muted-foreground">
-              今の名前（名前が無ければブランチ名）を、sed の s コマンドの書き方で置き換えます。括弧で囲んだ所は置換の \1〜\9 で、一致した全体は &amp; で表します。末尾に g を付けるとすべての一致を、i を付けると大文字と小文字を区別せずに置き換えます。
+              今の名前（名前が無ければブランチ名）の中の検索文字列を、すべて置換文字列に置き換えます。
             </Dialog.Description>
-            <label className="mt-4 block space-y-1.5">
-              <span className="text-xs text-muted-foreground">置換</span>
-              <input
-                ref={input}
-                value={command}
-                onChange={(e) => {
-                  setCommand(e.target.value);
-                  setFailed(new Map());
-                }}
-                placeholder={String.raw`s/^feat\/([0-9]+)-.*/#\1/`}
-                disabled={busy}
-                spellCheck={false}
-                autoCapitalize="off"
-                autoCorrect="off"
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm outline-none placeholder:text-muted-foreground/60 focus:border-border-hover disabled:opacity-60"
-              />
-            </label>
-            <p aria-live="polite" className="mt-2 text-sm text-red-400 empty:hidden">
-              {substitution && !substitution.ok ? substitution.error : ""}
-            </p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <label className="block space-y-1.5">
+                <span className="text-xs text-muted-foreground">検索文字列</span>
+                <input
+                  ref={input}
+                  value={search}
+                  onChange={edit(setSearch)}
+                  placeholder="feat/"
+                  disabled={busy}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  className={FIELD}
+                />
+              </label>
+              <label className="block space-y-1.5">
+                <span className="text-xs text-muted-foreground">置換文字列</span>
+                <input
+                  value={replacement}
+                  onChange={edit(setReplacement)}
+                  disabled={busy}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  className={FIELD}
+                />
+              </label>
+            </div>
             <ul aria-label="変更前と変更後" className="mt-3 max-h-64 space-y-0.5 overflow-y-auto rounded-lg border border-border p-1 text-sm">
               {plan.map((p) => {
                 const error = failed.get(p.worktree.id) ?? p.refused?.error;

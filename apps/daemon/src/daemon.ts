@@ -249,6 +249,11 @@ interface Tracked {
   opening?: Promise<void>;
   /** Sessions started from Gasho: the model in Claude Code's welcome banner, until the transcript records one. */
   bannerModel?: string;
+  /**
+   * Sessions started from Gasho: the effort level last shown above the prompt box. Claude Code shows it only for a while
+   * (a /model picker opened and closed takes it away), and the transcript records none before the first message.
+   */
+  shownEffort?: EffortLevel;
   /** Sessions started from Gasho: the tokens they used, and when they were last counted. */
   tokens?: TokenCounter;
   tokensAt?: number;
@@ -984,7 +989,7 @@ export class Daemon {
     info.costUSD = meta.costUSD;
     info.lastActivityAt = meta.lastActivityAt;
     info.model = meta.model ?? t.bannerModel;
-    info.effort = meta.effort;
+    info.effort = meta.effort ?? t.shownEffort;
     info.ultracode = meta.ultracode;
     this.remember(info.sessionId, meta);
   }
@@ -1277,7 +1282,7 @@ export class Daemon {
       t.dialog = permissionDialogText(screen);
       const state = statusLine(screen);
       if (state) {
-        t.info.effort = state.effort;
+        t.info.effort = t.shownEffort = state.effort;
         t.info.ultracode = state.ultracode;
         this.rememberEffort(m.sessionId, state.effort);
       }
@@ -1567,7 +1572,7 @@ export class Daemon {
         try {
           switch (m.type) {
             case "session.launch":
-              result = await this.launch(m.cwd, m.name, m.trust === true, m.agent);
+              result = await this.launch(m.cwd, m.name, m.trust === true, m.agent, false, m.effort && EFFORT_LEVELS.includes(m.effort) ? m.effort : undefined);
               break;
             case "session.input":
               result = await this.input(m);
@@ -1882,9 +1887,18 @@ export class Daemon {
 
   /**
    * Starts `claude --remote-control` in `cwd` in a terminal of its own and waits for its session id. With `trust`,
-   * Claude Code's question whether to trust the folder is answered with yes; without it, the launch stops there.
+   * Claude Code's question whether to trust the folder is answered with yes; without it, the launch stops there. With
+   * `effort`, Claude Code starts with that effort level, for this session only: a model that does not have it starts
+   * with one it has, or none, and the settings keep their effortLevel.
    */
-  private async launch(cwd: string, name: string | undefined, trust = false, agent: AgentKind = "claude", chrome = false): Promise<CommandResult> {
+  private async launch(
+    cwd: string,
+    name: string | undefined,
+    trust = false,
+    agent: AgentKind = "claude",
+    chrome = false,
+    effort?: EffortLevel,
+  ): Promise<CommandResult> {
     if (agent === "codex") return chrome ? { ok: false, error: CODEX_NO_CHROME } : this.launchCodex(cwd, name);
     if (!this.canLaunch) return { ok: false, error: NO_TERMINAL };
     const dir = path.resolve(cwd);
@@ -1893,7 +1907,7 @@ export class Daemon {
     // Without a name, "<folder>-gasho" until the first message names it (see nameAfterTitle).
     const autoName = !name?.trim();
     const rcName = name?.trim() || `${path.basename(dir)}-gasho`;
-    const started = await this.startClaude(dir, rcName, { trust, chrome });
+    const started = await this.startClaude(dir, rcName, { trust, chrome, claudeArgs: effort ? ["--effort", effort] : [] });
     if ("error" in started) {
       const { error, needsTrust, trustWarnings } = started;
       return needsTrust ? { ok: false, error, needsTrust, trustWarnings } : { ok: false, error };

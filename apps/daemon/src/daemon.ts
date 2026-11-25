@@ -207,7 +207,7 @@ const AUTO_RETRY_MS = 30_000;
 const LATE_PICKER_WAIT_MS = 10_000;
 /** A session is used to read the model names only once it has run this long (Claude Code has finished starting). */
 const PROBE_MIN_AGE_MS = 30_000;
-/** An idle session's tokens are counted again after this long (a working one at every refresh). */
+/** An idle session's tokens are counted again after this long (a working one at every refresh, and once it stops). */
 const TOKENS_IDLE_MS = 30_000;
 /** The tokens per day are told to the Gasho server and saved at most this often. */
 const TOKEN_DAYS_EVERY_MS = 60_000;
@@ -252,6 +252,8 @@ interface Tracked {
   /** Sessions started from Gasho: the tokens they used, and when they were last counted. */
   tokens?: TokenCounter;
   tokensAt?: number;
+  /** It has stopped working since they were counted: its last reply, written just before, is counted without waiting. */
+  tokensDue?: boolean;
   /** Claude Code's own state of the session, as its registry has it (see RegistryInfo.status), else as its list does. */
   claude?: ClaudeState;
   /** Sessions started from Gasho: the permission dialog on the screen when it was last read (see openPermission). */
@@ -741,9 +743,10 @@ export class Daemon {
     const read = await Promise.all(
       [...this.tracked.values()].map(async (t) => ({ t, reg: t.info.pid === undefined ? undefined : await readRegistry(this.cfg.claudeDir, t.info.pid) })),
     );
-    let changed = false;
-    for (const { t, reg } of read) if (reg?.status && this.applyStatus(t, undefined, reg)) changed = true;
-    if (!changed) return;
+    const changed = read.filter(({ t, reg }) => reg?.status && this.applyStatus(t, undefined, reg));
+    if (changed.length === 0) return;
+    // The tokens of the last reply go in the same list as the end of the work.
+    if (changed.some(({ t }) => t.tokensDue)) await this.countTokens();
     this.emitSessions();
     this.flushWaitingInputs();
   }
@@ -756,8 +759,10 @@ export class Daemon {
     info.waitingFor = waitingForOf(row, reg);
     this.permissions.status(info.sessionId, info.status);
     if (info.status === before) return false;
-    // For the sessions started from Gasho (those it stops), when Claude Code wrote a state and when Gasho showed it.
     const m = this.managed.get(info.sessionId);
+    // Only the sessions started from Gasho have their tokens counted (see countTokens).
+    if (m && before === "busy") t.tokensDue = true;
+    // For the sessions started from Gasho (those it stops), when Claude Code wrote a state and when Gasho showed it.
     if (m && before !== "unknown") {
       const written = reg?.statusAt ? `${Math.round((Date.now() - reg.statusAt) / 100) / 10} s ago` : "-";
       log(`${m.name}: ${before} → ${info.status} (Claude Code's file: ${reg?.status ?? "-"}, written ${written}; list: ${row ? mapStatus(row) : "-"})`);
@@ -1312,8 +1317,9 @@ export class Daemon {
       // A fork's transcript starts with a copy of the conversation it was forked from: not this session's tokens. A fork
       // opened again from the history is known as one only by what was remembered when it was made.
       t.tokens ??= new TokenCounter(t.transcript, { since: this.tokenDays.forkedAt(m.sessionId) ?? m.forkedAt });
-      if (t.info.status !== "busy" && t.tokensAt !== undefined && now - t.tokensAt < TOKENS_IDLE_MS) continue;
+      if (t.info.status !== "busy" && !t.tokensDue && t.tokensAt !== undefined && now - t.tokensAt < TOKENS_IDLE_MS) continue;
       t.tokensAt = now;
+      t.tokensDue = false;
       try {
         await t.tokens.update();
       } catch (e) {

@@ -1,4 +1,4 @@
-import { ArrowLeft, ExternalLink, FolderOpen, GitBranch, GitPullRequest } from "lucide-react";
+import { ArrowLeft, ExternalLink, FolderOpen, GitBranch, GitPullRequest, LoaderCircle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { InputFeature, MachineInfo, SessionInfo, SessionModel } from "@gasho/protocol";
 import { AgentMark } from "@/components/agent-mark";
@@ -6,7 +6,6 @@ import { BackgroundTasks, useBackgroundListOpen } from "@/components/background-
 import { HibernationNotice } from "@/components/hibernation-notice";
 import { RepoPicker } from "@/components/repo-picker";
 import { BackgroundToggle, EffortPicker, MODELS } from "@/components/session-controls";
-import { SessionHeaderToggle } from "@/components/session-header-toggle";
 import type { SessionActionRequest } from "@/components/session-menu";
 import { SessionTabs } from "@/components/session-tabs";
 import { StatusBadge } from "@/components/status-badge";
@@ -27,7 +26,7 @@ import { promptDraft, useDraftBox, usePicks, useUnsent } from "@/lib/drafts";
 import { addPending, noneWaiting, notRecordedYet, pendingShown, removePending, sessionWorking, settlePending, usePending } from "@/lib/pending";
 import { go, type SessionPanel } from "@/lib/route";
 import { closeSmallSessionHeader, useSessionHeaderShown } from "@/lib/session-header";
-import { daemonAtLeast, rememberOpened, shownStatus, worktreeId, worktreesByLastUse } from "@/lib/sessions";
+import { daemonAtLeast, rememberOpened, shownStatus, startingSession, worktreeId, worktreesByLastUse } from "@/lib/sessions";
 import { loadSkills, useSkills } from "@/lib/skills";
 import { loadTranscript, sendCommand, type SentResult, transcriptKey, type TranscriptState, useAppState } from "@/lib/store";
 import { useNow } from "@/lib/use-now";
@@ -76,18 +75,7 @@ export function SessionView({
   const online = m?.connected === true;
   const source = useMemo(() => ({ machine, sessionId, online }), [machine, sessionId, online]);
 
-  if (!m || !s || !shown) {
-    return (
-      <div className="mx-auto max-w-3xl p-6 text-sm text-muted-foreground">
-        <BackLink />
-        <p className="mt-4">
-          {s
-            ? "このセッションは Gasho から起動したものではないので、表示しません。"
-            : `このセッションは見つかりません。終了したか、${m?.name ?? "この working server"} の gasho-daemon が接続していません。`}
-        </p>
-      </div>
-    );
-  }
+  if (!m || !s || !shown) return <SessionNotShown machine={m} machineId={machine} sessionId={sessionId} listed={s !== undefined} />;
 
   // Opens a panel beside the session (in its place on a phone); one already open is swapped, not stacked in the history.
   const open = (p: SessionPanel) => go({ name: "session", machine, sessionId, panel: p }, { replace: panel !== undefined });
@@ -100,13 +88,12 @@ export function SessionView({
   const github = only ? only.github : s.github;
   const branch = only ? only.branch : branchLabel(s);
   const repoText = github ? `${github.owner}/${github.name}` : only ? only.path : repoLabel(s);
-  const status = <SessionState machine={m} session={s} />;
   const pending = sent.filter((p) => pendingShown(p, t?.entries ?? [], t?.start ?? 0, s.pendingInputs ?? 0, now));
 
   return (
     <div className="flex h-full flex-col">
       <SessionTabs worktree={worktreesByLastUse([m]).find((w) => w.id === worktree)!} current={sessionId} onAction={onSessionAction} onAskTrust={onAskTrust} />
-      {headerShown ? (
+      {headerShown && (
         <header className="shrink-0 space-y-2 border-b border-border px-4 py-3 md:px-6">
           <BackLink />
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -120,9 +107,8 @@ export function SessionView({
                 </span>
               </p>
             </div>
-            <div className="hidden items-center gap-2 md:flex">
-              {status}
-              <SessionHeaderToggle className="-my-1" />
+            <div className="hidden md:flex">
+              <SessionState machine={m} session={s} />
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -212,15 +198,6 @@ export function SessionView({
             {cost && <span>費用 {cost}</span>}
             <PluginHeaderItems machine={m} session={s} panel={panel} from={1000} to={Infinity} />
           </div>
-        </header>
-      ) : (
-        // Header hidden: one line keeps the session's name and state on screen. A phone has them in its top bar (see
-        // App), with the toggle, so it leaves this line out and the conversation gets the room.
-        <header className="hidden shrink-0 items-center gap-2 border-b border-border px-4 py-1.5 md:flex md:px-6">
-          {showsAgents(machines) && <AgentMark agent={sessionAgent(s)} />}
-          <h1 className="min-w-0 truncate text-sm font-medium">{sessionLabel(s)}</h1>
-          {status}
-          <SessionHeaderToggle className="ml-auto" />
         </header>
       )}
       <div className="min-h-0 flex-1">
@@ -626,6 +603,32 @@ function PanelLink({
       {icon}
       {children}
     </button>
+  );
+}
+
+/**
+ * The page of a session that is not shown. `listed`: the working server lists it, as one Gasho did not start. One just
+ * started from this page says so until its working server lists it (see startingSession).
+ */
+function SessionNotShown({ machine, machineId, sessionId, listed }: { machine?: MachineInfo; machineId: string; sessionId: string; listed: boolean }) {
+  const now = useNow(1_000);
+  const starting = !listed && machine?.connected === true && startingSession(machineId, sessionId, now);
+  return (
+    <div className="mx-auto max-w-3xl p-6 text-sm text-muted-foreground">
+      <BackLink />
+      {starting ? (
+        <p role="status" className="mt-4 flex items-center gap-2">
+          <LoaderCircle className="size-4 shrink-0 animate-spin motion-reduce:animate-none" />
+          セッションを起動しています。まもなく表示されます。
+        </p>
+      ) : (
+        <p className="mt-4">
+          {listed
+            ? "このセッションは Gasho から起動したものではないので、表示しません。"
+            : `このセッションは見つかりません。終了したか、${machine?.name ?? "この working server"} の gasho-daemon が接続していません。`}
+        </p>
+      )}
+    </div>
   );
 }
 

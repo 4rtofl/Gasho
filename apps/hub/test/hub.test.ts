@@ -656,51 +656,106 @@ test("the default agent is kept by the Gasho server, and every browser hears of 
   assert.equal(kept.server?.defaultAgent, "codex");
 });
 
-test("the model and effort level a new session starts with are kept by the Gasho server, and every browser hears of a change", () => {
+test("the default effort level is kept by the Gasho server, and every launch of Claude Code starts with it", () => {
   const store = new Store(":memory:");
-  const first = store.createDevice("browser", "iPhone");
-  const second = store.createDevice("browser", "PC");
-  const info: ServerInfo = { version: "0.22.0", update: { canUpdate: false } };
+  const machine = store.createDevice("machine", "ubuntu");
+  const browser = store.createDevice("browser", "iPhone");
+  const info: ServerInfo = { version: "0.15.0", update: { canUpdate: false } };
   const server: ServerSource = { info: () => info, update: () => ({ ok: true }), subscribe: () => () => undefined };
   const hub = new Hub(store, { server });
-  const a = fakePeer<HubToClient>(first.device.id);
-  const b = fakePeer<HubToClient>(second.device.id);
-  hub.onClientConnect(a);
-  hub.onClientConnect(b);
-  const snapshot = a.sent.find((m) => m.type === "snapshot");
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId: machine.device.id, token: machine.token, daemonVersion: "0.36.4" });
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: [], agents: { codex: { status: "available", version: "0.170.0", canLaunch: true } } });
+  const c = fakePeer<HubToClient>(browser.device.id);
+  hub.onClientConnect(c);
+  const launched = (requestId: string, extra: { agent?: "codex"; effort?: "low" } = {}) => {
+    hub.onClientMessage(c, { type: "session.launch", requestId, machine: machine.device.id, cwd: "/w", ...extra });
+    const sent = d.sent.at(-1);
+    assert.ok(sent?.type === "session.launch");
+    return sent.effort;
+  };
+  const snapshot = c.sent.find((m) => m.type === "snapshot");
   assert.ok(snapshot?.type === "snapshot");
-  // Claude Code's own default at first.
-  assert.equal(snapshot.server?.defaultModel, undefined);
   assert.equal(snapshot.server?.defaultEffort, undefined);
+  assert.equal(launched("before"), undefined);
 
-  hub.onClientMessage(a, { type: "launchDefaults.set", requestId: "r1", model: "opus", effort: "high" });
-  assert.deepEqual(a.sent.at(-1), { type: "server.result", requestId: "r1", result: { ok: true } });
-  assert.deepEqual(b.sent.at(-1), { type: "server", server: { ...info, defaultAgent: "claude", defaultModel: "opus", defaultEffort: "high" } });
+  hub.onClientMessage(c, { type: "defaultEffort.set", requestId: "r1", effort: "high" });
+  assert.deepEqual(c.sent.at(-2), { type: "server", server: { ...info, defaultAgent: "claude", defaultEffort: "high" } });
+  assert.deepEqual(c.sent.at(-1), { type: "server.result", requestId: "r1", result: { ok: true } });
+  assert.equal(launched("high"), "high");
+  assert.match(store.recentEvents().findLast((e) => e.event === "Gasho:session.launch")?.summary ?? "", /\[effort: high\]/);
+  // Codex is started as before, and a launch that names its own effort level keeps it.
+  assert.equal(launched("codex", { agent: "codex" }), undefined);
+  assert.equal(launched("own", { effort: "low" }), "low");
 
-  hub.onClientMessage(a, { type: "launchDefaults.set", requestId: "r2", model: "gpt" as never, effort: "low" });
-  const refused = a.sent.at(-1);
+  hub.onClientMessage(c, { type: "defaultEffort.set", requestId: "r2", effort: "ultra" as never });
+  const refused = c.sent.at(-1);
   assert.ok(refused?.type === "server.result" && !refused.result.ok);
+  assert.equal(launched("still high"), "high");
 
   // Kept over a restart of the Gasho server.
   const again = new Hub(store, { server });
-  const c = fakePeer<HubToClient>(first.device.id);
-  again.onClientConnect(c);
-  const kept = c.sent.find((m) => m.type === "snapshot");
+  const k = fakePeer<HubToClient>(browser.device.id);
+  again.onClientConnect(k);
+  const kept = k.sent.find((m) => m.type === "snapshot");
   assert.ok(kept?.type === "snapshot");
-  assert.equal(kept.server?.defaultModel, "opus");
   assert.equal(kept.server?.defaultEffort, "high");
 
-  // The default model and no effort level: Claude Code's own default again.
-  again.onClientMessage(c, { type: "launchDefaults.set", requestId: "r3", model: "default" });
-  assert.deepEqual(c.sent.at(-1), { type: "server.result", requestId: "r3", result: { ok: true } });
+  // Back to Claude Code's own default: launched without --effort.
+  hub.onClientMessage(c, { type: "defaultEffort.set", requestId: "r3" });
   assert.deepEqual(c.sent.at(-2), { type: "server", server: { ...info, defaultAgent: "claude" } });
+  assert.equal(launched("default"), undefined);
 });
 
-test("a launch's model and effort level are checked", () => {
-  const ok = { type: "session.launch", cwd: "/work" } as const;
-  assert.equal(validateCommand({ ...ok, model: "opus", effort: "max" }), undefined);
-  assert.ok(validateCommand({ ...ok, model: "gpt" as never }));
-  assert.ok(validateCommand({ ...ok, effort: "ultra" as never }));
+test("the default model is kept by the Gasho server, and every launch of Claude Code starts with it", () => {
+  const store = new Store(":memory:");
+  const machine = store.createDevice("machine", "ubuntu");
+  const browser = store.createDevice("browser", "iPhone");
+  const info: ServerInfo = { version: "0.15.0", update: { canUpdate: false } };
+  const server: ServerSource = { info: () => info, update: () => ({ ok: true }), subscribe: () => () => undefined };
+  const hub = new Hub(store, { server });
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId: machine.device.id, token: machine.token, daemonVersion: "0.36.4" });
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: [], agents: { codex: { status: "available", version: "0.170.0", canLaunch: true } } });
+  const c = fakePeer<HubToClient>(browser.device.id);
+  hub.onClientConnect(c);
+  const launched = (requestId: string, extra: { agent?: "codex"; model?: "haiku" } = {}) => {
+    hub.onClientMessage(c, { type: "session.launch", requestId, machine: machine.device.id, cwd: "/w", ...extra });
+    const sent = d.sent.at(-1);
+    assert.ok(sent?.type === "session.launch");
+    return sent.model;
+  };
+  const snapshot = c.sent.find((m) => m.type === "snapshot");
+  assert.ok(snapshot?.type === "snapshot");
+  assert.equal(snapshot.server?.defaultModel, undefined);
+  assert.equal(launched("before"), undefined);
+
+  hub.onClientMessage(c, { type: "defaultModel.set", requestId: "r1", model: "opus" });
+  assert.deepEqual(c.sent.at(-2), { type: "server", server: { ...info, defaultAgent: "claude", defaultModel: "opus" } });
+  assert.deepEqual(c.sent.at(-1), { type: "server.result", requestId: "r1", result: { ok: true } });
+  assert.equal(launched("opus"), "opus");
+  assert.match(store.recentEvents().findLast((e) => e.event === "Gasho:session.launch")?.summary ?? "", /\[model: opus\]/);
+  // Codex is started as before, and a launch that names its own model keeps it.
+  assert.equal(launched("codex", { agent: "codex" }), undefined);
+  assert.equal(launched("own", { model: "haiku" }), "haiku");
+
+  hub.onClientMessage(c, { type: "defaultModel.set", requestId: "r2", model: "gpt" as never });
+  const refused = c.sent.at(-1);
+  assert.ok(refused?.type === "server.result" && !refused.result.ok);
+  assert.equal(launched("still opus"), "opus");
+
+  // Kept over a restart of the Gasho server.
+  const again = new Hub(store, { server });
+  const k = fakePeer<HubToClient>(browser.device.id);
+  again.onClientConnect(k);
+  const kept = k.sent.find((m) => m.type === "snapshot");
+  assert.ok(kept?.type === "snapshot");
+  assert.equal(kept.server?.defaultModel, "opus");
+
+  // Back to Claude Code's own default ("default" is not kept): launched without --model.
+  hub.onClientMessage(c, { type: "defaultModel.set", requestId: "r3", model: "default" });
+  assert.deepEqual(c.sent.at(-2), { type: "server", server: { ...info, defaultAgent: "claude" } });
+  assert.equal(launched("default"), undefined);
 });
 
 test("a worktree's name is kept by the Gasho server for every browser, from a browser or gasho-daemon, until it is taken away", () => {

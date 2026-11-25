@@ -141,7 +141,7 @@ import { npmOf, Updater } from "./self-update.ts";
 import { log, str } from "./util.ts";
 import { CLAUDE_TMP_SWEEP_MS, prepareClaudeTmp, removeSessionTmp, sessionOfTmpFile, sweepClaudeTmp } from "./claude-tmp.ts";
 
-export const DAEMON_VERSION = "0.36.2";
+export const DAEMON_VERSION = "0.36.6";
 const GITHUB_CACHE_MS = 5 * 60_000;
 /** How long the worktree a folder is in, or the repositories inside it, and their branches are reused. */
 const REPOS_CACHE_MS = 60_000;
@@ -193,9 +193,6 @@ const MODEL_NAMES: Record<SessionModel, string> = { default: "既定のモデル
 const EFFORT_NAMES: Record<EffortLevel, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "xHigh", max: "Max" };
 /** What this gasho-daemon can switch or carry with an input (MachineInfo.features). */
 const INPUT_FEATURES: readonly InputFeature[] = ["model", "effort", "ultracode", "files"];
-/** What session.launch may start Claude Code with (`--model` takes the /model picker's aliases). */
-const LAUNCH_MODELS = new Set<unknown>(Object.keys(MODEL_NAMES));
-const LAUNCH_EFFORTS = new Set<unknown>(Object.keys(EFFORT_NAMES));
 /** What a session of Claude Code can do (AgentInfo.operations); one of Codex only talks, for now. */
 const CLAUDE_OPERATIONS: readonly AgentOperation[] = [...INPUT_FEATURES, "fork", "background", "skills", "shell"];
 /** How long the prompt box may take to let go of a text after Enter (see typeInput). */
@@ -210,7 +207,7 @@ const AUTO_RETRY_MS = 30_000;
 const LATE_PICKER_WAIT_MS = 10_000;
 /** A session is used to read the model names only once it has run this long (Claude Code has finished starting). */
 const PROBE_MIN_AGE_MS = 30_000;
-/** An idle session's tokens are counted again after this long (a working one at every refresh). */
+/** An idle session's tokens are counted again after this long (a working one at every refresh, and once it stops). */
 const TOKENS_IDLE_MS = 30_000;
 /** The tokens per day are told to the Gasho server and saved at most this often. */
 const TOKEN_DAYS_EVERY_MS = 60_000;
@@ -252,9 +249,16 @@ interface Tracked {
   opening?: Promise<void>;
   /** Sessions started from Gasho: the model in Claude Code's welcome banner, until the transcript records one. */
   bannerModel?: string;
+  /**
+   * Sessions started from Gasho: the effort level last shown above the prompt box. Claude Code shows it only for a while
+   * (a /model picker opened and closed takes it away), and the transcript records none before the first message.
+   */
+  shownEffort?: EffortLevel;
   /** Sessions started from Gasho: the tokens they used, and when they were last counted. */
   tokens?: TokenCounter;
   tokensAt?: number;
+  /** It has stopped working since they were counted: its last reply, written just before, is counted without waiting. */
+  tokensDue?: boolean;
   /** Claude Code's own state of the session, as its registry has it (see RegistryInfo.status), else as its list does. */
   claude?: ClaudeState;
   /** Sessions started from Gasho: the permission dialog on the screen when it was last read (see openPermission). */
@@ -323,6 +327,8 @@ export class Daemon {
   private followingNewIds = false;
   private refreshing = false;
   private refreshAgain = false;
+  /** The callers waiting for the refresh that refreshAgain asks for (see refresh). */
+  private refreshWaiters: (() => void)[] = [];
   private refreshTimer: NodeJS.Timeout | undefined;
   private statusTimer: NodeJS.Timeout | undefined;
   private emitTimer: NodeJS.Timeout | undefined;
@@ -744,9 +750,10 @@ export class Daemon {
     const read = await Promise.all(
       [...this.tracked.values()].map(async (t) => ({ t, reg: t.info.pid === undefined ? undefined : await readRegistry(this.cfg.claudeDir, t.info.pid) })),
     );
-    let changed = false;
-    for (const { t, reg } of read) if (reg?.status && this.applyStatus(t, undefined, reg)) changed = true;
-    if (!changed) return;
+    const changed = read.filter(({ t, reg }) => reg?.status && this.applyStatus(t, undefined, reg));
+    if (changed.length === 0) return;
+    // The tokens of the last reply go in the same list as the end of the work.
+    if (changed.some(({ t }) => t.tokensDue)) await this.countTokens();
     this.emitSessions();
     this.flushWaitingInputs();
   }
@@ -759,8 +766,10 @@ export class Daemon {
     info.waitingFor = waitingForOf(row, reg);
     this.permissions.status(info.sessionId, info.status);
     if (info.status === before) return false;
-    // For the sessions started from Gasho (those it stops), when Claude Code wrote a state and when Gasho showed it.
     const m = this.managed.get(info.sessionId);
+    // Only the sessions started from Gasho have their tokens counted (see countTokens).
+    if (m && before === "busy") t.tokensDue = true;
+    // For the sessions started from Gasho (those it stops), when Claude Code wrote a state and when Gasho showed it.
     if (m && before !== "unknown") {
       const written = reg?.statusAt ? `${Math.round((Date.now() - reg.statusAt) / 100) / 10} s ago` : "-";
       log(`${m.name}: ${before} → ${info.status} (Claude Code's file: ${reg?.status ?? "-"}, written ${written}; list: ${row ? mapStatus(row) : "-"})`);
@@ -778,12 +787,18 @@ export class Daemon {
     }
   }
 
+  /**
+   * Reads the sessions again and sends them. Called while a refresh runs, it waits for the next one to end: the one
+   * running may have read `claude agents` before what the caller changed, and a session just started would then reach
+   * the browser after the answer that opens its page (which would say it is gone).
+   */
   async refresh(): Promise<void> {
     if (this.refreshing) {
       this.refreshAgain = true;
-      return;
+      return new Promise((resolve) => this.refreshWaiters.push(resolve));
     }
     this.refreshing = true;
+    const waiters = this.refreshWaiters.splice(0);
     try {
       const rows = await listAgents(this.cfg.claudeBin);
       await this.followNewIds(rows);
@@ -829,6 +844,7 @@ export class Daemon {
         this.refreshed = true;
         this.emitSessions();
       }
+      for (const resolve of waiters) resolve();
       if (this.refreshAgain) {
         this.refreshAgain = false;
         void this.refresh();
@@ -982,10 +998,7 @@ export class Daemon {
     info.costUSD = meta.costUSD;
     info.lastActivityAt = meta.lastActivityAt;
     info.model = meta.model ?? t.bannerModel;
-    // Before its first reply, the effort level it was started with (--effort), which nothing on the screen says. Not
-    // after /clear: what it goes on with then is kept for a resume only (see rememberEffort).
-    const m = this.managed.get(info.sessionId);
-    info.effort = meta.effort ?? (m && !m.previousIds?.length ? m.effort : undefined);
+    info.effort = meta.effort ?? t.shownEffort;
     info.ultracode = meta.ultracode;
     this.remember(info.sessionId, meta);
   }
@@ -1278,7 +1291,7 @@ export class Daemon {
       t.dialog = permissionDialogText(screen);
       const state = statusLine(screen);
       if (state) {
-        t.info.effort = state.effort;
+        t.info.effort = t.shownEffort = state.effort;
         t.info.ultracode = state.ultracode;
         this.rememberEffort(m.sessionId, state.effort);
       }
@@ -1318,8 +1331,9 @@ export class Daemon {
       // A fork's transcript starts with a copy of the conversation it was forked from: not this session's tokens. A fork
       // opened again from the history is known as one only by what was remembered when it was made.
       t.tokens ??= new TokenCounter(t.transcript, { since: this.tokenDays.forkedAt(m.sessionId) ?? m.forkedAt });
-      if (t.info.status !== "busy" && t.tokensAt !== undefined && now - t.tokensAt < TOKENS_IDLE_MS) continue;
+      if (t.info.status !== "busy" && !t.tokensDue && t.tokensAt !== undefined && now - t.tokensAt < TOKENS_IDLE_MS) continue;
       t.tokensAt = now;
+      t.tokensDue = false;
       try {
         await t.tokens.update();
       } catch (e) {
@@ -1567,7 +1581,15 @@ export class Daemon {
         try {
           switch (m.type) {
             case "session.launch":
-              result = await this.launch(m.cwd, m.name, m.trust === true, m.agent, false, { model: m.model, effort: m.effort });
+              result = await this.launch(
+                m.cwd,
+                m.name,
+                m.trust === true,
+                m.agent,
+                false,
+                m.effort && EFFORT_LEVELS.includes(m.effort) ? m.effort : undefined,
+                m.model && m.model !== "default" && Object.hasOwn(MODEL_NAMES, m.model) ? m.model : undefined,
+              );
               break;
             case "session.input":
               result = await this.input(m);
@@ -1882,7 +1904,10 @@ export class Daemon {
 
   /**
    * Starts `claude --remote-control` in `cwd` in a terminal of its own and waits for its session id. With `trust`,
-   * Claude Code's question whether to trust the folder is answered with yes; without it, the launch stops there.
+   * Claude Code's question whether to trust the folder is answered with yes; without it, the launch stops there. With
+   * `effort`, Claude Code starts with that effort level, for this session only: a model that does not have it starts
+   * with one it has, or none, and the settings keep their effortLevel. Likewise with `model` (`--model`, the /model
+   * picker's alias): the settings keep their model.
    */
   private async launch(
     cwd: string,
@@ -1890,7 +1915,8 @@ export class Daemon {
     trust = false,
     agent: AgentKind = "claude",
     chrome = false,
-    { model, effort }: { model?: SessionModel; effort?: EffortLevel } = {},
+    effort?: EffortLevel,
+    model?: SessionModel,
   ): Promise<CommandResult> {
     if (agent === "codex") return chrome ? { ok: false, error: CODEX_NO_CHROME } : this.launchCodex(cwd, name);
     if (!this.canLaunch) return { ok: false, error: NO_TERMINAL };
@@ -1900,12 +1926,7 @@ export class Daemon {
     // Without a name, "<folder>-gasho" until the first message names it (see nameAfterTitle).
     const autoName = !name?.trim();
     const rcName = name?.trim() || `${path.basename(dir)}-gasho`;
-    // For this session only: neither is saved to Claude Code's settings. The default model passes nothing.
-    const claudeArgs = [
-      ...(model && model !== "default" && LAUNCH_MODELS.has(model) ? ["--model", model] : []),
-      ...(effort && LAUNCH_EFFORTS.has(effort) ? ["--effort", effort] : []),
-    ];
-    const started = await this.startClaude(dir, rcName, { trust, chrome, claudeArgs });
+    const started = await this.startClaude(dir, rcName, { trust, chrome, claudeArgs: [...(model ? ["--model", model] : []), ...(effort ? ["--effort", effort] : [])] });
     if ("error" in started) {
       const { error, needsTrust, trustWarnings } = started;
       return needsTrust ? { ok: false, error, needsTrust, trustWarnings } : { ok: false, error };
@@ -1920,8 +1941,6 @@ export class Daemon {
       launchedAt: Date.now(),
       ...(autoName ? { autoName } : {}),
       ...(chrome ? { chrome } : {}),
-      // Shown until its first reply records it, and kept as what it goes on with (see rememberEffort).
-      ...(claudeArgs.includes("--effort") && effort ? { effort } : {}),
     });
     await this.managed.save();
     await this.refresh();
@@ -2315,9 +2334,9 @@ export class Daemon {
       );
     }
     await this.refresh();
-    // Before the answer, also when that refresh only asked the one running to go again: a session /clear took away from
-    // this conversation has it among its earlier ids no longer (see ManagedSessions.add), and a page still told it does
-    // goes on to that session instead (see the web's movedSession).
+    // Also when that refresh failed: a session /clear took away from this conversation has it among its earlier ids no
+    // longer (see ManagedSessions.add), and a page still told it does goes on to that session instead (see the web's
+    // movedSession).
     this.emitSessions();
     return { ok: true, sessionId: id, ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}) };
   }
@@ -3082,16 +3101,30 @@ export class Daemon {
         return;
       }
       this.settleUntil.delete(m.sessionId);
+      // Claude Code's list of background tasks left open (by hand, or by a stop that could not close it) is closed
+      // first, busy or not: nothing can be typed while it is open, and Claude Code holds back what it would tell Claude
+      // (a task that ended, or was stopped) until it is closed, so a session waiting for its subagents stays busy. No
+      // stop runs meanwhile (it holds `flushing`).
+      const closeTasksLeftOpen = async () => {
+        log(`${m.name}: closing Claude Code's list of background tasks, left open, before typing`);
+        await this.closeTasks(m.terminal);
+      };
       if ((await this.currentStatus(m.pid)) !== "idle") {
         // Busy after an Enter that came back "unsure": Claude Code took it.
         const head = this.managed.peek(m.sessionId);
         if (head?.entered) head.seenBusy = true;
+        const s = await this.terminals.screen(m.terminal).catch(() => undefined);
+        if (s && tasksDialog(s.plain)) {
+          await closeTasksLeftOpen();
+          this.scheduleRefresh(500);
+        }
         return;
       }
       const screen = (await this.terminals.screen(m.terminal)).plain;
       // A /model picker (or its question) still open, e.g. from an Enter that Claude Code took late: close it first
       // (Esc changes nothing there). Any other dialog, such as a permission request, is the person's to answer.
       if (modelPickerOptions(screen).length > 0 || switchQuestion(screen)) await this.closePicker(m.terminal);
+      else if (tasksDialog(screen)) await closeTasksLeftOpen();
       else if (dialogOpen(screen)) return;
       const item = this.managed.next(m.sessionId);
       if (item === undefined) return;

@@ -129,14 +129,22 @@ mkdir -p ~/.config/gasho
 echo "GASHO_ALLOW_NETS=lan,tailscale" >> ~/.config/gasho/hub.env
 ```
 
-変数の一覧は [README](../README.md) の「環境変数」にある。常駐と更新に使うものは次のとおり。
-
 | 変数 | 意味 | 既定値 |
 |---|---|---|
+| `GASHO_HUB_HOST` / `GASHO_HUB_PORT` | 待ち受けるアドレスとポート | `0.0.0.0` / `7740` |
+| `GASHO_ALLOW_NETS` | 受け付ける接続元。CIDR と `lan`・`tailscale` をカンマで並べる | `lan`（このマシンと LAN のプライベートアドレス） |
+| `GASHO_DB` | データベースのファイル | `~/.local/share/gasho/hub.db` |
+| `GASHO_WEB_DIST` | 配る画面のフォルダー | パッケージでは、その中の `web`。clone では `apps/web/dist` |
+| `GASHO_PLUGINS_DIR` | 入れたプラグインのフォルダー | `~/.local/share/gasho/plugins` |
+| `GASHO_PLUGIN_CACHE` | 配るプラグインの版ごとの写し | `~/.cache/gasho/hub-plugins` |
+| `GASHO_PLUGIN_REPO` | プラグインを追加するリポジトリ | `4rtofl/GashoPlugins` |
+| `GASHO_GH_BIN` | GitHub CLI のコマンド | `gh` |
+| `GASHO_VAPID_SUBJECT` | Web Push で push service に伝える送り手。`mailto:` か `https:` の URL | `https://github.com/4rtofl/Gasho` |
+| `GASHO_HUB_ENV` | 起動するときに読む設定のファイル。`off` にすると読まない | `~/.config/gasho/hub.env` |
 | `GASHO_HUB_HOME` | `service install` と更新が、Gasho サーバーを版ごとに入れるフォルダー | `~/.local/share/gasho/hub` |
-| `GASHO_HUB_PROBATION_MS` | 更新したあとの試しの期間（ミリ秒） | `60000` |
+| `GASHO_HUB_PROBATION_MS` | 更新したあとの試しの期間（ミリ秒）。そのうちに止まった版は、前の版に戻す | `60000` |
 | `GASHO_NPM_BIN` | 版を入れ、最新の版を調べる npm | Node.js と同じフォルダーの `npm` |
-| `GASHO_LATEST_CHECK` | `off` にすると、公開されている最新の版を調べない | なし |
+| `GASHO_LATEST_CHECK` | `off` にすると、公開されている gasho-daemon と Gasho サーバーの最新の版を調べない | なし |
 
 ## やめる
 

@@ -1,7 +1,8 @@
 // Settings of this browser: the size of the conversation's text on the session screen, with a sample of a
-// conversation to see it by, and its notifications (Web Push). The default agent is the Gasho server's, the same for
-// every browser, and so are the model and effort level a new session of Claude Code starts with. Then the versions of Gasho running now. Each is a section that folds (lib/settings-sections).
-import { Check, CircleAlert, Copy, Gauge, Info, RotateCcw, Type } from "lucide-react";
+// conversation to see it by, and its notifications (Web Push). The default agent, model and effort level are the Gasho
+// server's, the same for every browser. Then the versions of Gasho running now. Each is a section that folds
+// (lib/settings-sections).
+import { Check, CircleAlert, Copy, Cpu, Gauge, Info, RotateCcw, Type } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { AgentKind, EffortLevel, SessionModel, TranscriptEntry } from "@gasho/protocol";
 import { PushSettingsSection } from "@/components/push-settings";
@@ -10,11 +11,12 @@ import { TranscriptSample } from "@/components/transcript";
 import { Badge } from "@/components/ui/badge";
 import { AccordionSection } from "@/components/ui/unfold-accordion";
 import { MorphingButton, type MorphingButtonStatus } from "@/components/ui/morphing-button";
+import { SemiGauge } from "@/components/ui/semi-gauge";
 import { AGENT_NAME, codexOffered } from "@/lib/agents";
 import { CHAT_TEXT_DEFAULT, CHAT_TEXT_MAX, CHAT_TEXT_MIN, useChatTextSize } from "@/lib/chat-text";
 import { go } from "@/lib/route";
 import { useSettingsSectionOpen } from "@/lib/settings-sections";
-import { OWN_BUILD, setDefaultAgent, setLaunchDefaults, useAppState } from "@/lib/store";
+import { OWN_BUILD, setDefaultAgent, setDefaultEffort, setDefaultModel, useAppState } from "@/lib/store";
 import { copyToClipboard } from "@/lib/utils";
 import { versionRows, versionsText } from "@/lib/versions";
 import { PluginSettingsSections } from "@/plugins/parts";
@@ -139,7 +141,9 @@ export function SettingsView() {
 
       <DefaultAgentSection />
 
-      <LaunchDefaultsSection />
+      <DefaultModelSection />
+
+      <DefaultEffortSection />
 
       <PushSettingsSection />
 
@@ -197,67 +201,89 @@ export function DefaultAgentSection() {
   );
 }
 
+const CLAUDE_DEFAULT = "Claude Code の既定";
+
 const FIELD =
   "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-border-hover disabled:opacity-60";
 
-/**
- * The model and effort level a new session of Claude Code starts with (`--model`, `--effort`), the same for every
- * browser. Each can be switched later in the session's chat box, for that session only.
- */
-export function LaunchDefaultsSection() {
+/** The model a new session of Claude Code starts with, picked from a combobox. */
+export function DefaultModelSection() {
   const { server } = useAppState();
   const [error, setError] = useState<string>();
-  const [open, setOpen] = useSettingsSectionOpen("launch-defaults");
+  const [open, setOpen] = useSettingsSectionOpen("default-model");
   if (!server) return null;
-  const model: SessionModel = server.defaultModel ?? "default";
-  const effort = server.defaultEffort;
-  const save = async (next: { model?: SessionModel; effort?: EffortLevel }) => {
+  const current: SessionModel = server.defaultModel ?? "default";
+  const pick = async (model: SessionModel) => {
     setError(undefined);
-    const r = await setLaunchDefaults(next);
+    const r = await setDefaultModel(model);
     if (!r.ok) setError(r.error ?? "変えられませんでした。");
   };
-  const modelName = MODELS.find((m) => m.id === model)?.name ?? "既定";
-  const effortName = EFFORTS.find((e) => e.id === effort)?.name ?? "既定";
+  return (
+    <AccordionSection
+      icon={<Cpu className="size-4" />}
+      title="既定のモデル"
+      description="「＋」で起動する Claude Code のセッションのモデルです。どのブラウザーでも同じです。起動したあとは、入力欄でそのセッションだけ切り替えられます。Codex のセッションと、開き直し・フォークには使いません。"
+      open={open}
+      onOpenChange={setOpen}
+      actions={<span className="text-sm">{current === "default" ? CLAUDE_DEFAULT : (MODELS.find((m) => m.id === current)?.name ?? current)}</span>}
+    >
+      <label className="block max-w-sm space-y-1.5">
+        <span className="text-xs text-muted-foreground">既定のモデル</span>
+        <select value={current} onChange={(e) => void pick(e.target.value as SessionModel)} className={FIELD}>
+          {MODELS.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.id === "default" ? `${CLAUDE_DEFAULT}（working server の Claude Code の設定のまま）` : `${m.name}（${m.description}）`}
+            </option>
+          ))}
+        </select>
+      </label>
+      {error && <p className="text-xs text-red-400">{error}</p>}
+    </AccordionSection>
+  );
+}
+
+/** The effort level a new session of Claude Code starts with. */
+export function DefaultEffortSection() {
+  const { server } = useAppState();
+  const [error, setError] = useState<string>();
+  const [open, setOpen] = useSettingsSectionOpen("default-effort");
+  if (!server) return null;
+  const current = server.defaultEffort;
+  const pick = async (effort: EffortLevel | undefined) => {
+    setError(undefined);
+    const r = await setDefaultEffort(effort);
+    if (!r.ok) setError(r.error ?? "変えられませんでした。");
+  };
   return (
     <AccordionSection
       icon={<Gauge className="size-4" />}
-      title="新しいセッションのモデルと Effort"
-      description="Claude Code のセッションを起動するときに使います。どのブラウザーでも同じです。起動したあとは、入力欄でそのセッションだけ切り替えられます。"
+      title="既定の Effort"
+      description="「＋」で起動する Claude Code のセッションの Effort です。どのブラウザーでも同じです。モデルにその Effort が無いときは、そのモデルにある近い Effort で起動します。Codex のセッションと、開き直し・フォークには使いません。"
       open={open}
       onOpenChange={setOpen}
-      bodyClassName="space-y-4"
-      actions={<span className="text-sm">{`${modelName} · ${effortName}`}</span>}
+      actions={<span className="text-sm">{EFFORTS.find((e) => e.id === current)?.name ?? CLAUDE_DEFAULT}</span>}
     >
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className="block space-y-1.5">
-          <span className="text-xs text-muted-foreground">モデル</span>
-          <select value={model} onChange={(e) => void save({ model: e.target.value as SessionModel, effort })} className={FIELD}>
-            {MODELS.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.id === "default" ? "既定（Claude Code の既定）" : `${m.name}（${m.description}）`}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block space-y-1.5">
-          <span className="text-xs text-muted-foreground">Effort</span>
-          <select
-            value={effort ?? ""}
-            onChange={(e) => void save({ model, effort: (e.target.value || undefined) as EffortLevel | undefined })}
-            className={FIELD}
-          >
-            <option value="">既定（Claude Code の設定）</option>
-            {EFFORTS.map((e) => (
-              <option key={e.id} value={e.id}>
-                {`${e.name}（${e.description}）`}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <p className="text-xs text-muted-foreground">
-        Codex のセッションには使いません。古い gasho-daemon の working server では、Claude Code の既定のまま起動します。
-      </p>
+      <SemiGauge
+        steps={EFFORTS}
+        value={current}
+        onChange={(effort) => void pick(effort)}
+        label="既定の Effort"
+        empty={{ name: "既定", description: "working server の Claude Code の設定（effortLevel）のまま起動します" }}
+      >
+        <button
+          type="button"
+          role="radio"
+          aria-checked={current === undefined}
+          onClick={() => current !== undefined && void pick(undefined)}
+          className={
+            current === undefined
+              ? "rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground"
+              : "rounded-lg border border-border px-3 py-1.5 text-sm hover:border-border-hover"
+          }
+        >
+          {CLAUDE_DEFAULT}
+        </button>
+      </SemiGauge>
       {error && <p className="text-xs text-red-400">{error}</p>}
     </AccordionSection>
   );

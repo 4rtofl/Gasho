@@ -158,20 +158,9 @@ async function launchSession(machine: string, input: LaunchInput, { fromPlugin =
   if (answer === "cancel") return { ok: false, cancelled: true, error: "セッションの起動をキャンセルしました。" };
   const held = liveGo(machine);
   if (held) held.running++;
-  const agent = input.agent ?? "claude";
-  // Claude Code starts with the model and effort level of the settings (the same for every browser).
-  const { defaultModel, defaultEffort } = getAppState().server ?? {};
   const r = await sendCommand(
     machine,
-    {
-      type: "session.launch",
-      cwd: input.cwd,
-      name: input.name,
-      ...(input.trust ? { trust: true } : {}),
-      ...launchAgentField(agent),
-      ...(agent === "claude" && defaultModel && defaultModel !== "default" ? { model: defaultModel } : {}),
-      ...(agent === "claude" && defaultEffort ? { effort: defaultEffort } : {}),
-    },
+    { type: "session.launch", cwd: input.cwd, name: input.name, ...(input.trust ? { trust: true } : {}), ...launchAgentField(input.agent ?? "claude") },
     LAUNCH_WAIT_MS,
   );
   if (held) {

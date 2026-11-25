@@ -2,14 +2,17 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { GashoNotification, MachineInfo, SessionInfo } from "@gasho/protocol";
 import {
+  forgetStarting,
   movedSession,
   narrowWorktrees,
   rememberedOf,
+  rememberStarting,
   repoChoices,
   repoKeyOf,
   sessionDot,
   sessionDotStatus,
   shownStatus,
+  startingSession,
   tabAfterRemoval,
   unreadOfSession,
   unreadSessions,
@@ -287,6 +290,17 @@ test("a page open on an id from before /clear goes to the session that had it; o
   assert.equal(movedSession(mac, "c"), undefined);
   assert.equal(movedSession(mac, "x"), undefined);
   assert.equal(movedSession(undefined, "a"), undefined);
+});
+
+test("a session just started is starting until its working server lists it or 30 s pass; one that ends after being listed is not", () => {
+  rememberStarting("mac", "new", 1_000);
+  rememberStarting("mac", "late", 1_000);
+  assert.equal(startingSession("mac", "new", 2_000), true);
+  assert.equal(startingSession("ubuntu", "new", 2_000), false);
+  assert.equal(startingSession("mac", "late", 30_999), true);
+  assert.equal(startingSession("mac", "late", 31_000), false);
+  forgetStarting(machine("mac", [session("new")]));
+  assert.equal(startingSession("mac", "new", 2_000), false);
 });
 
 test("an open session reads its unread notifications, those under an id it had before /clear too", () => {

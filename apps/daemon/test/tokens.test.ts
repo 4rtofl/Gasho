@@ -65,6 +65,20 @@ test("tokens are counted once per reply, across the session's transcript and its
   await fs.rm(dir, { recursive: true, force: true });
 });
 
+test("counts at once read on from where the transcript was, and miss none of what is written after", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-tokens-"));
+  const transcript = path.join(dir, "s1.jsonl");
+  await fs.writeFile(transcript, reply("m1", "2026-11-18T02:00:00Z", { output_tokens: 1 }));
+  const c = new TokenCounter(transcript);
+  // Several, as whether two of them overlap is up to the file system. A reply written after is longer than they could
+  // have moved the offset on (else the file seems rewritten and is read again from the start).
+  await Promise.all(Array.from({ length: 10 }, () => c.update()));
+  await fs.appendFile(transcript, reply("m2", "2026-11-18T02:01:00Z", { output_tokens: 10 }, "、".repeat(1000)) + reply("m3", "2026-11-18T02:02:00Z", { output_tokens: 100 }));
+  await c.update();
+  assert.equal(c.totals().output, 111);
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
 test("a fork does not count the replies copied from the session it was forked from", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-tokens-"));
   try {
@@ -230,6 +244,47 @@ test("a fork removed and opened again from the history still leaves out the conv
   d.tracked.set("fork", { transcript, info: { status: "busy" } });
   await d.countTokens();
   assert.deepEqual(d.tokenDays.all(NOW), [["2026-11-18", 1100]]);
+  await d.tokenDays.save();
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test("the last reply's tokens are sent with the end of the work, without waiting for the next count of an idle session", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-tokens-"));
+  const claudeDir = path.join(dir, "claude-dir");
+  await fs.mkdir(path.join(claudeDir, "sessions"), { recursive: true });
+  const transcript = path.join(dir, "s.jsonl");
+  const status = (s: string) => fs.writeFile(path.join(claudeDir, "sessions", "4242.json"), JSON.stringify({ status: s }));
+  await fs.writeFile(transcript, reply("m1", "2026-11-18T02:00:00Z", { output_tokens: 10 }));
+  const d = new Daemon({
+    hubUrl: "ws://127.0.0.1:1",
+    machineId: "m",
+    token: "t",
+    hookPort: 0,
+    claudeDir,
+    claudeBin: "claude",
+    ghBin: "gh",
+    pollIntervalMs: 60_000,
+    stateDir: dir,
+    attachmentsDir: path.join(dir, "attachments"),
+    pluginCacheDir: path.join(dir, "plugin-cache"),
+    pluginDataDir: path.join(dir, "plugin-data"),
+    runPlugins: false,
+  } as ConstructorParameters<typeof Daemon>[0]) as unknown as Record<string, any>;
+  const sent: { sessionId: string; status: string; tokens?: { output: number } }[][] = [];
+  d.refreshed = true;
+  d.hub = { connected: true, send: (m: { type: string; sessions?: [] }) => m.type === "sessions" && sent.push(m.sessions!) };
+  d.managed.add({ sessionId: "s", terminal: "t", pid: 4242, cwd: dir, name: "s", launchedAt: NOW });
+  d.tracked.set("s", { transcript, meta: {}, info: { sessionId: "s", cwd: dir, pid: 4242, status: "unknown", rcMode: "none", prLinks: [] } });
+  await status("busy");
+  await d.readStatuses();
+  // The last count while it works, before its last reply.
+  await d.countTokens();
+  await fs.appendFile(transcript, reply("m2", "2026-11-18T02:01:00Z", { output_tokens: 1800 }));
+  await status("idle");
+  await d.readStatuses();
+  const shown = sent.at(-1)?.find((s) => s.sessionId === "s");
+  assert.equal(shown?.status, "idle");
+  assert.equal(shown?.tokens?.output, 1810);
   await d.tokenDays.save();
   await fs.rm(dir, { recursive: true, force: true });
 });

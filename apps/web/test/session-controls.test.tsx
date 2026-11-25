@@ -1,7 +1,10 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { EffortLevel } from "@gasho/protocol";
 import { expect, test, vi } from "vitest";
 import { EffortPicker, UltracodeToggle } from "@/components/session-controls";
+import { DefaultEffortSection } from "@/views/settings";
+import { connectHub } from "./hub";
 
 test("the effort picked is told, and the button says it is switched when sending until the session uses it", async () => {
   const user = userEvent.setup();
@@ -44,4 +47,25 @@ test("ultracode turns over, and says it is switched when sending until the sessi
   rerender(<UltracodeToggle value={true} current={false} onChange={onChange} />);
   expect(button.getAttribute("aria-pressed")).toBe("true");
   expect(button.title).toContain("送るときに切り替えます");
+});
+
+test("the default effort level is set for every browser from the gauge, by its keys, and back to Claude Code's own", async () => {
+  const server = (defaultEffort?: EffortLevel) => ({ version: "0.15.0", update: { canUpdate: false }, ...(defaultEffort ? { defaultEffort } : {}) });
+  const hub = await connectHub({ server: server() });
+  render(<DefaultEffortSection />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: /^既定の Effort/ }));
+  expect(screen.getByRole("radio", { name: "Claude Code の既定" }).getAttribute("aria-checked")).toBe("true");
+
+  await user.click(screen.getByRole("radio", { name: "High" }));
+  expect(hub.sent.at(-1)).toMatchObject({ type: "defaultEffort.set", effort: "high" });
+  await hub.say({ type: "server", server: server("high") });
+  expect(screen.getByRole("radio", { name: "High" }).getAttribute("aria-checked")).toBe("true");
+
+  await user.keyboard("{ArrowRight}");
+  expect(hub.sent.at(-1)).toMatchObject({ type: "defaultEffort.set", effort: "xhigh" });
+
+  await user.click(screen.getByRole("radio", { name: "Claude Code の既定" }));
+  const back = hub.sent.at(-1);
+  expect(back?.type === "defaultEffort.set" && !("effort" in back)).toBe(true);
 });

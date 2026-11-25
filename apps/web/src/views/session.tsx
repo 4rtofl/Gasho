@@ -1,4 +1,4 @@
-import { ArrowLeft, ExternalLink, FolderOpen, GitBranch, GitPullRequest } from "lucide-react";
+import { ArrowLeft, ExternalLink, FolderOpen, GitBranch, GitPullRequest, LoaderCircle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { InputFeature, MachineInfo, SessionInfo, SessionModel } from "@gasho/protocol";
 import { AgentMark } from "@/components/agent-mark";
@@ -26,7 +26,7 @@ import { promptDraft, useDraftBox, usePicks, useUnsent } from "@/lib/drafts";
 import { addPending, noneWaiting, notRecordedYet, pendingShown, removePending, sessionWorking, settlePending, usePending } from "@/lib/pending";
 import { go, type SessionPanel } from "@/lib/route";
 import { closeSmallSessionHeader, useSessionHeaderShown } from "@/lib/session-header";
-import { daemonAtLeast, rememberOpened, shownStatus, worktreeId, worktreesByLastUse } from "@/lib/sessions";
+import { daemonAtLeast, rememberOpened, shownStatus, startingSession, worktreeId, worktreesByLastUse } from "@/lib/sessions";
 import { loadSkills, useSkills } from "@/lib/skills";
 import { loadTranscript, sendCommand, type SentResult, transcriptKey, type TranscriptState, useAppState } from "@/lib/store";
 import { useNow } from "@/lib/use-now";
@@ -75,18 +75,7 @@ export function SessionView({
   const online = m?.connected === true;
   const source = useMemo(() => ({ machine, sessionId, online }), [machine, sessionId, online]);
 
-  if (!m || !s || !shown) {
-    return (
-      <div className="mx-auto max-w-3xl p-6 text-sm text-muted-foreground">
-        <BackLink />
-        <p className="mt-4">
-          {s
-            ? "このセッションは Gasho から起動したものではないので、表示しません。"
-            : `このセッションは見つかりません。終了したか、${m?.name ?? "この working server"} の gasho-daemon が接続していません。`}
-        </p>
-      </div>
-    );
-  }
+  if (!m || !s || !shown) return <SessionNotShown machine={m} machineId={machine} sessionId={sessionId} listed={s !== undefined} />;
 
   // Opens a panel beside the session (in its place on a phone); one already open is swapped, not stacked in the history.
   const open = (p: SessionPanel) => go({ name: "session", machine, sessionId, panel: p }, { replace: panel !== undefined });
@@ -626,6 +615,32 @@ function PanelLink({
       {icon}
       {children}
     </button>
+  );
+}
+
+/**
+ * The page of a session that is not shown. `listed`: the working server lists it, as one Gasho did not start. One just
+ * started from this page says so until its working server lists it (see startingSession).
+ */
+function SessionNotShown({ machine, machineId, sessionId, listed }: { machine?: MachineInfo; machineId: string; sessionId: string; listed: boolean }) {
+  const now = useNow(1_000);
+  const starting = !listed && machine?.connected === true && startingSession(machineId, sessionId, now);
+  return (
+    <div className="mx-auto max-w-3xl p-6 text-sm text-muted-foreground">
+      <BackLink />
+      {starting ? (
+        <p role="status" className="mt-4 flex items-center gap-2">
+          <LoaderCircle className="size-4 shrink-0 animate-spin motion-reduce:animate-none" />
+          セッションを起動しています。まもなく表示されます。
+        </p>
+      ) : (
+        <p className="mt-4">
+          {listed
+            ? "このセッションは Gasho から起動したものではないので、表示しません。"
+            : `このセッションは見つかりません。終了したか、${machine?.name ?? "この working server"} の gasho-daemon が接続していません。`}
+        </p>
+      )}
+    </div>
   );
 }
 

@@ -3,11 +3,12 @@
 // Claude's questions (AskUserQuestion) and a plan to approve (ExitPlanMode) have cards of their own: Claude Code takes
 // them only with the answers, or the plan, so that "allow" alone would leave its dialog open.
 import { ChevronRight, ClipboardList, MessageCircleQuestion, ShieldAlert } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { type KeyboardEvent, useEffect, useId, useState } from "react";
 import type { AgentKind, AskedQuestion, MachineInfo, PermissionRequestInfo, QuestionAnswer, SessionCommand, SessionInfo } from "@gasho/protocol";
 import { MarkdownText } from "@/components/markdown";
 import { AGENT_SPEAKER, sessionAgent } from "@/lib/agents";
 import { sendCommand } from "@/lib/store";
+import { composing } from "@/lib/text-input";
 import { cn } from "@/lib/utils";
 
 export function PermissionRequests({ machine, session }: { machine: MachineInfo; session: SessionInfo }) {
@@ -41,6 +42,13 @@ const FIELD =
   "w-full resize-y rounded-lg border border-border bg-black/30 px-2.5 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-border-hover focus:outline-none disabled:opacity-50";
 
 type Answer = Omit<Extract<SessionCommand, { type: "permission.answer" }>, "type" | "sessionId" | "permissionId">;
+
+/** A text box's onKeyDown: ⌘/Ctrl+Enter sends what is written, as in the chat box; Enter alone adds a line. */
+const sendOnModEnter = (submit: () => void) => (e: KeyboardEvent<HTMLTextAreaElement>) => {
+  if (e.key !== "Enter" || !(e.metaKey || e.ctrlKey) || composing(e)) return;
+  e.preventDefault();
+  submit();
+};
 
 /**
  * Sends an answer to a request. `sending`: which of the card's answers is on its way (its button says so). `sent`: one
@@ -164,6 +172,9 @@ function QuestionCard({ machine, sessionId, request: r, questions, agent = "clau
   const answers = questions.map((_, i) => answerOf(choices[i] ?? { picked: [], other: false, text: "" }));
   const complete = answers.every((a) => a !== undefined);
   const update = (i: number, change: (c: Choice) => Choice) => setChoices((cs) => cs.map((c, j) => (j === i ? change(c) : c)));
+  const answer = () => {
+    if (!disabled && complete) void send("answer", { decision: "allow", answers: answers.filter((a) => a !== undefined) });
+  };
 
   return (
     <div className={cn(CARD, "border-sky-500/40")}>
@@ -183,6 +194,7 @@ function QuestionCard({ machine, sessionId, request: r, questions, agent = "clau
             question={q}
             choice={choices[i] ?? { picked: [], other: false, text: "" }}
             onChange={(change) => update(i, change)}
+            onSubmit={answer}
             disabled={disabled}
           />
         ))}
@@ -192,7 +204,7 @@ function QuestionCard({ machine, sessionId, request: r, questions, agent = "clau
           type="button"
           disabled={disabled || !complete}
           title={complete ? undefined : "すべての質問に答えてください"}
-          onClick={() => void send("answer", { decision: "allow", answers: answers.filter((a) => a !== undefined) })}
+          onClick={answer}
           className={PRIMARY}
         >
           {sending === "answer" ? "送信中…" : "回答する"}
@@ -217,11 +229,14 @@ function QuestionField({
   question: q,
   choice,
   onChange,
+  onSubmit,
   disabled,
 }: {
   question: AskedQuestion;
   choice: Choice;
   onChange: (change: (c: Choice) => Choice) => void;
+  /** Sends the card's answers, if every question has one. */
+  onSubmit: () => void;
   disabled: boolean;
 }) {
   const name = useId();
@@ -283,6 +298,7 @@ function QuestionField({
               const text = e.currentTarget.value;
               onChange((c) => ({ ...c, text, ...(text.trim() ? { other: true, picked: multi ? c.picked : [] } : {}) }));
             }}
+            onKeyDown={sendOnModEnter(onSubmit)}
             className={cn(FIELD, "max-h-40 min-h-8 resize-none [field-sizing:content]")}
           />
         </div>
@@ -299,6 +315,9 @@ function PlanCard({ machine, sessionId, request: r, plan }: CardProps & { plan: 
   const { sending, error, send, disabled } = useAnswer(machine, sessionId, r.id);
   const [revising, setRevising] = useState(false);
   const [feedback, setFeedback] = useState("");
+  const revise = () => {
+    if (!disabled && feedback.trim()) void send("revise", { decision: "deny", message: feedback.trim() });
+  };
 
   return (
     <div className={cn(CARD, "border-violet-500/40")}>
@@ -320,15 +339,11 @@ function PlanCard({ machine, sessionId, request: r, plan }: CardProps & { plan: 
             aria-label="計画の直してほしいところ"
             placeholder="直してほしいところを書いてください。Claude は計画を立て直します"
             onChange={(e) => setFeedback(e.currentTarget.value)}
+            onKeyDown={sendOnModEnter(revise)}
             className={FIELD}
           />
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              disabled={disabled || !feedback.trim()}
-              onClick={() => void send("revise", { decision: "deny", message: feedback.trim() })}
-              className={PRIMARY}
-            >
+            <button type="button" disabled={disabled || !feedback.trim()} onClick={revise} className={PRIMARY}>
               {sending === "revise" ? "送信中…" : "送る"}
             </button>
             <button type="button" disabled={disabled} onClick={() => setRevising(false)} className={QUIET}>

@@ -55,6 +55,13 @@ const RENAME_WAIT_MS = 50_000;
 const FORK_WAIT_MS = 95_000;
 const REMOVE_WAIT_MS = 50_000;
 
+/** Why the menu's items (and the "×" of a session's tab, which removes it) cannot be used now, if they cannot. */
+export function sessionActionsUnavailable(machine: MachineInfo): string | undefined {
+  if (!machine.connected) return `${machine.name} はオフラインです。`;
+  if (!daemonAtLeast(machine, 0, 9)) return `${machine.name} の gasho-daemon を 0.9.0 以上に更新すると使えます。`;
+  return undefined;
+}
+
 /** The menu of a session's tab; `children` is the tab, which opens it. */
 export function SessionContextMenu({
   machine,
@@ -69,11 +76,7 @@ export function SessionContextMenu({
 }) {
   // Focus goes back to the item when the menu closes, unless a dialog is opening from it.
   const picked = useRef(false);
-  const unavailable = !machine.connected
-    ? `${machine.name} はオフラインです。`
-    : !daemonAtLeast(machine, 0, 9)
-      ? `${machine.name} の gasho-daemon を 0.9.0 以上に更新すると使えます。`
-      : undefined;
+  const unavailable = sessionActionsUnavailable(machine);
   const pick = (action: SessionAction) => {
     picked.current = true;
     onPick({ action, machine, session });

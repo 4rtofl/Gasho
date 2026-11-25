@@ -133,7 +133,7 @@ test("the transcript keeps the model's full name past its replies, until another
     assert.equal(meta.model, "Sonnet 5.5");
     assert.equal(meta.namedModel, undefined);
   } finally {
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, { recursive: true, force: true, maxRetries: 10 });
   }
 });
 
@@ -155,7 +155,7 @@ test("what waits for a hibernated session is saved with it, and nothing else tha
     assert.deepEqual(b.waiting("asleep"), [{ id: "r1", text: "続きを" }]);
     assert.equal(b.pending("awake"), 0);
   } finally {
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, { recursive: true, force: true, maxRetries: 10 });
   }
 });
 
@@ -170,7 +170,7 @@ test("work Claude scheduled to run later is noticed in the transcript", async ()
     for await (const _ of new TranscriptTail(file).read(meta)) void _;
     assert.equal(meta.scheduledAt, Date.parse("2026-11-18T02:00:00.000Z"));
   } finally {
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, { recursive: true, force: true, maxRetries: 10 });
   }
 });
 
@@ -284,7 +284,7 @@ async function setup() {
     shown,
     done: async () => {
       for (const p of procs) p.kill("SIGKILL");
-      await fs.rm(dir, { recursive: true, force: true });
+      await fs.rm(dir, { recursive: true, force: true, maxRetries: 10 });
     },
   };
 }
@@ -408,6 +408,32 @@ test("the effort level known before /clear is the one a session comes back with"
     assert.equal(m.hibernated?.effort, "low");
     const args = resumeArgs(NEW, m.hibernated);
     assert.equal(args[args.indexOf("--effort") + 1], "low");
+  } finally {
+    await done();
+  }
+});
+
+test("the effort level shown above the prompt box stays once it is gone, while the transcript records none (before the first message)", async () => {
+  const { d, done } = await setup();
+  try {
+    const t = d.tracked.get(SID);
+    t.meta.effort = undefined;
+    // Known already, so that nothing is saved while the folder is removed.
+    d.managed.get(SID).effort = "high";
+    d.nextModelsProbe = Number.POSITIVE_INFINITY;
+    const screen = d.terminals.screen;
+    try {
+      d.terminals.screen = async () => plainScreen(["● high · /effort", RULE, "❯ ", RULE, "  ⏵⏵ auto mode on (shift+tab to cycle)", ""].join("\n"));
+      await Daemon.prototype["readManagedScreens"].call(d);
+      assert.equal(t.info.effort, "high");
+      // A /model picker opened and closed again takes the line away; the transcript is read again.
+      d.terminals.screen = screen;
+      await Daemon.prototype["readManagedScreens"].call(d);
+      d.applyMeta(t);
+      assert.equal(t.info.effort, "high");
+    } finally {
+      d.terminals.screen = screen;
+    }
   } finally {
     await done();
   }
@@ -580,7 +606,7 @@ test("an input kept for a session stays saved while it is typed, and no longer",
     assert.equal(c.pending("s"), 0);
     assert.equal(c.get("s")?.wokenFrom, undefined);
   } finally {
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, { recursive: true, force: true, maxRetries: 10 });
   }
 });
 

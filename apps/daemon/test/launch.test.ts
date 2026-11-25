@@ -360,9 +360,20 @@ test("without chrome, Claude Code starts as before, and an explanation of Claude
   try {
     assert.equal((await d.launch(folder, "plain", true)).ok, true);
     assert.equal(started[0]?.args.includes("--chrome"), false);
+    assert.equal(started[0]?.args.includes("--effort"), false);
     assert.equal(d.managed.get(SID)?.chrome, undefined);
     assert.equal("chrome" in d.controlSessions()[0], false);
     assert.deepEqual(fake.keys, ["Down", "Enter"]);
+  } finally {
+    await done();
+  }
+});
+
+test("with an effort level, Claude Code starts with --effort", async () => {
+  const { d, folder, started, done } = await setup();
+  try {
+    assert.equal((await d.launch(folder, "deep", true, "claude", false, "high")).ok, true);
+    assert.deepEqual(started[0]?.args.slice(0, 3), ["--remote-control=deep", "--effort", "high"]);
   } finally {
     await done();
   }
@@ -647,6 +658,63 @@ test("an input or a rename that waits while /clear gives the session a new id wa
   }
 });
 
+/**
+ * Starts a refresh that reads `claude agents` and then stays running until `release`, as one with a slow `claude agents`
+ * does. `asked` counts the refreshes asked for from then on, that one included.
+ */
+async function holdRefresh(d: Record<string, any>) {
+  const refresh = d.refresh;
+  let asked = 0;
+  d.refresh = () => {
+    asked++;
+    return refresh.call(d);
+  };
+  const screens = d.readManagedScreens;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let reached!: () => void;
+  const reading = new Promise<void>((resolve) => (reached = resolve));
+  d.readManagedScreens = async () => {
+    d.readManagedScreens = screens;
+    reached();
+    await held;
+  };
+  const running = d.refresh();
+  await reading;
+  return { running, asked: () => asked, release };
+}
+
+test("a new session is answered with only after a list of sessions that has it is sent, also while a refresh runs", async () => {
+  const { d, agentsFile, folder, done } = await setup();
+  const sent: { sessionId: string; managed?: boolean }[][] = [];
+  try {
+    d.cfg.pluginDataDir = path.join(folder, "plugin-data");
+    d.refresh = Object.getPrototypeOf(d).refresh;
+    d.readManagedScreens = async () => undefined;
+    d.countTokens = async () => undefined;
+    d.hub = { connected: true, send: (m: { type: string; sessions?: [] }) => m.type === "sessions" && sent.push(m.sessions!) };
+    d.terminals.start = async () => {
+      writeFileSync(agentsFile, JSON.stringify([{ pid: process.pid, sessionId: SID, cwd: folder, status: "idle" }]));
+      return process.pid;
+    };
+    d.terminals.screen = async () => plainScreen(replScreen());
+    // It read `claude agents` before the session started.
+    const refresh = await holdRefresh(d);
+    let answeredAfter: (string | undefined)[][] | undefined;
+    const launching = d.launch(folder, "x").then((r: unknown) => {
+      answeredAfter = sent.map((list) => list.filter((s) => s.managed).map((s) => s.sessionId));
+      return r;
+    });
+    while (refresh.asked() < 2) await new Promise((resolve) => setTimeout(resolve, 20));
+    refresh.release();
+    await refresh.running;
+    assert.deepEqual(await launching, { ok: true, sessionId: SID });
+    assert.deepEqual(answeredAfter?.at(-1), [SID]);
+  } finally {
+    await done();
+  }
+});
+
 test("the conversation from before /clear, opened again while a refresh runs, is no longer sent among the session's earlier ids", async () => {
   const { d, agentsFile, folder, done } = await setup();
   const claude = await child('process.on("SIGTERM", () => process.exit(0))');
@@ -670,8 +738,44 @@ test("the conversation from before /clear, opened again while a refresh runs, is
     await fs.mkdir(project, { recursive: true });
     await fs.writeFile(path.join(project, `${OLD}.jsonl`), `${JSON.stringify({ type: "user", cwd: folder, message: { role: "user", content: "前の会話" } })}\n`);
     d.startClaude = async () => ({ sessionId: OLD, terminal: "t-resumed", pid: process.pid });
-    // `claude agents` is slow, and the refresh resume asks for only has the one running go again.
-    d.refreshing = true;
+    const refresh = await holdRefresh(d);
+    let answeredAfter: (string | string[] | undefined)[][] | undefined;
+    const resuming = d.resume(OLD).then((r: { ok: boolean }) => {
+      answeredAfter = sent.at(-1)?.map((s) => [s.sessionId, s.previousSessionIds]);
+      return r;
+    });
+    while (refresh.asked() < 2) await new Promise((resolve) => setTimeout(resolve, 20));
+    refresh.release();
+    assert.equal((await resuming).ok, true);
+    assert.deepEqual(answeredAfter, [[NEW, undefined]]);
+  } finally {
+    claude.kill("SIGKILL");
+    await done();
+  }
+});
+
+test("the conversation from before /clear, opened again when `claude agents` fails, is no longer sent among the session's earlier ids", async () => {
+  const { d, agentsFile, folder, done } = await setup();
+  const claude = await child('process.on("SIGTERM", () => process.exit(0))');
+  const OLD = "aaaaaaaa-0000-4000-8000-000000000031";
+  const NEW = "aaaaaaaa-0000-4000-8000-000000000032";
+  const launchedAt = Date.now();
+  writeFileSync(agentsFile, JSON.stringify([{ pid: claude.pid, sessionId: NEW, cwd: folder, status: "idle", startedAt: launchedAt - 1000 }]));
+  const sent: { sessionId: string; previousSessionIds?: string[] }[][] = [];
+  try {
+    d.cfg.pluginDataDir = path.join(folder, "plugin-data");
+    d.refresh = Object.getPrototypeOf(d).refresh;
+    d.readManagedScreens = async () => undefined;
+    d.countTokens = async () => undefined;
+    d.flushInput = async () => undefined;
+    d.hub = { connected: true, send: (m: { type: string; sessions?: [] }) => m.type === "sessions" && sent.push(m.sessions!) };
+    d.managed.add({ sessionId: OLD, terminal: "t-old", pid: claude.pid, cwd: folder, name: "-wip", launchedAt });
+    await d.refresh();
+    const project = path.join(d.cfg.claudeDir, "projects", "p");
+    await fs.mkdir(project, { recursive: true });
+    await fs.writeFile(path.join(project, `${OLD}.jsonl`), `${JSON.stringify({ type: "user", cwd: folder, message: { role: "user", content: "前の会話" } })}\n`);
+    d.startClaude = async () => ({ sessionId: OLD, terminal: "t-resumed", pid: process.pid });
+    writeFileSync(agentsFile, "not json");
     assert.equal((await d.resume(OLD)).ok, true);
     assert.deepEqual(sent.at(-1)?.map((s) => [s.sessionId, s.previousSessionIds]), [[NEW, undefined]]);
   } finally {

@@ -360,9 +360,20 @@ test("without chrome, Claude Code starts as before, and an explanation of Claude
   try {
     assert.equal((await d.launch(folder, "plain", true)).ok, true);
     assert.equal(started[0]?.args.includes("--chrome"), false);
+    assert.equal(started[0]?.args.includes("--effort"), false);
     assert.equal(d.managed.get(SID)?.chrome, undefined);
     assert.equal("chrome" in d.controlSessions()[0], false);
     assert.deepEqual(fake.keys, ["Down", "Enter"]);
+  } finally {
+    await done();
+  }
+});
+
+test("with an effort level, Claude Code starts with --effort", async () => {
+  const { d, folder, started, done } = await setup();
+  try {
+    assert.equal((await d.launch(folder, "deep", true, "claude", false, "high")).ok, true);
+    assert.deepEqual(started[0]?.args.slice(0, 3), ["--remote-control=deep", "--effort", "high"]);
   } finally {
     await done();
   }

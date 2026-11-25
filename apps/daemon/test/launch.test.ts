@@ -368,6 +368,29 @@ test("without chrome, Claude Code starts as before, and an explanation of Claude
   }
 });
 
+test("a launch with a model and an effort level starts Claude Code with them, and the session shows the effort level until its first reply", async () => {
+  const { d, folder, started, done } = await setup();
+  try {
+    assert.equal((await d.launch(folder, "tuned", true, "claude", false, { model: "opus", effort: "high" })).ok, true);
+    assert.deepEqual(started[0]?.args.slice(0, 5), ["--remote-control=tuned", "--model", "opus", "--effort", "high"]);
+    assert.equal(d.managed.get(SID)?.effort, "high");
+  } finally {
+    await done();
+  }
+});
+
+test("the default model, and what is not a model or an effort level, start Claude Code with nothing for them", async () => {
+  const { d, folder, started, done } = await setup();
+  try {
+    assert.equal((await d.launch(folder, "plain", true, "claude", false, { model: "default", effort: "--yolo" })).ok, true);
+    assert.equal(started[0]?.args.includes("--model"), false);
+    assert.equal(started[0]?.args.includes("--effort"), false);
+    assert.equal(d.managed.get(SID)?.effort, undefined);
+  } finally {
+    await done();
+  }
+});
+
 test("Codex is not started with Claude in Chrome", async () => {
   const { d, folder, started, done } = await setup();
   try {

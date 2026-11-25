@@ -271,7 +271,7 @@ test("添付は 5 個・1 個 10MB・合計 10MB まで。超えると文を出�
   expect(daemon.received.filter((m) => m.type === "session.input")).toHaveLength(0);
 });
 
-test("モデル（既定・「いま」の札）・Effort・Ultracode は、いまと違うものを選ぶと次に送るときに切り替わり、Effort と Ultracode には切り替わるまで琥珀色の点が付く", async ({ page, hub }) => {
+test("モデル（既定・「いま」の札）・Effort・Ultracode は、いまと違うものを選ぶと次に送るときに切り替わり、Effort（とそのメニューの Ultracode）には切り替わるまで琥珀色の点が付く", async ({ page, hub }) => {
   const daemon = await openSession(page, hub, {
     session: { model: "Opus 5.5", effort: "medium", ultracode: false },
     daemon: {
@@ -304,46 +304,42 @@ test("モデル（既定・「いま」の札）・Effort・Ultracode は、い�
   await expect(page.getByRole("button", { name: "Effort：High（送るときに切り替えます）" })).toBeVisible();
   await expect(dot(effort)).toBeVisible();
 
-  const ultracode = page.getByRole("button", { name: "Ultracode" });
-  await expect(ultracode).toHaveAttribute("aria-pressed", "false");
-  await expect(dot(ultracode)).toHaveCount(0);
+  // Ultracode is in the same menu, which stays open after it is turned over.
+  await page.getByRole("button", { name: "Effort：High（送るときに切り替えます）" }).click();
+  const ultracode = page.getByRole("menuitemcheckbox", { name: /Ultracode/ });
+  await expect(ultracode).toHaveAttribute("aria-checked", "false");
   await ultracode.click();
-  await expect(ultracode).toHaveAttribute("aria-pressed", "true");
-  await expect(ultracode).toHaveAttribute("title", /送るときに切り替えます/);
-  await expect(dot(ultracode)).toBeVisible();
+  await expect(ultracode).toHaveAttribute("aria-checked", "true");
+  await expect(ultracode).toContainText("送るときに切り替えます");
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "Effort：High・Ultracode オン（送るときに切り替えます）" })).toBeVisible();
 
   await chatBox(page).fill("切り替えて続けて");
   await sendButton(page).click();
   expect(await daemon.waitFor("session.input")).toMatchObject({ text: "切り替えて続けて", model: "default", effort: "high", ultracode: true });
 
-  // Once the session runs with them, the dots go.
+  // Once the session runs with them, the dot goes.
   daemon.updateSession(SESSION_ID, { model: "Sonnet 5.5 (default)", effort: "high", ultracode: true });
-  await expect(page.getByRole("button", { name: "Effort：High" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Effort：High・Ultracode オン" })).toBeVisible();
   await expect(dot(effort)).toHaveCount(0);
-  await expect(ultracode).not.toHaveAttribute("title", /送るときに切り替えます/);
-  await expect(ultracode).toHaveAttribute("aria-pressed", "true");
-  await expect(dot(ultracode)).toHaveCount(0);
 
   // What the working server could not switch is dropped, and the session keeps what it had.
   daemon.handle("session.input", (msg) =>
     commandResult(msg, { ok: true, unapplied: ["effort", "ultracode"], warning: "Effort と Ultracode を切り替えられませんでした" }),
   );
-  await page.getByRole("button", { name: "Effort：High" }).click();
+  await page.getByRole("button", { name: "Effort：High・Ultracode オン" }).click();
+  await expect(ultracode).toContainText("いまオン");
+  await ultracode.click();
+  await expect(ultracode).toHaveAttribute("aria-checked", "false");
   await page.getByRole("menuitemradio", { name: /Max/ }).click();
   await expect(page.getByRole("button", { name: "Effort：Max（送るときに切り替えます）" })).toBeVisible();
   await expect(dot(effort)).toBeVisible();
-  await ultracode.click();
-  await expect(ultracode).toHaveAttribute("aria-pressed", "false");
-  await expect(dot(ultracode)).toBeVisible();
   await chatBox(page).fill("もう一度");
   await sendButton(page).click();
   expect(await daemon.waitFor("session.input", (m) => m.text === "もう一度")).toMatchObject({ effort: "max", ultracode: false });
   await expect(page.getByText("Effort と Ultracode を切り替えられませんでした")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Effort：High" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Effort：High・Ultracode オン" })).toBeVisible();
   await expect(dot(effort)).toHaveCount(0);
-  await expect(ultracode).toHaveAttribute("aria-pressed", "true");
-  await expect(ultracode).not.toHaveAttribute("title", /送るときに切り替えます/);
-  await expect(dot(ultracode)).toHaveCount(0);
 });
 
 test("古い gasho-daemon では、モデル・Effort・Ultracode・添付のうち、できないものを出さない", async ({ page, hub }) => {
@@ -356,7 +352,7 @@ test("古い gasho-daemon では、モデル・Effort・Ultracode・添付のう
   await expect(page.getByRole("button", { name: "ファイルを添付" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^モデル：/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^Effort：/ })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Ultracode" })).toHaveCount(0);
+  await expect(page.getByRole("menuitemcheckbox", { name: /Ultracode/ })).toHaveCount(0);
   // A file dropped on the box is not attached.
   await chatBox(page).dispatchEvent("drop", { dataTransfer: await dataTransfer(page, [{ name: "b.txt", type: "text/plain", text: "B" }]) });
   await expect(attachments(page)).toHaveCount(0);
@@ -365,7 +361,7 @@ test("古い gasho-daemon では、モデル・Effort・Ultracode・添付のう
   await expect(page.getByRole("button", { name: "ファイルを添付" })).toBeVisible();
   await expect(page.getByRole("button", { name: /^モデル：/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /^Effort：/ })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Ultracode" })).toHaveCount(0);
+  await expect(page.getByRole("menuitemcheckbox", { name: /Ultracode/ })).toHaveCount(0);
 });
 
 test("オフライン・送信待ち・Gasho で答えられない確認待ちのときは、その文を出す", async ({ page, hub }) => {
@@ -404,13 +400,15 @@ test("書きかけ（文・添付・選んだもの）はセッションごと�
   });
   await chatBox(page).fill("A の書きかけ");
   await attach(page, [{ name: "a.txt" }]);
-  await page.getByRole("button", { name: "Ultracode" }).click();
+  await page.getByRole("button", { name: /^Effort：/ }).click();
+  await page.getByRole("menuitemcheckbox", { name: /Ultracode/ }).click();
+  await page.keyboard.press("Escape");
 
   await page.goto(sessionPath(daemon, OTHER_SESSION_ID));
   await expect(page.getByRole("heading", { name: "other-session" })).toBeVisible();
   await expect(chatBox(page)).toHaveValue("");
   await expect(attachments(page)).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Ultracode" })).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByRole("button", { name: /^Effort：/ })).not.toHaveAccessibleName(/Ultracode オン/);
   await chatBox(page).fill("B の書きかけ");
 
   await page.goto("/#/");
@@ -418,7 +416,7 @@ test("書きかけ（文・添付・選んだもの）はセッションごと�
   await expect(page.getByRole("heading", { name: "e2e-session" })).toBeVisible();
   await expect(chatBox(page)).toHaveValue("A の書きかけ");
   await expect(attachments(page).filter({ hasText: "a.txt" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Ultracode" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: /^Effort：/ })).toHaveAccessibleName(/Ultracode オン/);
 
   await page.goto(sessionPath(daemon, OTHER_SESSION_ID));
   await expect(chatBox(page)).toHaveValue("B の書きかけ");

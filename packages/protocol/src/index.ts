@@ -607,6 +607,12 @@ export interface ServerInfo {
   update: HubUpdateInfo;
   /** The agent a new session starts with, the same for every browser (absent from an older Gasho server: Claude Code). */
   defaultAgent?: AgentKind;
+  /**
+   * The model and effort level a new session of Claude Code starts with (session.launch's `model` and `effort`), the
+   * same for every browser. Absent: Claude Code's own default.
+   */
+  defaultModel?: SessionModel;
+  defaultEffort?: EffortLevel;
 }
 
 /** The latest published versions, as the Gasho server last looked them up on the package registry. */
@@ -1172,6 +1178,11 @@ export type ClientToHub =
   /** Changes the agent a new session starts with (answered with server.result; every browser gets the new server). */
   | { type: "defaultAgent.set"; requestId: string; agent: AgentKind }
   /**
+   * Changes the model and effort level a new session of Claude Code starts with (ServerInfo.defaultModel and
+   * defaultEffort); an absent one goes back to Claude Code's own default. Answered with server.result.
+   */
+  | { type: "launchDefaults.set"; requestId: string; model?: SessionModel; effort?: EffortLevel }
+  /**
    * Names a worktree of a working server, for every browser (MachineInfo.worktreeNames), or takes its name away (no
    * `name`, or only spaces): it shows its branch again. Answered with server.result. Also while the working server is offline.
    */
@@ -1242,8 +1253,12 @@ export type SessionCommand =
    * folder" (gasho-daemon 0.10.0 and later). Without it, the launch stops at the question and its result says so
    * (`needsTrust`), so that the person decides.
    */
-  /** `agent`: the agent to start; Claude Code when absent. `trust` is about Claude Code's question only. */
-  | { type: "session.launch"; cwd: string; name?: string; trust?: boolean; agent?: AgentKind }
+  /**
+   * `agent`: the agent to start; Claude Code when absent. `trust` is about Claude Code's question only. `model`,
+   * `effort`: Claude Code starts with them (`--model`, `--effort`, for this session only); an older gasho-daemon, and
+   * Codex, ignore them.
+   */
+  | { type: "session.launch"; cwd: string; name?: string; trust?: boolean; agent?: AgentKind; model?: SessionModel; effort?: EffortLevel }
   /** Makes the folder `name` inside the folder `parent` (gasho-daemon 0.10.0 and later). */
   | { type: "folder.create"; parent: string; name: string }
   /**

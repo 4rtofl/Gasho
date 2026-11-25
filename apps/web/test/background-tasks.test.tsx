@@ -8,9 +8,9 @@ import { connectHub, machine, session } from "./hub";
 const shell: BackgroundTask = { id: "b1", kind: "shell", title: "開発サーバー", command: "npm run dev" };
 const agent: BackgroundTask = { id: "a1", kind: "agent", title: "テストを調べる" };
 
-function show(background: BackgroundTask[]) {
+function show(background: BackgroundTask[], open = true) {
   const s = session("s1", { background });
-  render(<BackgroundTasks machine={machine("m1", [s])} session={s} />);
+  return render(<BackgroundTasks machine={machine("m1", [s])} session={s} open={open} />);
 }
 
 test("a task is stopped by its id, all of them without one, and nothing else can be stopped meanwhile", async () => {
@@ -39,8 +39,18 @@ test("a task is stopped by its id, all of them without one, and nothing else can
 test("a single task has no button to stop them all", async () => {
   await connectHub();
   show([shell]);
-  expect(screen.getByText("バックグラウンドで実行中（1）")).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "バックグラウンドで実行中" })).toBeTruthy();
+  expect(screen.getByLabelText("1 件")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "すべて止める" })).toBeNull();
   // A shell shows what it runs under its title.
   expect(screen.getByText(/npm run dev/)).toBeTruthy();
+});
+
+test("the list is not there while it is hidden, nor while nothing runs", async () => {
+  await connectHub();
+  const { unmount } = show([shell], false);
+  expect(screen.queryByRole("region", { name: "バックグラウンドで実行中" })).toBeNull();
+  unmount();
+  show([]);
+  expect(screen.queryByRole("region", { name: "バックグラウンドで実行中" })).toBeNull();
 });

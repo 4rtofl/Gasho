@@ -6,6 +6,7 @@ import type {
   CommandResult,
   DeviceInfo,
   DirListing,
+  EffortLevel,
   FileContent,
   GashoNotification,
   GitGraph,
@@ -21,6 +22,7 @@ import type {
   PushInfo,
   ServerInfo,
   SessionCommand,
+  SessionModel,
   TranscriptEntry,
 } from "@gasho/protocol";
 import { fetchMe } from "./api";
@@ -453,6 +455,14 @@ export function updateServer(version: string, timeoutMs = 20_000): Promise<Comma
 /** Changes the agent a new session starts with, for every browser. */
 export function setDefaultAgent(agent: AgentKind, timeoutMs = 20_000): Promise<CommandResult> {
   return askServer((id) => ({ type: "defaultAgent.set", requestId: id, agent }), timeoutMs);
+}
+
+/**
+ * Changes the model and effort level a new session of Claude Code starts with, for every browser. Absent: Claude
+ * Code's own default.
+ */
+export function setLaunchDefaults(defaults: { model?: SessionModel; effort?: EffortLevel }, timeoutMs = 20_000): Promise<CommandResult> {
+  return askServer((id) => ({ type: "launchDefaults.set", requestId: id, ...defaults }), timeoutMs);
 }
 
 /** Names a worktree for every browser, or takes its name away (`name` empty): it shows its branch again. */

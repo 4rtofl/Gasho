@@ -2,10 +2,10 @@ import { ArrowLeft, ExternalLink, FolderOpen, GitBranch, GitPullRequest } from "
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { InputFeature, MachineInfo, SessionInfo, SessionModel } from "@gasho/protocol";
 import { AgentMark } from "@/components/agent-mark";
-import { BackgroundTasks } from "@/components/background-tasks";
+import { BackgroundTasks, useBackgroundListOpen } from "@/components/background-tasks";
 import { HibernationNotice } from "@/components/hibernation-notice";
 import { RepoPicker } from "@/components/repo-picker";
-import { EffortPicker, UltracodeToggle } from "@/components/session-controls";
+import { BackgroundToggle, EffortPicker, MODELS } from "@/components/session-controls";
 import { SessionHeaderToggle } from "@/components/session-header-toggle";
 import type { SessionActionRequest } from "@/components/session-menu";
 import { SessionTabs } from "@/components/session-tabs";
@@ -248,18 +248,6 @@ export function SessionState({ machine, session }: { machine: MachineInfo; sessi
 }
 
 /**
- * The models of Claude Code's /model picker. Picking one switches the session, for this session only, before sending.
- * The names with their versions ("Opus 5.5") come from the working server, which reads them from the picker.
- */
-const MODELS: { id: SessionModel; name: string; description: string }[] = [
-  { id: "default", name: "既定", description: "Claude Code の既定（おすすめ）のモデル" },
-  { id: "opus", name: "Opus", description: "複雑な作業にも、普段の作業にも" },
-  { id: "fable", name: "Fable", description: "いちばん難しい課題に" },
-  { id: "sonnet", name: "Sonnet", description: "簡単な作業を効率よく" },
-  { id: "haiku", name: "Haiku", description: "短い質問に、いちばん速く答える" },
-];
-
-/**
  * The first option when the session's model is not one of the picker's: a model the picker does not list by that
  * name (say "Opus 4.6"). Picking it switches nothing.
  */
@@ -404,6 +392,8 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
   const features = (machine.features ?? legacyFeatures(machine.daemonVersion)).filter((f) => canDo(machine, s, f));
   const offersSkills = canDo(machine, s, "skills");
   const skills = useSkills(machine.id, s.sessionId);
+  const [backgroundOpen, toggleBackground] = useBackgroundListOpen();
+  const showsBackground = canDo(machine, s, "background");
   // Once the session runs with what was picked, follow the session again.
   useEffect(() => {
     if (picked && picked === current) setPicks((p) => (p.model === current ? { ...p, model: undefined } : p));
@@ -466,7 +456,7 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
   return (
     <div ref={box} className="flex min-h-0 flex-col">
       <PermissionRequests machine={machine} session={s} />
-      {canDo(machine, s, "background") && <BackgroundTasks machine={machine} session={s} />}
+      {showsBackground && <BackgroundTasks machine={machine} session={s} open={backgroundOpen} />}
       <HibernationNotice machine={machine} session={s} />
       <PromptInput
         onSend={async ({ text, files }) => {
@@ -542,17 +532,15 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
                 value={pickedEffort ?? s.effort}
                 current={s.effort}
                 onChange={(level) => setPicks((p) => ({ ...p, effort: level }))}
+                ultracode={
+                  features.includes("ultracode")
+                    ? { value: pickedUltracode ?? ultracode, current: ultracode, onChange: (on) => setPicks((p) => ({ ...p, ultracode: on })) }
+                    : undefined
+                }
                 disabled={offline}
               />
             )}
-            {features.includes("ultracode") && (
-              <UltracodeToggle
-                value={pickedUltracode ?? ultracode}
-                current={ultracode}
-                onChange={(on) => setPicks((p) => ({ ...p, ultracode: on }))}
-                disabled={offline}
-              />
-            )}
+            {showsBackground && <BackgroundToggle count={s.background?.length ?? 0} open={backgroundOpen} onToggle={toggleBackground} />}
           </>
         }
         draft={promptDraft(key)}

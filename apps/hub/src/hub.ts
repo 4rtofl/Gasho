@@ -11,6 +11,7 @@ import type {
   DaemonToHub,
   DaemonUpdateInfo,
   DeviceInfo,
+  EffortLevel,
   HookEvent,
   HubToClient,
   HubToDaemon,
@@ -25,6 +26,7 @@ import type {
   ServerInfo,
   SessionCommand,
   SessionInfo,
+  SessionModel,
 } from "@gasho/protocol";
 import type { LatestCheck } from "./latest.ts";
 import { boundedHook, NotificationGate, notificationFor, sessionLabel } from "./notify.ts";
@@ -133,6 +135,9 @@ const AGENT_STATUSES = new Set<unknown>(["available", "loginRequired", "unknown"
 const AGENT_OPERATIONS = new Set<unknown>(["model", "effort", "ultracode", "files", "fork", "background", "skills", "shell"] satisfies AgentOperation[]);
 /** Where the agent a new session starts with is kept (meta). */
 const DEFAULT_AGENT_KEY = "default_agent";
+/** Where the model and effort level a new session of Claude Code starts with are kept (meta). */
+const DEFAULT_MODEL_KEY = "default_model";
+const DEFAULT_EFFORT_KEY = "default_effort";
 /** An agent's version: x.y.z, with a pre-release after it. */
 const AGENT_VERSION_RE = /^\d{1,9}\.\d{1,9}\.\d{1,9}(?:[-+][0-9A-Za-z.+-]{1,40})?$/;
 
@@ -424,6 +429,8 @@ export function validateCommand(cmd: SessionCommand): string | undefined {
       if (cmd.name !== undefined && (typeof cmd.name !== "string" || cmd.name.length > 60)) return "名前は60文字までです。";
       if (cmd.trust !== undefined && typeof cmd.trust !== "boolean") return "信頼の指定が正しくありません。";
       if (cmd.agent !== undefined && !AGENT_KINDS.includes(cmd.agent)) return "エージェントの指定が正しくありません。";
+      if (cmd.model !== undefined && !MODELS.has(cmd.model)) return "モデルの指定が正しくありません。";
+      if (cmd.effort !== undefined && !EFFORTS.has(cmd.effort)) return "Effort の指定が正しくありません。";
       return undefined;
     case "folder.create":
       return folderError(cmd.parent) ?? folderNameError(cmd.name);
@@ -892,7 +899,14 @@ export class Hub {
 
   /** The Gasho server as browsers see it: its own information, and the settings it keeps for all of them. */
   private serverInfo(server: ServerSource): ServerInfo {
-    return { ...server.info(), defaultAgent: this.store.getMeta(DEFAULT_AGENT_KEY) === "codex" ? "codex" : "claude" };
+    const model = this.store.getMeta(DEFAULT_MODEL_KEY);
+    const effort = this.store.getMeta(DEFAULT_EFFORT_KEY);
+    return {
+      ...server.info(),
+      defaultAgent: this.store.getMeta(DEFAULT_AGENT_KEY) === "codex" ? "codex" : "claude",
+      ...(model && MODELS.has(model) ? { defaultModel: model as SessionModel } : {}),
+      ...(effort && EFFORTS.has(effort) ? { defaultEffort: effort as EffortLevel } : {}),
+    };
   }
 
   private broadcastServer(): void {
@@ -1015,6 +1029,19 @@ export class Hub {
           break;
         }
         this.store.setMeta(DEFAULT_AGENT_KEY, msg.agent);
+        this.broadcastServer();
+        peer.send({ type: "server.result", requestId: msg.requestId, result: { ok: true } });
+        break;
+      }
+      case "launchDefaults.set": {
+        if (typeof msg.requestId !== "string" || !msg.requestId || msg.requestId.length > 100) return;
+        if ((msg.model !== undefined && !MODELS.has(msg.model)) || (msg.effort !== undefined && !EFFORTS.has(msg.effort))) {
+          peer.send({ type: "server.result", requestId: msg.requestId, result: { ok: false, error: "モデルか Effort の指定が正しくありません。" } });
+          break;
+        }
+        // The default model passes no --model: Claude Code's own default.
+        this.store.setMeta(DEFAULT_MODEL_KEY, msg.model && msg.model !== "default" ? msg.model : "");
+        this.store.setMeta(DEFAULT_EFFORT_KEY, msg.effort ?? "");
         this.broadcastServer();
         peer.send({ type: "server.result", requestId: msg.requestId, result: { ok: true } });
         break;
@@ -1145,7 +1172,15 @@ export class Hub {
           .filter(Boolean)
           .join(" ");
       case "session.launch":
-        return [cmd.cwd, cmd.trust && "[trust]", cmd.agent === "codex" && "[codex]"].filter(Boolean).join(" ");
+        return [
+          cmd.cwd,
+          cmd.trust && "[trust]",
+          cmd.agent === "codex" && "[codex]",
+          cmd.model && cmd.model !== "default" && `[model: ${cmd.model}]`,
+          cmd.effort && `[effort: ${cmd.effort}]`,
+        ]
+          .filter(Boolean)
+          .join(" ");
       case "folder.create":
         return path.posix.join(cmd.parent, cmd.name);
       case "repo.clone":

@@ -193,6 +193,9 @@ const MODEL_NAMES: Record<SessionModel, string> = { default: "既定のモデル
 const EFFORT_NAMES: Record<EffortLevel, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "xHigh", max: "Max" };
 /** What this gasho-daemon can switch or carry with an input (MachineInfo.features). */
 const INPUT_FEATURES: readonly InputFeature[] = ["model", "effort", "ultracode", "files"];
+/** What session.launch may start Claude Code with (`--model` takes the /model picker's aliases). */
+const LAUNCH_MODELS = new Set<unknown>(Object.keys(MODEL_NAMES));
+const LAUNCH_EFFORTS = new Set<unknown>(Object.keys(EFFORT_NAMES));
 /** What a session of Claude Code can do (AgentInfo.operations); one of Codex only talks, for now. */
 const CLAUDE_OPERATIONS: readonly AgentOperation[] = [...INPUT_FEATURES, "fork", "background", "skills", "shell"];
 /** How long the prompt box may take to let go of a text after Enter (see typeInput). */
@@ -979,7 +982,10 @@ export class Daemon {
     info.costUSD = meta.costUSD;
     info.lastActivityAt = meta.lastActivityAt;
     info.model = meta.model ?? t.bannerModel;
-    info.effort = meta.effort;
+    // Before its first reply, the effort level it was started with (--effort), which nothing on the screen says. Not
+    // after /clear: what it goes on with then is kept for a resume only (see rememberEffort).
+    const m = this.managed.get(info.sessionId);
+    info.effort = meta.effort ?? (m && !m.previousIds?.length ? m.effort : undefined);
     info.ultracode = meta.ultracode;
     this.remember(info.sessionId, meta);
   }
@@ -1561,7 +1567,7 @@ export class Daemon {
         try {
           switch (m.type) {
             case "session.launch":
-              result = await this.launch(m.cwd, m.name, m.trust === true, m.agent);
+              result = await this.launch(m.cwd, m.name, m.trust === true, m.agent, false, { model: m.model, effort: m.effort });
               break;
             case "session.input":
               result = await this.input(m);
@@ -1878,7 +1884,14 @@ export class Daemon {
    * Starts `claude --remote-control` in `cwd` in a terminal of its own and waits for its session id. With `trust`,
    * Claude Code's question whether to trust the folder is answered with yes; without it, the launch stops there.
    */
-  private async launch(cwd: string, name: string | undefined, trust = false, agent: AgentKind = "claude", chrome = false): Promise<CommandResult> {
+  private async launch(
+    cwd: string,
+    name: string | undefined,
+    trust = false,
+    agent: AgentKind = "claude",
+    chrome = false,
+    { model, effort }: { model?: SessionModel; effort?: EffortLevel } = {},
+  ): Promise<CommandResult> {
     if (agent === "codex") return chrome ? { ok: false, error: CODEX_NO_CHROME } : this.launchCodex(cwd, name);
     if (!this.canLaunch) return { ok: false, error: NO_TERMINAL };
     const dir = path.resolve(cwd);
@@ -1887,7 +1900,12 @@ export class Daemon {
     // Without a name, "<folder>-gasho" until the first message names it (see nameAfterTitle).
     const autoName = !name?.trim();
     const rcName = name?.trim() || `${path.basename(dir)}-gasho`;
-    const started = await this.startClaude(dir, rcName, { trust, chrome });
+    // For this session only: neither is saved to Claude Code's settings. The default model passes nothing.
+    const claudeArgs = [
+      ...(model && model !== "default" && LAUNCH_MODELS.has(model) ? ["--model", model] : []),
+      ...(effort && LAUNCH_EFFORTS.has(effort) ? ["--effort", effort] : []),
+    ];
+    const started = await this.startClaude(dir, rcName, { trust, chrome, claudeArgs });
     if ("error" in started) {
       const { error, needsTrust, trustWarnings } = started;
       return needsTrust ? { ok: false, error, needsTrust, trustWarnings } : { ok: false, error };
@@ -1902,6 +1920,8 @@ export class Daemon {
       launchedAt: Date.now(),
       ...(autoName ? { autoName } : {}),
       ...(chrome ? { chrome } : {}),
+      // Shown until its first reply records it, and kept as what it goes on with (see rememberEffort).
+      ...(claudeArgs.includes("--effort") && effort ? { effort } : {}),
     });
     await this.managed.save();
     await this.refresh();

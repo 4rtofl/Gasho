@@ -6,7 +6,6 @@ import { BackgroundTasks } from "@/components/background-tasks";
 import { HibernationNotice } from "@/components/hibernation-notice";
 import { RepoPicker } from "@/components/repo-picker";
 import { EffortPicker, UltracodeToggle } from "@/components/session-controls";
-import { SessionHeaderToggle } from "@/components/session-header-toggle";
 import type { SessionActionRequest } from "@/components/session-menu";
 import { SessionTabs } from "@/components/session-tabs";
 import { StatusBadge } from "@/components/status-badge";
@@ -89,13 +88,12 @@ export function SessionView({
   const github = only ? only.github : s.github;
   const branch = only ? only.branch : branchLabel(s);
   const repoText = github ? `${github.owner}/${github.name}` : only ? only.path : repoLabel(s);
-  const status = <SessionState machine={m} session={s} />;
   const pending = sent.filter((p) => pendingShown(p, t?.entries ?? [], t?.start ?? 0, s.pendingInputs ?? 0, now));
 
   return (
     <div className="flex h-full flex-col">
       <SessionTabs worktree={worktreesByLastUse([m]).find((w) => w.id === worktree)!} current={sessionId} onAction={onSessionAction} onAskTrust={onAskTrust} />
-      {headerShown ? (
+      {headerShown && (
         <header className="shrink-0 space-y-2 border-b border-border px-4 py-3 md:px-6">
           <BackLink />
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -109,9 +107,8 @@ export function SessionView({
                 </span>
               </p>
             </div>
-            <div className="hidden items-center gap-2 md:flex">
-              {status}
-              <SessionHeaderToggle className="-my-1" />
+            <div className="hidden md:flex">
+              <SessionState machine={m} session={s} />
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -201,15 +198,6 @@ export function SessionView({
             {cost && <span>費用 {cost}</span>}
             <PluginHeaderItems machine={m} session={s} panel={panel} from={1000} to={Infinity} />
           </div>
-        </header>
-      ) : (
-        // Header hidden: one line keeps the session's name and state on screen. A phone has them in its top bar (see
-        // App), with the toggle, so it leaves this line out and the conversation gets the room.
-        <header className="hidden shrink-0 items-center gap-2 border-b border-border px-4 py-1.5 md:flex md:px-6">
-          {showsAgents(machines) && <AgentMark agent={sessionAgent(s)} />}
-          <h1 className="min-w-0 truncate text-sm font-medium">{sessionLabel(s)}</h1>
-          {status}
-          <SessionHeaderToggle className="ml-auto" />
         </header>
       )}
       <div className="min-h-0 flex-1">

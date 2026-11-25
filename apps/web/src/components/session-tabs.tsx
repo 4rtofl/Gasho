@@ -4,13 +4,15 @@
 // tabs lists the worktree's past conversations (see session-history); "＋" after them starts a new session in it. The
 // plugins' tabs of the worktree come last (docs/plugins.md, P15). While a plugin's categories list the sessions in the
 // sidebar (P17, hideSessionTabs), the sessions' tabs and their "＋" are left out: the sidebar has them. Above the tabs,
-// the conversations open in the worktree outside Gasho, if any (see outside-sessions).
+// the conversations open in the worktree outside Gasho, if any (see outside-sessions). At the right end, while a
+// session is open, the button that hides or shows its header (on a phone, it is in the top bar).
 import { LoaderCircle, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { AgentKind, MachineInfo, SessionInfo } from "@gasho/protocol";
 import { AgentMark } from "@/components/agent-mark";
 import { LaunchMenu } from "@/components/launch-menu";
 import { OutsideSessions } from "@/components/outside-sessions";
+import { SessionHeaderToggle } from "@/components/session-header-toggle";
 import { SessionHistory } from "@/components/session-history";
 import { SessionContextMenu, sessionActionsUnavailable, type SessionActionRequest } from "@/components/session-menu";
 import { StatusDot } from "@/components/status-badge";
@@ -98,73 +100,77 @@ export function SessionTabs({
   return (
     <>
       <OutsideSessions worktree={worktree} />
-      <nav
-        aria-label={hidden ? "この worktree" : "この worktree のセッション"}
-        className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-2 [scrollbar-width:none] md:px-4 [&::-webkit-scrollbar]:hidden"
-      >
-        <SessionHistory worktree={worktree} />
-        {!hidden &&
-          sessions.map((s) => {
-            const open = s.sessionId === current;
-            return (
-              <SessionContextMenu key={s.sessionId} machine={machine} session={s} onPick={onAction}>
-                <div
-                  ref={open ? active : undefined}
-                  className={cn(
-                    "relative flex h-9 max-w-56 shrink-0 items-center text-xs transition-colors",
-                    "after:absolute after:inset-x-1.5 after:bottom-0 after:h-0.5 after:rounded-full",
-                    open ? "text-foreground after:bg-foreground" : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!open) go({ name: "session", machine: machine.id, sessionId: s.sessionId });
-                    }}
-                    aria-current={open ? "page" : undefined}
-                    title={sessionLabel(s)}
-                    className="flex h-full min-w-0 items-center gap-2 pr-1 pl-2.5"
+      <div className="flex shrink-0 items-center border-b border-border">
+        <nav
+          aria-label={hidden ? "この worktree" : "この worktree のセッション"}
+          className="flex min-w-0 flex-1 gap-1 overflow-x-auto px-2 [scrollbar-width:none] md:px-4 [&::-webkit-scrollbar]:hidden"
+        >
+          <SessionHistory worktree={worktree} />
+          {!hidden &&
+            sessions.map((s) => {
+              const open = s.sessionId === current;
+              return (
+                <SessionContextMenu key={s.sessionId} machine={machine} session={s} onPick={onAction}>
+                  <div
+                    ref={open ? active : undefined}
+                    className={cn(
+                      "relative flex h-9 max-w-56 shrink-0 items-center text-xs transition-colors",
+                      "after:absolute after:inset-x-1.5 after:bottom-0 after:h-0.5 after:rounded-full",
+                      open ? "text-foreground after:bg-foreground" : "text-muted-foreground hover:text-foreground",
+                    )}
                   >
-                    <StatusDot {...sessionDot(machine, s, unread)} />
-                    {marks && <AgentMark agent={sessionAgent(s)} />}
-                    <span className="truncate">{sessionLabel(s)}</span>
-                    {/* Work Claude started that runs on in the background (listed above the chat box, where it can be stopped). */}
-                    {machine.connected && s.background?.length ? (
-                      <LoaderCircle
-                        role="img"
-                        aria-label={`バックグラウンドで ${s.background.length} 件実行中`}
-                        className="size-3 shrink-0 animate-spin text-sky-400 motion-reduce:animate-none"
-                      >
-                        <title>{`バックグラウンドで ${s.background.length} 件実行中`}</title>
-                      </LoaderCircle>
-                    ) : null}
-                  </button>
-                  <CloseTabButton machine={machine} session={s} onAction={onAction} />
-                </div>
-              </SessionContextMenu>
-            );
-          })}
-        {!hidden && (
-          <LaunchMenu machine={machine} onPick={(agent) => void launch(agent)}>
-            <button
-              type="button"
-              onClick={() => void launch()}
-              disabled={!canLaunch || launching}
-              aria-label="この worktree で新しいセッションを起動"
-              title={canLaunch ? launchTitle(machine, defaultAgent, "この worktree で新しいセッションを起動") : "接続していて、セッションの端末を作れる working server でだけ起動できます"}
-              className="grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-            >
-              {launching ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
-            </button>
-          </LaunchMenu>
-        )}
-        <PluginWorktreeTabs worktree={worktree} open={view} />
-        {error && (
-          <p role="alert" title={error} className="self-center truncate text-xs text-red-400">
-            {error}
-          </p>
-        )}
-      </nav>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!open) go({ name: "session", machine: machine.id, sessionId: s.sessionId });
+                      }}
+                      aria-current={open ? "page" : undefined}
+                      title={sessionLabel(s)}
+                      className="flex h-full min-w-0 items-center gap-2 pr-1 pl-2.5"
+                    >
+                      <StatusDot {...sessionDot(machine, s, unread)} />
+                      {marks && <AgentMark agent={sessionAgent(s)} />}
+                      <span className="truncate">{sessionLabel(s)}</span>
+                      {/* Work Claude started that runs on in the background (listed above the chat box, where it can be stopped). */}
+                      {machine.connected && s.background?.length ? (
+                        <LoaderCircle
+                          role="img"
+                          aria-label={`バックグラウンドで ${s.background.length} 件実行中`}
+                          className="size-3 shrink-0 animate-spin text-sky-400 motion-reduce:animate-none"
+                        >
+                          <title>{`バックグラウンドで ${s.background.length} 件実行中`}</title>
+                        </LoaderCircle>
+                      ) : null}
+                    </button>
+                    <CloseTabButton machine={machine} session={s} onAction={onAction} />
+                  </div>
+                </SessionContextMenu>
+              );
+            })}
+          {!hidden && (
+            <LaunchMenu machine={machine} onPick={(agent) => void launch(agent)}>
+              <button
+                type="button"
+                onClick={() => void launch()}
+                disabled={!canLaunch || launching}
+                aria-label="この worktree で新しいセッションを起動"
+                title={canLaunch ? launchTitle(machine, defaultAgent, "この worktree で新しいセッションを起動") : "接続していて、セッションの端末を作れる working server でだけ起動できます"}
+                className="grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+              >
+                {launching ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
+              </button>
+            </LaunchMenu>
+          )}
+          <PluginWorktreeTabs worktree={worktree} open={view} />
+          {error && (
+            <p role="alert" title={error} className="self-center truncate text-xs text-red-400">
+              {error}
+            </p>
+          )}
+        </nav>
+        {/* Outside the tabs, so it stays in view however far they scroll. */}
+        {current && <SessionHeaderToggle className="mr-2 hidden md:grid" />}
+      </div>
     </>
   );
 }

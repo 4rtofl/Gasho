@@ -26,7 +26,7 @@ import { prepareClap } from "@/lib/clap";
 import { TAPS, countTap, type GasshoFrom, type Taps } from "@/lib/gassho";
 import { DESKTOP, useMediaQuery, useWindowWidth } from "@/lib/media";
 import { arrangeSessions, rememberSessions, reorderShown, useSavedOrder } from "@/lib/order";
-import { updateCount } from "@/lib/plugin-catalog";
+import { notInCatalog, updateCount } from "@/lib/plugin-catalog";
 import { go, isOldGitHubLink, pageOf, useRoute, type SessionPanel } from "@/lib/route";
 import { rememberWorktrees, useRememberedWorktrees } from "@/lib/remembered-worktrees";
 import {
@@ -605,8 +605,8 @@ export function App() {
           // gasho-daemon on a working server, or the Gasho server itself, can be updated.
           badge: machines.some((m) => updateToTell(m, latest)) || hubUpdateToTell(server, latest) ? "更新" : undefined,
         },
-        // The plugins that the catalog has a newer version of.
-        { id: "plugins", label: "プラグイン", icon: <Puzzle />, badge: updateCount(plugins, catalog) || undefined },
+        // The plugins that the catalog has a newer version of, or no longer lists.
+        { id: "plugins", label: "プラグイン", icon: <Puzzle />, badge: updateCount(plugins, catalog) + notInCatalog(plugins, catalog).size || undefined },
         { id: "settings", label: "設定", icon: <Settings /> },
       ],
     },

@@ -249,6 +249,11 @@ interface Tracked {
   opening?: Promise<void>;
   /** Sessions started from Gasho: the model in Claude Code's welcome banner, until the transcript records one. */
   bannerModel?: string;
+  /**
+   * Sessions started from Gasho: the effort level last shown above the prompt box. Claude Code shows it only for a while
+   * (a /model picker opened and closed takes it away), and the transcript records none before the first message.
+   */
+  shownEffort?: EffortLevel;
   /** Sessions started from Gasho: the tokens they used, and when they were last counted. */
   tokens?: TokenCounter;
   tokensAt?: number;
@@ -984,7 +989,7 @@ export class Daemon {
     info.costUSD = meta.costUSD;
     info.lastActivityAt = meta.lastActivityAt;
     info.model = meta.model ?? t.bannerModel;
-    info.effort = meta.effort;
+    info.effort = meta.effort ?? t.shownEffort;
     info.ultracode = meta.ultracode;
     this.remember(info.sessionId, meta);
   }
@@ -1277,7 +1282,7 @@ export class Daemon {
       t.dialog = permissionDialogText(screen);
       const state = statusLine(screen);
       if (state) {
-        t.info.effort = state.effort;
+        t.info.effort = t.shownEffort = state.effort;
         t.info.ultracode = state.ultracode;
         this.rememberEffort(m.sessionId, state.effort);
       }

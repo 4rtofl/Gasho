@@ -6,10 +6,11 @@
 // headings of their own that fold (`groups`, a plugin's categories of sessions), which can be dragged too
 // (`groupSort`), whose items can be dragged from one group into another (`itemMove`), and the width on a computer can
 // be changed by dragging the right edge (`ResizeHandle`, lib/widths), and an item's tooltip can show while the sidebar
-// is open too (`tip`, for the branch of a worktree that has a name). On a Mac, iPhone and iPad, Ctrl+B in a box that
-// text is written in is left to the box (it moves the cursor back), and only ⌘B folds the sidebar there. Only the
-// items of the last section scroll, under the rest (the other sections and that section's title), which stays, as the
-// list of conversations does under the top row in EasyUI's Chat (with Data Table's shadow under it once scrolled).
+// is open too (`tip`, for the branch of a worktree that has a name), and items can be selected together (`selected`,
+// `onShiftClick`, for the worktrees pressed with Shift). On a Mac, iPhone and iPad, Ctrl+B in a box that text is
+// written in is left to the box (it moves the cursor back), and only ⌘B folds the sidebar there. Only the items of the
+// last section scroll, under the rest (the other sections and that section's title), which stays, as the list of
+// conversations does under the top row in EasyUI's Chat (with Data Table's shadow under it once scrolled).
 
 import * as React from "react";
 import { AnimatePresence, motion, useDragControls, type PanInfo } from "framer-motion";
@@ -67,6 +68,10 @@ export type SidebarItem = {
    * sidebar, the label and the description show there as before).
    */
   tip?: string;
+  /** Gasho: one of the items selected together, which shows so (with DataTable's look of a selected row). */
+  selected?: boolean;
+  /** Gasho: called in place of `onActiveChange` when the item is pressed with Shift (it selects the items up to it). */
+  onShiftClick?: () => void;
 };
 /** Gasho: a button at the right of a section's title, such as "＋" to add an item. */
 export type SidebarAction = {
@@ -577,8 +582,9 @@ function Panel({
     const isActive = !hasChildren && activeId === item.id;
     const tipLabel = item.description ? `${item.label} · ${item.description}` : item.label;
 
-    const onClick = () => {
-      if (!hasChildren) {
+    const onClick = (e: React.MouseEvent) => {
+      if (e.shiftKey && item.onShiftClick) item.onShiftClick();
+      else if (!hasChildren) {
         onActiveChange(item.id);
         onNavigate?.();
       } else if (collapsed) {
@@ -598,10 +604,14 @@ function Panel({
       <button
         type="button"
         onClick={onClick}
+        // Gasho: Shift and a press would select the text from the last press to this one.
+        onMouseDown={(e) => {
+          if (e.shiftKey && item.onShiftClick) e.preventDefault();
+        }}
         onMouseEnter={(e) => enter(e, tipLabel, item.tip)}
         onFocus={(e) => enter(e, tipLabel, item.tip)}
         onBlur={() => setTip(null)}
-        aria-label={collapsed ? tipLabel : undefined}
+        aria-label={collapsed ? `${tipLabel}${item.selected ? "（選択中）" : ""}` : undefined}
         aria-description={!collapsed ? item.tip : undefined}
         aria-expanded={hasChildren ? isOpen : undefined}
         aria-current={isActive ? "page" : undefined}
@@ -620,6 +630,12 @@ function Panel({
             className="absolute inset-0 rounded-lg bg-neutral-200/70 dark:bg-neutral-800"
           />
         )}
+        {item.selected && (
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-0 rounded-lg bg-neutral-900/[0.04] ring-1 ring-inset ring-neutral-900/25 dark:bg-white/[0.045] dark:ring-white/25"
+          />
+        )}
         <span className="relative grid size-5 shrink-0 place-items-center [&>svg]:size-[18px]">{item.icon}</span>
         <motion.span
           initial={false}
@@ -627,7 +643,10 @@ function Panel({
           transition={{ duration: 0.15 }}
           className="relative min-w-0 flex-1 whitespace-nowrap text-left"
         >
-          <span className="block truncate">{item.label}</span>
+          <span className="block truncate">
+            {item.label}
+            {item.selected && <span className="sr-only">（選択中）</span>}
+          </span>
           {item.description && (
             <span className="block truncate text-[11px] leading-4 text-neutral-400 dark:text-neutral-500">{item.description}</span>
           )}

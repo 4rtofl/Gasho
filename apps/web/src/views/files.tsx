@@ -1,8 +1,9 @@
 // The files of a session's folder, as a panel of the session (see SidePanel): the entries of a folder in it, and a
-// file's text (Markdown and SVG also as what they show, images as pictures), which can be edited and saved; and new
-// files. gasho-daemon reads and writes them on the working server, inside the session's folder only.
+// file's text (Markdown and SVG also as what they show, images as pictures, or as a plugin shows them: P20), which can
+// be edited and saved; and new files. gasho-daemon reads and writes them on the working server, inside the session's
+// folder only.
 import { ChevronRight, Code, Eye, FileImage, FilePlus, FileQuestionMark, FileSymlink, FileText, Folder, FolderOpen, FolderSymlink, Pencil, RefreshCw, WrapText } from "lucide-react";
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { DirEntry, FileContent } from "@gasho/protocol";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY } from "@/components/dialog-styles";
 import { MarkdownText } from "@/components/markdown";
@@ -29,6 +30,7 @@ import { fileKey, loadDir, loadFile, saveFile, useAppState } from "@/lib/store";
 import { composing } from "@/lib/text-input";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
+import { PluginFileView, useFileViewer } from "@/plugins/parts";
 
 /** Beyond this many lines, a text is shown without line numbers (one element per line would be slow). */
 const MAX_NUMBERED_LINES = 5000;
@@ -305,7 +307,7 @@ function NewFileForm({ machine, sessionId, dir, onCancel }: { machine: string; s
  * lib/file-drafts.ts) and saved over the version that was read only, so that what Claude wrote meanwhile is not lost.
  */
 export function FilePanel({ machine, sessionId, path, docked, onClose }: PanelProps) {
-  const { machines, files } = useAppState();
+  const { machines, files, dirs } = useAppState();
   const now = useNow(60_000);
   const m = machines.find((x) => x.id === machine);
   const s = m?.sessions.find((x) => x.sessionId === sessionId);
@@ -326,10 +328,18 @@ export function FilePanel({ machine, sessionId, path, docked, onClose }: PanelPr
   const [conflict, setConflict] = useState(false);
   const [savedAt, setSavedAt] = useState<number>();
   const eol = useMemo(() => (text === undefined ? undefined : toEditable(text).eol), [text]);
+  // A plugin's view of the file (P20) gets the entries of its folder, read afresh as the file list reads them.
+  const viewer = useFileViewer(path);
+  const folder = parentPath(path);
+  const entries = viewer ? dirs[fileKey(machine, sessionId, folder)]?.dir?.entries : undefined;
+  const openFile = useCallback((p: string) => go(fileRoute(machine, sessionId, p)), [machine, sessionId]);
 
   useEffect(() => {
     if (m?.connected) loadFile(machine, sessionId, path);
   }, [machine, sessionId, path, m?.connected]);
+  useEffect(() => {
+    if (viewer && m?.connected) loadDir(machine, sessionId, folder);
+  }, [machine, sessionId, folder, m?.connected, viewer !== undefined]);
   // Left without changes, the editor closes: coming back shows the file. Changes not saved stay for later.
   useEffect(
     () => () => {
@@ -454,7 +464,8 @@ export function FilePanel({ machine, sessionId, path, docked, onClose }: PanelPr
             {eol === "\r\n" && <span title="改行が CRLF のファイルです。保存するときも CRLF にします。">CRLF</span>}
             {!file.writable && <span className="text-amber-400">読み取り専用</span>}
             {dirty && <span className="text-amber-400">未保存の変更があります</span>}
-            {text !== undefined && (
+            {/* A plugin's view has its own ways to be shown; Gasho's editor still wraps. */}
+            {text !== undefined && (draft || !viewer) && (
               <span className="ml-auto flex items-center gap-1.5">
                 {shows && !draft && <ViewToggle source={source} onChange={setSource} />}
                 <button
@@ -490,7 +501,21 @@ export function FilePanel({ machine, sessionId, path, docked, onClose }: PanelPr
               }}
             />
           ) : (
-            file && <FileView file={file} name={name} wrap={wrap} source={source} shows={shows} />
+            file &&
+            (viewer ? (
+              <PluginFileView
+                {...viewer}
+                machine={m}
+                session={s}
+                path={path}
+                file={file}
+                entries={entries}
+                openFile={openFile}
+                fallback={<FileView file={file} name={name} wrap={wrap} source={source} shows={shows} />}
+              />
+            ) : (
+              <FileView file={file} name={name} wrap={wrap} source={source} shows={shows} />
+            ))
           )}
         </div>
       </div>

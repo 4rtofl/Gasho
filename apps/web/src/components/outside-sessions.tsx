@@ -1,13 +1,15 @@
 // Above a worktree's tabs: how many conversations Claude Codes started outside Gasho (in Orca, a terminal) have open in
 // the worktree. "Gasho に移す" ends those Claude Codes (session.end), after a dialog that lists them; their
 // conversations are then among the worktree's past conversations (see session-history), to be opened again from Gasho
-// one by one: opening them all at once could start a great many sessions.
+// one by one: opening them all at once could start a great many sessions. "×" closes it while only the conversations
+// open then are open, in this browser (see outside-dismissed).
 import { X } from "lucide-react";
 import { AlertDialog } from "radix-ui";
 import { useState } from "react";
 import { BUTTON_DANGER, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG_PANEL } from "@/components/dialog-styles";
 import { StatusDot } from "@/components/status-badge";
 import { relativeTime, sessionLabel } from "@/lib/format";
+import { useDismissedOutside } from "@/lib/outside-dismissed";
 import { shownStatus, type WorktreeSessions } from "@/lib/sessions";
 import { sendCommand } from "@/lib/store";
 
@@ -18,34 +20,46 @@ export function OutsideSessions({ worktree }: { worktree: WorktreeSessions }) {
   const { machine, outside } = worktree;
   const [confirming, setConfirming] = useState(false);
   const [notice, setNotice] = useState<string>();
-  if (outside.length === 0 && !notice && !confirming) return null;
+  const [dismissed, dismiss] = useDismissedOutside(worktree.id);
+  const opened = outside.some((s) => !dismissed.includes(s.sessionId));
+  if (!opened && !notice && !confirming) return null;
   const usable = machine.connected && machine.canEnd === true;
 
   return (
     <div className="flex shrink-0 items-center gap-3 border-b border-border bg-surface px-3 py-1.5 text-xs text-muted-foreground md:px-4">
       <p className="min-w-0 flex-1">{notice ?? `Gasho の外で ${outside.length} 件の会話が開いています`}</p>
       {notice ? (
-        <button
-          type="button"
-          onClick={() => setNotice(undefined)}
-          aria-label="閉じる"
-          className="grid size-6 shrink-0 place-items-center rounded-md hover:text-foreground"
-        >
-          <X className="size-3.5" />
-        </button>
+        <DismissButton onClick={() => setNotice(undefined)} />
       ) : (
-        <button
-          type="button"
-          onClick={() => setConfirming(true)}
-          disabled={!usable}
-          title={usable ? undefined : "接続していて、gasho-daemon が Gasho の外の会話を終了できる working server でだけ使えます"}
-          className="shrink-0 rounded-md border border-border px-2 py-1 font-medium text-foreground transition-colors hover:bg-surface-raised disabled:pointer-events-none disabled:opacity-40"
-        >
-          Gasho に移す
-        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            disabled={!usable}
+            title={usable ? undefined : "接続していて、gasho-daemon が Gasho の外の会話を終了できる working server でだけ使えます"}
+            className="shrink-0 rounded-md border border-border px-2 py-1 font-medium text-foreground transition-colors hover:bg-surface-raised disabled:pointer-events-none disabled:opacity-40"
+          >
+            Gasho に移す
+          </button>
+          <DismissButton onClick={() => dismiss(outside.map((s) => s.sessionId))} />
+        </div>
       )}
       {confirming && <EndDialog worktree={worktree} onClose={() => setConfirming(false)} onEnded={setNotice} />}
     </div>
+  );
+}
+
+/** EasyUI's Alert (easyui.site/components/alert): its dismiss button, smaller to fit the banner, in Gasho's colors. */
+function DismissButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="閉じる"
+      className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground outline-none transition hover:bg-white/10 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 active:scale-95 pointer-coarse:size-8"
+    >
+      <X className="size-3.5" />
+    </button>
   );
 }
 

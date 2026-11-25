@@ -82,6 +82,7 @@ export class TokenCounter {
   private byDay = new Map<string, number>();
   private files = new Map<string, { offset: number; rest: Buffer }>();
   private unread = false;
+  private reading: Promise<unknown> = Promise.resolve();
 
   constructor(transcript: string, { since = 0 }: { since?: number } = {}) {
     this.transcript = transcript;
@@ -89,7 +90,14 @@ export class TokenCounter {
   }
 
   /** Reads the session's transcript and its subagents' from where the last call stopped; whether anything changed. */
-  async update(): Promise<boolean> {
+  update(): Promise<boolean> {
+    // One read at a time: two at once would both read on from the same offset, and each move it on.
+    const run = this.reading.then(() => this.readAll());
+    this.reading = run.catch(() => undefined);
+    return run;
+  }
+
+  private async readAll(): Promise<boolean> {
     const subagents = path.join(path.dirname(this.transcript), path.basename(this.transcript, ".jsonl"), "subagents");
     let changed = false;
     this.unread = false;

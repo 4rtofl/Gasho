@@ -22,7 +22,9 @@ export function controlSocketOf(stateDir: string): string {
 }
 
 export type ControlRequest =
-  | { op: "session.launch"; cwd: string; name?: string; trust?: boolean; agent?: AgentKind }
+  | { op: "session.launch"; cwd: string; name?: string; trust?: boolean; agent?: AgentKind; chrome?: boolean }
+  /** `chrome`: the copy has Claude in Chrome; without it, it has it when the session has it. */
+  | { op: "session.fork"; sessionId: string; name?: string; chrome?: boolean }
   | { op: "session.input"; sessionId: string; text: string }
   | { op: "session.rename"; sessionId: string; name: string }
   | { op: "session.list" }
@@ -45,6 +47,8 @@ export interface ControlSession {
   agent: AgentKind;
   /** The terminal it runs in (`gasho-daemon attach <terminal>`); Codex's sessions have none. */
   terminal?: string;
+  /** Started with `--chrome`: it has Claude in Chrome's browser tools. */
+  chrome?: boolean;
   status: string;
   pendingInputs?: number;
   /** Its folder is gone (removed with `git worktree remove`, say): only `session remove` takes it away. */
@@ -151,6 +155,16 @@ export function parseRequest(v: unknown): ControlRequest {
         ...(name !== undefined ? { name } : {}),
         ...(r.trust === true ? { trust: true } : {}),
         ...(agent ? { agent } : {}),
+        ...(r.chrome === true ? { chrome: true } : {}),
+      };
+    }
+    case "session.fork": {
+      const name = s("name", true);
+      return {
+        op: "session.fork",
+        sessionId: s("sessionId")!,
+        ...(name !== undefined ? { name } : {}),
+        ...(r.chrome === true ? { chrome: true } : {}),
       };
     }
     case "session.input":
@@ -221,14 +235,23 @@ export function controlRequest(file: string, req: ControlRequest, timeoutMs = 12
 
 // ---- `gasho-daemon session …` ----
 
-export const SESSION_USAGE = `  session launch --cwd DIR [--name NAME] [--agent claude|codex] [--trust] [--prompt TEXT | --prompt-file FILE | --prompt -]
+export const SESSION_USAGE = `  session launch --cwd DIR [--name NAME] [--agent claude|codex] [--trust] [--chrome] [--prompt TEXT | --prompt-file FILE | --prompt -]
                                                    start a session in DIR (as Gasho does) and wait for it; with a
                                                    prompt, type it in. Prints {sessionId, name, cwd, terminal} as JSON:
                                                    "name" is the name Claude Code lists it under (ListAgents). With
                                                    --name, the session is renamed to NAME first; without it, Gasho names
                                                    it after its first message later, so its name changes then.
                                                    --trust answers Claude Code's "trust this folder?" with yes.
-                                                   --agent codex starts Codex instead of Claude Code (it has no terminal)
+                                                   --agent codex starts Codex instead of Claude Code (it has no terminal).
+                                                   --chrome starts it with Claude in Chrome (claude --chrome): it can
+                                                   drive the person's Chrome (on this machine, or on another computer
+                                                   whose Claude extension is signed in to the same account)
+  session fork <NAME|ID> [--name NAME] [--chrome] [--prompt TEXT | --prompt-file FILE | --prompt -]
+                                                   copy a session Gasho started, with its conversation so far, into a
+                                                   new one in the same folder (as Gasho's fork does), and wait for it;
+                                                   with a prompt, type it in. --chrome gives the copy Claude in Chrome
+                                                   (a fork of a session that has it has it anyway). Prints {sessionId,
+                                                   name, cwd, terminal, forkOf} as JSON
   session send <NAME|ID> (--text TEXT | --file FILE | -)
                                                    type a message into a session Gasho started (it waits while the
                                                    session works)
@@ -297,6 +320,7 @@ export async function sessionCommand(args: string[], io: SessionCliIO): Promise<
         ...(name ? { name } : {}),
         ...(args.includes("--trust") ? { trust: true } : {}),
         ...(agent ? { agent } : {}),
+        ...(args.includes("--chrome") ? { chrome: true } : {}),
       });
       const sessionId = launched.sessionId;
       if (!sessionId) throw new Error("gasho-daemon started no session");
@@ -329,6 +353,52 @@ export async function sessionCommand(args: string[], io: SessionCliIO): Promise<
             cwd: session.cwd,
             ...(session.agent !== "claude" ? { agent: session.agent } : {}),
             ...(session.terminal ? { terminal: session.terminal } : {}),
+            ...(session.chrome ? { chrome: true } : {}),
+            ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}),
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+    case "fork": {
+      const target = args[1];
+      if (!target || target.startsWith("--") || target === "-") throw new Error("session fork needs the session's name or id");
+      const name = opt("--name")?.trim() || undefined;
+      const prompt = await textOf(opt("--prompt"), opt("--prompt-file"), io, "--prompt");
+      const source = pick(await list(), target);
+      const forked = await call({
+        op: "session.fork",
+        sessionId: source.sessionId,
+        ...(name ? { name } : {}),
+        ...(args.includes("--chrome") ? { chrome: true } : {}),
+      });
+      const sessionId = forked.sessionId;
+      if (!sessionId) throw new Error("gasho-daemon forked no session");
+      const warnings: string[] = forked.warning ? [forked.warning] : [];
+      // The daemon renames the copy with /rename; until Claude Code shows that, it lists the copy under the source's name.
+      let session = (await list()).find((s) => s.sessionId === sessionId);
+      const until = Date.now() + (io.renameWaitMs ?? 60_000);
+      while (session?.gashoName !== undefined && Date.now() < until) {
+        await sleep(io.pollMs ?? 1000);
+        session = (await list()).find((s) => s.sessionId === sessionId);
+      }
+      if (!session) throw new Error(`the copy ${sessionId} started, but gasho-daemon no longer lists it`);
+      if (session.gashoName !== undefined) warnings.push(`Claude Code does not list the copy as "${session.gashoName}" yet; it still shows "${session.name}"`);
+      if (prompt !== undefined) {
+        const sent = await call({ op: "session.input", sessionId, text: prompt });
+        if (sent.warning) warnings.push(sent.warning);
+      }
+      io.out(
+        JSON.stringify(
+          {
+            sessionId,
+            name: session.name,
+            cwd: session.cwd,
+            ...(session.terminal ? { terminal: session.terminal } : {}),
+            ...(session.chrome ? { chrome: true } : {}),
+            forkOf: source.sessionId,
             ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}),
           },
           null,

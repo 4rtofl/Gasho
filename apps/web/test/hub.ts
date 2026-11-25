@@ -58,7 +58,7 @@ class FakeSocket {
 }
 
 /** What the Gasho server answers itself, with server.result. */
-const SERVER_REQUESTS = new Set<ClientToHub["type"]>(["hub.update", "defaultAgent.set", "worktree.name"]);
+const SERVER_REQUESTS = new Set<ClientToHub["type"]>(["hub.update", "defaultAgent.set", "defaultEffort.set", "worktree.name"]);
 
 export interface Hub {
   /** Every message the page sent, in order. */

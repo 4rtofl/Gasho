@@ -161,6 +161,16 @@ clone したリポジトリは、親のフォルダーを信頼していても�
 
 使い終わった worktree は、サイドバーの行を右クリックして（スマホでは長押し）「削除…」で、中のセッションとまとめて消せる。確認のダイアログには、フォルダー・ブランチ・working server と、一緒に終わるセッションが出る。「ローカルのブランチ <ブランチ> も消す」は既定でチェックが付いている。未コミットの変更や push していない commit があるときは、件数を出して止まり、「変更を捨てて削除」をもう一度押したときだけ消す。リポジトリの main の worktree は消せない。プラグインも、`useRemoveWorktree`（[docs/plugins.md](docs/plugins.md)、API 1.10）で同じ削除を使える。
 
+### worktree をまとめて扱う
+
+worktree の行を 1 つ押したあと、Shift キーを押しながら別の行を押すと、その間の行（画面に並んでいる順。分け方のカテゴリをまたいでもよい）をすべて選ぶ。Esc を押すか、Shift キーなしで行を押すと、選択が外れる。選んだ行を右クリックすると、選んだ worktree をまとめて扱うメニューが開く。
+
+- 「削除…」は、選んだ worktree を、中のセッションごと 1 つずつ削除する。削除できない worktree（リポジトリの main の worktree など）は、理由を添えて対象から外す。未コミットの変更や push していない commit がある worktree は、件数を出して残し、「変更を捨てて削除」をもう一度押したときだけ消す
+- 「名前を変更…」は、選んだ worktree の名前（名前が無ければブランチ名）の中の「検索文字列」を、すべて「置換文字列」に置き換える（Finder でまとめて名前を変えるときの「テキストを置き換える」と同じ）。検索文字列は文字どおりに探し、大文字と小文字を区別する。ダイアログに変更前と変更後が並ぶので、確かめてから変更する。置き換えて空になった worktree は、名前を消す。たとえば検索文字列を `feat/`、置換文字列を空にすると、`feat/264-sidebar-sticky-menu` が `264-sidebar-sticky-menu` になる
+- 行を別のカテゴリへ動かせる分け方（[docs/plugins.md](docs/plugins.md) の P18、API 1.9）では、選んだ行の 1 つを別のカテゴリへドラッグすると、選んだ worktree がまとめてそこへ移る
+
+選択に入っていない行を右クリックしたときとドラッグしたときは、その行だけを扱う。
+
 ### セッションの名前の変更、フォーク、削除
 
 セッション画面の上のタブを右クリックすると（スマホでは長押し）、名前の変更、フォーク、削除のメニューが開く。使えるのは、その working server の gasho-daemon が 0.9.0 以上で、つながっているときだけ。
@@ -181,7 +191,7 @@ clone したリポジトリは、親のフォルダーを信頼していても�
 - ホームのトークンの数には、引き継いだ会話の分を入れない
 - まだ会話がないセッションは、フォークできない
 
-削除すると、daemon が Claude Code を終了し、セッションの端末を閉じて、Gasho の一覧から外す。開いていたセッションを削除したときは、隣のタブ（右、無ければ左）を開き、タブが無くなったら worktree の画面を開く。会話の記録は working server に残るので、タブの左の過去の会話から開き直せる。
+削除は、タブの右の × からも始められる（メニューの「削除…」と同じ確認が出る）。削除すると、daemon が Claude Code を終了し、セッションの端末を閉じて、Gasho の一覧から外す。開いていたセッションを削除したときは、隣のタブ（右、無ければ左）を開き、タブが無くなったら worktree の画面を開く。会話の記録は working server に残るので、タブの左の過去の会話から開き直せる。
 
 - 作業中なら、途中で止まる。待たせていた指示は送らず、添付ファイルは消える
 - daemon は Claude Code に SIGTERM を送り、8秒たっても終わらなければ端末ごと止める
@@ -218,10 +228,11 @@ clone したリポジトリは、親のフォルダーを信頼していても�
 
 ### working server のコマンドからセッションを起動する・片付ける
 
-working server の上では、Gasho の画面を通さずに、`gasho-daemon session` でセッションを起動し、入力し、消せる。`gasho-daemon worktree remove` で、ワークツリーを中のセッションごと消せる。`gasho-daemon worktree name` で、ワークツリーにサイドバーで出す名前を付けられる。Claude Code のセッションから別のセッションを立ち上げて作業させるときや、終わった作業を片付けるときに使う（リポジトリの Skill `.claude/skills/launch-gasho-session` が、ワークツリーを作るところから起動を、`.claude/skills/remove-gasho-worktree` が片付けを、これで行う）。
+working server の上では、Gasho の画面を通さずに、`gasho-daemon session` でセッションを起動し、入力し、消せる。`gasho-daemon worktree remove` で、ワークツリーを中のセッションごと消せる。`gasho-daemon worktree name` で、ワークツリーにサイドバーで出す名前を付けられる。Claude Code のセッションから別のセッションを立ち上げて作業させるときや、終わった作業を片付けるときに使う（リポジトリの Skill `.claude/skills/launch-gasho-session` が、ワークツリーを作るところから起動を、`.claude/skills/remove-gasho-worktree` が片付けを、`.claude/skills/verify-in-chrome` が Chrome での検証を、これで行う）。
 
 ```bash
-gasho-daemon session launch --cwd <フォルダー> --name <名前> [--agent claude|codex] [--trust] [--prompt <文> | --prompt-file <ファイル> | --prompt -]
+gasho-daemon session launch --cwd <フォルダー> --name <名前> [--agent claude|codex] [--trust] [--chrome] [--prompt <文> | --prompt-file <ファイル> | --prompt -]
+gasho-daemon session fork <名前か ID> [--name <名前>] [--chrome] [--prompt <文> | --prompt-file <ファイル> | --prompt -]
 gasho-daemon session send <名前か ID> (--text <文> | --file <ファイル> | -)
 gasho-daemon session list [--json]
 gasho-daemon session remove <名前か ID>
@@ -234,8 +245,10 @@ gasho-daemon worktree name <フォルダー> (<名前> | --clear)
 - `launch` は起動を待ち、プロンプトがあれば入力欄に送ってから、`{sessionId, name, cwd, terminal}` を JSON で出す。`name` は `claude agents`（Claude Code のセッション一覧）に出る名前で、ほかのセッションから SendMessage するときの宛先になる。Claude Code は新しいセッションを `--remote-control` の名前ではなくフォルダー名で並べるので、`--name` を付けたときは、まず `/rename` でその名前に変え、一覧に出るまで待ってからプロンプトを送る。`--name` が無いと、最初の発言のあとで Gasho が発言から名前を付け直すので、出した名前は変わる
 - `--trust` は、Claude Code の「このフォルダーを信頼するか」に Yes と答える（Gasho の画面の「信頼して起動する」と同じ）
 - `--agent codex` は、Claude Code の代わりに Codex のセッションを起動する。指定がなければ Claude Code。Codex のセッションには端末がないので、`launch` の JSON には `terminal` の代わりに `"agent": "codex"` が入る
+- `--chrome` は、Claude in Chrome つき（`claude --chrome`）で起動する。セッションは、利用者の Chrome を、そのプロファイルのログイン状態のまま操作できる。Chrome は working server に無くてもよく、同じ claude.ai アカウントでサインインした Claude の拡張機能があれば、別のコンピューターの Chrome にもつながる。セッションごとに、自分のタブグループを使う。休止から再開しても、`--chrome` のまま戻る。初回に Claude Code が出す Claude in Chrome の説明は、Enter で閉じる。Anthropic のプランでの `/login` と、Chrome の Claude の拡張機能（同じアカウントでサインイン）が要る。`doctor` の「Claude in Chrome」は、working server の Chrome がつながるかを示す。検証には、普段使いでない Chrome のプロファイルを勧める
+- `fork` は、Gasho の画面のフォークと同じ。Gasho が起動したセッションを、ここまでの会話ごと、同じフォルダーの新しいセッションに写して起動を待ち、プロンプトがあれば送ってから、`{sessionId, name, cwd, terminal, forkOf}` を JSON で出す。`--chrome` を付けると、写しは Claude in Chrome つきで起動する（元のセッションが Chrome つきなら、付けなくても Chrome つき）。セッションが自分を写して、ブラウザーでの検証を任せるのに使う（Skill `verify-in-chrome`）
 - `send` と `remove` は、`/clear` の前の ID でもセッションを見つける。出す JSON の `sessionId` は今の ID になる。`list --json` は、前の ID を `previousSessionIds` に出す
-- `list` は、セッションの ID の次にエージェント（`claude` か `codex`）を出す。作業フォルダーが無くなったセッションに、行末の `(folder missing)`（`--json` では `"cwdMissing": true`）を付ける
+- `list` は、セッションの ID の次にエージェント（`claude` か `codex`）を出す。`--json` は、Chrome つきのセッションに `"chrome": true` を出す。作業フォルダーが無くなったセッションに、行末の `(folder missing)`（`--json` では `"cwdMissing": true`）を付ける
 - `session remove` は、Gasho の画面のセッションの削除と同じ。Claude Code を終わらせて Gasho から外し、`{sessionId, name, cwd}` を JSON で出す。会話は残る。名前と ID の探し方は `send` と同じ。フォルダーが先に消えたセッションも消せる
 - `worktree remove` は、Gasho の画面のワークツリーの削除と同じ。中のセッションを終わらせてからフォルダーを消し（`git worktree remove`）、`{path, branch, ended}` を JSON で出す。`ended` は終わらせたセッション（`{sessionId, name}`）。未コミットの変更や、どのリモートにも無いコミットがあれば、何もせずにその件数を理由として返す。`--force` はそれでも消す。ブランチは消さない。`git worktree remove` で直接消すと、中のセッションは消えたフォルダーで動き続け、「リポジトリ外」に残る
 - `worktree name` は、Gasho の画面の「名前を変更…」と同じ。指定したフォルダーのワークツリー（ワークツリーの中のフォルダーを指定しても、そのワークツリー）に名前を付け、`{path, name}` を JSON で出す。`path` はワークツリーの最上位のフォルダー。`--clear` で名前を消し、ブランチ名に戻す。名前に空白や `#` が入るときは、`"#254 accordion"` のように引用符で囲む（囲まないと、シェルが `#` から後ろを読まない）。名前は Gasho サーバーに保存するので、gasho-daemon が Gasho サーバーにつながっていないときは、そう伝えて失敗する。名前を保存できない古い Gasho サーバーは答えないので、10 秒待って失敗する

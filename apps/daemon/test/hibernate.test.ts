@@ -413,6 +413,32 @@ test("the effort level known before /clear is the one a session comes back with"
   }
 });
 
+test("the effort level shown above the prompt box stays once it is gone, while the transcript records none (before the first message)", async () => {
+  const { d, done } = await setup();
+  try {
+    const t = d.tracked.get(SID);
+    t.meta.effort = undefined;
+    // Known already, so that nothing is saved while the folder is removed.
+    d.managed.get(SID).effort = "high";
+    d.nextModelsProbe = Number.POSITIVE_INFINITY;
+    const screen = d.terminals.screen;
+    try {
+      d.terminals.screen = async () => plainScreen(["● high · /effort", RULE, "❯ ", RULE, "  ⏵⏵ auto mode on (shift+tab to cycle)", ""].join("\n"));
+      await Daemon.prototype["readManagedScreens"].call(d);
+      assert.equal(t.info.effort, "high");
+      // A /model picker opened and closed again takes the line away; the transcript is read again.
+      d.terminals.screen = screen;
+      await Daemon.prototype["readManagedScreens"].call(d);
+      d.applyMeta(t);
+      assert.equal(t.info.effort, "high");
+    } finally {
+      d.terminals.screen = screen;
+    }
+  } finally {
+    await done();
+  }
+});
+
 /** Claude scheduled work four hours ago, and /clear is about to give the session the id NEXT. */
 const NEXT = "33333333-2222-3333-4444-777777777777";
 async function scheduledThenCleared(s: Awaited<ReturnType<typeof setup>>) {
@@ -519,6 +545,20 @@ test("a session comes back in the permission mode it was in", async () => {
     await d.wake(SID);
     const { args } = started[0]!;
     assert.equal(args[args.indexOf("--permission-mode") + 1], "plan");
+  } finally {
+    await done();
+  }
+});
+
+test("a session started with Claude in Chrome comes back with it", async () => {
+  const { d, started, agents, done } = await setup();
+  try {
+    d.managed.get(SID).chrome = true;
+    await d.hibernateIdle();
+    assert.equal(d.managed.get(SID).chrome, true);
+    agents([]);
+    await d.wake(SID);
+    assert.equal(started[0]!.args.includes("--chrome"), true);
   } finally {
     await done();
   }

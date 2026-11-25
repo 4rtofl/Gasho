@@ -10,6 +10,7 @@ import {
   groupingOptions,
   holdWorktreeList,
   moveHeldWorktree,
+  movesOfDrop,
   normalizeWorktreeCategories,
   withMoves,
   worktreeListContext,
@@ -167,6 +168,24 @@ test("a row dropped in another category shows there until the plugin took it, an
   assert.deepEqual(shown(arrangeWorktreeCategories(answer, {}, held)), ["doing: n,a", "review: ", `${OTHER_CATEGORY}: m`]);
   // When the plugin's function failed, it goes back to where it was.
   assert.deepEqual(shown(moveHeldWorktree(held, "n", OTHER_CATEGORY, 0).categories), ["doing: a", "review: ", `${OTHER_CATEGORY}: n,m`]);
+});
+
+test("a selected row dropped in another category takes the selected rows of the other categories with it, where it was dropped", () => {
+  const categoryOf = (k: string) => ({ a: "doing", b: "doing", c: "review", d: "done", e: "done" })[k];
+  // b dropped first in done, above d (which is selected, and already there).
+  const drop = { id: "b", from: "doing", ids: ["b", "d", "e"] };
+  assert.deepEqual(movesOfDrop(drop, ["a", "b", "c", "d"], categoryOf), {
+    ids: ["a", "b", "c", "d", "e"],
+    moves: [
+      { worktree: "a", from: "doing", index: 0 },
+      { worktree: "b", from: "doing", index: 1 },
+      { worktree: "c", from: "review", index: 2 },
+    ],
+  });
+  // A row out of the selection, or a selection of one, goes alone.
+  for (const selected of [["a", "c"], ["b"]]) {
+    assert.deepEqual(movesOfDrop(drop, selected, categoryOf), { ids: ["b", "d", "e"], moves: [{ worktree: "b", from: "doing", index: 0 }] });
+  }
 });
 
 test("the groupings offered are those of the loaded plugins, in their order; the first is used until one is picked", () => {

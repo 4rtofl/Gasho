@@ -1,6 +1,6 @@
 // A plugin's web part for the tests of the plugins' parts, written as a plugin's build turns one into: React and the
 // SDK come from what Gasho's screen shares (globalThis.__gasho, sdk.tsx). The screen loads it as it loads any (registry.ts).
-import type { GashoSdk } from "@gasho/plugin-sdk";
+import type { FileViewerProps, GashoSdk } from "@gasho/plugin-sdk";
 import type * as ReactType from "react";
 
 const { modules } = (globalThis as unknown as { __gasho: { modules: { react: typeof ReactType; "@gasho/plugin-sdk": GashoSdk } } }).__gasho;
@@ -81,6 +81,22 @@ function Notes() {
   );
 }
 
+/** Its view of pictures in the file panel (P20): what it got, and a button to the next file of the folder. */
+function Shot({ path, file, entries, openFile }: FileViewerProps) {
+  if (path.endsWith("boom.png")) throw new Error("壊れました");
+  const ctx = sdk.useSessionContext();
+  const folder = path.slice(0, path.lastIndexOf("/") + 1);
+  const names = entries?.filter((e) => e.kind === "file").map((e) => e.name);
+  const next = names?.[names.indexOf(path.slice(folder.length)) + 1];
+  return h(
+    "div",
+    null,
+    h("p", null, `${path}（${file.size} バイト、${ctx?.session.sessionId}）`),
+    h("p", null, names ? `同じフォルダー：${names.join("・")}` : "同じフォルダーを読み込み中"),
+    next && h("button", { type: "button", onClick: () => openFile(folder + next) }, "次のファイル"),
+  );
+}
+
 export default sdk.definePlugin({
   pages: {
     list: ({ params }) => h(sdk.Page, { title: "メモの一覧" }, `ページ ${params.tag ?? ""}`),
@@ -91,6 +107,8 @@ export default sdk.definePlugin({
     { id: "named", label: "名前あり", when: ({ session }) => Boolean(session.name), onClick: () => Promise.reject(new Error("押せませんでした")) },
   ],
   sessionPanels: { notes: Notes },
+  // With and without the dot, in either case: they are the same.
+  fileViewers: [{ id: "shots", extensions: [".PNG", "gif"], component: Shot }],
   conversationEnd: [
     {
       id: "end",

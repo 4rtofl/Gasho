@@ -3091,16 +3091,30 @@ export class Daemon {
         return;
       }
       this.settleUntil.delete(m.sessionId);
+      // Claude Code's list of background tasks left open (by hand, or by a stop that could not close it) is closed
+      // first, busy or not: nothing can be typed while it is open, and Claude Code holds back what it would tell Claude
+      // (a task that ended, or was stopped) until it is closed, so a session waiting for its subagents stays busy. No
+      // stop runs meanwhile (it holds `flushing`).
+      const closeTasksLeftOpen = async () => {
+        log(`${m.name}: closing Claude Code's list of background tasks, left open, before typing`);
+        await this.closeTasks(m.terminal);
+      };
       if ((await this.currentStatus(m.pid)) !== "idle") {
         // Busy after an Enter that came back "unsure": Claude Code took it.
         const head = this.managed.peek(m.sessionId);
         if (head?.entered) head.seenBusy = true;
+        const s = await this.terminals.screen(m.terminal).catch(() => undefined);
+        if (s && tasksDialog(s.plain)) {
+          await closeTasksLeftOpen();
+          this.scheduleRefresh(500);
+        }
         return;
       }
       const screen = (await this.terminals.screen(m.terminal)).plain;
       // A /model picker (or its question) still open, e.g. from an Enter that Claude Code took late: close it first
       // (Esc changes nothing there). Any other dialog, such as a permission request, is the person's to answer.
       if (modelPickerOptions(screen).length > 0 || switchQuestion(screen)) await this.closePicker(m.terminal);
+      else if (tasksDialog(screen)) await closeTasksLeftOpen();
       else if (dialogOpen(screen)) return;
       const item = this.managed.next(m.sessionId);
       if (item === undefined) return;

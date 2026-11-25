@@ -1,12 +1,15 @@
 // Where the plugins' parts go on Gasho's screen (docs/plugins.md): sidebar items and their badges (P1), pages (P2),
 // session header items (P3), session panels (P4), settings (P5), home tiles (P6), the end of a session's
-// conversation (P13), the line under its chat box (P14) and a worktree's tabs and their screens (P15). Every part is
-// drawn in the scope of its plugin (the SDK's hooks find it there) and inside an error boundary of its own, so that a
-// plugin that throws shows an error in its place while the rest of Gasho goes on.
+// conversation (P13), the line under its chat box (P14), a worktree's tabs and their screens (P15) and the view of a
+// file in a session's file panel (P20). Every part is drawn in the scope of its plugin (the SDK's hooks find it there)
+// and inside an error boundary of its own, so that a plugin that throws shows an error in its place while the rest of
+// Gasho goes on.
 import { Component, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type {
   ComposerFooterItem,
   ConversationEndItem,
+  FileViewer,
+  FileViewerProps,
   OpenPanel,
   Params,
   PluginDefinition,
@@ -27,6 +30,7 @@ import { setSettingsSectionOpen, useSettingsSectionOpen } from "@/lib/settings-s
 import { useAppState } from "@/lib/store";
 import { composing } from "@/lib/text-input";
 import { cn } from "@/lib/utils";
+import { viewerShows } from "./definition";
 import { reportPluginError, usePluginRegistry, type PluginPart } from "./registry";
 import { PanelScopeContext, PluginScopeContext, readiness, SessionScopeContext, usePluginInfo, useSetting } from "./sdk";
 
@@ -478,6 +482,30 @@ export function PluginWorktreeView({ worktree, view }: { worktree: WorktreeSessi
     <Part part={part}>
       <View machine={worktree.machine} worktree={worktreeInfo(worktree)} params={view.params} />
     </Part>
+  );
+}
+
+// ---- the view of a file in a session's file panel (P20) ----
+
+/** The plugins' view of the file at `path`: the first plugin's, in the plugins' order, whose viewer shows it. */
+export function useFileViewer(path: string): { part: PluginPart; viewer: FileViewer } | undefined {
+  const { parts } = usePluginRegistry();
+  for (const part of parts) {
+    const viewer = part.def.fileViewers?.find((v) => viewerShows(v, path));
+    if (viewer) return { part, viewer };
+  }
+  return undefined;
+}
+
+/** A plugin's view of a file in the file panel; Gasho's own (`fallback`) while it throws. */
+export function PluginFileView({ part, viewer, fallback, ...props }: FileViewerProps & { part: PluginPart; viewer: FileViewer; fallback: ReactNode }) {
+  const View = viewer.component;
+  return (
+    <SessionScopeContext.Provider value={{ machine: props.machine, session: props.session, daemon: readiness(part.info, props.machine.id) }}>
+      <Part part={part} fallback={fallback}>
+        <View {...props} />
+      </Part>
+    </SessionScopeContext.Provider>
   );
 }
 

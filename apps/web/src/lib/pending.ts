@@ -205,19 +205,22 @@ export function removePending(key: string, id: string): PendingMessage | undefin
 /**
  * What the working server did with a message: typed it into the session ("sent"; it is removed from here a while
  * later, by when the conversation shows it), or kept it waiting until the session has finished its work ("queued").
+ * `afterWork`: one it kept was typed in once the work had ended (see noneWaiting), so Claude Code does not hold it,
+ * even if the session already works on it.
  */
-export function settlePending(key: string, id: string, state: "queued" | "sent"): void {
+export function settlePending(key: string, id: string, state: "queued" | "sent", afterWork = false): void {
   const at = holder(key, id);
   if (!at) return;
   const list = lists.get(at) ?? [];
-  // A shell command runs, and any other message waits in Claude Code, as long as the session works (see sessionWorking).
+  // A shell command runs, and any other message typed while the session works waits in Claude Code, as long as the
+  // session works (see sessionWorking).
   const shell = isShellInput(list.find((p) => p.id === id)?.text ?? "");
-  const whileWorking = state === "sent" && !shell && working.get(at) === true;
+  const whileWorking = state === "sent" && !shell && !afterWork && working.get(at) === true;
   set(at, list.map((p) => (p.id === id ? { ...p, state, at: Date.now(), ...(whileWorking ? { whileWorking } : {}) } : p)));
   if (state === "sent") {
     clearTimeout(timers.get(id));
     timers.delete(id);
-    if (!working.get(at)) timers.set(id, setTimeout(() => removePending(at, id), SENT_GRACE_MS));
+    if (!((shell || whileWorking) && working.get(at))) timers.set(id, setTimeout(() => removePending(at, id), SENT_GRACE_MS));
   }
 }
 
@@ -239,7 +242,7 @@ export function sessionWorking(key: string, now: boolean): void {
 
 /** The session has no messages waiting on the working server any more: the ones that waited there were typed. */
 export function noneWaiting(key: string): void {
-  for (const p of lists.get(key) ?? []) if (p.state === "queued") settlePending(key, p.id, "sent");
+  for (const p of lists.get(key) ?? []) if (p.state === "queued") settlePending(key, p.id, "sent", true);
 }
 
 /**

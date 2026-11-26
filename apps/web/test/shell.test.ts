@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mock, test } from "node:test";
 import type { TranscriptEntry } from "@gasho/protocol";
-import { addPending, pendingOf, sessionWorking, settlePending, SENT_GRACE_MS } from "../src/lib/pending.ts";
+import { addPending, noneWaiting, pendingOf, sessionWorking, settlePending, SENT_GRACE_MS } from "../src/lib/pending.ts";
 import { emptyShellInput, isShellInput, shellCommand, shellOutput } from "../src/lib/shell.ts";
 import { transcriptItems } from "../src/lib/transcript-items.ts";
 
@@ -88,6 +88,15 @@ test("a shell command sent from here, and a message typed while the session work
     const other = addPending(key, { text: "テストを流して", files: [], after: 3 });
     settlePending(key, other, "sent");
     sessionWorking(key, true);
+    mock.timers.tick(SENT_GRACE_MS);
+    assert.deepEqual(shown(), []);
+
+    // One the working server kept until the work ended is not held by Claude Code, even if the session already works
+    // on it when the browser learns that it was typed.
+    const kept = addPending(key, { text: "終わったら読んで", files: [], after: 3 });
+    settlePending(key, kept, "queued");
+    noneWaiting(key);
+    assert.equal(pendingOf(key)[0]?.whileWorking, undefined);
     mock.timers.tick(SENT_GRACE_MS);
     assert.deepEqual(shown(), []);
   } finally {

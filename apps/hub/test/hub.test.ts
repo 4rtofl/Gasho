@@ -1511,6 +1511,60 @@ test("a working server's memory is forgotten when it goes offline, cannot read i
   assert.deepEqual(snapshotMemory(), {});
 });
 
+test("a working server's plan usage is read when a browser asks and what is known is too old, and told to every browser", () => {
+  const { hub, machineId, machineToken, browserId } = setup();
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.37.0" });
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const asks = () => d.sent.filter((m) => m.type === "usage.get").length;
+  const told = () => c.sent.filter((m) => m.type === "machine.usage").at(-1);
+
+  // A gasho-daemon that does not say it reads them is not asked.
+  hub.onClientMessage(c, { type: "usage.get", machine: machineId, maxAgeMs: 300_000 });
+  assert.equal(asks(), 0);
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: [], canReadUsage: true });
+
+  hub.onClientMessage(c, { type: "usage.get", machine: machineId, maxAgeMs: 300_000 });
+  assert.equal(asks(), 1);
+  assert.deepEqual(told(), { type: "machine.usage", machine: machineId, usage: { reading: true } });
+  // Asked once while a read is under way.
+  hub.onClientMessage(c, { type: "usage.get", machine: machineId, maxAgeMs: 0 });
+  assert.equal(asks(), 1);
+
+  const usage = { at: Date.now(), available: true, sevenDay: { percent: 41, resetsAt: Date.now() + 1000 }, models: [{ name: "Fable", percent: 12 }] };
+  hub.onDaemonMessage(d, { type: "usage", usage });
+  assert.deepEqual(told(), { type: "machine.usage", machine: machineId, usage: { usage } });
+  // Young enough: not read again.
+  hub.onClientMessage(c, { type: "usage.get", machine: machineId, maxAgeMs: 60_000 });
+  assert.equal(asks(), 1);
+  hub.onClientMessage(c, { type: "usage.get", machine: machineId, maxAgeMs: 0 });
+  assert.equal(asks(), 2);
+
+  // A failure keeps what was read; something malformed counts as one.
+  hub.onDaemonMessage(d, { type: "usage", usage: { ...usage, models: "x" } as never, error: "読めませんでした。" });
+  assert.deepEqual(told(), { type: "machine.usage", machine: machineId, usage: { usage, error: "読めませんでした。" } });
+
+  // Kept while offline, for browsers that connect later too.
+  hub.onDaemonClose(d);
+  const later = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(later);
+  const snapshot = later.sent[0];
+  assert.deepEqual(snapshot?.type === "snapshot" ? snapshot.usage : undefined, { [machineId]: { usage, error: "読めませんでした。" } });
+});
+
+test("a read of the plan usage that the working server leaves unanswered is over when it goes offline", () => {
+  const { hub, machineId, machineToken, browserId } = setup();
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.37.0" });
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: [], canReadUsage: true });
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  hub.onClientMessage(c, { type: "usage.get", machine: machineId, maxAgeMs: 300_000 });
+  hub.onDaemonClose(d);
+  assert.deepEqual(c.sent.filter((m) => m.type === "machine.usage").at(-1), { type: "machine.usage", machine: machineId, usage: {} });
+});
+
 test("a gasho-daemon that does not tell its memory replaces one that did without leaving the old value", () => {
   const { hub, machineId, machineToken, browserId } = setup();
   const newer = fakePeer<HubToDaemon>();

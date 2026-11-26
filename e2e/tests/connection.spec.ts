@@ -26,7 +26,8 @@ async function openSession(page: Page, d: FakeDaemon): Promise<void> {
 }
 
 test("Gasho サーバーを止めると「再接続中…」になり、戻すと「接続中 · 端末名」に戻る", async ({ page, hub }) => {
-  await page.goto("/");
+  // The connection shows in a session's footer.
+  await openSession(page, await hub.fakeDaemon({ name: "mac", sessions: [fakeSession({ sessionId: SESSION, cwd: "/work/gasho", name: "e2e-session" })] }));
   await expectConnection(page, true, BROWSER);
 
   await hub.stopServer();
@@ -415,11 +416,12 @@ test("つなぎ直したあとも、遡って読み込んだ会話が残る（#1
   await expect(older).toBeAttached();
 });
 
-test("画面を隠して戻したときと online のときは、待たずにつなぎ直す", async ({ page }) => {
+test("画面を隠して戻したときと online のときは、待たずにつなぎ直す", async ({ page, hub }) => {
+  const d = await hub.fakeDaemon({ name: "mac", sessions: [fakeSession({ sessionId: SESSION, cwd: "/work/gasho", name: "e2e-session" })] });
   // The clock stands still: the page's own next try (after 1 s) never comes, only the events make it connect.
   await page.clock.install();
   const conn = await routeConnection(page);
-  await page.goto("/");
+  await openSession(page, d);
   await expectConnection(page, true, BROWSER);
   await page.clock.pauseAt(Date.now() + 1000);
   // The drawer's animations stand still too: on a phone, the top bar tells it.
@@ -441,7 +443,7 @@ test("画面を隠して戻したときと online のときは、待たずにつ
 });
 
 test("別のブラウザーからこの端末を取り消すと、登録の画面に戻る", async ({ page, hub, browser }) => {
-  await page.goto("/");
+  await openSession(page, await hub.fakeDaemon({ name: "mac", sessions: [fakeSession({ sessionId: SESSION, cwd: "/work/gasho", name: "e2e-session" })] }));
   await expectConnection(page, true, BROWSER);
 
   const other = await browser.newContext({ baseURL: hub.url });

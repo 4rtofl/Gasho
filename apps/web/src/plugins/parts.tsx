@@ -7,6 +7,7 @@
 import { Component, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type {
   ComposerFooterItem,
+  SessionFooterItem,
   ConversationEndItem,
   FileViewer,
   FileViewerProps,
@@ -382,6 +383,43 @@ function ComposerFooterPart({ part, item, machine, session }: { part: PluginPart
   return (
     <SessionScopeContext.Provider value={ctx}>
       {/* What throws is left out: the line is too small for the notice with "もう一度". */}
+      <Part part={part} fallback={null}>
+        <Shown machine={machine} session={session} />
+      </Part>
+    </SessionScopeContext.Provider>
+  );
+}
+
+/** Whether a plugin puts parts in the line under the chat box (P14): without any, a phone leaves the line out. */
+export function useComposerFooterParts(): boolean {
+  const { parts } = usePluginRegistry();
+  return parts.some((p) => (p.def.composerFooter?.length ?? 0) > 0);
+}
+
+// ---- the footer of a session's screen (P21) ----
+
+/** The plugins' parts on one side of the footer of a session's screen. */
+export function PluginSessionFooter({ machine, session, side }: { machine: MachineInfo; session: SessionInfo; side: "left" | "right" }) {
+  const { parts } = usePluginRegistry();
+  return (
+    <>
+      {ordered(parts, (def) => def.sessionFooter?.filter((item) => (item.side ?? "right") === side)).map(({ part, item }) => (
+        // A `when` that throws leaves the part out, as a header item's does.
+        <Part key={`${part.info.id}.${item.id}`} part={part} fallback={null}>
+          <SessionFooterPart part={part} item={item} machine={machine} session={session} />
+        </Part>
+      ))}
+    </>
+  );
+}
+
+function SessionFooterPart({ part, item, machine, session }: { part: PluginPart; item: SessionFooterItem; machine: MachineInfo; session: SessionInfo }) {
+  const ctx: SessionContext = { machine, session, daemon: readiness(part.info, machine.id) };
+  if (item.when && !item.when(ctx)) return null;
+  const Shown = item.component;
+  return (
+    <SessionScopeContext.Provider value={ctx}>
+      {/* What throws is left out: the line is too small for the notice with "もう一度" (as P14). */}
       <Part part={part} fallback={null}>
         <Shown machine={machine} session={session} />
       </Part>

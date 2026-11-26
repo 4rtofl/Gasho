@@ -62,6 +62,8 @@ test.describe("部品", () => {
       await expect(main.getByText("worktree の画面 feat/1-x 1")).toBeVisible();
       await expect(tab).toHaveAttribute("aria-current", "page");
       await expect(tabs.getByRole("button", { name: "作業" })).toBeVisible();
+      // The button that hides a session's header is there only while a session is open.
+      await expect(page.getByRole("button", { name: /^ヘッダーを(隠す|表示)$/ })).toHaveCount(0);
     });
 
     await test.step("無い画面のタブは、そのことを出す", async () => {

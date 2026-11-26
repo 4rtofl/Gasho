@@ -607,6 +607,16 @@ export interface ServerInfo {
   update: HubUpdateInfo;
   /** The agent a new session starts with, the same for every browser (absent from an older Gasho server: Claude Code). */
   defaultAgent?: AgentKind;
+  /**
+   * The effort level a new session of Claude Code starts with (`--effort`, for that session only), the same for every
+   * browser. Absent: Claude Code's own default (the working server's effortLevel).
+   */
+  defaultEffort?: EffortLevel;
+  /**
+   * The model a new session of Claude Code starts with (`--model`, for that session only), the same for every browser.
+   * Absent: Claude Code's own default model.
+   */
+  defaultModel?: SessionModel;
 }
 
 /** The latest published versions, as the Gasho server last looked them up on the package registry. */
@@ -1171,6 +1181,10 @@ export type ClientToHub =
   | { type: "hub.update"; requestId: string; version: string }
   /** Changes the agent a new session starts with (answered with server.result; every browser gets the new server). */
   | { type: "defaultAgent.set"; requestId: string; agent: AgentKind }
+  /** Changes the effort level a new session of Claude Code starts with; without `effort`, Claude Code's own default (as defaultAgent.set). */
+  | { type: "defaultEffort.set"; requestId: string; effort?: EffortLevel }
+  /** Changes the model a new session of Claude Code starts with; without `model` (or "default"), Claude Code's own default. */
+  | { type: "defaultModel.set"; requestId: string; model?: SessionModel }
   /**
    * Names a worktree of a working server, for every browser (MachineInfo.worktreeNames), or takes its name away (no
    * `name`, or only spaces): it shows its branch again. Answered with server.result. Also while the working server is offline.
@@ -1242,8 +1256,13 @@ export type SessionCommand =
    * folder" (gasho-daemon 0.10.0 and later). Without it, the launch stops at the question and its result says so
    * (`needsTrust`), so that the person decides.
    */
-  /** `agent`: the agent to start; Claude Code when absent. `trust` is about Claude Code's question only. */
-  | { type: "session.launch"; cwd: string; name?: string; trust?: boolean; agent?: AgentKind }
+  /**
+   * `agent`: the agent to start; Claude Code when absent. `trust` is about Claude Code's question only. `effort`: Claude
+   * Code starts with it (`--effort`, for this session only); the Gasho server gives its default effort level
+   * (ServerInfo.defaultEffort) to a launch of Claude Code without one. A model that does not have it starts with one it
+   * has, or none. `model`: likewise (`--model`, ServerInfo.defaultModel); "default" passes nothing.
+   */
+  | { type: "session.launch"; cwd: string; name?: string; trust?: boolean; agent?: AgentKind; effort?: EffortLevel; model?: SessionModel }
   /** Makes the folder `name` inside the folder `parent` (gasho-daemon 0.10.0 and later). */
   | { type: "folder.create"; parent: string; name: string }
   /**

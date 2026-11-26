@@ -142,7 +142,7 @@ import { npmOf, Updater } from "./self-update.ts";
 import { log, str } from "./util.ts";
 import { CLAUDE_TMP_SWEEP_MS, prepareClaudeTmp, removeSessionTmp, sessionOfTmpFile, sweepClaudeTmp } from "./claude-tmp.ts";
 
-export const DAEMON_VERSION = "0.36.4";
+export const DAEMON_VERSION = "0.36.7";
 const GITHUB_CACHE_MS = 5 * 60_000;
 /** How long the worktree a folder is in, or the repositories inside it, and their branches are reused. */
 const REPOS_CACHE_MS = 60_000;
@@ -254,6 +254,11 @@ interface Tracked {
   opening?: Promise<void>;
   /** Sessions started from Gasho: the model in Claude Code's welcome banner, until the transcript records one. */
   bannerModel?: string;
+  /**
+   * Sessions started from Gasho: the effort level last shown above the prompt box. Claude Code shows it only for a while
+   * (a /model picker opened and closed takes it away), and the transcript records none before the first message.
+   */
+  shownEffort?: EffortLevel;
   /** Sessions started from Gasho: the tokens they used, and when they were last counted. */
   tokens?: TokenCounter;
   tokensAt?: number;
@@ -327,6 +332,8 @@ export class Daemon {
   private followingNewIds = false;
   private refreshing = false;
   private refreshAgain = false;
+  /** The callers waiting for the refresh that refreshAgain asks for (see refresh). */
+  private refreshWaiters: (() => void)[] = [];
   private refreshTimer: NodeJS.Timeout | undefined;
   private statusTimer: NodeJS.Timeout | undefined;
   private emitTimer: NodeJS.Timeout | undefined;
@@ -791,12 +798,18 @@ export class Daemon {
     }
   }
 
+  /**
+   * Reads the sessions again and sends them. Called while a refresh runs, it waits for the next one to end: the one
+   * running may have read `claude agents` before what the caller changed, and a session just started would then reach
+   * the browser after the answer that opens its page (which would say it is gone).
+   */
   async refresh(): Promise<void> {
     if (this.refreshing) {
       this.refreshAgain = true;
-      return;
+      return new Promise((resolve) => this.refreshWaiters.push(resolve));
     }
     this.refreshing = true;
+    const waiters = this.refreshWaiters.splice(0);
     try {
       const rows = await listAgents(this.cfg.claudeBin);
       await this.followNewIds(rows);
@@ -842,6 +855,7 @@ export class Daemon {
         this.refreshed = true;
         this.emitSessions();
       }
+      for (const resolve of waiters) resolve();
       if (this.refreshAgain) {
         this.refreshAgain = false;
         void this.refresh();
@@ -995,7 +1009,7 @@ export class Daemon {
     info.costUSD = meta.costUSD;
     info.lastActivityAt = meta.lastActivityAt;
     info.model = meta.model ?? t.bannerModel;
-    info.effort = meta.effort;
+    info.effort = meta.effort ?? t.shownEffort;
     info.ultracode = meta.ultracode;
     this.remember(info.sessionId, meta);
   }
@@ -1288,7 +1302,7 @@ export class Daemon {
       t.dialog = permissionDialogText(screen);
       const state = statusLine(screen);
       if (state) {
-        t.info.effort = state.effort;
+        t.info.effort = t.shownEffort = state.effort;
         t.info.ultracode = state.ultracode;
         this.rememberEffort(m.sessionId, state.effort);
       }
@@ -1578,7 +1592,15 @@ export class Daemon {
         try {
           switch (m.type) {
             case "session.launch":
-              result = await this.launch(m.cwd, m.name, m.trust === true, m.agent);
+              result = await this.launch(
+                m.cwd,
+                m.name,
+                m.trust === true,
+                m.agent,
+                false,
+                m.effort && EFFORT_LEVELS.includes(m.effort) ? m.effort : undefined,
+                m.model && m.model !== "default" && Object.hasOwn(MODEL_NAMES, m.model) ? m.model : undefined,
+              );
               break;
             case "session.input":
               result = await this.input(m);
@@ -1893,9 +1915,20 @@ export class Daemon {
 
   /**
    * Starts `claude --remote-control` in `cwd` in a terminal of its own and waits for its session id. With `trust`,
-   * Claude Code's question whether to trust the folder is answered with yes; without it, the launch stops there.
+   * Claude Code's question whether to trust the folder is answered with yes; without it, the launch stops there. With
+   * `effort`, Claude Code starts with that effort level, for this session only: a model that does not have it starts
+   * with one it has, or none, and the settings keep their effortLevel. Likewise with `model` (`--model`, the /model
+   * picker's alias): the settings keep their model.
    */
-  private async launch(cwd: string, name: string | undefined, trust = false, agent: AgentKind = "claude", chrome = false): Promise<CommandResult> {
+  private async launch(
+    cwd: string,
+    name: string | undefined,
+    trust = false,
+    agent: AgentKind = "claude",
+    chrome = false,
+    effort?: EffortLevel,
+    model?: SessionModel,
+  ): Promise<CommandResult> {
     if (agent === "codex") return chrome ? { ok: false, error: CODEX_NO_CHROME } : this.launchCodex(cwd, name);
     if (!this.canLaunch) return { ok: false, error: NO_TERMINAL };
     const dir = path.resolve(cwd);
@@ -1904,7 +1937,7 @@ export class Daemon {
     // Without a name, "<folder>-gasho" until the first message names it (see nameAfterTitle).
     const autoName = !name?.trim();
     const rcName = name?.trim() || `${path.basename(dir)}-gasho`;
-    const started = await this.startClaude(dir, rcName, { trust, chrome });
+    const started = await this.startClaude(dir, rcName, { trust, chrome, claudeArgs: [...(model ? ["--model", model] : []), ...(effort ? ["--effort", effort] : [])] });
     if ("error" in started) {
       const { error, needsTrust, trustWarnings } = started;
       return needsTrust ? { ok: false, error, needsTrust, trustWarnings } : { ok: false, error };
@@ -2312,9 +2345,9 @@ export class Daemon {
       );
     }
     await this.refresh();
-    // Before the answer, also when that refresh only asked the one running to go again: a session /clear took away from
-    // this conversation has it among its earlier ids no longer (see ManagedSessions.add), and a page still told it does
-    // goes on to that session instead (see the web's movedSession).
+    // Also when that refresh failed: a session /clear took away from this conversation has it among its earlier ids no
+    // longer (see ManagedSessions.add), and a page still told it does goes on to that session instead (see the web's
+    // movedSession).
     this.emitSessions();
     return { ok: true, sessionId: id, ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}) };
   }
@@ -3084,12 +3117,26 @@ export class Daemon {
         return;
       }
       this.settleUntil.delete(m.sessionId);
+      // Claude Code's list of background tasks left open (by hand, or by a stop that could not close it) is closed
+      // first, busy or not: nothing can be typed while it is open, and Claude Code holds back what it would tell Claude
+      // (a task that ended, or was stopped) until it is closed, so a session waiting for its subagents stays busy. No
+      // stop runs meanwhile (it holds `flushing`).
+      const closeTasksLeftOpen = async () => {
+        log(`${m.name}: closing Claude Code's list of background tasks, left open, before typing`);
+        await this.closeTasks(m.terminal);
+      };
       const status = await this.currentStatus(m.pid);
       const busy = status === "busy";
       if (status !== "idle") {
         // Busy after an Enter that came back "unsure", pressed while the session was idle: Claude Code took it.
         const head = this.managed.peek(m.sessionId);
         if (head?.entered && !head.enteredWhileBusy) head.seenBusy = true;
+        const s = await this.terminals.screen(m.terminal).catch(() => undefined);
+        if (s && tasksDialog(s.plain)) {
+          await closeTasksLeftOpen();
+          this.scheduleRefresh(500);
+          return;
+        }
         if (!busy || this.managed.nextAt(m.sessionId, busy) < 0) return;
         // A permission dialog that opens as Enter is pressed takes it as a yes: nothing is typed while one may still
         // open, and the next tool call waits until the text is in.
@@ -3103,7 +3150,8 @@ export class Daemon {
       if (modelPickerOptions(screen).length > 0 || switchQuestion(screen)) {
         if (busy) return;
         await this.closePicker(m.terminal);
-      } else if (dialogOpen(screen) || (busy && noticeKey(screen) === "Esc")) return;
+      } else if (tasksDialog(screen)) await closeTasksLeftOpen();
+      else if (dialogOpen(screen) || (busy && noticeKey(screen) === "Esc")) return;
       const item = this.managed.next(m.sessionId, busy);
       if (item === undefined) return;
       const out: InputOutcome = { ...(item.id ? { id: item.id } : {}), warnings: [], unapplied: [] };

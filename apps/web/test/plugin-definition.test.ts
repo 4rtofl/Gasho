@@ -25,6 +25,7 @@ test("a web.js definition of the right shape is taken as it is", () => {
     settings: () => null,
     sessionList: { useCategories: () => [], hideSessionTabs: true },
     worktreeGroupings: [{ id: "g", label: "分け方", useCategories: () => [] }],
+    fileViewers: [{ id: "v", extensions: ["png", ".JPG"], component: () => null }],
   };
   assert.equal(checkDefinition(def), def);
   assert.deepEqual(checkDefinition({}), {});
@@ -41,11 +42,15 @@ test("a web.js definition that would fail to be drawn is refused, saying what to
   };
   for (const d of [undefined, null, [], "plugin", () => ({})]) assert.match(refused(d), /^web\.js が、プラグイン/);
   // Every place of the SDK's PluginDefinition is checked, each a list of items with an id or an object.
-  for (const k of ["sidebar", "sessionHeader", "homeTiles", "conversationEnd", "composerFooter", "worktreeTabs"]) {
+  for (const k of ["sidebar", "sessionHeader", "homeTiles", "conversationEnd", "composerFooter", "worktreeTabs", "fileViewers"]) {
     assert.equal(refused({ [k]: {} }), `${k} は配列にしてください。`);
     assert.equal(refused({ [k]: [{ id: "" }] }), `${k} の項目に id がありません。`);
   }
   assert.equal(refused({ conversationEnd: [null] }), "conversationEnd の項目に id がありません。");
+  // The file panel matches every file it opens against a viewer's extensions.
+  for (const extensions of [undefined, "png", [], ["."], ["png", 3]]) {
+    assert.equal(refused({ fileViewers: [{ id: "v", extensions }] }), 'fileViewers の v の extensions は、拡張子（"png" など）の配列にしてください。');
+  }
   for (const k of ["pages", "sessionPanels", "pagePanels", "worktreeViews"]) assert.equal(refused({ [k]: [] }), `${k} はオブジェクトにしてください。`);
   assert.equal(refused({ pagePanels: "notes" }), "pagePanels はオブジェクトにしてください。");
   assert.equal(refused({ settings: {} }), "settings は部品にしてください。");

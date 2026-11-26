@@ -6,6 +6,7 @@ import type {
   CommandResult,
   DeviceInfo,
   DirListing,
+  EffortLevel,
   FileContent,
   GashoNotification,
   GitGraph,
@@ -21,6 +22,7 @@ import type {
   PushInfo,
   ServerInfo,
   SessionCommand,
+  SessionModel,
   TranscriptEntry,
 } from "@gasho/protocol";
 import { fetchMe } from "./api";
@@ -29,7 +31,7 @@ import { hasUnsavedFiles, moveFileDrafts } from "./file-drafts";
 import { usePageVisible } from "./media";
 import { movePending } from "./pending";
 import { type AutoReload, onOutOfDate, outOfDate } from "./server-update";
-import { movedSession, unreadOfSession } from "./sessions";
+import { forgetStarting, movedSession, rememberStarting, unreadOfSession } from "./sessions";
 import { mergeTokenDays } from "./token-days.ts";
 import { sameEntry, takePage } from "./transcript-page";
 
@@ -455,6 +457,16 @@ export function setDefaultAgent(agent: AgentKind, timeoutMs = 20_000): Promise<C
   return askServer((id) => ({ type: "defaultAgent.set", requestId: id, agent }), timeoutMs);
 }
 
+/** Changes the model a new session of Claude Code starts with, for every browser ("default": Claude Code's own default). */
+export function setDefaultModel(model: SessionModel, timeoutMs = 20_000): Promise<CommandResult> {
+  return askServer((id) => ({ type: "defaultModel.set", requestId: id, ...(model !== "default" ? { model } : {}) }), timeoutMs);
+}
+
+/** Changes the effort level a new session of Claude Code starts with, for every browser (undefined: Claude Code's own default). */
+export function setDefaultEffort(effort: EffortLevel | undefined, timeoutMs = 20_000): Promise<CommandResult> {
+  return askServer((id) => ({ type: "defaultEffort.set", requestId: id, ...(effort ? { effort } : {}) }), timeoutMs);
+}
+
 /** Names a worktree for every browser, or takes its name away (`name` empty): it shows its branch again. */
 export function setWorktreeName(machine: string, path: string, name: string, timeoutMs = 20_000): Promise<CommandResult> {
   const given = name.trim();
@@ -532,6 +544,9 @@ function requestId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/** The commands whose answer opens the page of the session they start. */
+const STARTS = new Set<SessionCommand["type"]>(["session.launch", "session.fork", "session.resume"]);
+
 /** Sends a command to a working server through the Gasho server and waits for its result. */
 export function sendCommand(machine: string, cmd: SessionCommand, timeoutMs = 60_000): Promise<SentResult> {
   return new Promise((resolve) => {
@@ -546,6 +561,10 @@ export function sendCommand(machine: string, cmd: SessionCommand, timeoutMs = 60
     }, timeoutMs);
     pendingCommands.set(id, (r) => {
       clearTimeout(timer);
+      const sessionId = r.ok && STARTS.has(cmd.type) ? r.sessionId : undefined;
+      if (sessionId && !state.machines.find((x) => x.id === machine)?.sessions.some((s) => s.sessionId === sessionId)) {
+        rememberStarting(machine, sessionId);
+      }
       resolve(r);
     });
     send({ ...cmd, requestId: id, machine });
@@ -597,6 +616,7 @@ function handle(m: HubToClient): void {
     case "snapshot":
       heartbeat = m.heartbeat === true;
       moveDrafts(m.machines);
+      for (const x of m.machines) forgetStarting(x);
       update({
         push: m.push,
         machines: m.machines,
@@ -620,6 +640,7 @@ function handle(m: HubToClient): void {
       machines.push(m.machine);
       machines.sort((a, b) => a.name.localeCompare(b.name));
       moveDrafts([m.machine]);
+      forgetStarting(m.machine);
       update({ machines });
       break;
     }

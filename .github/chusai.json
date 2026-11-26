@@ -1,0 +1,4 @@
+{
+  "install": ["npm ci"],
+  "verify": ["npm run typecheck", "npm test", "npm run web:build"]
+}

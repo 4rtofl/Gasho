@@ -1,383 +1,100 @@
 # Gasho
 
-Mac と Ubuntu Server で動く Claude Code（Remote Control）のセッションと、その作業対象のリポジトリの Git・GitHub の状況を、1つのブラウザ画面で見るためのダッシュボード。
+Mac や Ubuntu Server で動く Claude Code のセッションを、1つのブラウザー画面から起動し、指示を送り、見守るためのダッシュボード。スマホからも使える。
 
-- 仕様の案：[docs/spec.md](docs/spec.md)
-- 調査と検証の記録：[docs/research.md](docs/research.md)
+- **セッションを起動して操作する**：working server とフォルダーを選んで Claude Code（Remote Control）を起動し、指示、停止、権限の確認、モデルの切り替え、添付ができる。公式アプリからも同じセッションを操作できる
+- **worktree ごとに並べる**：サイドバーにセッションを worktree ごとにまとめ、確認待ちやオフラインがひと目でわかる
+- **リポジトリの様子を見る**：ブランチグラフ、フォルダーのファイル（編集もできる）、GitHub の Issue と Pull request を、セッションの横に開く
+- **通知を受け取る**：応答の完了や確認待ちを、iPhone のホーム画面に追加した Gasho にも通知する
+- **プラグインで足す**：[GashoPlugins](https://github.com/4rtofl/GashoPlugins) から画面と機能を足せる
 
 Claude Code が動くマシンを **working server**、ダッシュボードのサーバーを **Gasho サーバー** と呼ぶ。
+
+## 入れ方
+
+Node.js 24 以上が要る。Gasho サーバーと gasho-daemon は、GitHub Packages の npm パッケージとして配っているので、リポジトリの clone は要らない。
+
+### 1. GitHub Packages から入れられるようにする
+
+Gasho サーバーと各 working server で、初めてのときだけ行う。
+
+```bash
+gh auth refresh -s read:packages
+npm config set @4rtofl:registry https://npm.pkg.github.com
+npm config set //npm.pkg.github.com/:_authToken "$(gh auth token)"
+```
+
+### 2. Gasho サーバーを常駐させる
+
+```bash
+npx @4rtofl/gasho-hub@latest service install   # Ubuntu は systemd、Mac は launchd。LAN 側の 0.0.0.0:7740 で待ち受ける
+```
+
+起動すると、LAN から開くときの URL がログに出る。受け付ける接続元は、既定ではこのマシンと LAN のプライベートアドレスだけ。詳しくは [docs/hub-setup.md](docs/hub-setup.md)。
+
+### 3. ブラウザーを登録する
+
+Gasho は、登録した端末からしか使えない。
+
+```bash
+npx @4rtofl/gasho-hub pair   # 登録コード（10分間有効、1回だけ使える）を出す
+```
+
+ブラウザーで `http://<Gasho サーバーの IP アドレス>:7740` を開き、コードを入れる。2台目からは、登録済みの端末の「端末」画面でもコードを出せる。
+
+### 4. working server に gasho-daemon を入れる
+
+Claude Code を動かすマシンごとに、gasho-daemon を1つ動かす。
+
+```bash
+npx @4rtofl/gasho-daemon register --server http://<Gasho サーバーの IP アドレス>:7740 --code <コード>
+npx @4rtofl/gasho-daemon doctor            # 要るもの（Claude Code、git、gh、hooks など）が揃っているかを確かめる
+npx @4rtofl/gasho-daemon service install   # 常駐させる
+```
+
+通知を使うときは hooks も入れる。詳しくは [docs/daemon-setup.md](docs/daemon-setup.md)。
+
+常駐させた Gasho サーバーと gasho-daemon は、Gasho の「端末」の画面から更新できる。新しい版がうまく起動しなかったときは、自動で前の版に戻す。
+
+### 外から使う
+
+Gasho サーバーは LAN の中だけで使う前提にしている。外から使うときや、iPhone のホーム画面に追加して使うときは、Tailscale を入れ、Gasho サーバーで `sudo tailscale serve --bg 7740` を実行する。`https://<マシン名>.<tailnet>.ts.net/` で Gasho を開けるようになる。iPhone で通知を受け取る手順も含め、[docs/iphone.md](docs/iphone.md) にまとめた。
+
+Mac の gasho-daemon を家の外からつなぐときは、Gasho サーバーの `~/.config/gasho/hub.env` に `GASHO_ALLOW_NETS=lan,tailscale` と書いて動かし直し、Tailscale のアドレスからも受け付ける。
+
+LAN の中では通信が暗号化されない。端末のトークンも平文で流れるので、家の LAN を信用できる前提で使う。LAN を信用できないときも Tailscale を使う。
+
+## ドキュメント
+
+| 文書 | 中身 |
+|---|---|
+| [docs/usage.md](docs/usage.md) | 画面の使い方（セッション、サイドバー、入力欄、パネル、ホーム、プラグイン） |
+| [docs/cli.md](docs/cli.md) | working server のコマンド（`gasho-daemon session`・`worktree`） |
+| [docs/hub-setup.md](docs/hub-setup.md) | Gasho サーバーの入れ方、更新、設定 |
+| [docs/daemon-setup.md](docs/daemon-setup.md) | gasho-daemon の入れ方、更新、設定 |
+| [docs/iphone.md](docs/iphone.md) | 外から・iPhone で使う |
+| [docs/plugins.md](docs/plugins.md) | プラグインの仕組みと API |
+| [docs/development.md](docs/development.md) | 開発、テスト、公開 |
+| [docs/spec.md](docs/spec.md) | 仕様 |
+| [docs/research.md](docs/research.md) | 調査と検証の記録 |
 
 ## 構成
 
 | ディレクトリ | 中身 |
 |---|---|
 | `apps/hub` | gasho-hub（Gasho サーバー）。各 working server からの情報をまとめて保存し、画面に配信する。端末の登録も管理する |
-| `apps/daemon` | gasho-daemon。各 working server で動き、セッションの一覧・会話・hooks のイベントを Gasho サーバーに送る |
+| `apps/daemon` | gasho-daemon。各 working server で動き、セッションの起動と入力、会話・hooks のイベントの送信を受け持つ |
 | `apps/web` | gasho-web。画面（Vite・React・Tailwind CSS・easyui.site の部品） |
 | `packages/protocol` | 3つで共有する型 |
+| `packages/plugin-sdk` | プラグインの SDK |
+| `e2e` | Playwright の E2E テスト |
+| `infra/release-trigger` | 公開と E2E を定期的に起動する Cloudflare Worker |
 | `nakamaba/` | Nakamaba で配信している「🙏 Gasho」のサイト（ダッシュボードとは別） |
-
-いま動くのは、セッションの観測と通知、LAN での待ち受け、端末の登録、Gasho から起動したセッションへの入力まで。
-
-## 動かし方
-
-Node.js 24 以上が要る。TypeScript はビルドせずにそのまま実行する。
-
-### Gasho サーバー（Ubuntu Server）
-
-Gasho サーバーは、GitHub Packages の npm パッケージ `@4rtofl/gasho-hub` として配っている。画面も入っているので、リポジトリの clone も `npm install` も要らない。手順は [docs/hub-setup.md](docs/hub-setup.md) にまとめた。
-
-```bash
-# GitHub Packages から入れる設定（初めてのときだけ。gasho-daemon と同じもの）
-gh auth refresh -s read:packages
-npm config set @4rtofl:registry https://npm.pkg.github.com
-npm config set //npm.pkg.github.com/:_authToken "$(gh auth token)"
-
-npx @4rtofl/gasho-hub@latest service install   # 常駐させる（Ubuntu は systemd、Mac は launchd）。LAN 側の 0.0.0.0:7740 で待ち受ける
-```
-
-こうして常駐させた Gasho サーバーは、Gasho の「端末」の画面から更新できる。新しい版がうまく起動しなかったときは、自動で前の版に戻す。
-
-起動すると、LAN から開くときの URL がログに出る。受け付ける接続元は、既定ではこのマシンと LAN のプライベートアドレスだけで、それ以外からのリクエストは断る。
-
-開発するときは、clone から動かす。clone から動かしている Gasho サーバーは、Gasho の画面からは更新できない（`git pull` のあと動かし直す）。
-
-```bash
-npm install
-npm run web:build
-npm run hub        # LAN 側の 0.0.0.0:7740 で待ち受ける
-```
-
-### ブラウザを登録する
-
-Gasho は、登録した端末からしか使えない。
-
-```bash
-npx @4rtofl/gasho-hub pair   # 登録コード（10分間有効、1回だけ使える）を出す。clone では npm run hub:pair
-```
-
-ブラウザで `http://<Gasho サーバーの IP アドレス>:7740` を開き、登録の画面にコードを入れる。2台目からは、登録済みの端末の「端末」画面でもコードを出せる。
-
-### working server に gasho-daemon を入れる
-
-Claude Code を動かすマシン（working server）ごとに、gasho-daemon を1つ動かす。手順は [docs/daemon-setup.md](docs/daemon-setup.md) にまとめた。おおまかには次のとおり。
-
-```bash
-# GitHub Packages から入れる設定（初めてのときだけ。読むのに read:packages の権限のトークンが要る）
-gh auth refresh -s read:packages
-npm config set @4rtofl:registry https://npm.pkg.github.com
-npm config set //npm.pkg.github.com/:_authToken "$(gh auth token)"
-
-npx @4rtofl/gasho-daemon register --server http://<Gasho サーバーの IP アドレス>:7740 --code <コード>
-npx @4rtofl/gasho-daemon doctor          # 要るものが揃っているかを確かめる
-npx @4rtofl/gasho-daemon service install # 常駐させる（Ubuntu は systemd、Mac は launchd）。これからは Gasho の画面から更新でき、新しい版がうまく起動しなかったときは前の版に戻す
-```
-
-gasho-daemon は GitHub Packages の npm パッケージ `@4rtofl/gasho-daemon` として配っているので、リポジトリの clone も `npm install` も要らない。`doctor` は、Node.js、登録、Claude Code、セッションの端末、git、GitHub CLI、通知の hooks が揃っているかを確かめ、足りないものがあれば、使えなくなる機能と直し方を示す。
-
-### Gasho からセッションを起動して、入力する
-
-ホームの「新しいセッション」を押して、working server とフォルダーを選ぶと、そのマシンで `claude --remote-control=<名前>` が起動する。サイドバーにある worktree で起動するなら、その worktree のタブの右の「＋」で、すぐ起動できる（後述）。このセッションには、セッション画面の入力欄から指示を送れる。公式アプリ（スマホ・Desktop）からも、同じセッションを操作できる。
-
-セッションの一覧に出すのは、こうして Gasho が起動したセッションだけ。端末や `claude rc` で起動したセッションは、一覧にも通知にも出さず、サイドバーにある worktree のものだけ、タブの上に件数を出す（後述の「Gasho に移す」）。
-
-サイドバーには、これらのセッションがある worktree を、working server に分けずに1つの一覧で出す。どの worktree のセッションかは、gasho-daemon がセッションの作業フォルダーで git を流して調べる。各行にはブランチ名（ブランチが無いときはフォルダー名。名前を付けた worktree はその名前。後述の「worktree の名前」）とリポジトリ名を出し、working server が2台以上あるときはその名前も出す。最後に会話があったセッションの worktree から並べ、まだ会話がないセッションは起動した時刻で数える。確認を待っているセッションがある worktree には「確認」、オフラインの working server の worktree には「オフライン」と出す。リポジトリの外のフォルダーのセッションと、worktree を調べない前の版の gasho-daemon のセッションは、作業フォルダーごとに1行にする。セッションがまだないときも、一覧の見出しは出す。
-
-セッションがすべて無くなった worktree も、ブラウザーが覚えていて、一覧の最後に残す。その worktree を押すと、セッションの無い worktree の画面が開き、そこの「サイドバーから外す」で一覧から外せる。覚えるのはそのブラウザーだけなので、スマホと PC では別になる。登録したリポジトリ（次の段落）の worktree は、覚えずに git の一覧に合わせて出し入れする。
-
-リポジトリを登録すると、その worktree を、Gasho のセッションが無くても一覧に出す。一覧の見出しの右にある絞り込みのボタンから「リポジトリを登録・解除…」を開き、working server ごとにリポジトリを選んで登録する。候補は、Claude Code が信頼しているフォルダーとセッションのフォルダーのリポジトリで、worktree のフォルダーや、本体と worktree を並べた親フォルダーは、その本体の1行にまとめる（Git でないフォルダーは出さない）。gasho-daemon が5分おきに git で調べ、行には本体のフォルダー名・パス・worktree の数を出す。検索欄で名前やパスを絞り込み、行を押すと登録する。一覧に無いフォルダーは、パスを入れて登録する。worktree のフォルダーを入れると、そのリポジトリの本体のフォルダーを登録する。リポジトリの外のフォルダーを入れると、その直下にある worktree が1つのリポジトリのものなら、そのリポジトリを登録する（本体と worktree を1つの親フォルダーに並べる置き方）。直下に別々のリポジトリがあるときは登録しない。候補が出るのは gasho-daemon 0.17.1 より新しい版から。gasho-daemon が `git worktree list` で worktree を 10 秒おきに読み、セッションのある worktree の後ろに並べる。Orca や git で worktree を足したり消したりすると、一覧も変わる。登録は gasho-daemon の置き場（`~/.config/gasho/repos.json`）に残るので、どのブラウザーにも同じ一覧が出る。登録と解除は、working server がつながっているときだけできる。
-
-絞り込みのボタンのメニューでリポジトリにチェックを付けると、一覧にはチェックを付けたリポジトリの worktree だけを出し、見出しを「worktree · <リポジトリ名>」（2つ以上なら「、」でつなぐ）にする。チェックは複数付けられ、付けてもメニューは閉じない。「すべて」で元に戻す（1つも付けていないときも、すべてを出す）。選べるのは、一覧にある worktree のリポジトリ（登録していなくても、セッションがあれば出る）。選んだリポジトリはブラウザーごとに覚える。
-
-worktree を押すと、その worktree で最後に開いたセッションを開く（ページを読み込み直したあとは、最後に会話があったセッション）。セッション画面の上には、同じ worktree のセッションを起動した順にタブで並べ、タブを押すとセッションを切り替える。タブの右の「＋」を押すと、その worktree の最上位のフォルダー（リポジトリの外ならセッションの作業フォルダー）で、新しいセッションをすぐ起動して開く。
-
-タブの左の時計のボタンを押すと、その worktree の過去の会話を、新しいものから 30 件まで出す。Claude Code が worktree のフォルダー（とその中のフォルダー）に残した会話のうち、いま開いている Claude Code が無いものである。会話を押すと、その会話のフォルダーで `claude --remote-control=<名前> --resume <ID>` を起動し、Gasho が起動したセッションとして開く。名前は、会話に付けた名前か、Claude Code が付けた題になる。Gasho の外で動いている会話は、一覧に出さない。
-
-Gasho の外（Orca や端末）で起動した Claude Code が、サイドバーにある worktree で会話を開いていると、タブの上に「Gasho の外で N 件の会話が開いています」と出す。「Gasho に移す」を押すと、その会話の一覧を確かめるダイアログを出し、「終了する」で、それらの Claude Code に SIGTERM を送って終了させる。元の端末は閉じない。会話の記録は残るので、終了した会話は過去の会話に出て、続けたいものだけを Gasho で開き直せる。8秒待っても終わらない Claude Code は止めずに残し、元の端末で終了するよう伝える。バックグラウンドで動いている会話（`claude agents` に PID が無いもの）は、終了できないので数えない。
-
-サイドバーの worktree の一覧は、プラグイン（[docs/plugins.md](docs/plugins.md) の P17）で、セッションそのものを並べる一覧に置き換えられる。たとえば GashoPlugins の Session List Rewind は、リポジトリごとのカテゴリ（見出し）の下にセッションを並べ、セッション画面の上のタブからセッションを外す。カテゴリは見出しを押すと畳め、カテゴリもセッションもドラッグで並べ替えられる。
-
-worktree の一覧は、プラグイン（[docs/plugins.md](docs/plugins.md) の P18）で、行はそのままにカテゴリに分けても出せる。たとえば GashoPlugins の Better WorktreeList は、リポジトリごとか、確認待ち・作業中・待機中などの状態ごとのカテゴリ（見出し）の下に worktree を並べる。分け方は、一覧の見出しの絞り込みのボタンのメニューで選ぶ。分け方が `useOnMove`（API 1.9）を持っていれば、worktree の行を別のカテゴリへドラッグして入れられる。入れた先は、プラグインが `useSharedState` で Gasho サーバーに保存すれば、すべてのブラウザーで同じになる。
-
-サイドバーの worktree は、ドラッグで並べ替えられる。PC では、マウスで項目をそのままドラッグする（押して離すだけなら、worktree を開く）。スマホでは、項目の右端のつまみをドラッグする（項目に触れて動かすと一覧がスクロールする）。キーボードでは、項目にフォーカスして Alt+↑・Alt+↓ で動かせる。並べ替えると、それからは最後に使った順ではなく、その並びのまま変わらない。並べ替えたあとに初めてセッションを起動した worktree は、一覧の先頭に出る。見出しの右に出る「最後に使った順に戻す」を押すと、元の並び方に戻る。並び順はブラウザーごとに覚えるので、PC とスマホでは別々になる。
-
-PC では、サイドバーの右の端をドラッグして、幅を200〜360px（標準は248px）のあいだで変えられる。セッションの右に開くパネル（ブランチグラフ、ファイル、プラグインのパネル）も、左の端をドラッグして、幅を380〜620px（標準はウィンドウの幅の40%）のあいだで変えられる。ウィンドウが狭いときは、パネルを開いても会話の欄に140px残るところで止まる。端をダブルクリックすると標準の幅に戻る。端にフォーカスして ←・→ でも変えられる。幅はブラウザーごとに覚える。
-
-- セッションは、gasho-daemon がセッションごとに用意する端末（`gasho-<名前>-xxxx`）の中で動く。端末は gasho-daemon とは別のプロセスで、Ubuntu では systemd のスコープの中で動くので、gasho-daemon を動かし直してもセッションは止まらない。SSH から `gasho-daemon attach <その名前>` で直接見て、そのまま操作することもできる（Ctrl+] で抜ける。名前を付けずに実行すると、端末の一覧を出す）。gasho-daemon 0.10 までは zellij が要った。そのころに起動したセッションは、終わるまで zellij で動かし続ける
-- フォルダーの一覧に出るのは、Claude Code が信頼しているフォルダーと、その親フォルダー（`~/repos` など）。一覧にないフォルダーは「ほかのフォルダーを入力する…」で絶対パスを入れる。Claude Code がまだ信頼していないフォルダーで起動するときは、信頼するかを画面で確かめる（下の「起動する前に、フォルダーを作る・clone する」）。gasho-daemon が 0.10.0 より前の working server では、これまでどおり端末で一度 `claude` を起動して信頼してから使う
-- 作業中は、入力欄が空なら、送信ボタンが停止ボタンに変わる。押すと Esc を送って作業を止める。続けて何度押しても、Esc は3秒に1回しか送らない（Claude Code は、Esc が続けて届くと巻き戻しの画面を開き、セッションがそこで止まるため）
-- 作業中も、入力欄に文があれば送信ボタンと Enter で送れる。daemon はその文を Claude Code の入力欄に入れ、Claude Code は端末で打ったときと同じく待ち行列に入れて、今の手順（ツールの実行など）が終わったところで Claude に届ける。文を入れる1〜2秒のあいだは、Claude の次のツールの開始を止める。権限の確認が開いた直後に Enter が届くと、その確認を許可してしまうためである。始まったツールの権限の確認がまだ開くかもしれないあいだ（ツールが終わるまでか、始まって15秒まで）と、確認が開いているあいだは、文を入れずに待つ
-- ファイルを添えた指示、`/` や `!` で始まる指示、モデル・Effort・ultracode の切り替えを付けた指示は、daemon が預かり、作業が終わってから順に送る。その後ろに送った指示も、その後に送る。hook が daemon に届いていないセッション（daemon が起動してから、まだ発言を受け取っていないもの）でも、作業が終わってから送る
-- Claude がバックグラウンドで動かしているもの（`run_in_background` で動かしたコマンド、Monitor、サブエージェント、ワークフロー）は、入力欄の上の「バックグラウンドで実行中」に、説明、種類、始まってからの時間、コマンドとともに並ぶ。セッションのタブにも、回る印が出る。Claude の作業が終わっても動き続けるので、Esc（停止ボタン）では止まらない
-- それぞれの「止める」と「すべて止める」で止められる。daemon が端末で Claude Code のタスクの一覧（`/tasks`）を開き、そのタスクで x を押して閉じる。端末で手で止めたときと同じく、Claude には止めたことが伝わる。端末の入力欄に書きかけの文があるときと、権限の確認などが開いているときは止めない。gasho-daemon の新しい版が要る
-- Claude の作業が終わり、バックグラウンドでシェルや Monitor だけが動いているときは、セッションは待機中になる。指示はそのまま送れて、預けられない（Claude Code 自身は、このときも `claude agents` で作業中と報告する）。サブエージェントやワークフローが動いているあいだは、Claude はその結果を待って続けるので、作業中のままで、停止ボタンはそれらを止める（シェルは止めない）
-- 送った指示は、すぐに会話の末尾に「送信中…」と出す。Claude Code が指示を会話に記録するのは、daemon が指示を入力したときで、モデルを先に切り替える（`/model`）ときなどは数秒かかる。記録されると、その記録に置き換わる。作業中に入力した指示は、Claude に届いて記録されるまで「送信待ち（今の手順が終わったら届きます）」と出す。daemon が預かった指示は「送信待ち（作業が終わったら送ります）」と出す
-- 応答が始まる前に止めると、Claude Code は止めた指示を端末の入力欄に戻す。daemon は、次の指示を貼り付ける前に入力欄を空にする
-- 入力欄から（または端末で）`/clear` を送ると、Claude Code は同じ端末のまま、新しい ID で新しい会話を始める。Gasho は同じ名前のセッションとして扱い続け、開いている画面も新しい会話に移る。預かっている指示と添付したファイルも引き継ぐ。gasho-daemon の新しい版が要る
-- Claude の返答は Markdown として表示する。HTML は表示せず、画像は読み込まずにリンクとして出す
-- Claude が SendUserFile（利用者にファイルを送る Claude Code のツール）で送った画像と動画は、ツールの折りたたみではなく、会話の中にそのまま出す。1枚なら大きく、何枚かならタイルに並べ、説明（caption）を下に添える。画像を押すと画面いっぱいに開き、もう一度押すと原寸になる。同じときに送ったほかの画像と動画へは ←・→ か左右のボタンで移り、Esc で閉じる。右上のボタンで保存できる。動画はその場で再生でき、好きなところへ飛ばせる
-- 画像と動画は、表示するときに working server から Gasho サーバーを通して読む。会話の記録には、ファイルのパスしか残らないためである。送ったあとで消えたファイル（Claude の作業用のフォルダーは、マシンを再起動すると消える）は「表示できません」と出し、書き換えたファイルは新しい中身で出る。gasho-daemon が読むのは、そのセッションの会話で Claude が送った画像（PNG、JPEG、GIF、WebP、AVIF、BMP、SVG）と動画（MP4、MOV、WebM、OGV）だけで、ほかのファイルは読まない
-- 画像と動画のほかのファイル（Markdown や HTML など）は、名前だけを出す。Claude がファイルとして渡すように送ったもの（`display: "attach"`）は、画像と動画も名前だけを出し、押すと開く。gasho-daemon の新しい版が要る（前の版では、これまでどおりツールの折りたたみで出る）
-- 会話は新しいほうから読み込む。上へスクロールすると、前の会話を自動で読み込んで上に足すので、ボタンを押さずにそのまま遡れる。見えている発言の位置は動かない。スマホでは、スクロールが止まってから足す。読み込めなかったときは、一覧の上の「もう一度」で読み込み直す
-- 入力欄に「!」で始まる文を入れると、Claude Code の「!」（シェルモード）と同じく、working server のセッションのフォルダーで、そのままシェルのコマンドとして実行する。入力欄には「! シェル」と出て、文字が等幅になり、送信ボタンは「実行」になる。会話には、コマンドと出力を1つにまとめて出す（失敗したコマンドの出力は赤）。Claude Code はコマンドが終わってから会話に記録するので、それまでは「実行中…」と出す。止めるには停止ボタン（Esc）を押す。ファイルは添付できない。Claude Code 2.1.323 では、コマンドが終わると Claude がその出力に返答する。コマンドは Claude Code の権限の確認を通らずに実行される
-- 入力欄で、モデル（既定・Opus 5.5 など、Claude Code の選択画面と同じ名前）、Effort（Low〜Max）、Ultracode を選んで送ると、送る前にそのセッションだけ切り替える。全体の既定は変えない。会話の途中でモデルを変えると、次の返答では履歴を新しいモデルで読み直すので、時間とトークンが多くかかる
-- モデルの名前は、daemon が Claude Code の `/model` の選択画面から読んで覚える。覚えていないか24時間たったときは、待機中のいちばん新しい Gasho のセッションで選択画面を開いて閉じるので、その会話に `/model` の記録が残る
-- 入力欄に `/` を打つと、そのセッションの Claude Code が読むスキルとカスタムコマンドを、名前と説明の先頭の 1 行ずつで、入力欄の上に並べる。続けて打った文字で絞り込み（`/impl` で `/impl-review` が残る。`/review` のように名前の途中の `-`・`:` の後ろからでも見つかる）、↑↓ で選んで Tab か Enter を押すと、入力欄に `/<名前> ` が入る（送りはしない）。スマホでは行を押す。Esc か、入力欄の外を押すと閉じる。並べるのは、`~/.claude` のスキル（`skills/`）とコマンド（`commands/`）、セッションのフォルダーからリポジトリの一番上までの `.claude/skills` と `.claude/commands`、有効なプラグインのもの（`/<プラグイン>:<名前>`）、claude.ai から同期されたスキル（`/anthropic-skills:<名前>`）。Claude Code に組み込みのコマンド（`/model`・`/clear` など）は出さない。`user-invocable: false` のスキルと、設定の `skillOverrides` で `off` にしたものも出さない。一覧は、`/` を打ったときに daemon がセッションのフォルダーをもとに読み、1分たつまでは読み直さない。gasho-daemon の新しい版が要る
-- 入力欄に `/model` や `/effort high` のように書いて送ることはできない。これらは、すべての新しいセッションの既定も変えてしまうため。`/effort ultracode on` と `off` は送れる
-- Effort と Ultracode の切り替えには、その working server の gasho-daemon が 0.6.0 以上である必要がある。0.5 の gasho-daemon ではモデルの切り替えと添付だけ、それより前のものでは文字の入力だけになり、扱えない操作は出ない
-- クリップのボタン、ドラッグ、貼り付けでファイルを添付できる（1回に5個、合わせて10MB まで）。ファイルは working server の `~/.local/share/gasho/attachments/` に保存され、Claude が読む。セッションが終わると消える
-- 入力欄に書きかけた文、添付したファイル、選んだモデル・Effort・Ultracode、↑ で呼び出せる送った文は、セッションごとに覚えておく。ほかのセッションやホームに移って戻っても残る。ページを開いているあいだだけ覚えるので、読み込み直すと消える
-- ホームでは、Gasho が起動したセッションが使ったトークンを、過去24時間の推移と内訳（入力、出力、キャッシュへの書き込み、キャッシュからの読み込み）で見られる。daemon が、セッションとそのサブエージェントの会話の記録（`~/.claude/projects/` の下）から、返答ごとに1回ずつ数える。キャッシュからの読み込みは、それまでの会話を毎回読み直した分で、たいてい全体の大部分を占める
-- ホームの「メモリ」のタイルで、working server ごとのメモリの使用率と使用量／総量を見られる。daemon が 15 秒ごとに読み、ページキャッシュは使用中に数えない。80% 以上で「注意」、90% 以上で「警告」と出る。オフラインのサーバーは「オフライン」、メモリの値を送らない古い gasho-daemon のサーバーは「未対応」と出る
-- ホームのタイルは、上の辺の真ん中にあるつまみをドラッグして並べ替えられる。つまみは、PC ではタイルにポインターを乗せると出て、スマホではいつも出ている。ドラッグ中は、ほかのタイルが場所を空け、画面の上端・下端に近づけるとスクロールする。Esc を押すと元の並びに戻る。つまみにフォーカスして、矢印キーでも動かせる。並びはブラウザーごとに覚える。並べ替えると見出しの横に出る「並びを元に戻す」で、最初の並びに戻る
-- `/exit` を送るか公式アプリで終了すると、daemon がセッションの端末も閉じる
-- `claude rc` が起動したセッションには、外から入力する公式の手段がないので、Gasho からは入力できない。公式アプリから操作する
-
-起動したセッションの記録は `~/.config/gasho/managed.json` に残り、daemon を起動し直しても引き継ぐ。
-
-### 起動する前に、フォルダーを作る・clone する
-
-新しいセッションのフォームでは、選んだフォルダーの中に新しいフォルダーを作ったり、GitHub のリポジトリを clone したりできる。1つのフォルダーに複数のリポジトリを置き、そのフォルダーでセッションを起動する使い方（`zen` のようなフォルダー）にも使える。使うには、working server の gasho-daemon が 0.10.0 以上である必要がある。
-
-- 「新しいフォルダー」：名前を入れて「作る」を押すと、選んだフォルダーの中にフォルダーができ、そのフォルダーが選ばれる。続けて clone すると、その中に入る
-- 「GitHub から clone」：`owner/name` か GitHub の URL を入れて「clone する」を押すと、working server で `gh repo clone` が動き、選んだフォルダーの中に clone する。フォルダーの名前は、空ならリポジトリの名前になる。clone したあとも選んだフォルダーはそのままなので、同じフォルダーに続けて clone できる。clone したリポジトリで起動するときは、「このフォルダーを選ぶ」を押してから起動する
-- clone には、working server の GitHub CLI（`gh`）とそのログインを使う。Gasho は GitHub のトークンを扱わない。gh と git は端末なしで動かすので、パスワードや SSH のホスト鍵は尋ねず、それが要るときは失敗する。10分で終わらない clone は止める
-- 同じ名前のフォルダーやファイルがすでにあるときは、作らず、clone もしない。名前に `/` は使えない（1階層ずつ作る）。`-` で始まる名前、`.`、`..` も使えない
-- 作ったフォルダーと clone したリポジトリは、フォームを開いているあいだ、フォルダーの一覧に出る。そこで起動して Claude Code が信頼すると、それからは一覧にいつも出る
-
-clone したリポジトリは、親のフォルダーを信頼していても、Claude Code はまだ信頼していない（Claude Code は、リポジトリの外のフォルダーの信頼を、リポジトリの中に引き継がない）。こうしたフォルダーで起動すると、Claude Code が信頼するかを尋ね、起動はそこで止まる。フォームには、そのことと、Claude Code からの注意（フォルダーの設定が前もって許可しているコマンドなど。英語のまま）が出る。
-
-- 「信頼して起動する」を押したときだけ、gasho-daemon が Claude Code の確認で「Yes, I trust this folder」を選ぶ。カーソルが Yes にあることを画面で確かめてから、Enter を1回だけ押す。信頼したことは Claude Code に保存され、次からは尋ねられない
-- 信頼すると、Claude Code はそのフォルダーのファイルを読み書きし、コマンドを実行できるようになる。フォルダーの中の設定（`.claude/settings.json` の許可や hooks など）も使う。自分で作ったものや、よく知っているリポジトリだけを信頼する
-- 信頼のあとで、フォルダーの `.mcp.json` にある MCP サーバーを使うかを Claude Code が尋ねたときは、Esc で答えて、使わずに起動する。Claude Code は、この答えをフォルダーの `.claude/settings.local.json` に保存する。起動したあとで、そのことを知らせる。使うときは、端末で `claude` を起動し、`/mcp` から有効にする
-- 信頼しているフォルダーの中に作ったフォルダー（リポジトリでないもの）は、その信頼を引き継ぐので、確認は出ない
-
-### worktree の名前
-
-サイドバーの worktree の行には、ブランチ名の代わりに、自分で付けた名前（`#254 accordion` など）を出せる。行を右クリックして（スマホでは長押し）「名前を変更…」で名前を入れる。「名前を消す」か、空にして「変更する」を押すと、ブランチ名に戻る。名前を付けた行は、ポインターを乗せるか、キーボードでフォーカスすると、横にブランチ名（リポジトリの外のフォルダーではフォルダー名）が出る。メニューの見出しと worktree の画面にも、名前とブランチ名を出す。
-
-名前は Gasho サーバーに保存するので、どのブラウザーにも同じ名前が出る。working server がオフラインのあいだも付けられる。Gasho の画面やコマンドで worktree を削除すると、その名前も消す。working server のコマンド（`gasho-daemon worktree name`、後述）でも付けられるので、Claude やスクリプトが worktree を作ったときに名前を付けられる。
-
-### worktree の削除
-
-使い終わった worktree は、サイドバーの行を右クリックして（スマホでは長押し）「削除…」で、中のセッションとまとめて消せる。確認のダイアログには、フォルダー・ブランチ・working server と、一緒に終わるセッションが出る。「ローカルのブランチ <ブランチ> も消す」は既定でチェックが付いている。未コミットの変更や push していない commit があるときは、件数を出して止まり、「変更を捨てて削除」をもう一度押したときだけ消す。リポジトリの main の worktree は消せない。プラグインも、`useRemoveWorktree`（[docs/plugins.md](docs/plugins.md)、API 1.10）で同じ削除を使える。
-
-### セッションの名前の変更、フォーク、削除
-
-セッション画面の上のタブを右クリックすると（スマホでは長押し）、名前の変更、フォーク、削除のメニューが開く。使えるのは、その working server の gasho-daemon が 0.9.0 以上で、つながっているときだけ。
-
-名前を変えると、Gasho での名前はすぐ変わる。
-
-- daemon が Claude Code に `/rename <名前>` を送り、Claude Code での名前も変える。Claude Code は Remote Control のセッション名も変えるので、公式アプリの表示も変わる想定（公式アプリの画面ではまだ確かめていない）
-- 作業中は、`/` で始まる指示と同じように daemon が預かり、作業が終わってから送る
-- 端末で `/rename` したときも、Gasho の名前をそれに合わせる
-- 名前を付けずに起動したセッションは、はじめ「<フォルダー名>-gasho」で、最初の発言のあと、Claude Code がその発言から付けたタイトル（「セッション名の自動設定」など）に自動で変わる（gasho-daemon 0.10.0 以上）。その前に名前を変えたときは、変えた名前のまま。端末の入力欄に打ちかけの文字があるときは、それを消さずに、空くまで `/rename` を待たせる
-- 名前は1行で、60文字まで
-
-フォークすると、会話をそこまで引き継いだ新しいセッションが、同じフォルダーで起動する（`claude --remote-control=<名前> --resume <ID> --fork-session`）。元のセッションは、そのまま使える。
-
-- 名前は、はじめ「<元の名前> のフォーク」になっていて、変えられる
-- Claude Code は、フォークした会話を、発言やコマンドが記録されるまでファイルに書き出さない。daemon は、起動した直後に `/rename` を送って名前を付け、引き継いだ会話をすぐ Gasho に出す
-- 前の発言から時間がたっていて会話も長いと、Claude Code が要約から始めるかを尋ねることがある。daemon は Esc で答え、会話をそのまま引き継ぐ。次の返答では会話をすべて読み直すので、時間とトークンが多くかかる
-- ホームのトークンの数には、引き継いだ会話の分を入れない
-- まだ会話がないセッションは、フォークできない
-
-削除すると、daemon が Claude Code を終了し、セッションの端末を閉じて、Gasho の一覧から外す。開いていたセッションを削除したときは、隣のタブ（右、無ければ左）を開き、タブが無くなったら worktree の画面を開く。会話の記録は working server に残るので、タブの左の過去の会話から開き直せる。
-
-- 作業中なら、途中で止まる。待たせていた指示は送らず、添付ファイルは消える
-- daemon は Claude Code に SIGTERM を送り、8秒たっても終わらなければ端末ごと止める
-
-### セッション画面とブランチグラフ
-
-- セッション画面のヘッダーは、右上のボタンで隠せる（スマホでは画面上部のバーの右端）。隠すと、セッション名と状態だけの1行になる。スマホでは、セッション名と状態をいつも画面上部のバーに出すので、隠すとこの1行もなくなり、その分を会話に使える。PC では、隠したかどうかをブラウザごとに覚える。スマホと、高さが 500px に満たない窓（スマホを横にしたとき）では、覚えずに、セッション画面を開くたびに隠した状態から始まる
-- 会話の文字の大きさは、サイドバーの「設定」で変えられる。12〜20px（標準は14px）のあいだで、見本の会話を見ながら選ぶ。時刻、ツールの折りたたみ、コード、表の文字も同じ割合で変わる。入力欄とヘッダーの文字は変わらない。ブラウザごとに覚えるので、スマホと PC で別々に決められる
-- 会話の中のツールの呼び出し（コマンドの実行など）は、その結果と一緒に1つの折りたたみにまとめて出す
-- ツールの呼び出しが続くところは、ツールの種類にかかわらず（Bash、Read、Edit などが混ざっていても）全部を1つの折りたたみにまとめる。閉じたままでも、呼び出した回数、最後に呼び出したツールとその内容、エラーになった回数がわかる。開くと、呼び出しごとの折りたたみが並ぶ
-- Claude Code が会話を要約したところ（Conversation compacted）には、「会話を要約しました」の区切り線を出す。要約の本文は線の下に折りたたんでおき、押すと開く。要約は Claude Code がユーザーの発言として記録するが、Gasho では発言として出さない
-- Claude Code が権限の確認を出しているあいだは、入力欄の上に確認のカードを出し、Gasho から「許可」「今後も許可」「拒否」で答えられる。端末や公式アプリでも答えられ、そちらで答えるとカードは消える。「今後も許可」は、Claude Code が許可のルール（`Bash(npm test:*)` など）を提案したときだけ出る。拒否すると、端末で「No」を選んだときと同じく、Claude は作業を止めて次の指示を待つ。使うには hooks を入れ直す（`hooks install`）
-- ヘッダーのブランチ名を押すと、ブランチグラフを開く。PC ではセッションの右にパネルとして並べ、スマホでは画面全体に出す。セッションのリポジトリのブランチと、全ブランチの新しいほうから300件のコミットを、枝分かれとマージの線で表示する
-- スマホでパネル（ブランチグラフ、ファイル、プラグインのパネル）を開くと、パネルの題名と右上のボタンを画面上部のバーに出す。バーの左の ← でセッションに戻る。ボタンがバーに入りきらないときは、ボタンの並びを横にスクロールする
-- GitHub プラグインを入れると（「プラグイン」の節）、ブランチ名と「ファイル」のあいだに「Issues」「Pull requests」が出る。押すと、リポジトリの開いている Issue と Pull request の一覧を、同じようにパネルで開く。一覧の項目を押すと、GitHub へは移らずに、本文とコメント（Pull request ではレビュー、チェック、変更したファイルも）を Gasho の中で読める。GitHub のページは、パネルの「GitHub」から開く。working server の GitHub CLI（gh）で読むので、working server で `gh auth login` を済ませておく。gh のログインを使うので、Gasho は GitHub のトークンを扱わない。プラグインに対応した gasho-daemon の working server でだけ出る
-- ブランチの一覧には、ローカルのブランチ（push していないコミットの数など）と、リモートにだけあるブランチ（雲のアイコン）を並べる。見出しを押すと、一覧を折りたためる
-- コミットの件名は省略せずに出す。長い件名は、その行を横にスクロールして読む（スクロールバーは出さない）
-- ブランチ名の右のアイコンは、GitHub のそのブランチのページを開く
-- 作業フォルダーがリポジトリでなく、その中に複数のリポジトリがあるとき（2階層下まで探す）は、ヘッダーに「複数のリポジトリ…」と「ブランチ…」を出す。「複数のリポジトリ…」を押すと、GitHub で開くリポジトリを選べる。「ブランチ…」を押すとブランチグラフを開き、タブでリポジトリを切り替えられる
-
-### セッションのフォルダーのファイルを見る・編集する
-
-セッション画面のヘッダーの「ファイル」を押すと、そのセッションのフォルダーのファイルを、ブランチグラフと同じようにパネルで開く（PC ではセッションの右、スマホでは画面全体）。使うには、working server の gasho-daemon が 0.11.0 以上である必要がある。
-
-- フォルダーを押すと中に入り、上の場所の表示から前のフォルダーに戻れる。フォルダーを先にして名前の順に並べ、ファイルには大きさと最終更新を添える。`.git` は出さない
-- ファイルを押すと中身を開く。テキストは行番号を付けて出し、Markdown と SVG は「表示」と「テキスト」を切り替えられる。画像（PNG、JPEG、GIF、WebP など）は画像として出す。開けるのは、テキストは 1MB、画像は 5MB まで。バイナリのファイルと、UTF-8 でないテキストは表示しない
-- 「折り返す」で長い行を折り返す。ブラウザーごとに覚え、スマホでは折り返す状態から始まる
-- 「編集」を押すと書き換えられ、「保存」（Ctrl+S・⌘S）で working server のファイルに書き込む。改行コード（CRLF）と BOM は、元のまま保つ。読み取り専用のファイルは編集できない
-- 保存しようとしたファイルが、開いたあとで変わっていたとき（Claude が書き換えたときなど）は、上書きせずに知らせる。「上書きして保存」を押したときだけ上書きする。「編集を捨てて読み込み直す」で、いまの中身を開き直す
-- 編集中の内容は、ほかのファイルやセッションに移っても残り、フォルダーの一覧には「未保存」と出る。ページを開いているあいだだけ覚えるので、読み込み直すと消える（その前にブラウザーが確かめる）
-- フォルダーの「新しいファイル」で、そのフォルダーに空のファイルを作り、編集の画面で開く。同じ名前のファイルやフォルダーがあれば作らない
-- 読み書きできるのは、セッションのフォルダーの中だけ。フォルダーの外を指すシンボリックリンクは、一覧に「フォルダーの外」と出すが、開かない
-- 保存と作成は、ファイルのパスと大きさを操作のログに残し、ホームの「最近の操作」に出す。ファイルの中身は Gasho サーバーに残さない
-
-### working server のコマンドからセッションを起動する・片付ける
-
-working server の上では、Gasho の画面を通さずに、`gasho-daemon session` でセッションを起動し、入力し、消せる。`gasho-daemon worktree remove` で、ワークツリーを中のセッションごと消せる。`gasho-daemon worktree name` で、ワークツリーにサイドバーで出す名前を付けられる。Claude Code のセッションから別のセッションを立ち上げて作業させるときや、終わった作業を片付けるときに使う（リポジトリの Skill `.claude/skills/launch-gasho-session` が、ワークツリーを作るところから起動を、`.claude/skills/remove-gasho-worktree` が片付けを、`.claude/skills/verify-in-chrome` が Chrome での検証を、これで行う）。
-
-```bash
-gasho-daemon session launch --cwd <フォルダー> --name <名前> [--agent claude|codex] [--trust] [--chrome] [--prompt <文> | --prompt-file <ファイル> | --prompt -]
-gasho-daemon session fork <名前か ID> [--name <名前>] [--chrome] [--prompt <文> | --prompt-file <ファイル> | --prompt -]
-gasho-daemon session send <名前か ID> (--text <文> | --file <ファイル> | -)
-gasho-daemon session list [--json]
-gasho-daemon session remove <名前か ID>
-gasho-daemon worktree remove <フォルダー> [--force]
-gasho-daemon worktree name <フォルダー> (<名前> | --clear)
-```
-
-- 動いている gasho-daemon に、その置き場（`~/.config/gasho/`、`GASHO_DAEMON_CONFIG` で変わる）の Unix ソケット `control.sock` で頼む。ソケットは本人だけが使える（0600）。Gasho サーバーを通らないので、ペアリングも要らず、Gasho サーバーが止まっていても使える
-- 中身は Gasho の画面からの起動・入力・名前の変更と同じ。起動したセッションは Gasho の画面にも出て、作業中の入力は Gasho の画面から送ったときと同じく扱う
-- `launch` は起動を待ち、プロンプトがあれば入力欄に送ってから、`{sessionId, name, cwd, terminal}` を JSON で出す。`name` は `claude agents`（Claude Code のセッション一覧）に出る名前で、ほかのセッションから SendMessage するときの宛先になる。Claude Code は新しいセッションを `--remote-control` の名前ではなくフォルダー名で並べるので、`--name` を付けたときは、まず `/rename` でその名前に変え、一覧に出るまで待ってからプロンプトを送る。`--name` が無いと、最初の発言のあとで Gasho が発言から名前を付け直すので、出した名前は変わる
-- `--trust` は、Claude Code の「このフォルダーを信頼するか」に Yes と答える（Gasho の画面の「信頼して起動する」と同じ）
-- `--agent codex` は、Claude Code の代わりに Codex のセッションを起動する。指定がなければ Claude Code。Codex のセッションには端末がないので、`launch` の JSON には `terminal` の代わりに `"agent": "codex"` が入る
-- `--chrome` は、Claude in Chrome つき（`claude --chrome`）で起動する。セッションは、利用者の Chrome を、そのプロファイルのログイン状態のまま操作できる。Chrome は working server に無くてもよく、同じ claude.ai アカウントでサインインした Claude の拡張機能があれば、別のコンピューターの Chrome にもつながる。セッションごとに、自分のタブグループを使う。休止から再開しても、`--chrome` のまま戻る。初回に Claude Code が出す Claude in Chrome の説明は、Enter で閉じる。Anthropic のプランでの `/login` と、Chrome の Claude の拡張機能（同じアカウントでサインイン）が要る。`doctor` の「Claude in Chrome」は、working server の Chrome がつながるかを示す。検証には、普段使いでない Chrome のプロファイルを勧める
-- `fork` は、Gasho の画面のフォークと同じ。Gasho が起動したセッションを、ここまでの会話ごと、同じフォルダーの新しいセッションに写して起動を待ち、プロンプトがあれば送ってから、`{sessionId, name, cwd, terminal, forkOf}` を JSON で出す。`--chrome` を付けると、写しは Claude in Chrome つきで起動する（元のセッションが Chrome つきなら、付けなくても Chrome つき）。セッションが自分を写して、ブラウザーでの検証を任せるのに使う（Skill `verify-in-chrome`）
-- `send` と `remove` は、`/clear` の前の ID でもセッションを見つける。出す JSON の `sessionId` は今の ID になる。`list --json` は、前の ID を `previousSessionIds` に出す
-- `list` は、セッションの ID の次にエージェント（`claude` か `codex`）を出す。`--json` は、Chrome つきのセッションに `"chrome": true` を出す。作業フォルダーが無くなったセッションに、行末の `(folder missing)`（`--json` では `"cwdMissing": true`）を付ける
-- `session remove` は、Gasho の画面のセッションの削除と同じ。Claude Code を終わらせて Gasho から外し、`{sessionId, name, cwd}` を JSON で出す。会話は残る。名前と ID の探し方は `send` と同じ。フォルダーが先に消えたセッションも消せる
-- `worktree remove` は、Gasho の画面のワークツリーの削除と同じ。中のセッションを終わらせてからフォルダーを消し（`git worktree remove`）、`{path, branch, ended}` を JSON で出す。`ended` は終わらせたセッション（`{sessionId, name}`）。未コミットの変更や、どのリモートにも無いコミットがあれば、何もせずにその件数を理由として返す。`--force` はそれでも消す。ブランチは消さない。`git worktree remove` で直接消すと、中のセッションは消えたフォルダーで動き続け、「リポジトリ外」に残る
-- `worktree name` は、Gasho の画面の「名前を変更…」と同じ。指定したフォルダーのワークツリー（ワークツリーの中のフォルダーを指定しても、そのワークツリー）に名前を付け、`{path, name}` を JSON で出す。`path` はワークツリーの最上位のフォルダー。`--clear` で名前を消し、ブランチ名に戻す。名前に空白や `#` が入るときは、`"#254 accordion"` のように引用符で囲む（囲まないと、シェルが `#` から後ろを読まない）。名前は Gasho サーバーに保存するので、gasho-daemon が Gasho サーバーにつながっていないときは、そう伝えて失敗する。名前を保存できない古い Gasho サーバーは答えないので、10 秒待って失敗する
-- 失敗したときは、gasho-daemon が返した理由をエラーとして出す（終了コード 1）
-- gasho-daemon が動いていないとき（ソケットが無い古い版のときも）は、そう伝えて起動の仕方を示す
-- `service install` で入れたときは PATH に `gasho-daemon` が無いので、`node ~/.local/share/gasho/daemon/current/node_modules/@4rtofl/gasho-daemon/lib/cli.js session …` で呼ぶ
-
-### 端末を管理する
-
-画面の「端末」で、登録した端末の一覧、名前の変更、登録の取り消し、登録コードの発行ができる。取り消した端末の接続はすぐに切れる。コマンドでも操作できる。
-
-```bash
-npm run hub:devices                              # 一覧
-node apps/hub/src/cli.ts revoke <端末の ID>      # 取り消し（30秒以内に接続が切れる）
-```
-
-いま動いているバージョンは、サイドバーの「設定」の「バージョン」の欄にまとめて出る。Gasho サーバー（clone から動かしているときは commit の短い SHA も）・画面のビルド・プラグインの API と、working server ごとの gasho-daemon とそのプラグインの API のバージョンを並べる。新しいバージョンが公開されているものには「〜に更新できます」が出て、押すと「端末」の画面の更新の欄へ移る。「バージョンをコピー」で、欄のバージョンをまとめてテキストでコピーできる。不具合を伝えるときに貼る。
-
-### プラグイン
-
-Gasho の画面と gasho-daemon には、プラグインで機能を足せる。仕組みは [docs/plugins.md](docs/plugins.md) にまとめた。プラグインは [GashoPlugins](https://github.com/4rtofl/GashoPlugins) に置く。GitHub の Issues と Pull requests のパネル、ホームの GitHub のタイルも、GitHub プラグイン（`github`）になった。
-
-プラグインは、サイドバーの「プラグイン」の画面で、GashoPlugins にあるものから選んで追加する。GashoPlugins の GitHub Actions が、版を上げたプラグインをビルドしてリリースに置き、プラグインの一覧（カタログ）を作る。Gasho サーバーは、そのカタログとプラグインを、Gasho サーバーのマシンの GitHub CLI（gh）で取ってくる。Gasho サーバーのマシンで `gh auth login` を済ませておく。
-
-プラグインの画面では、プラグインを追加するほかに、有効・無効をスイッチで切り替え、カタログに新しい版があれば更新し、外す（ゴミ箱のボタン）ことができる。GashoPlugins にあるプラグインは、ジャンル（連携、開発ツールなど）ごとに分けて出す。daemon の部分（working server で動く部分）は、有効なプラグインなら、すべての working server で動く。どれも、Gasho サーバーと gasho-daemon を起動し直さずに、開いている画面と gasho-daemon にすぐ反映する。daemon の部分は、プラグインに対応した gasho-daemon でだけ動く。古い gasho-daemon の working server では、プラグインの画面に「gasho-daemon が古い」と出る。
-
-作っているプラグインは、Gasho サーバーでコマンドを実行して入れる。
-
-```bash
-npm run hub:plugin -- add --link ~/repos/GashoPlugins/github/dist   # 作っているあいだ。ビルドするたびに画面と gasho-daemon が入れ替わる
-npm run hub:plugin -- add ~/repos/GashoPlugins/github/dist          # ビルドしたものを写して入れる（カタログを使わないとき）
-npm run hub:plugin -- list
-npm run hub:plugin -- remove github
-```
-
-### 外から使う（必要なとき）
-
-Gasho サーバーは LAN の中だけで使う前提にしている。外から使うときや、iPhone のホーム画面に追加して使うときは、Tailscale を導入する。手順は [docs/iphone.md](docs/iphone.md) にまとめた。
-
-1. Gasho サーバー・スマホ（・Mac）に Tailscale を入れる
-2. Gasho サーバーで `sudo tailscale serve --bg 7740` を実行する。`https://<マシン名>.<tailnet>.ts.net/` で Gasho を開けるようになる。Serve は Gasho サーバーに 127.0.0.1 からつなぐので、`GASHO_ALLOW_NETS` は変えなくてよい
-3. Mac の gasho-daemon を家の外からつなぐときは、Gasho サーバーを `GASHO_ALLOW_NETS=lan,tailscale npm run hub` で起動して、Tailscale のアドレスからも受け付ける
-4. iPhone で通知を受け取るときは、ホーム画面に追加した Gasho の「設定」で「この端末に通知する」をオンにする。通知は Apple の push service を通るので、Gasho サーバーから外（`web.push.apple.com`）へつながる必要がある
-
-### 開発
-
-```bash
-npm run web:dev    # Vite。/ws、/api、/plugins は Gasho サーバー（127.0.0.1:7740）に中継する
-npm test
-npm run test:coverage   # npm test のうち node --test で流すテスト（apps/*/test・scripts・e2e の .test.ts）について、ソースのファイルごとに、テストが通った行・分岐・関数の割合を出す。画面を描く Vitest のテストは含まない（CI では流さない）
-npm run typecheck
-```
-
-PR と main への push のたびに、GitHub Actions（`.github/workflows/ci.yml`）が Ubuntu で `npm run typecheck`・`npm test`・`npm run web:build` を流す。PR の画面に、それぞれの結果が別々に出る。
-
-### E2E テスト
-
-`e2e/` に、Playwright で実際の画面を操作するテストがある。ビルドした画面（`apps/web/dist`）を、Chromium（PC の幅）と WebKit（iPhone の幅・タッチ）で開く。
-
-```bash
-npx playwright install chromium webkit   # 初回だけ。ブラウザーを入れる
-npm run e2e                              # 画面をビルドしてから、全部のテストを流す
-npm run e2e -- --project chromium        # Chromium だけ。後ろに Playwright の引数を付けられる
-npx playwright show-trace e2e/test-results/<テスト>/trace.zip   # 落ちたテストの操作と画面を見る
-```
-
-- テストごとに、`/tmp/ge2e-*` に置き場を作り、Gasho サーバーを 127.0.0.1 の空いているポートで起動する。DB・プラグイン・キャッシュ・`HOME` もそこに置くので、ふだん使う Gasho サーバー・gasho-daemon・Claude Code の設定と会話には触れない。テストが終わると置き場を消す
-- ブラウザーは、登録コードで登録した状態（Cookie）で始まる
-- working server は、テストから動かす偽の gasho-daemon（`hub.fakeDaemon()`）を主に使う。版・できること・セッション・会話・答えの遅れや失敗・オフラインを、テストから決められる
-- 本物の gasho-daemon（`hub.startDaemon()`）も起動できる。claude と gh は偽物（`e2e/harness/bin/`）で、テストが渡した表から答え、受けた引数を記録する。偽の claude は、端末で動かすと入力欄を描き、送られた文に答えて会話のファイルに書く
-- Gasho サーバーが使う gh（プラグインの一覧）と npm（公開されている最新の版）も偽物にしてある
-- 起動の処理（`e2e/harness/index.ts`）は `@playwright/test` を読み込まないので、GashoPlugins のテストからも使える。Playwright の fixture は `e2e/tests/fixtures.ts` で組む
-
-main では、GitHub Actions の `.github/workflows/e2e.yml` が毎日 5:00（日本時間）に流す。起動するのは Cloudflare Worker（`infra/release-trigger`）である。手で流すときは `gh workflow run e2e.yml`。テストが落ちると、trace・スクリーンショット・動画を run の artifact（`e2e-results`）に残し、落ちたテストの名前と run の URL を書いた Issue（`bug` ラベル）を立てる。同じテストの Issue が開いていれば、そこにコメントを足す。PR の CI では流さない。
-
-### 公開
-
-gasho-daemon（`@4rtofl/gasho-daemon`）、Gasho サーバー（`@4rtofl/gasho-hub`。画面も入る）、プラグインの SDK（`@4rtofl/gasho-plugin-sdk`）は、GitHub Actions（`.github/workflows/release.yml`）が GitHub Packages に公開する。15分ごとに main を見て、前に公開してから中身が変わったパッケージだけを公開する。まだ一度も公開していないパッケージ（タグが無いもの）は、ソースに書いてある版のまま公開する。
-
-ワークフローを15分ごとに起動するのは、Cloudflare Worker（`infra/release-trigger`）である。GitHub Actions の `schedule` では動かなかったため、Cron Trigger から `workflow_dispatch` で起動している。Worker のデプロイと、使うトークンの作り方・替え方は、[infra/release-trigger/README.md](infra/release-trigger/README.md) に書いた。
-
-版は x.y.z の形にする。
-
-- x は変えない。gasho-daemon と Gasho サーバーは 0、SDK はプラグインの API のメジャーと同じ 1
-- 機能を足したときは y を上げ、z を 0 に戻す。前に公開してからマージした PR に `enhancement` のラベルが付いているとき、またはプラグインの API の版（`PLUGIN_API`）が変わったときを、機能の追加とする
-- それ以外は直しとして、z を上げる
-
-機能を足す PR には `enhancement` のラベルを付ける。PR では版を変えない。公開するときに、GitHub Actions が新しい版を `apps/daemon/src/daemon.ts` の `DAEMON_VERSION`、`apps/hub/src/version.ts` の `HUB_VERSION`、`packages/plugin-sdk/package.json` に書いて main にコミットし、そのコミットに `daemon-v<版>`・`hub-v<版>`・`plugin-sdk-v<版>` のタグを付けてから公開する。タグを付けたあとで公開に失敗したときは、次の回にそのタグから公開し直す。Gasho サーバーは、画面（`apps/web`）や SDK の名前と見た目（`packages/plugin-sdk` の `src` と `theme.css`）が変わったときと、`package-lock.json` で外の依存の版が変わったときにも公開する。
-
-15分を待たずに公開するときは、`gh workflow run release.yml` で動かす。次に何が公開されるかは、最新の main を checkout して `node scripts/release.ts plan` を実行すると見られる（何も変えない）。パッケージの中身を確かめるときは、`npm run pack -w @gasho/daemon`、`npm run pack -w @gasho/hub`、`npm run pack -w @gasho/plugin-sdk` で、それぞれの `dist/package` に作る。
-
-## 環境変数
-
-| 変数 | 使う側 | 既定値 |
-|---|---|---|
-| `GASHO_HUB_HOST` / `GASHO_HUB_PORT` | hub | `0.0.0.0` / `7740` |
-| `GASHO_ALLOW_NETS` | hub | `lan`（このマシンと LAN のプライベートアドレス）。CIDR と `lan`・`tailscale` をカンマで並べる |
-| `GASHO_DB` | hub | `~/.local/share/gasho/hub.db` |
-| `GASHO_WEB_DIST` | hub | パッケージでは、その中の `web`。clone では `apps/web/dist` |
-| `GASHO_PLUGINS_DIR` | hub | `~/.local/share/gasho/plugins`（入れたプラグイン） |
-| `GASHO_PLUGIN_CACHE` | hub | `~/.cache/gasho/hub-plugins`（配るプラグインの版ごとの写し） |
-| `GASHO_PLUGIN_REPO` | hub | `4rtofl/GashoPlugins`（プラグインを追加するリポジトリ） |
-| `GASHO_LATEST_CHECK` | hub | なし。`off` にすると、公開されている gasho-daemon と Gasho サーバーの最新の版を調べない |
-| `GASHO_VAPID_SUBJECT` | hub | `https://github.com/4rtofl/Gasho`（Web Push で push service に伝える送り手。`mailto:` か `https:` の URL） |
-| `GASHO_HUB_HOME` | hub | `~/.local/share/gasho/hub`（`service install` と更新が、版ごとに Gasho サーバーを入れるフォルダー） |
-| `GASHO_HUB_PROBATION_MS` | hub | `60000`（更新したあとの試しの期間。そのうちに止まった版は、前の版に戻す） |
-| `GASHO_HUB_ENV` | hub | `~/.config/gasho/hub.env`（起動するときに読む設定のファイル）。`off` にすると読まない |
-| `GASHO_NPM_BIN` | hub・daemon | Node.js と同じフォルダーの `npm`（最新の版を調べる、更新で入れる） |
-| `GASHO_DAEMON_CONFIG` | daemon | `~/.config/gasho/daemon.json` |
-| `GASHO_HUB_URL` | daemon | 登録した Gasho サーバーから決める |
-| `GASHO_HOOK_PORT` | daemon | `7741` |
-| `GASHO_HOOK_SECRET` | daemon・hooks install | なし |
-| `GASHO_CLAUDE_DIR` / `GASHO_CLAUDE_BIN` | daemon | `~/.claude` / `claude` |
-| `GASHO_CODEX_BIN` | daemon | `codex` |
-| `GASHO_GH_BIN` | hub・daemon | `gh` |
-| `GASHO_POLL_MS` | daemon | `3000` |
-| `GASHO_PLUGINS` | daemon | なし。`none` にすると、この working server ではプラグインの daemon の部分を動かさない |
-| `GASHO_DAEMON_HOME` | daemon | `~/.local/share/gasho/daemon`（`service install` と更新が、版ごとに gasho-daemon を入れるフォルダー） |
-| `GASHO_DAEMON_PROBATION_MS` | daemon | `60000`（更新したあとの試しの期間。そのうちに止まった版は、前の版に戻す。1時間を超える値は 60000 になる） |
-
-gasho-daemon の変数は `~/.config/gasho/daemon.env` に、hub の変数は `~/.config/gasho/hub.env` に、`名前=値` の形で書いておくこともできる。どちらも、コマンドが起動するときにこのファイルを読む。端末で設定した値のほうが優先される。
 
 ## フォント・アイコン・音
 
-画面のフォントは [Gen Interface JP](https://gen.typesetting.jp/)（Inter と Noto Sans JP を組み合わせた書体）で、npm の `gen-interface-jp` を使い、Gasho サーバーから配信する。外部の CDN には取りに行かない。使う太さは Regular・Medium・SemiBold の3つで、どれも文字の範囲ごとに分かれたファイルなので、ブラウザは表示する文字を含むファイルだけを読み込む。ライセンスは SIL Open Font License 1.1 で、全文を `apps/web/public/licenses/gen-interface-jp-OFL.txt` に置き、画面と一緒に `/licenses/gen-interface-jp-OFL.txt` で配信している。
+画面のフォントは [Gen Interface JP](https://gen.typesetting.jp/)（Inter と Noto Sans JP を組み合わせた書体）で、npm の `gen-interface-jp` を使い、Gasho サーバーから配信する。外部の CDN には取りに行かない。使う太さは Regular・Medium・SemiBold の3つで、どれも文字の範囲ごとに分かれたファイルなので、ブラウザーは表示する文字を含むファイルだけを読み込む。ライセンスは SIL Open Font License 1.1 で、全文を `apps/web/public/licenses/gen-interface-jp-OFL.txt` に置き、画面と一緒に `/licenses/gen-interface-jp-OFL.txt` で配信している。
 
 ホーム画面のアイコン（`apps/web/public/icons/`）は、[Noto Emoji](https://github.com/googlefonts/noto-emoji) の 🙏（`2D/svg/emoji_u1f64f.svg`）を画面の背景の色の上に置き、PNG にしたもの。ライセンスは SIL Open Font License 1.1 で、全文を `apps/web/public/licenses/noto-emoji-OFL.txt` に置き、`/licenses/noto-emoji-OFL.txt` で配信している。
 
 拍手の音（`apps/web/src/assets/clap.mp3`。サイドバーのロゴの隠し機能で鳴らす）は、Freesound にある Landau00 の [HandClap1.wav](https://freesound.org/people/Landau00/sounds/463687/) のプレビュー（MP3）をそのまま使っている。ライセンスは CC0 1.0（パブリックドメイン）。頭の無音を飛ばすことと、音量をそろえることは、鳴らすときに画面（`apps/web/src/lib/clap.ts`）で行う。
-
-## 注意
-
-LAN の中では通信が暗号化されない。端末のトークンも平文で流れるので、家の LAN を信用できる前提で使う。外から使うときや、LAN を信用できないときは、Tailscale を導入する。
-
-## nakamaba/
-
-`nakamaba/` は Nakamaba で配信しているサイトで、公開・更新は `nakamaba/` フォルダを指定して行う。
-
-```bash
-node <nakamaba スキルのフォルダ>/scripts/nakamaba.mjs publish nakamaba
-```

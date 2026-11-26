@@ -1,7 +1,8 @@
 // Work that Claude runs in the background: what the transcript says was started and has ended, what Claude Code's own
-// state says still runs, the screens of Claude Code's list of background tasks (2.1.325), and the daemon stopping that
-// work in a fake Claude Code terminal, where no key may reach the prompt box by mistake: an Esc there stops Claude (two
-// in a row open its rewind dialog), and an Enter there can send Claude Code's suggestion for the next message.
+// state says still runs, the screens of Claude Code's list of background tasks (2.1.325, 2.1.331), and the daemon
+// stopping that work in a fake Claude Code terminal, where no key may reach the prompt box by mistake: an Esc there
+// stops Claude (two in a row open its rewind dialog), and an Enter there can send Claude Code's suggestion for the next
+// message.
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -241,6 +242,97 @@ test("the list of background tasks: rows, groups, the cursor, and the view of on
   assert.equal(tasksDialog(`${LIST_TWO_GROUPS}\n${RULE}\n❯ \n${RULE}\n  ⏵⏵ auto mode on`), undefined);
 });
 
+// Screens of Claude Code 2.1.331 (a 50-column terminal): the hints change with the row the cursor is on, a group's
+// heading has no count, and the summary is left out once nothing runs.
+
+const PANEL_TOP = "▔".repeat(50);
+
+test("the list of background tasks of Claude Code 2.1.331", () => {
+  const shell = tasksDialog(
+    ["● started", "", PANEL_TOP, "  Background", "  1 shell", "", "  ❯ ● sleep 900   running", "", "      Earlier in this session (0)", "", "  x to stop · Enter to view · Esc to close"].join(
+      "\n",
+    ),
+  );
+  assert.ok(shell && shell.view === "list");
+  assert.equal(shell.summary, "1 shell");
+  assert.deepEqual(shell.rows, [{ label: "sleep 900", state: "running", selected: true, group: "1 shell" }]);
+  assert.equal(taskRowKind(shell.rows[0]!), "shell");
+
+  const away = tasksDialog(
+    [PANEL_TOP, "  Background", "  1 shell", "", "    ● sleep 900   running", "", "  ❯   Earlier in this session (0)", "", "  ↑/↓ to navigate · Esc to close"].join("\n"),
+  );
+  assert.ok(away && away.view === "list");
+  assert.equal(away.cursorAway, true);
+  assert.equal(away.rows.length, 1);
+
+  const agents = tasksDialog(
+    [
+      "✻ Waiting for 1 background agent to finish",
+      PANEL_TOP,
+      "  Background",
+      "  1 background agent",
+      "",
+      "    Background agents",
+      "  ❯ ● slow helper   running · Haiku 5.5",
+      "",
+      "    Completed",
+      "    ✔ slow helper   done · Haiku 5.5",
+      "",
+      "      Earlier in this session (0)",
+      "",
+      "  x to stop · f to foreground · Enter to view ·",
+      "  Esc to close",
+    ].join("\n"),
+  );
+  assert.ok(agents && agents.view === "list");
+  assert.deepEqual(agents.rows, [
+    { label: "slow helper", state: "running", selected: true, group: "Background agents" },
+    { label: "slow helper", state: "done", selected: false, group: "Completed" },
+  ]);
+  assert.deepEqual(agents.rows.map(taskRowKind), ["agent", undefined]);
+  assert.deepEqual(agents.rows.filter(taskRowActive).length, 1);
+
+  // Once the agent is stopped: no summary, and Claude Code holds its notice back while the list is open.
+  const stopped = tasksDialog(
+    [
+      "Background update waiting while this panel is open",
+      PANEL_TOP,
+      "  Background",
+      "",
+      "    Completed",
+      "  ❯ ✔ slow helper   done · Haiku 5.5",
+      "",
+      "      Earlier in this session (0)",
+      "",
+      "  ↑/↓ to navigate · Enter to view · Esc to close",
+    ].join("\n"),
+  );
+  assert.ok(stopped && stopped.view === "list");
+  assert.equal(stopped.summary, "");
+  assert.deepEqual(stopped.rows.filter(taskRowActive), []);
+
+  const empty = tasksDialog([PANEL_TOP, "  Background", "", "  No tasks currently running", "", "  ❯ Earlier in this session (0)", "", "  Esc to close"].join("\n"));
+  assert.ok(empty && empty.view === "list");
+  assert.deepEqual(empty.rows, []);
+  assert.equal(empty.cursorAway, true);
+
+  const details = [
+    PANEL_TOP,
+    "  Sleep for 900 seconds in background",
+    "  shell",
+    "",
+    "  Status:   running",
+    "  Command:  sleep 900",
+    "",
+    "  ← to go back · x to stop · Enter/Space to",
+    "  close · Esc to close",
+  ].join("\n");
+  assert.deepEqual(tasksDialog(details), { view: "details" });
+  // Another screen that ends in "Esc to close" is no list of background tasks.
+  assert.equal(tasksDialog(["  Help", "", "  /tasks  List background tasks", "", "  Esc to close"].join("\n")), undefined);
+  assert.equal(tasksDialog(["  Background", "", PANEL_TOP, "  Help", "  /tasks  List background tasks", "", "  Esc to close"].join("\n")), undefined);
+});
+
 test("the item for the background tasks has the keys when it is reversed; ↓ can go to the row of subagents instead", () => {
   const prompt = (footer: string, more: string[] = []) => [RULE, "❯ \x1b[2mstop the polling loop\x1b[22m", RULE, footer, ...more].join("\n");
   assert.equal(tasksItemFocused(readScreen(prompt("  ⏵⏵ auto mode on · 1 shell · ↓ to manage"))), false);
@@ -269,8 +361,12 @@ interface FakeTask {
   running: boolean;
 }
 
-/** Claude Code 2.1.325's prompt box, its footer and its list of background tasks, as far as the daemon drives them. */
+/**
+ * Claude Code's prompt box, its footer and its list of background tasks, as far as the daemon drives them: as 2.1.325
+ * draws the list, or as 2.1.331 does (`version`).
+ */
 class FakeClaude {
+  version: "2.1.325" | "2.1.331" = "2.1.325";
   tasks: FakeTask[] = [];
   /** Claude's turn runs (the footer then says "esc to interrupt"). */
   turn = false;
@@ -380,6 +476,7 @@ class FakeClaude {
       const t = this.active()[this.detailsOf];
       return [...head, RULE, "  Shell details", "  Status:   running", `  Command:  ${t?.label ?? ""}`, "  ← to go back · Esc/Enter/Space to close · x to", "  stop"].join("\n");
     }
+    if (this.mode === "list" && this.version === "2.1.331") return [...head, PANEL_TOP, ...this.list331()].join("\n");
     if (this.mode === "list") {
       const active = this.active();
       const shells = active.filter((t) => t.kind === "shell");
@@ -395,6 +492,40 @@ class FakeClaude {
       lines.push(`  ${this.cursor === order.length ? "❯" : " "}   Earlier in this session (0)`, "  ↑/↓ to select · Enter to view · x to stop ·", "  Esc to close");
       return [...head, RULE, ...lines].join("\n");
     }
+    return this.prompt();
+  }
+
+  /** The list as Claude Code 2.1.331 draws it: headings without counts, hints that follow the cursor. */
+  private list331(): string[] {
+    const active = this.active();
+    const shells = active.filter((t) => t.kind === "shell");
+    const agents = active.filter((t) => t.kind === "agent");
+    const ended = this.tasks.filter((t) => !t.running);
+    const groups = [shells.length && ["Shells", shells], agents.length && ["Background agents", agents]].filter(Boolean) as [string, FakeTask[]][];
+    const summary = [shells.length && `${shells.length} shell${shells.length > 1 ? "s" : ""}`, agents.length && `${agents.length} background agent${agents.length > 1 ? "s" : ""}`]
+      .filter(Boolean)
+      .join(" · ");
+    const lines = ["  Background", summary ? `  ${summary}` : "", ""];
+    if (!summary && ended.length === 0) lines.push("  No tasks currently running", "");
+    const order = [...shells, ...agents];
+    for (const [name, list] of groups) {
+      if (groups.length > 1 || ended.length > 0) lines.push(`    ${name}`);
+      for (const t of list) lines.push(`  ${order.indexOf(t) === this.cursor ? "❯" : " "} ● ${t.label}   running`);
+      lines.push("");
+    }
+    if (ended.length > 0) {
+      lines.push("    Completed");
+      for (const t of ended) lines.push(`    ✔ ${t.label}   ${t.kind === "agent" ? "done" : "killed"}`);
+      lines.push("");
+    }
+    const away = this.cursor === order.length;
+    lines.push(`  ${away ? "❯" : " "}   Earlier in this session (0)`, "");
+    lines.push(away ? (order.length ? "  ↑/↓ to navigate · Esc to close" : "  Esc to close") : "  x to stop · Enter to view · Esc to close");
+    return lines;
+  }
+
+  private prompt(): string {
+    const head = ["● launched", this.turn ? "✻ Working… (5s · ↓ 1.2k tokens)" : this.active().some((t) => t.kind === "agent") ? "✻ Waiting for 1 background agent to finish" : "✻ Baked for 2s · done 4:11 PM"];
     const shells = this.active().filter((t) => t.kind === "shell").length;
     const agents = this.active().filter((t) => t.kind === "agent");
     const item = shells ? `${shells} shell${shells > 1 ? "s" : ""}` : "";
@@ -585,4 +716,79 @@ test("stopping Claude when its turn has ended and only shells run: no Esc, and t
   assert.deepEqual(c.harm, []);
   assert.deepEqual(c.stopped, []);
   await done();
+});
+
+// Claude Code 2.1.331 (#262): the list was not told apart any more, so it stayed open after a stop; Claude Code then
+// holds back the notice of the stop, and nothing more could be typed into the session.
+
+test("2.1.331: stopping one of two shells, and the list is closed after", async () => {
+  const c = new FakeClaude();
+  c.version = "2.1.331";
+  c.tasks = [
+    { id: "b1", kind: "shell", label: "npm run dev", running: true },
+    { id: "b2", kind: "shell", label: "sleep 900", running: true },
+  ];
+  const { d, done } = await setup(c, () => "idle");
+  assert.deepEqual(await d.stopTasks(SID, "b2"), { ok: true });
+  assert.deepEqual(c.stopped, ["b2"]);
+  assert.equal(c.mode, "prompt");
+  assert.deepEqual(c.harm, []);
+  await done();
+});
+
+test("2.1.331: one shell alone opens in its own view; ← to the list, x, and the list is closed after", async () => {
+  const c = new FakeClaude();
+  c.version = "2.1.331";
+  c.tasks = [{ id: "b1", kind: "shell", label: "sleep 900", running: true }];
+  const { d, done } = await setup(c, () => "idle");
+  // As by hand: the view of the only task, then ← back to the list.
+  c.key("Down");
+  c.mode = "details";
+  c.focus = "box";
+  c.key("Left");
+  assert.equal(c.mode, "list");
+  assert.deepEqual(await d.stopTasks(SID, "b1"), { ok: true });
+  assert.deepEqual(c.stopped, ["b1"]);
+  assert.equal(c.mode, "prompt");
+  assert.deepEqual(c.harm, []);
+  await done();
+});
+
+test("2.1.331: stopping Claude while it waits for its subagent stops it and closes the list", async () => {
+  const c = new FakeClaude();
+  c.version = "2.1.331";
+  c.tasks = [
+    { id: "b1", kind: "shell", label: "npm run dev", running: true },
+    { id: "a1", kind: "agent", label: "slow helper", running: true },
+  ];
+  const { d, done } = await setup(c, () => "busy");
+  assert.deepEqual(await d.interrupt(SID), { ok: true });
+  assert.deepEqual(c.stopped, ["a1"]);
+  assert.equal(c.tasks[0]!.running, true);
+  assert.equal(c.mode, "prompt");
+  assert.deepEqual(c.harm, []);
+  await done();
+});
+
+test("a message waiting while the list of background tasks is left open closes it first, even while the session is busy", async () => {
+  for (const status of ["idle", "busy"]) {
+    const c = new FakeClaude();
+    c.version = "2.1.331";
+    c.tasks = [{ id: "a1", kind: "agent", label: "slow helper", running: false }];
+    c.mode = "list";
+    c.cursor = 0;
+    let now = status;
+    const { d, done } = await setup(c, () => now);
+    const r = await d.input({ type: "session.input", requestId: "r", sessionId: SID, text: "次へ進んで" });
+    assert.equal(r.ok, true);
+    await d.flushInput(SID);
+    assert.equal(c.mode, "prompt", status);
+    assert.deepEqual(c.harm, [], status);
+    // Claude Code goes on with the notice it held back, and the message is typed once the session is idle.
+    now = "idle";
+    d.settleUntil.delete(SID);
+    await d.flushInput(SID);
+    assert.deepEqual(c.submitted, ["次へ進んで"], status);
+    await done();
+  }
 });

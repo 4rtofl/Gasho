@@ -4,7 +4,8 @@
 // what is typed can be kept outside the component (`draft`), so it is still there when the box is shown again. With
 // `shell`, a text that starts with "!" is shown as a shell command (Claude Code's shell mode). With `commands`, a text
 // that starts with "/" offers Claude Code's skills above the box (SlashMenu, from EasyUI's Combobox). The keyboard
-// hint shows where it fits on the line, not by the window's width (Hint).
+// hint shows where it fits on the line, not by the window's width (Hint). The Stop button grows a little and darkens
+// under the pointer, like the buttons of EasyUI's Small Floating Dock and the primary variant of its Button.
 
 import {
   forwardRef,
@@ -24,6 +25,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, animate, motion, useMotionValue, useReducedMotion } from "framer-motion";
+import { motionTransitions } from "@/lib/motion-tokens";
 import { emptyShellInput, isShellInput } from "@/lib/shell";
 import { matchSlash, slashQuery, type SlashCommand, type SlashMatch } from "@/lib/slash";
 import { appleKeys, composing, pastedFiles } from "@/lib/text-input";
@@ -1184,8 +1186,12 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
               </span>
             )}
 
-            {/* send ⇄ stop */}
-            <div className="relative h-10 w-10 shrink-0">
+            {/* send ⇄ stop. The ring grows with the Stop button, so it stays around it. */}
+            <motion.div
+              className="relative h-10 w-10 shrink-0"
+              whileHover={stopShown && !reduce ? { scale: 1.08 } : undefined}
+              transition={motionTransitions.springSnappy}
+            >
               <motion.svg
                 viewBox="0 0 46 46"
                 aria-hidden
@@ -1224,6 +1230,7 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
                   sendReady
                     ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
                     : "bg-black/[0.06] text-neutral-400 dark:bg-white/[0.08] dark:text-neutral-500",
+                  stopShown && "[@media(hover:hover)]:hover:bg-neutral-700 dark:[@media(hover:hover)]:hover:bg-neutral-200",
                   focusRing,
                   "disabled:cursor-not-allowed",
                 )}
@@ -1243,7 +1250,7 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
                   transition={{ type: "spring", duration: 0.35, bounce: 0.3 }}
                 />
               </motion.button>
-            </div>
+            </motion.div>
           </div>
         </div>
 

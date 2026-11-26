@@ -507,14 +507,23 @@ export interface TaskRow {
  */
 export type TasksDialog = { view: "list"; summary: string; rows: TaskRow[]; cursorAway: boolean } | { view: "details" };
 
-/** The hints at the bottom of the list ("↑/↓ to select · Enter to view · x to stop · Esc to close"), and of one task's view. */
-const TASK_LIST_HINT_RE = /↑\/↓ to select\b.*\bEsc to close/;
+/**
+ * The hints at the bottom of the list, and of one task's view. The list's hints end in "Esc to close"; what comes
+ * before changes with the version and with the row the cursor is on ("↑/↓ to select · Enter to view · x to stop ·
+ * Esc to close" in 2.1.325; "x to stop · Enter to view · Esc to close", "↑/↓ to navigate · Esc to close" or only
+ * "Esc to close" in 2.1.331), so only that end is looked for, under the list's heading.
+ */
+const TASK_LIST_HINT_RE = /\bEsc to close$/;
 const TASK_DETAILS_HINT_RE = /← to go back\b.*\bto close\b/;
+/** The list's summary under its heading ("1 active shell · 1 active agent", "1 shell", "No tasks currently running"); 2.1.331 leaves it out once nothing runs. */
+const TASK_SUMMARY_RE = /^(\d+ |No tasks\b)/;
 /** "❯ ● sleep 900          running", "✔ slow helper   done · Haiku 5.5": a status mark, the label, then its state. */
 const TASK_ROW_RE = /^\s*(❯\s*)?[●◯○◉◎✔✓✗✘×■◆⏺]\s+(.+?)\s{2,}([a-z]+)\b/;
-/** "Shells (2)", "Local agents (1)", "Completed (1)": a group's heading. */
-const TASK_GROUP_RE = /^\s*([A-Z][A-Za-z ]*?) \(\d+\)\s*$/;
+/** "Shells (2)", "Local agents (1)", "Completed (1)" (2.1.325), "Background agents", "Completed" (2.1.331): a group's heading. */
+const TASK_GROUP_RE = /^\s*([A-Z][A-Za-z ]*?)(?: \(\d+\))?\s*$/;
 const TASK_EARLIER_RE = /Earlier in this session/;
+/** The top edge of the list's panel: "▔▔▔…" (2.1.331), "───…" (2.1.325). */
+const TASK_PANEL_EDGE_RE = /^\s*(▔{10,}|─{10,})\s*$/;
 /** The states of a row whose task has ended. */
 const ENDED_STATES = new Set(["done", "completed", "failed", "error", "stopped", "killed", "cancelled", "canceled"]);
 
@@ -526,16 +535,17 @@ export function tasksDialog(screen: string): TasksDialog | undefined {
   const tail = lines.slice(Math.max(0, end - 3), end).join(" ").replace(/\s+/g, " ");
   if (TASK_DETAILS_HINT_RE.test(tail)) return { view: "details" };
   if (!TASK_LIST_HINT_RE.test(tail)) return undefined;
-  // The list runs from its heading ("Background") down to the hints.
+  // The list runs from its heading ("Background"), right under the top edge of its panel, down to the hints.
   let top = end - 1;
   while (top >= 0 && lines[top]!.trim() !== "Background") top--;
-  if (top < 0) return undefined;
+  if (top < 1 || !TASK_PANEL_EDGE_RE.test(lines[top - 1]!)) return undefined;
   const body = lines.slice(top + 1, end).filter(Boolean);
-  const summary = body[0]?.trim() ?? "";
+  const first = body[0]?.trim() ?? "";
+  const summary = TASK_SUMMARY_RE.test(first) ? first : "";
   const rows: TaskRow[] = [];
   let group = summary;
   let cursorAway = false;
-  for (const line of body.slice(1)) {
+  for (const line of summary ? body.slice(1) : body) {
     const row = TASK_ROW_RE.exec(line);
     if (row) {
       rows.push({ label: row[2]!.trim(), state: row[3]!, selected: Boolean(row[1]), group });

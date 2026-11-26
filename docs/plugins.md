@@ -56,8 +56,9 @@ Gasho のプラグインは、Gasho の画面の決まった場所に、項目�
 | P17 | サイドバーの worktree の一覧の代わりに、プラグインが決めたカテゴリに分けてセッションを並べる。使えるのは1つのプラグインの一覧だけ（API 1.7） |
 | P18 | サイドバーの worktree の一覧を、プラグインが決めたカテゴリに分けて出す。分け方は一覧のメニューで選び、いくつのプラグインのものからでも選べる（API 1.8）。行を別のカテゴリへドラッグしたことを、プラグインに伝える（API 1.9） |
 | P19 | プラグインのページの横に、セッションのパネル（P4）と同じパネルを開く（API 1.11） |
+| P20 | セッションのファイルのパネルで開いたファイルを、拡張子ごとに、Gasho の表示の代わりにプラグインの部品で描く（API 1.18） |
 
-P6 は、いまの GitHub の機能がホームにタイルを持っているので足した。P8 は GitHub では使わないが、working server の様子を監視するプラグインのために、API 1.5 で足した。P13 は、エージェントが作業しているあいだ、その様子を会話に出すプラグインのために、API 1.2 で足した。P14 は、セッションの Context Window の使用率と、Claude.ai のプランで決まっている使用量の上限を出すプラグインのために、API 1.4 で足した。P15 は、worktree の Issue と Pull request を、セッションと並んだタブで開くプラグイン（GashoPlugins の github-allmighty）のために、API 1.5 で足した。P16 は、Gasho の見た目を好みの色に変えるテーマを1つずつプラグインにして、GashoPlugins のカタログから選んで入れるために、API 1.6 で足した。P17 は、サイドバーに worktree の行の代わりに、リポジトリごとのカテゴリでセッションを並べるプラグイン（GashoPlugins の Session List Rewind）のために、API 1.7 で足した。P18 は、worktree の行のまま、リポジトリごとや作業中・待機中のカテゴリに分けて出すプラグイン（GashoPlugins の Better WorktreeList）のために、API 1.8 で足した。API 1.9 では、利用者が作った見出しに worktree を手で入れて分けるプラグイン（GashoPlugins の worktree-status）のために、P18 の分け方に行を別のカテゴリへ動かしたときに呼ぶ関数（`useOnMove`）と、すべてのブラウザーで共通の値を Gasho サーバーに保存するフック（`useSharedState`）を足した。P19 は、レビューする Pull request の一覧のページで、行を押すとその Pull request をセッションのパネルと同じ形で横に開くプラグイン（GashoPlugins の github-review）のために、API 1.11 で足した。
+P6 は、いまの GitHub の機能がホームにタイルを持っているので足した。P8 は GitHub では使わないが、working server の様子を監視するプラグインのために、API 1.5 で足した。P13 は、エージェントが作業しているあいだ、その様子を会話に出すプラグインのために、API 1.2 で足した。P14 は、セッションの Context Window の使用率と、Claude.ai のプランで決まっている使用量の上限を出すプラグインのために、API 1.4 で足した。P15 は、worktree の Issue と Pull request を、セッションと並んだタブで開くプラグイン（GashoPlugins の github-allmighty）のために、API 1.5 で足した。P16 は、Gasho の見た目を好みの色に変えるテーマを1つずつプラグインにして、GashoPlugins のカタログから選んで入れるために、API 1.6 で足した。P17 は、サイドバーに worktree の行の代わりに、リポジトリごとのカテゴリでセッションを並べるプラグイン（GashoPlugins の Session List Rewind）のために、API 1.7 で足した。P18 は、worktree の行のまま、リポジトリごとや作業中・待機中のカテゴリに分けて出すプラグイン（GashoPlugins の Better WorktreeList）のために、API 1.8 で足した。API 1.9 では、利用者が作った見出しに worktree を手で入れて分けるプラグイン（GashoPlugins の worktree-status）のために、P18 の分け方に行を別のカテゴリへ動かしたときに呼ぶ関数（`useOnMove`）と、すべてのブラウザーで共通の値を Gasho サーバーに保存するフック（`useSharedState`）を足した。P19 は、レビューする Pull request の一覧のページで、行を押すとその Pull request をセッションのパネルと同じ形で横に開くプラグイン（GashoPlugins の github-review）のために、API 1.11 で足した。P20 は、ファイルのパネルで開いた画像を拡大・縮小し、同じフォルダーの前と後の画像に移るプラグイン（GashoPlugins の Image Preview）のために、API 1.18 で足した。
 
 ## 構成
 
@@ -152,7 +153,7 @@ GitHub プラグインの場合は、次のようになる。
 | `name`、`description` | 画面に出す名前（40文字まで）と説明 |
 | `genre` | ジャンルの ID。GashoPlugins のプラグインでは必ず書き、GashoPlugins の `genres.json` にあるジャンル（連携の `integration`、開発ツールの `devtools` など）から1つ選ぶ。GashoPlugins の GitHub Actions が、Pull request と main への push のたびに確かめる。プラグインの画面は、カードにジャンルの名前を出し、「GashoPlugins にあるもの」をジャンルごとに分けて並べる（P9）。ジャンルの名前と並びは、カタログから読む（P10）。Gasho サーバーは、ID の形だけを確かめる |
 | `version` | プラグインの版（1.2.0 の形）。GashoPlugins に新しい版を出すときに上げる。プラグインの画面は、カタログの版が入れた版より新しいときに「更新」を出す。ホットリロードで入れ替えるかは、版ではなく中身のハッシュで判断する |
-| `api` | プラグインが前提にする、プラグインの API の版。Gasho は、メジャーが同じで、マイナーが Gasho の対応する版以下のものだけを読み込む。daemon の部分は、マイナーがその gasho-daemon の版以下の working server でだけ使える（それより古い gasho-daemon は「古い」と出す）。拡張点を足すなど、前の版のプラグインがそのまま動く変更ではマイナーを上げ、動かなくなる変更ではメジャーを上げる。1.1 で、`session.launch`、`useLaunchSession`、`useNavigation` の `openSession`、daemon の部分の `ctx.folders()` と `ctx.dataDir` を足した。1.2 で、会話の末尾（P13、`conversationEnd`）と `useSessionActivity` を足した。1.3 で、daemon の部分の `ctx.github` を足した。1.4 で、入力欄の下（P14、`composerFooter`）、SDK の `Popover`、`SessionInfo` の `context` と `limits` を足し、プラグイン専用のフォルダーで動く Claude Code をセッションとして扱わないようにした。1.5 で、daemon の部分の `ctx.emit` と画面の部分の `useEvent`（P8）、worktree のタブ（P15、`worktreeTabs`・`worktreeViews`）、`useNavigation` の `worktreeHref`・`openWorktreeView` を足した。1.6 で、テーマ（P16、`theme`）を足した。1.7 で、サイドバーのセッションの一覧（P17、`sessionList`）を足した。1.8 で、サイドバーの worktree の一覧の分け方（P18、`worktreeGroupings`）を足した。1.9 で、分け方の `useOnMove` と、`useSharedState` を足した。1.10 で、`useRemoveWorktree`、`removeWorktreeProblem`、`permissions` の `worktree.remove` を足した。gasho-daemon は、1.5 から 1.10 を名乗るようにした（`worktree.remove` に答えるのはこの gasho-daemon からなので、api 1.10 の daemon の部分は、これより古い gasho-daemon では「古い」と出る）。1.11 で、ページのパネル（P19、`pagePanels`）を足した。P19 は画面だけの変更だが、api 1.11 の daemon の部分が動くよう、gasho-daemon も 1.11 を名乗る（それより古い gasho-daemon では「古い」と出る）。1.12 で、`useSendInput` の `model`・`effort`・`ultracode` と結果の `data`（`SendInputResult`）を足した。これも画面だけの変更だが、gasho-daemon も 1.12 を名乗る。1.14 で、`useRemoveSession` と `permissions` の `session.remove` を足した。これも画面だけの変更だが、gasho-daemon も 1.14 を名乗る。1.15 で、daemon の部分の `onSessionStop` と、`permissions` の `session.notification` を足した。`onSessionStop` を呼ぶのはこの gasho-daemon からなので、api 1.15 の daemon の部分は、これより古い gasho-daemon では「古い」と出る。1.16 で、`useLaunchSession` の `agent` と、daemon の部分の `ctx.session` の `agent` を足した。1.17 で、`useSendInput` と `useCall` の結果（`CallResult`）に `unknown` を足した。これも画面だけの変更だが、gasho-daemon も 1.17 を名乗る |
+| `api` | プラグインが前提にする、プラグインの API の版。Gasho は、メジャーが同じで、マイナーが Gasho の対応する版以下のものだけを読み込む。daemon の部分は、マイナーがその gasho-daemon の版以下の working server でだけ使える（それより古い gasho-daemon は「古い」と出す）。拡張点を足すなど、前の版のプラグインがそのまま動く変更ではマイナーを上げ、動かなくなる変更ではメジャーを上げる。1.1 で、`session.launch`、`useLaunchSession`、`useNavigation` の `openSession`、daemon の部分の `ctx.folders()` と `ctx.dataDir` を足した。1.2 で、会話の末尾（P13、`conversationEnd`）と `useSessionActivity` を足した。1.3 で、daemon の部分の `ctx.github` を足した。1.4 で、入力欄の下（P14、`composerFooter`）、SDK の `Popover`、`SessionInfo` の `context` と `limits` を足し、プラグイン専用のフォルダーで動く Claude Code をセッションとして扱わないようにした。1.5 で、daemon の部分の `ctx.emit` と画面の部分の `useEvent`（P8）、worktree のタブ（P15、`worktreeTabs`・`worktreeViews`）、`useNavigation` の `worktreeHref`・`openWorktreeView` を足した。1.6 で、テーマ（P16、`theme`）を足した。1.7 で、サイドバーのセッションの一覧（P17、`sessionList`）を足した。1.8 で、サイドバーの worktree の一覧の分け方（P18、`worktreeGroupings`）を足した。1.9 で、分け方の `useOnMove` と、`useSharedState` を足した。1.10 で、`useRemoveWorktree`、`removeWorktreeProblem`、`permissions` の `worktree.remove` を足した。gasho-daemon は、1.5 から 1.10 を名乗るようにした（`worktree.remove` に答えるのはこの gasho-daemon からなので、api 1.10 の daemon の部分は、これより古い gasho-daemon では「古い」と出る）。1.11 で、ページのパネル（P19、`pagePanels`）を足した。P19 は画面だけの変更だが、api 1.11 の daemon の部分が動くよう、gasho-daemon も 1.11 を名乗る（それより古い gasho-daemon では「古い」と出る）。1.12 で、`useSendInput` の `model`・`effort`・`ultracode` と結果の `data`（`SendInputResult`）を足した。これも画面だけの変更だが、gasho-daemon も 1.12 を名乗る。1.14 で、`useRemoveSession` と `permissions` の `session.remove` を足した。これも画面だけの変更だが、gasho-daemon も 1.14 を名乗る。1.15 で、daemon の部分の `onSessionStop` と、`permissions` の `session.notification` を足した。`onSessionStop` を呼ぶのはこの gasho-daemon からなので、api 1.15 の daemon の部分は、これより古い gasho-daemon では「古い」と出る。1.16 で、`useLaunchSession` の `agent` と、daemon の部分の `ctx.session` の `agent` を足した。1.17 で、`useSendInput` と `useCall` の結果（`CallResult`）に `unknown` を足した。これも画面だけの変更だが、gasho-daemon も 1.17 を名乗る。1.18 で、ファイルの表示（P20、`fileViewers`）を足した。画面だけの変更なので、gasho-daemon は 1.17 のまま名乗る。そのため、api 1.18 のプラグインの daemon の部分は、どの gasho-daemon でも「古い」と出る |
 | `web`、`daemon` | 画面の部分と daemon の部分のファイル。`web`・`daemon`・`theme` のうち、少なくとも1つは要る |
 | `methods` | 画面の部分から呼べる、daemon の部分のメソッド。`kind` は、読むだけのもの（`read`）か、何かを変えるもの（`write`）か。`write` の呼び出しは操作のログに残す。`timeoutSeconds` は待つ時間で、既定は15秒、長くても120秒まで |
 | `permissions` | 読む・出す以外に、画面の部分がすること。`session.input`（セッションに発言を送る）、`session.launch`（セッションを起動する。API 1.1）、`session.remove`（Gasho が起動したセッションを削除する。API 1.14）、`worktree.remove`（worktree を中のセッションとともに削除する。API 1.10）、`session.notification`（セッションの応答が終わったときの通知を、daemon の部分の `onSessionStop` で置き換える。API 1.15） |
@@ -188,6 +189,7 @@ P13 会話の末尾      ─▶ 最後の発言の下に出し、会話と一緒
 P14 入力欄の下      ─▶ 入力欄の下の行で、文字数の左に出す（スマホでも出す）
 P15 worktree のタブ ─▶ タブの下に、セッションの代わりにプラグインの画面を出す
 P19 ページのパネル  ─▶ P2 のページの右に、P4 と同じパネルを開く（スマホでは画面全体）
+P20 ファイルの表示  ─▶ ファイルのパネルで開いたファイルを、Gasho の表示の代わりに描く
 ```
 
 サイドバーのセッションの一覧（P17）を足すプラグインがあれば、サイドバーの worktree の一覧の代わりに、そのプラグインが決めたカテゴリにセッションを並べる。worktree の一覧の分け方（P18）を足すプラグインがあれば、一覧の見出しのメニューで選んだ分け方のカテゴリに、worktree の行を分けて出す。
@@ -275,7 +277,7 @@ sidebar: [{ id: "repos", label: "リポジトリ", icon: FolderGit2, page: { id:
 
 ### セッションのヘッダー（P3）
 
-項目は、セッション画面のヘッダーの2行目、いまの「Issues」や「ファイル」が並んでいる行に足し、同じくアイコンと文字のボタンにする。右上の、状態とヘッダーを隠すボタンのところには足さない。スマホではそこが画面上部のバーになり、幅が足りないためである。ヘッダーを隠しているあいだは、ほかの項目と同じく出さない。
+項目は、セッション画面のヘッダーの2行目、いまの「Issues」や「ファイル」が並んでいる行に足し、同じくアイコンと文字のボタンにする。右上の、状態のところには足さない。スマホではそこが画面上部のバーになり、幅が足りないためである。ヘッダーを隠しているあいだは、ほかの項目と同じく出さない。
 
 並ぶ位置は、`order` の数で決める。Gasho の項目は、次の位置に置く。
 
@@ -427,7 +429,7 @@ function useIssueTab({ worktree, daemon }: WorktreeContext): WorktreeTab[] {
 
 セッションが無くなってサイドバーに残した worktree では、`sessions` が空で、`branch` と `github` は、最後にセッションがあったときのものになる。
 
-登録したリポジトリ（README の「Gasho からセッションを起動して、入力する」）の worktree でセッションの無いものも、`sessions` が空になる。`branch` は `git worktree list` で読んだもの、`github` はリポジトリのものになる。
+登録したリポジトリ（[usage.md](usage.md) の「リポジトリを登録する」）の worktree でセッションの無いものも、`sessions` が空になる。`branch` は `git worktree list` で読んだもの、`github` はリポジトリのものになる。
 
 画面から daemon の部分のメソッドを呼ぶときは、セッションを指さなくてよい。GitHub の Issue や Pull request を読むだけなら、`worktree.github` と `worktree.branch` を引数で渡し、daemon の部分が `ctx.github.read` に `--repo` で渡す。worktree のフォルダーで git などを動かすときは、`worktree.sessions` のセッションを指して呼ぶ（daemon の部分の `ctx.session` になる）か、daemon の部分が `ctx.folders()` でフォルダーを確かめる。ブラウザーから来たパスを信用しないのは、ほかの呼び出しと同じである。
 
@@ -597,6 +599,7 @@ function useMoveToHeading() {
 - ドラッグは、同じカテゴリの中の並べ替えと同じく、PC では行そのもの、スマホではつまみを動かす。行の上下の端が見出しの真ん中を越えると、その見出しのカテゴリに入る。行の無いカテゴリ（見出しだけのもの）、畳んだカテゴリ、「その他」にも入れられる。キーボードでは、カテゴリの先頭で Alt+↑ を押すと上のカテゴリの最後へ、最後で Alt+↓ を押すと下のカテゴリの先頭へ動く
 - Gasho は、落とした行を、落とした場所にすぐ出し、関数が返す Promise が終わるまでそのまま出す。そのあとは、`useCategories` の答えのとおりに出す。ポインターが一覧の上にあるあいだは、P18 のほかの行と同じく、行を落としたカテゴリに止めておき、ポインターが離れてから答えのとおりに並べ直す。関数は、`useCategories` の答えを変えるもの（下の `useSharedState` の値など）を変える。何も変えなければ、行は元のカテゴリに戻る
 - 落としたカテゴリの中の順は、同じカテゴリの中で並べ替えたときと同じく、Gasho がブラウザーごとに覚える。`index` は、プラグインが順も覚えたいときに使う
+- Shift キーで選んだ複数の行の1つを落とすと、選んだ行のうち別のカテゴリにあるものも、落とした場所に、画面に並んでいる順でまとめて入る。Gasho は関数を worktree ごとに1回ずつ、その順に、前の呼び出しの Promise が終わってから呼ぶ。`index` は、まとめて入れた worktree がすべて入ったあとの場所である。関数は、上の例の `setPlaced` のように、前の呼び出しが変えた値に重ねて変える
 - 関数がエラーを投げたとき、返した Promise が失敗したときは、行を元のカテゴリに戻し、一覧の見出しの下に理由を10秒出す。`useOnMove` 自身がエラーを投げたときは、`useCategories` のときと同じく、分けない一覧に戻す
 
 ### ページのパネル（P19）
@@ -622,6 +625,34 @@ function PrPanel({ params, docked }: PagePanelProps) {
 - パネルの部品は、SDK の `Panel` に、見出し、副題、右上のボタンと中身を渡す。閉じるボタンと「戻る」は Gasho が付ける。部品は、引数（`params`）と、ページの横に出しているか（`docked`）を受け取る。セッションに付いたパネルではないので、`useSessionContext` は undefined を返す
 - プラグインが無効か読み込めないときと、そのパネルが無いときは、`Panel` の枠にそのことを出す
 
+### ファイルの表示（P20）
+
+セッションのファイルのパネルで開いたファイルを、Gasho の表示の代わりに、プラグインの部品で描く（API 1.18）。どのファイルを描くかは拡張子で決める。GashoPlugins の Image Preview は、画像を拡大・縮小し、同じフォルダーの前と後の画像に移るために使う。
+
+```tsx
+fileViewers: [{ id: "image", extensions: ["png", "jpg", "jpeg", "gif", "webp"], component: ImageView }],
+
+function ImageView({ path, file, entries, openFile }: FileViewerProps) {
+  if (!file.image) return <p>{file.tooLarge ? "大きすぎるので表示しません。" : "画像を読めませんでした。"}</p>;
+  return <img alt={path} src={`data:${file.image.mime};base64,${file.image.data}`} />;
+}
+```
+
+- `extensions` は、扱う拡張子の配列（`"png"`、`".PNG"`、`"tar.gz"`）で、点の有無と大文字・小文字を区別しない。ファイルの名前がその拡張子で終わるとき、その部品で描く。空の配列や、拡張子でないものが入った配列は、読み込むときに断る。同じ拡張子を扱うプラグインが複数あるときは、プラグインの順（名前の順）で最初のものを使う
+- プラグインが描くのは、ファイルの中身の部分だけである。パネルの見出しと右上のボタン（編集・再読み込み）、フォルダーの場所、容量と更新の時刻の行は、Gasho が描く。テキストのファイルの「編集」を押すと、Gasho の編集の欄を出す。プラグインの部品を出しているあいだは、Markdown と SVG の「表示・テキスト」と「折り返す」を出さない
+- 部品は、ファイルを読み終えてから描く。それまでは Gasho が「読み込み中…」を出す。ファイルごとに作り直すので、別のファイルを開くと、部品の状態（拡大の倍率など）は消える。残すときは `usePluginState` を使う
+- 部品がエラーを投げたときは、そのファイルを Gasho の表示で出し、エラーをプラグインの画面に出す。プラグインを無効にしたとき、読み込めないときも、Gasho の表示で出す
+
+部品が受け取るもの（`FileViewerProps`）:
+
+| 名前 | 中身 |
+|---|---|
+| `machine`、`session` | ファイルのパネルを開いた working server とセッション。`useSessionContext()` も使える |
+| `path` | 開いたファイルの、セッションのフォルダーからのパス（`docs/shot.png`） |
+| `file` | gasho-daemon が読んだファイル（`FileContent`）。画像はデータ（`image`）を、テキストは中身（`text`）を持つ。大きすぎて送らなかったファイル（`tooLarge`）と、テキストでも画像でもないファイル（`binary`）もそのまま渡すので、部品がそのことを出す |
+| `entries` | ファイルのフォルダーの項目（`DirEntry`）。ファイルの一覧と同じく、フォルダーが先で、次に名前の順。ファイルを開くたびに読み直す。読むまでと、読めないときは `undefined` |
+| `openFile(パス)` | セッションのフォルダーからのパスのファイルを、パネルに開く。ファイルの一覧で押したときと同じく、ブラウザーの履歴に足すので、戻るで前のファイルに戻る |
+
 ## 画面の部分から使えるもの
 
 画面の部分は、Gasho の状態と操作を、SDK のフックと関数で使う。プラグインが SDK だけを使うようにするのは、Gasho の中を変えても、プラグインが壊れないようにするためである。
@@ -629,7 +660,7 @@ function PrPanel({ params, docked }: PagePanelProps) {
 | 名前 | すること |
 |---|---|
 | `useMachines()` | working server とセッションの一覧。Gasho の画面と同じもので、読むだけ |
-| `useSessionContext()` | ヘッダーの項目、パネル、会話の末尾の部品の中で、そのセッション、working server、daemon の部分を使えるか |
+| `useSessionContext()` | ヘッダーの項目、パネル、会話の末尾の部品、ファイルの表示（P20）の中で、そのセッション、working server、daemon の部分を使えるか |
 | `useDaemonReady(machine)` | その working server で、このプラグインの daemon の部分が動いているか。動いていないときは、その理由 |
 | `useRequest(呼び出し, 指定)` | daemon の部分のメソッドを呼び、結果を覚えておく（P7） |
 | `useCall()` | daemon の部分のメソッドを1回呼ぶ関数を返す。`write` のメソッドに使う。`summary` に書いたことは、操作のログに残る。結果は `{ ok: true, data }` か `{ ok: false, error }`。API 1.17 から、結果が届く前に Gasho サーバーとの接続が切れると `{ ok: false, error, unknown: true }` を返す。メソッドは動いたかもしれないので、呼び直すと 2 回動くことがある |
@@ -639,7 +670,7 @@ function PrPanel({ params, docked }: PagePanelProps) {
 | `useSharedState(key, 初期値)` | Gasho サーバーに保存する JSON の値と、値を変える関数（API 1.9）。すべてのブラウザーで同じ値を読み書きする。下の「すべてのブラウザーで共通の値」を参照 |
 | `useNavigation()` | このプラグインのページとパネルを開く・閉じる・戻る。ホームのタイルのようにセッションの外からは、セッションを指定してパネルを開く。`<a href>` に入れる URL も作る。`openSession(machine, sessionId)` と `sessionHref(…)` で、Gasho のセッションの画面に移る（API 1.1）。`openWorktreeView(画面, 引数, at)` と `worktreeHref(…)` で、worktree のタブの画面を開く（API 1.5、P15） |
 | `useSendInput()` | セッションに発言を送る関数を返す。引数は `{ machine, sessionId, text }`。`permissions` に `session.input` が要る。入力欄から送ったときと同じく、会話の末尾にすぐ出し、操作のログに残す。API 1.12 から、引数に `model`・`effort`・`ultracode` も渡せる。入力欄のピッカーと同じく、送る前にそのセッションだけ切り替える。切り替えられるのは Gasho から起動したセッションで、gasho-daemon が `MachineInfo.features` にその項目を挙げているとき（0.6.0 以降）だけである。結果の `data` には、待ってから入力されるか（`queued`）、切り替えられなかった項目（`unapplied`）とその理由（`warning`）が入る。切り替えられなくても、文はそのまま送る。休止中のセッション（`SessionInfo.hibernation`）に送ると、gasho-daemon が再開してから入力する（`queued` は true）。API 1.17 から、結果が届く前に Gasho サーバーとの接続が切れると `{ ok: false, error, unknown: true }` を返す。文はセッションに入力されたかもしれないので、送り直すと 2 回届くことがある。Claude の作業中に届いた文は、作業が終わってから会話に出る |
-| `useLaunchSession()` | working server のフォルダーでセッションを起動する関数を返す（API 1.1）。引数は `{ machine, cwd, name, trust, agent }`。`agent`（API 1.16）に `"codex"` を渡すと Codex のセッションを起動し、渡さなければ Claude Code を起動する。設定の既定のエージェントは使わない。`permissions` に `session.launch` が要る。「新しいセッション」と同じく起動し、操作のログに残す。Claude Code がフォルダーを信頼するかを聞いたときは起動せず、`needsTrust` を返す。利用者に確かめてから `trust: true` で呼び直す。起動先に未使用のセッションがあると、Gasho が削除するかを利用者に聞き、答えが出てから起動する。プラグインは起動の前に worktree などを作っていることがあるので、プラグインからの起動は、この確認でキャンセルできない |
+| `useLaunchSession()` | working server のフォルダーでセッションを起動する関数を返す（API 1.1）。引数は `{ machine, cwd, name, trust, agent }`。`agent`（API 1.16）に `"codex"` を渡すと Codex のセッションを起動し、渡さなければ Claude Code を起動する。設定の既定のエージェントは使わない。Claude Code は、設定の既定のモデルと既定の Effort で起動する。`permissions` に `session.launch` が要る。「新しいセッション」と同じく起動し、操作のログに残す。Claude Code がフォルダーを信頼するかを聞いたときは起動せず、`needsTrust` を返す。利用者に確かめてから `trust: true` で呼び直す。起動先に未使用のセッションがあると、Gasho が削除するかを利用者に聞き、答えが出てから起動する。プラグインは起動の前に worktree などを作っていることがあるので、プラグインからの起動は、この確認でキャンセルできない |
 | `useRemoveSession()` | Gasho が起動したセッションを削除する関数を返す（API 1.14）。引数は `{ machine, sessionId }`、結果は `{ ok: true }` か `{ ok: false, error }`。`permissions` に `session.remove` が要る。セッションのメニューの「削除」と同じく、Claude Code を終了して Gasho の一覧から外し、操作のログに残す。確認のダイアログは出さず、作業の途中でも止めるので、呼ぶ前にプラグインが `status` を確かめる。会話の記録は working server に残る。画面がそのセッションを出していれば、隣のタブか worktree へ移る |
 | `useRemoveWorktree()` | worktree を、中のセッションとともに削除する関数を返す（API 1.10）。`permissions` に `worktree.remove` が要る。サイドバーの worktree の行の「削除…」と同じく、gasho-daemon が中のセッションを終え（Gasho の外で起動したものも）、`git worktree remove` で消し、操作のログに残す。下の「worktree の削除」を参照 |
 | `removeWorktreeProblem(machine, { path, repo })` | worktree を削除できない理由（人に見せる文）。削除できるなら `undefined`（API 1.10）。リポジトリの外（`repo` が無い）、リポジトリの main の worktree（`path` が `repo`）、オフラインの working server、worktree を削除できない古い gasho-daemon（`MachineInfo.canRemoveWorktree` が無い）のときに理由を返す。サイドバーのメニューも、これで項目を押せなくする |

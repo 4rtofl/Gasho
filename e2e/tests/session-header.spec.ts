@@ -132,12 +132,14 @@ test("768px 以上では、ヘッダーを閉じると読み込み直しても�
   test.skip(isMobile, "768px 以上の幅の動き");
   await openSession(page, hub);
   await expect(page.getByText("mac · /work/gasho")).toBeVisible();
-  await page.getByRole("button", { name: "ヘッダーを隠す" }).click();
+  const hide = page.getByRole("button", { name: "ヘッダーを隠す" });
+  const at = await hide.boundingBox();
+  await hide.click();
   await expect(page.getByText("mac · /work/gasho")).toBeHidden();
-  // The line left keeps the name and the state.
-  const line = page.getByRole("main").locator("header");
-  await expect(line.getByRole("heading", { name: "e2e-session" })).toBeVisible();
-  await expect(line.getByRole("img", { name: "待機中" })).toBeVisible();
+  // No line takes the header's place: the session's tab has the name and the state.
+  await expect(page.getByRole("main").locator("header")).toHaveCount(0);
+  // The button is in the row of tabs above the header, so it stays where it was.
+  expect(await page.getByRole("button", { name: "ヘッダーを表示" }).boundingBox()).toEqual(at);
 
   await page.reload();
   await expect(page.getByRole("button", { name: "ヘッダーを表示" })).toBeVisible();
@@ -146,6 +148,26 @@ test("768px 以上では、ヘッダーを閉じると読み込み直しても�
   await expect(page.getByText("mac · /work/gasho")).toBeVisible();
   await page.reload();
   await expect(page.getByText("mac · /work/gasho")).toBeVisible();
+});
+
+test("768px 以上では、タブが多くて横にスクロールしても、ヘッダーを隠すボタンはタブの一覧の右端に見えたまま", async ({ page, hub, isMobile }) => {
+  test.skip(isMobile, "768px 以上の幅の動き");
+  const many = Array.from({ length: 12 }, (_, i) =>
+    fakeSession({ sessionId: `7a1b2c3d-0000-4000-8000-${String(i + 1).padStart(12, "0")}`, cwd: "/work/gasho", name: `長い名前のセッション ${i + 1}` }),
+  );
+  await openSession(page, hub, { daemon: { sessions: many } });
+  const tabs = page.getByRole("navigation", { name: "この worktree のセッション" });
+  await expect(tabs.getByRole("button", { name: "長い名前のセッション 12", exact: true })).toBeAttached();
+  const hide = page.getByRole("button", { name: "ヘッダーを隠す" });
+  const at = await hide.boundingBox();
+  expect(at && at.x + at.width).toBeGreaterThan(page.viewportSize()!.width - 24);
+
+  await tabs.evaluate((nav) => {
+    nav.scrollLeft = nav.scrollWidth;
+  });
+  await expect.poll(() => tabs.evaluate((nav) => nav.scrollLeft)).toBeGreaterThan(0);
+  await expect(hide).toBeInViewport();
+  expect(await hide.boundingBox()).toEqual(at);
 });
 
 test("768px 未満では、セッションを開くたびにヘッダーが閉じた状態から始まる", async ({ page, hub, isMobile }) => {

@@ -235,6 +235,134 @@ test.describe("絞り込み", () => {
     await expect.poll(async () => (await rowLabels(nav)).length).toBe(3);
   });
 
+  /** Sessions in 21 repositories, /work/repo-01 to /work/repo-21: more than the menu's box shows at once. */
+  const manyRepos = () => Array.from({ length: 21 }, (_, i) => worktreeSession(`r${i + 1}`, { branch: `feat/r${i + 1}`, repo: `/work/repo-${String(i + 1).padStart(2, "0")}` }));
+
+  /** The top, bottom and height of an element in the window. */
+  async function edges(l: Locator) {
+    const box = await l.boundingBox();
+    if (!box) throw new Error("見えていない");
+    return { top: box.y, bottom: box.y + box.height, height: box.height };
+  }
+
+  test("#299: リポジトリが多くても、メニューは画面に収まり、リポジトリの行だけが高さを固定した枠でスクロールする", async ({ page, hub, isMobile }) => {
+    if (!isMobile) await page.setViewportSize({ width: 1440, height: 900 });
+    await hub.fakeDaemon({ sessions: manyRepos() });
+    await page.goto("/");
+    const nav = await sidebar(page, isMobile);
+    await nav.getByRole("button", { name: "リポジトリで絞り込む" }).click();
+    const menu = page.getByRole("menu");
+    const box = menu.getByRole("group", { name: "リポジトリ" });
+    await expect(box.getByRole("menuitemcheckbox")).toHaveCount(21);
+    const viewport = page.viewportSize()!;
+    const m = await edges(menu);
+    expect(m.top).toBeGreaterThanOrEqual(0);
+    expect(m.bottom).toBeLessThanOrEqual(viewport.height);
+    // About eight rows, and the rest below them.
+    const b = await edges(box);
+    expect(b.height).toBeLessThanOrEqual(256);
+    expect(await box.evaluate((e) => e.scrollHeight > e.clientHeight)).toBe(true);
+    await expect(menu.getByRole("menuitemcheckbox", { name: "すべて" })).toBeInViewport();
+    await expect(menu.getByRole("menuitem", { name: "リポジトリを登録・解除…" })).toBeInViewport();
+    await expect(box.getByRole("menuitemcheckbox", { name: "repo-21" })).not.toBeInViewport();
+  });
+
+  test("#299: キーボードで行を移ると、選んだ行がスクロールして見える", async ({ page, hub, isMobile }) => {
+    test.skip(isMobile, "キーボードは PC のもの");
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await hub.fakeDaemon({ sessions: manyRepos() });
+    await page.goto("/");
+    const nav = await sidebar(page, isMobile);
+    await nav.getByRole("button", { name: "リポジトリで絞り込む" }).focus();
+    await page.keyboard.press("Enter");
+    const menu = page.getByRole("menu");
+    const box = menu.getByRole("group", { name: "リポジトリ" });
+    await expect(menu.getByRole("menuitemcheckbox", { name: "すべて" })).toBeFocused();
+    /** The focused row is whole inside the box. */
+    const shown = async (name: string) => {
+      const row = box.getByRole("menuitemcheckbox", { name });
+      await expect(row).toBeFocused();
+      const [r, b] = [await edges(row), await edges(box)];
+      expect(r.top).toBeGreaterThanOrEqual(b.top - 0.5);
+      expect(r.bottom).toBeLessThanOrEqual(b.bottom + 0.5);
+    };
+    for (let i = 0; i < 12; i++) await page.keyboard.press("ArrowDown");
+    await shown("repo-12");
+    for (let i = 12; i < 21; i++) await page.keyboard.press("ArrowDown");
+    await shown("repo-21");
+    // Past the last row, "リポジトリを登録・解除…", always shown.
+    await page.keyboard.press("ArrowDown");
+    await expect(menu.getByRole("menuitem", { name: "リポジトリを登録・解除…" })).toBeFocused();
+    await page.keyboard.press("ArrowUp");
+    await shown("repo-21");
+    await page.keyboard.press("Home");
+    await expect(menu.getByRole("menuitemcheckbox", { name: "すべて" })).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await shown("repo-01");
+    // Space checks the row, and the menu stays open.
+    await page.keyboard.press(" ");
+    await expect(box.getByRole("menuitemcheckbox", { name: "repo-01" })).toBeChecked();
+    await expect(menu).toBeVisible();
+  });
+
+  test("#299: 画面が低いと、リポジトリの枠をさらに小さくして、メニュー全体を画面に収める", async ({ page, hub, isMobile }) => {
+    test.skip(isMobile, "窓の高さを変えるのは PC の幅で");
+    await page.setViewportSize({ width: 1440, height: 420 });
+    await hub.fakeDaemon({ sessions: manyRepos() });
+    await page.goto("/");
+    const nav = await sidebar(page, isMobile);
+    await nav.getByRole("button", { name: "リポジトリで絞り込む" }).click();
+    const menu = page.getByRole("menu");
+    const box = menu.getByRole("group", { name: "リポジトリ" });
+    const m = await edges(menu);
+    expect(m.top).toBeGreaterThanOrEqual(0);
+    expect(m.bottom).toBeLessThanOrEqual(420);
+    expect((await edges(box)).height).toBeLessThan(256);
+    // The menu itself does not scroll: only the box does.
+    expect(await menu.evaluate((e) => e.scrollHeight <= e.clientHeight)).toBe(true);
+    await expect(menu.getByRole("menuitemcheckbox", { name: "すべて" })).toBeInViewport();
+    await expect(menu.getByRole("menuitem", { name: "リポジトリを登録・解除…" })).toBeInViewport();
+  });
+
+  test.describe("指で", () => {
+    // A phone in Chromium, whose touches the DevTools protocol sends as a finger would: they scroll the page as one does.
+    test.use({ viewport: { width: 412, height: 915 }, hasTouch: true, isMobile: true });
+
+    test("#299: リポジトリの行を指でスクロールでき、メニューは開いたまま、裏のページは動かない", async ({ page, hub, browserName }) => {
+      test.skip(browserName !== "chromium", "指の動きは Chromium の DevTools のプロトコルで送る");
+      await hub.fakeDaemon({ sessions: manyRepos() });
+      await page.goto("/");
+      const nav = await sidebar(page, true);
+      await nav.getByRole("button", { name: "リポジトリで絞り込む" }).click();
+      const menu = page.getByRole("menu");
+      const box = menu.getByRole("group", { name: "リポジトリ" });
+      await expect(box.getByRole("menuitemcheckbox", { name: "repo-01" })).toBeVisible();
+      const cdp = await page.context().newCDPSession(page);
+      const drag = async (x: number, from: number, to: number) => {
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y: from }] });
+        for (let k = 1; k <= 12; k++) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: from + ((to - from) * k) / 12 }] });
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      };
+      const b = await box.boundingBox();
+      if (!b) throw new Error("見えていない");
+      await drag(b.x + b.width / 2, b.y + b.height - 16, b.y + 16);
+      await expect.poll(() => box.evaluate((e) => e.scrollTop)).toBeGreaterThan(100);
+      await expect(menu).toBeVisible();
+      await expect(menu.getByRole("menuitemcheckbox", { checked: true })).toHaveCount(1);
+      await expect(menu.getByRole("menuitemcheckbox", { name: "すべて" })).toBeChecked();
+
+      // Over "すべて", which does not scroll, nothing behind the menu moves.
+      const scrolled = () => nav.evaluate((n) => [...n.querySelectorAll("*")].map((e) => e.scrollTop).reduce((a, t) => a + t, 0));
+      const before = await scrolled();
+      const all = await menu.getByRole("menuitemcheckbox", { name: "すべて" }).boundingBox();
+      if (!all) throw new Error("見えていない");
+      await drag(all.x + 40, all.y + all.height / 2, all.y - 120);
+      await page.waitForTimeout(300);
+      expect(await scrolled()).toBe(before);
+      await expect(menu).toBeVisible();
+    });
+  });
+
   test("ドロワーの中で絞り込みのメニューを Esc で閉じても、ドロワーは開いたまま", async ({ page, hub, isMobile }) => {
     test.skip(!isMobile, "ドロワーはスマホの幅のもの");
     await hub.fakeDaemon({ sessions: [worktreeSession("g1", { branch: "feat/g1" })] });

@@ -607,8 +607,7 @@ function TextView({ text, wrap }: { text: string; wrap: boolean }) {
     return all;
   }, [text]);
   if (text === "") return <p className="text-sm text-muted-foreground">空のファイルです。</p>;
-  // Its scrollbar in the dark colours of the screen.
-  const box = "overflow-x-auto rounded-xl border border-border bg-surface py-2 dark:[color-scheme:dark]";
+  const box = "overflow-x-auto rounded-xl border border-border bg-surface py-2";
   if (lines.length > MAX_NUMBERED_LINES) {
     return <pre className={cn(box, CODE, "px-3", wrap ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "whitespace-pre")}>{text}</pre>;
   }
@@ -675,7 +674,7 @@ function Editor({ value, wrap, onChange }: { value: string; wrap: boolean; onCha
       autoComplete="off"
       // 16px on phones stops iOS zooming into the box.
       className={cn(
-        "block w-full resize-none overflow-y-hidden rounded-xl border border-border bg-surface px-3 py-2 font-mono text-[16px] leading-[1.6] outline-none [tab-size:4] focus:border-border-hover sm:text-[12.5px] dark:[color-scheme:dark]",
+        "block w-full resize-none overflow-y-hidden rounded-xl border border-border bg-surface px-3 py-2 font-mono text-[16px] leading-[1.6] outline-none [tab-size:4] focus:border-border-hover sm:text-[12.5px]",
         wrap ? "overflow-x-hidden" : "overflow-x-auto whitespace-pre",
       )}
     />

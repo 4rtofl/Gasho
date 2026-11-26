@@ -80,13 +80,14 @@ test("the hook gets every worktree the sidebar lists, the one used last first, w
 test("what the hook gave is kept as far as it is right; the worktrees it left out go in その他", () => {
   const got = normalizeWorktreeCategories(
     [
-      { id: "repo", title: "  app\n ", hint: "mac · /src/app", launch: key("/src/app"), worktrees: [{ key: key("/src/app"), description: "" }, { key: key("/src/app-x"), description: " x\ty " }] },
+      { id: "repo", title: "  app\n ", hint: "mac · /src/app", launch: key("/src/app"), repo: { machine: "mac", path: "/src/app", extra: 1 }, worktrees: [{ key: key("/src/app"), description: "" }, { key: key("/src/app-x"), description: " x\ty " }] },
       // Without a title, the same id again, or Gasho's own: left out.
       { id: "notitle", worktrees: [{ key: key("/src/lib") }] },
       { id: "repo", title: "again", worktrees: [{ key: key("/src/lib") }] },
       { id: OTHER_CATEGORY, title: "mine", worktrees: [{ key: key("/src/lib") }] },
       // An unknown worktree, one placed before, and an unknown launch are left out; a description that is no string is Gasho's.
-      { id: "rest", title: "rest", launch: "nope", worktrees: [{ key: "nope" }, { key: key("/src/app") }, { key: key("/src/lib"), description: 3 }, "x"] },
+      // A repo on an unknown working server, or not an absolute path, is left out too.
+      { id: "rest", title: "rest", launch: "nope", repo: { machine: "nope", path: "/src/lib" }, worktrees: [{ key: "nope" }, { key: key("/src/app") }, { key: key("/src/lib"), description: 3 }, "x"] },
       "not a category",
     ],
     ctx,
@@ -97,6 +98,7 @@ test("what the hook gave is kept as far as it is right; the worktrees it left ou
       title: "app",
       hint: "mac · /src/app",
       launch: key("/src/app"),
+      repo: { machine: "mac", path: "/src/app" },
       worktrees: [
         { key: key("/src/app"), description: "" },
         { key: key("/src/app-x"), description: "x y" },
@@ -105,6 +107,10 @@ test("what the hook gave is kept as far as it is right; the worktrees it left ou
     { id: "rest", title: "rest", worktrees: [{ key: key("/src/lib") }] },
     { id: OTHER_CATEGORY, title: "その他", worktrees: [{ key: key("/src/old") }] },
   ]);
+  for (const repo of [{ machine: "mac", path: "src/app" }, { machine: "mac" }, { machine: "mac", path: `/${"a".repeat(1024)}` }, "mac:/src/app"]) {
+    const [c] = normalizeWorktreeCategories([{ id: "r", title: "r", repo, worktrees: [] }], ctx);
+    assert.equal(c!.repo, undefined, JSON.stringify(repo));
+  }
   // No answer at all: every worktree in その他, in the context's order.
   assert.deepEqual(
     normalizeWorktreeCategories(undefined, ctx).map((c) => c.worktrees.map((w) => w.key.split("\u001f")[1])),

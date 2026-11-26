@@ -252,6 +252,64 @@ test.describe("gasho-daemon を更新できる working server", () => {
   });
 });
 
+test.describe("gasho-daemon をまとめて更新できる working server", () => {
+  test.use({ hubOptions: { npm: [npmLatestAnswer(DAEMON_PACKAGE, NEWER), npmLatestAnswer(HUB_PACKAGE, checkoutVersion("hub"))] } });
+
+  test("「すべて更新」で確かめてから 1 台ずつ、前の更新が終わってから次を更新し、失敗した行に理由を出す", async ({ page, hub }) => {
+    const alpha = await hub.fakeDaemon({ name: "alpha", capabilities: { update: { canUpdate: true } } });
+    const beta = await hub.fakeDaemon({ name: "beta", capabilities: { update: { canUpdate: true } } });
+    // Not counted: one from before updates from Gasho, and one offline.
+    await hub.fakeDaemon({ name: "old" });
+    const offline = await hub.fakeDaemon({ name: "offline", capabilities: { update: { canUpdate: true } } });
+    await offline.disconnect();
+    await page.goto("/#/devices");
+    const section = updates(page);
+    const all = section.getByRole("button", { name: "すべて更新（2）" });
+
+    await test.step("「今すぐ調べる」の隣に、更新できる gasho-daemon の数を出す", async () => {
+      await expect(all).toBeVisible();
+      await expect(section.getByRole("button", { name: "今すぐ調べる" })).toBeVisible();
+    });
+
+    const dialog = page.getByRole("alertdialog", { name: "2 台の gasho-daemon を更新しますか？" });
+    await test.step("押すと、更新する working server とバージョンを出して確かめる", async () => {
+      await all.click();
+      await expect(dialog.getByRole("list", { name: "更新するもの" }).getByRole("listitem")).toHaveText([
+        new RegExp(`^alpha\\s*${DAEMON.replaceAll(".", "\\.")} → ${NEWER.replaceAll(".", "\\.")}`),
+        new RegExp(`^beta\\s*${DAEMON.replaceAll(".", "\\.")} → ${NEWER.replaceAll(".", "\\.")}`),
+      ]);
+      await expect(dialog).toContainText("1台の更新が終わってから、次の working server に進みます。");
+      await dialog.getByRole("button", { name: "更新する" }).click();
+      await expect(dialog).toBeHidden();
+    });
+
+    await test.step("1 台目の更新が終わるまで、次の working server には送らない", async () => {
+      expect(await alpha.waitFor("daemon.update")).toMatchObject({ version: NEWER });
+      await expect(section.getByRole("button", { name: "更新しています（1/2）：alpha" })).toBeDisabled();
+      alpha.setCapabilities({ update: { canUpdate: true, progress: { version: NEWER, step: "install", at: Date.now() } } });
+      await expect(machineRow(page, "alpha")).toContainText(`${NEWER} に更新しています：新しいバージョンを取り込んでいます`);
+      alpha.setCapabilities({ update: { canUpdate: true, progress: { version: NEWER, step: "restart", at: Date.now() } } });
+      await alpha.disconnect();
+      await expect(machineRow(page, "alpha")).toContainText(`${NEWER} に更新しています：切り替えて、動かし直しています`);
+      expect(beta.received.filter((m) => m.type === "daemon.update")).toEqual([]);
+    });
+
+    await test.step("新しいバージョンでつながると、次の working server を更新する", async () => {
+      await alpha.startAgain({ version: NEWER, capabilities: { update: { canUpdate: true, previous: DAEMON, progress: { version: NEWER, step: "trial", at: Date.now() } } } });
+      expect(await beta.waitFor("daemon.update")).toMatchObject({ version: NEWER });
+      await expect(section.getByRole("button", { name: "更新しています（2/2）：beta" })).toBeDisabled();
+    });
+
+    await test.step("失敗すると、その行に理由が出て、まとめての更新を終える", async () => {
+      beta.setCapabilities({
+        update: { canUpdate: true, failed: { version: NEWER, error: `npm で ${DAEMON_PACKAGE}@${NEWER} を入れられませんでした：npm error 404 Not Found`, at: Date.now() } },
+      });
+      await expect(machineRow(page, "beta")).toContainText(`${NEWER} への更新に失敗しました（たった今）。何も変えていません。`);
+      await expect(section.getByRole("button", { name: "すべて更新（1）" })).toBeEnabled();
+    });
+  });
+});
+
 test.describe("gasho-daemon を更新できない working server", () => {
   test.use({ hubOptions: { npm: [npmLatestAnswer(DAEMON_PACKAGE, NEWER), npmLatestAnswer(HUB_PACKAGE, checkoutVersion("hub"))] } });
 

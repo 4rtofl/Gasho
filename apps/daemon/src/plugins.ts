@@ -22,10 +22,10 @@ import type { FromHost, GitHubAnswer, LocalWire, MachineWire, SessionWire, ToHos
  * are the screen's alone, as is 1.14 (useRemoveSession, session.remove having been answered long before): this
  * gasho-daemon names them so that a plugin of 1.14 with a daemon part runs. 1.15: the daemon part's onSessionStop is
  * asked from this gasho-daemon on. 1.17 (`unknown` of the screen's CallResult) is the screen's alone too, as are 1.18
- * (fileViewers) and 1.19 (sessionFooter): this gasho-daemon names 1.19, so that a plugin of 1.18 or 1.19 with a daemon
- * part runs.
+ * (fileViewers), 1.19 (WorktreeCategory.repo) and 1.20 (sessionFooter): this gasho-daemon names 1.20, so that a
+ * plugin of 1.18 to 1.20 with a daemon part runs.
  */
-export const PLUGIN_API = "1.19";
+export const PLUGIN_API = "1.20";
 /** The process of a daemon part: next to this file (.ts when run from the repository, .js in the npm package). */
 const HOST_FILE = fileURLToPath(new URL(`./plugin-host${path.extname(fileURLToPath(import.meta.url))}`, import.meta.url));
 /** How long a new process may take to import the plugin and run its `start`. */

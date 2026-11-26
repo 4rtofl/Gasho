@@ -104,6 +104,8 @@ export type SidebarGroup = {
   action?: SidebarAction;
   folded: boolean;
   onFoldedChange: (folded: boolean) => void;
+  /** Gasho: wraps the heading's button in the full sidebar, for a menu of its own (the wrapper passes the button's props on). */
+  wrap?: (button: React.ReactElement) => React.ReactElement;
   items: SidebarItem[];
   sort?: SidebarSort;
 };
@@ -796,6 +798,7 @@ function Panel({
     };
 
     let heading: React.ReactNode;
+    const wrapHeading = (button: React.ReactElement) => (group.wrap ? group.wrap(button) : button);
     if (!collapsed) {
       heading = (
         <div
@@ -807,6 +810,7 @@ function Panel({
           }}
           className="flex items-center gap-0.5 pt-2"
         >
+          {wrapHeading(
           <button
             type="button"
             onClick={() => group.onFoldedChange(!group.folded)}
@@ -825,7 +829,8 @@ function Panel({
                 {group.badge}
               </span>
             )}
-          </button>
+          </button>,
+          )}
           {group.action && (
             <span data-group-action className="contents">
               <SectionAction action={group.action} />

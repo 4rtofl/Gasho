@@ -18,8 +18,6 @@ jobs:
   chusai:
     uses: 4rtofl/Chusai/.github/workflows/resolve.yml@main
     with:
-      # true: push and comment nothing; write what Chusai would do to the job summary.
-      dry-run: true
       # The secret CHUSAI_ANTHROPIC_API_KEY holds `sgk_….sgu_…`, so that sigw records who spent what.
       anthropic-base-url: https://si.sigw.4rtofl.org/anthropic
     secrets:

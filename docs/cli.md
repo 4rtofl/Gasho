@@ -1,6 +1,6 @@
 # working server のコマンド
 
-working server の上では、Gasho の画面を通さずに、`gasho-daemon session` でセッションを起動し、入力し、消せる。`gasho-daemon worktree remove` で、ワークツリーを中のセッションごと消せる。`gasho-daemon worktree name` で、ワークツリーにサイドバーで出す名前を付けられる。Claude Code のセッションから別のセッションを立ち上げて作業させるときや、終わった作業を片付けるときに使う（リポジトリの Skill `.claude/skills/launch-gasho-session` が、ワークツリーを作るところから起動を、`.claude/skills/remove-gasho-worktree` が片付けを、`.claude/skills/verify-in-chrome` が Chrome での検証を、これで行う）。
+working server の上では、Gasho の画面を通さずに、`gasho-daemon session` でセッションを起動し、入力し、消せる。`gasho-daemon worktree remove` で、ワークツリーを中のセッションごと消せる。`gasho-daemon worktree name` で、ワークツリーにサイドバーで出す名前を付けられる。Claude Code のセッションから別のセッションを立ち上げて作業させるときや、終わった作業を片付けるときに使う（gasho-daemon が起動したセッションに読ませるプラグインのスキル `gasho:launch-gasho-session` が、ワークツリーを作るところから起動を、`gasho:remove-gasho-worktree` が片付けを、`gasho:verify-in-chrome` が Chrome での検証を、これで行う。[spec.md の「worktree での作業」](spec.md#worktree-での作業)）。
 
 ```bash
 gasho-daemon session launch --cwd <フォルダー> --name <名前> [--agent claude|codex] [--trust] [--chrome] [--prompt <文> | --prompt-file <ファイル> | --prompt -]
@@ -24,6 +24,8 @@ gasho-daemon worktree name <フォルダー> (<名前> | --clear)
 ## session launch
 
 - 起動を待ち、プロンプトがあれば入力欄に送ってから、`{sessionId, name, cwd, terminal}` を JSON で出す
+- Claude Code のセッションの中（Bash ツールなど）で呼ぶと、そのセッション（環境変数 `CLAUDE_CODE_SESSION_ID`）を、起動したセッションの親として覚える。JSON には親の ID を `launchedBy` で出す。gasho-daemon が知らないセッションなら覚えず、`launchedBy` も出ない。Gasho の画面には `SessionInfo.launchedBy` で渡る
+- Gasho のセッションの Agent が worktree で作業するときは、Agent ツールの `isolation: "worktree"` や `EnterWorktree` ではなく、これで worktree にセッションを立てる（gasho-daemon の hook がそれらを止める）
 - `name` は `claude agents`（Claude Code のセッション一覧）に出る名前で、ほかのセッションから SendMessage するときの宛先になる。Claude Code は新しいセッションを `--remote-control` の名前ではなくフォルダー名で並べるので、`--name` を付けたときは、まず `/rename` でその名前に変え、一覧に出るまで待ってからプロンプトを送る。`--name` が無いと、最初の発言のあとで Gasho が発言から名前を付け直すので、出した名前は変わる
 - `--trust` は、Claude Code の「このフォルダーを信頼するか」に Yes と答える（Gasho の画面の「信頼して起動する」と同じ）
 - `--agent codex` は、Claude Code の代わりに Codex のセッションを起動する。指定がなければ Claude Code。Codex のセッションには端末がないので、JSON には `terminal` の代わりに `"agent": "codex"` が入る
@@ -31,12 +33,12 @@ gasho-daemon worktree name <フォルダー> (<名前> | --clear)
 
 ## session fork
 
-Gasho の画面のフォークと同じ。Gasho が起動したセッションを、ここまでの会話ごと、同じフォルダーの新しいセッションに写して起動を待ち、プロンプトがあれば送ってから、`{sessionId, name, cwd, terminal, forkOf}` を JSON で出す。`--chrome` を付けると、写しは Claude in Chrome つきで起動する（元のセッションが Chrome つきなら、付けなくても Chrome つき）。セッションが自分を写して、ブラウザーでの検証を任せるのに使う（Skill `verify-in-chrome`）。
+Gasho の画面のフォークと同じ。Gasho が起動したセッションを、ここまでの会話ごと、同じフォルダーの新しいセッションに写して起動を待ち、プロンプトがあれば送ってから、`{sessionId, name, cwd, terminal, forkOf}` を JSON で出す。`--chrome` を付けると、写しは Claude in Chrome つきで起動する（元のセッションが Chrome つきなら、付けなくても Chrome つき）。セッションが自分を写して、ブラウザーでの検証を任せるのに使う（Skill `gasho:verify-in-chrome`）。
 
 ## session send・list・remove
 
 - `send` と `remove` は、`/clear` の前の ID でもセッションを見つける。出す JSON の `sessionId` は今の ID になる
-- `list` は、セッションの ID の次にエージェント（`claude` か `codex`）を出す。`--json` は、Chrome つきのセッションに `"chrome": true` を出す。作業フォルダーが無くなったセッションには、行末に `(folder missing)`（`--json` では `"cwdMissing": true`）を付ける。`--json` は、`/clear` の前の ID を `previousSessionIds` に出す
+- `list` は、セッションの ID の次にエージェント（`claude` か `codex`）を出す。`--json` は、Chrome つきのセッションに `"chrome": true` を出す。作業フォルダーが無くなったセッションには、行末に `(folder missing)`（`--json` では `"cwdMissing": true`）を付ける。`--json` は、`/clear` の前の ID を `previousSessionIds` に、`session launch` で親として覚えたセッションの今の ID を `launchedBy` に出す
 - `remove` は、Gasho の画面のセッションの削除と同じ。Claude Code を終わらせて Gasho から外し、`{sessionId, name, cwd}` を JSON で出す。会話は残る。フォルダーが先に消えたセッションも消せる
 
 ## worktree remove

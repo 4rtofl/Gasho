@@ -1,0 +1,4 @@
+{
+  "name": "gasho",
+  "description": "Gasho のセッション（gasho-daemon が起動・管理する Claude Code）で使うスキル。worktree にセッションを立てて作業させる、片付ける、Chrome で確かめる。gasho-daemon が、起動するセッションに --plugin-dir で読ませる"
+}

@@ -23,6 +23,7 @@ import type {
   RegisteredRepo,
   SessionInfo,
   SessionModel,
+  SessionParent,
   SessionRepo,
   SessionWorktree,
   SwitchField,
@@ -42,6 +43,7 @@ import { TokenDays } from "./token-days.ts";
 import { TokenCounter } from "./tokens.ts";
 import { startHookServer, summarizeHook } from "./hooks.ts";
 import { isInside, statusLineLaunch, statusLineOf, userStatusLine } from "./statusline.ts";
+import { agentWorktreeArgs, guardHooks, PLUGIN_DIR } from "./agent-worktrees.ts";
 import { HubClient } from "./hub-client.ts";
 import { type Install, type Layout, layoutOf } from "./install.ts";
 import { type MediaFailed, readMediaPart } from "./media.ts";
@@ -1128,6 +1130,7 @@ export class Daemon {
           managed: m ? true : undefined,
           pendingInputs: pending || undefined,
           previousSessionIds: m?.previousIds,
+          launchedBy: this.parentNow(m),
           permissionRequests: this.permissions.of(t.info.sessionId) ?? this.openQuestion(t) ?? this.openPermission(t),
           ...(m?.hibernated ? this.hibernatedInfo(m, m.hibernated, t.info) : {}),
         };
@@ -1703,7 +1706,7 @@ export class Daemon {
       switch (req.op) {
         case "session.launch":
           log(`session.launch in ${req.cwd} from the control socket`);
-          return await this.launch(req.cwd, req.name, req.trust === true, req.agent, req.chrome === true);
+          return await this.launch(req.cwd, req.name, req.trust === true, req.agent, req.chrome === true, undefined, undefined, req.launchedBy);
         case "session.fork":
           log(`session.fork of ${req.sessionId}${req.chrome ? " with Claude in Chrome" : ""} from the control socket`);
           return await this.fork(req.sessionId, req.name, req.chrome ? { chrome: true } : {});
@@ -1810,6 +1813,7 @@ export class Daemon {
         status: info?.status ?? "unknown",
         ...(pending > 0 ? { pendingInputs: pending } : {}),
         ...(fs.existsSync(m.cwd) ? {} : { cwdMissing: true }),
+        ...(m.launchedBy ? { launchedBy: this.parentNow(m)!.sessionId } : {}),
       };
     });
     return [...claude, ...codex];
@@ -1926,7 +1930,8 @@ export class Daemon {
    * Claude Code's question whether to trust the folder is answered with yes; without it, the launch stops there. With
    * `effort`, Claude Code starts with that effort level, for this session only: a model that does not have it starts
    * with one it has, or none, and the settings keep their effortLevel. Likewise with `model` (`--model`, the /model
-   * picker's alias): the settings keep their model.
+   * picker's alias): the settings keep their model. With `launchedBy` (a session whose Claude Code ran `gasho-daemon
+   * session launch`), the new session remembers it as its parent (SessionInfo.launchedBy).
    */
   private async launch(
     cwd: string,
@@ -1936,6 +1941,7 @@ export class Daemon {
     chrome = false,
     effort?: EffortLevel,
     model?: SessionModel,
+    launchedBy?: string,
   ): Promise<CommandResult> {
     if (agent === "codex") return chrome ? { ok: false, error: CODEX_NO_CHROME } : this.launchCodex(cwd, name);
     if (!this.canLaunch) return { ok: false, error: NO_TERMINAL };
@@ -1951,6 +1957,7 @@ export class Daemon {
       return needsTrust ? { ok: false, error, needsTrust, trustWarnings } : { ok: false, error };
     }
     const { sessionId, terminal, pid } = started;
+    const parent = launchedBy ? this.parentAt(launchedBy) : undefined;
     this.managed.add({
       sessionId,
       terminal,
@@ -1960,12 +1967,34 @@ export class Daemon {
       launchedAt: Date.now(),
       ...(autoName ? { autoName } : {}),
       ...(chrome ? { chrome } : {}),
+      ...(parent ? { launchedBy: parent } : {}),
     });
     await this.managed.save();
     await this.refresh();
     // A folder trusted just now is one to offer from now on.
     void this.refreshFolders();
     return started.mcpDeclined ? { ok: true, sessionId, warning: MCP_DECLINED } : { ok: true, sessionId };
+  }
+
+  /**
+   * The session `id` names (one Gasho started, also by an id it had before /clear, or another this daemon tracks), as
+   * a parent remembers it: its id and folder now. Undefined when it is not known: its folder cannot be told then.
+   */
+  private parentAt(id: string): SessionParent | undefined {
+    const m = this.managed.find(id);
+    const cwd = m?.cwd ?? this.tracked.get(id)?.info.cwd;
+    if (!cwd) {
+      log(`a session was launched from ${id}, which gasho-daemon does not know; it has no parent`);
+      return undefined;
+    }
+    return { sessionId: m?.sessionId ?? id, cwd };
+  }
+
+  /** A session's parent with the id it has now, while Gasho keeps it (an id changes with /clear). */
+  private parentNow(m: ManagedSession | undefined): SessionParent | undefined {
+    if (!m?.launchedBy) return undefined;
+    const parent = this.managed.find(m.launchedBy.sessionId);
+    return parent ? { ...m.launchedBy, sessionId: parent.sessionId } : m.launchedBy;
   }
 
   /** Starts a session of Codex in `cwd`: a new thread of its app-server. */
@@ -2050,6 +2079,8 @@ export class Daemon {
       port: this.cfg.hookPort,
       secret: this.cfg.hookSecret,
       user: await userStatusLine(dir, this.cfg.claudeDir).catch(() => undefined),
+      // Work in a worktree goes to a session of its own there, which Gasho shows (agent-worktrees.ts).
+      more: { hooks: guardHooks() },
     });
     let pid: number;
     try {
@@ -2058,7 +2089,7 @@ export class Daemon {
         cwd: dir,
         file: this.cfg.claudeBin,
         // One argument: a name starting with "-" (say "-wip") given on its own would be read as Claude Code's options.
-        args: [`--remote-control=${rcName}`, ...claudeArgs, ...statusLine.args],
+        args: [`--remote-control=${rcName}`, ...claudeArgs, ...statusLine.args, ...agentWorktreeArgs()],
         env: { ...cleanEnv(), ...claudeTmp, ...statusLine.env },
       });
     } catch (e) {
@@ -2306,6 +2337,8 @@ export class Daemon {
       claudeJson: path.join(os.homedir(), ".claude.json"),
       cwd: t.info.cwd,
       worktree: t.info.worktree,
+      // The sessions Gasho starts load its plugin (agent-worktrees.ts).
+      ...(this.managed.has(sessionId) ? { pluginDirs: [PLUGIN_DIR] } : {}),
     });
     return { ok: true, skills };
   }

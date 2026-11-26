@@ -92,6 +92,9 @@ test("statusLineLaunch makes the relay the status line, keeping the user's paddi
   const bare = statusLineLaunch({ port: 7741, secret: undefined, user: undefined, node: "node", relay: "/r.js" });
   assert.deepEqual(JSON.parse(bare.args[1] ?? ""), { statusLine: { type: "command", command: "'node' '/r.js'" } });
   assert.deepEqual(bare.env, { GASHO_STATUSLINE_URL: "http://127.0.0.1:7741/statusline" });
+  // Other settings go in the same --settings.
+  const more = statusLineLaunch({ port: 7741, secret: undefined, user: undefined, node: "node", relay: "/r.js", more: { hooks: { Stop: [] } } });
+  assert.deepEqual(JSON.parse(more.args[1] ?? ""), { hooks: { Stop: [] }, statusLine: { type: "command", command: "'node' '/r.js'" } });
 });
 
 test("shellQuote keeps quotes and dollar signs as they are", async () => {

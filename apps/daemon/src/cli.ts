@@ -146,6 +146,7 @@ try {
         },
         out: (s) => console.log(s),
         note: (s) => console.error(s),
+        ...(process.env.CLAUDE_CODE_SESSION_ID ? { callerSessionId: process.env.CLAUDE_CODE_SESSION_ID } : {}),
       });
       break;
     }

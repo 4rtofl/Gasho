@@ -27,6 +27,8 @@ export interface SkillPlaces {
   /** The session's folder. */
   cwd: string;
   worktree?: SessionWorktree;
+  /** The plugins the session's Claude Code was started with (`--plugin-dir`): gasho-daemon's own (agent-worktrees.ts). */
+  pluginDirs?: string[];
 }
 
 /** A skill or a command file as read: the name its frontmatter gives, its description, whether "/" offers it. */
@@ -139,19 +141,29 @@ async function pluginSkills(p: SkillPlaces, enabled: Record<string, unknown>): P
         isObject(i) && (i.scope === "project" || i.scope === "local") && typeof i.projectPath === "string" && here.has(path.resolve(i.projectPath));
       const install: unknown = installs.find(ofHere) ?? installs.find((i) => isObject(i) && (i.scope === "user" || i.scope === "managed"));
       if (!isObject(install) || typeof install.installPath !== "string") return [];
-      const root = path.resolve(install.installPath);
-      const manifest = ((await readJson(path.join(root, ".claude-plugin", "plugin.json"))) ?? {}) as PluginManifest;
-      if ((enabled[id] ?? manifest.defaultEnabled ?? true) !== true) return [];
-      const name = typeof manifest.name === "string" && validName(manifest.name) ? manifest.name : id.split("@")[0];
-      if (!name || !validName(name)) return [];
-      const [skills, commands] = await Promise.all([pluginSkillEntries(root, manifest, name), pluginCommandEntries(root, manifest)]);
-      return [
-        ...skills.map((s) => ({ ...s, command: s.name?.startsWith(`${name}:`) ? s.name : `${name}:${s.name ?? s.dir}` })),
-        ...commands.map((c) => ({ ...c, command: `${name}:${c.command}` })),
-      ];
+      return pluginEntries(path.resolve(install.installPath), id.split("@")[0], (manifest) => (enabled[id] ?? manifest.defaultEnabled ?? true) === true);
     }),
   );
-  return read.flat();
+  // A plugin given with --plugin-dir is loaded for that session whatever the settings say.
+  const given = await Promise.all((p.pluginDirs ?? []).map((dir) => pluginEntries(path.resolve(dir), path.basename(dir), () => true)));
+  return [...read.flat(), ...given.flat()];
+}
+
+/** The skills and commands of the plugin in `root`, as "<plugin>:<name>"; none when `use` says it is off. */
+async function pluginEntries(
+  root: string,
+  fallbackName: string | undefined,
+  use: (manifest: PluginManifest) => boolean,
+): Promise<(Entry & { command: string })[]> {
+  const manifest = ((await readJson(path.join(root, ".claude-plugin", "plugin.json"))) ?? {}) as PluginManifest;
+  if (!use(manifest)) return [];
+  const name = typeof manifest.name === "string" && validName(manifest.name) ? manifest.name : fallbackName;
+  if (!name || !validName(name)) return [];
+  const [skills, commands] = await Promise.all([pluginSkillEntries(root, manifest, name), pluginCommandEntries(root, manifest)]);
+  return [
+    ...skills.map((s) => ({ ...s, command: s.name?.startsWith(`${name}:`) ? s.name : `${name}:${s.name ?? s.dir}` })),
+    ...commands.map((c) => ({ ...c, command: `${name}:${c.command}` })),
+  ];
 }
 
 /**

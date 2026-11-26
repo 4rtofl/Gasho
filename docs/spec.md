@@ -229,6 +229,20 @@ Claude Code は、Context Window の使用量と、Claude.ai のプランで決�
 - 中継のコマンドは、gasho-daemon に送れなくても、利用者のステータスラインの出力は返す
 - Gasho が起動していないセッションには付けないので、その `context` と `limits` はない
 
+### worktree での作業
+
+Gasho が起動したセッション（フォークを含む）の Agent が worktree で作業するときは、worktree の中に Gasho のセッションを立て、そのセッションに指示する。Agent ツールの `isolation: "worktree"` の Subagent や `EnterWorktree` では、worktree の中にセッションができず、Gasho の画面から作業を見守れないためである。利用者が「Subagent でやって」と頼んでも、worktree を使う作業はこの形にする。worktree を使わない Subagent（Explore などの調べもの）はそのまま使う。
+
+gasho-daemon は、Claude Code を起動するたびに（新しいセッション、フォーク、休止からの再開）、次のものを付ける。どれも利用者・プロジェクトの設定ファイルは書き換えず、そのプロセスのあいだだけ効く。Gasho の外（ターミナルで直接）起動した Claude Code には付かない。
+
+- PreToolUse の hook（`--settings` の `hooks`。ステータスラインと同じ `--settings` に入れる）: マッチャーは `Agent|Task|EnterWorktree`。gasho-daemon の `worktree-guard-hook` を node で動かし、`EnterWorktree` と、`tool_input.isolation` が `"worktree"` の `Agent`（古い名前の `Task` も）を `permissionDecision: "deny"` で止める。理由には、スキル `gasho:launch-gasho-session` の手順（`git worktree add` で worktree を作り、`gasho-daemon session launch` で起動して指示する）を書く。ほかの呼び出しには何も返さない。`--settings` の hooks は、利用者とプロジェクトの hooks に足され、置き換えない（Claude Code 2.1.332 で確かめた）
+- 同じ決まりを `--append-system-prompt` で足し、最初からその手順を選ばせる
+- `--plugin-dir` で、gasho-daemon のプラグイン `gasho`（`apps/daemon/claude-plugin`。npm のパッケージでは `lib/` の隣の `claude-plugin/`）を読ませる。スキル `gasho:launch-gasho-session`（worktree を作ってセッションを起動し、指示する）、`gasho:remove-gasho-worktree`（worktree をセッションごと片付ける）、`gasho:verify-in-chrome`（自分を Chrome つきでフォークして確かめさせる）が入る。どのリポジトリのセッションでも使えるよう、リポジトリの `.claude/skills` には置かない。画面の「/」の候補（S19）にも、Gasho が起動したセッションではこれらを出す
+
+カスタムエージェントの定義（`.claude/agents/*.md`）の frontmatter で `isolation: worktree` を指定したものは、呼び出しの `tool_input` に `isolation` が無いので止めない。
+
+`gasho-daemon session launch` は、呼んだセッションを親として覚える。Claude Code は、Bash などで動かすコマンドに、そのセッションの ID を環境変数 `CLAUDE_CODE_SESSION_ID` で渡す。CLI はそれを `launchedBy` として control socket に送り、gasho-daemon は、その ID のセッション（Gasho が起動したもの。`/clear` の前の ID でもよい。ほかに gasho-daemon が見ているセッションでもよい）の ID と作業フォルダーを、新しいセッションの記録（`managed.json` の `launchedBy`）に残す。gasho-daemon が知らない ID なら残さない。Gasho サーバーには `SessionInfo.launchedBy`（`{sessionId, cwd}`）で送る。`sessionId` は、親が Gasho に残っているあいだは親の今の ID（`/clear` で変わったら新しい ID）、残っていなければ覚えたときの ID。`cwd` は覚えたときの親の作業フォルダーで、親のセッションが消えても残る。サイドバーで worktree を親の worktree の子として入れ子に出すとき（#301）は、子のセッションの `launchedBy.cwd` が入っている worktree を親にする。Codex のセッションと、Gasho の画面から起動したセッションには付かない。
+
 ### 操作の規則
 
 検証で分かったことから、次の規則を守る。
@@ -290,7 +304,7 @@ Claude Code は、Context Window の使用量と、Claude.ai のプランで決�
 - 新しいファイルは、すでにあるフォルダーの中に作り、同じ名前のものがあれば作らない。`O_EXCL` で開くので、リンク切れのリンクがあっても、その先に作らない
 - 画面の入力欄は改行を LF にするので、CRLF のファイルは、保存するときに CRLF に戻す。LF と CRLF が混ざっているファイルは、多いほうにそろえる。BOM も保つ
 - Claude が送った画像と動画（S18）は、トランスクリプトにある SendUserFile の呼び出しが送ったファイルのうち、拡張子が画像（PNG、JPEG、GIF、WebP、AVIF、BMP、SVG）か動画（MP4、M4V、MOV、WebM、OGV）のものだけを読む。作業フォルダーからの相対パスは、その記録の `cwd` から絶対パスにする。gasho-daemon は、セッションごとに送られたファイルを新しいほうから2000個まで覚え、ほかのパスは断る。Claude はスクリーンショットを作業用のフォルダー（`/tmp/claude-<uid>/…`）に置いて送るので、セッションのフォルダーの外でも読む。ふつうのファイルでないものは開かない。1回に読むのは 1MB までで、続きは Gasho サーバーが順に求める
-- スキルとカスタムコマンド（S19）は、Claude Code の資料（code.claude.com/docs/en/skills・plugins-reference）にある置き場から読む。`~/.claude/skills/<名前>/SKILL.md` と `~/.claude/commands/**/*.md`、セッションのフォルダーとその上のフォルダー（worktree の一番上まで）の `.claude/skills` と `.claude/commands`、`~/.claude/plugins/installed_plugins.json` のうちそのフォルダーで使えて設定（`enabledPlugins`）で切っていないプラグインの `skills/`・`commands/`（plugin.json の `skills`・`commands` が指すものを含む）、`~/.claude.json` のアカウントの `~/.claude/skills/synced/<組織>_<アカウント>/`。worktree の一番上に `.claude/skills` が無いときは、リポジトリの本体のものを読む。名前は Claude Code と同じく、SKILL.md の `name`（無ければフォルダーの名前）、コマンドはファイルの名前（フォルダーは `:` でつなぐ）、プラグインのものは `<プラグイン>:<名前>`、同期されたものは `anthropic-skills:<名前>`（名前だけでは、組み込みの `/help` などと重なることがあるため）にする。同じ名前は、個人のスキル、フォルダーのスキル、個人のコマンド、フォルダーのコマンドの順に先のものを残す。`user-invocable: false` のものと、設定（`~/.claude/settings.json`、フォルダーの `.claude/settings.json`・`.claude/settings.local.json`）の `skillOverrides` で `off` にしたものは出さない。読むのは各ファイルの先頭 16KB で、説明は frontmatter の `description`（無ければ本文の最初の行）を1行にして200文字で切る
+- スキルとカスタムコマンド（S19）は、Claude Code の資料（code.claude.com/docs/en/skills・plugins-reference）にある置き場から読む。`~/.claude/skills/<名前>/SKILL.md` と `~/.claude/commands/**/*.md`、セッションのフォルダーとその上のフォルダー（worktree の一番上まで）の `.claude/skills` と `.claude/commands`、`~/.claude/plugins/installed_plugins.json` のうちそのフォルダーで使えて設定（`enabledPlugins`）で切っていないプラグインの `skills/`・`commands/`（plugin.json の `skills`・`commands` が指すものを含む）、`~/.claude.json` のアカウントの `~/.claude/skills/synced/<組織>_<アカウント>/`、Gasho が起動したセッションでは gasho-daemon のプラグイン `gasho`（`--plugin-dir` で読ませるもの。「worktree での作業」）。worktree の一番上に `.claude/skills` が無いときは、リポジトリの本体のものを読む。名前は Claude Code と同じく、SKILL.md の `name`（無ければフォルダーの名前）、コマンドはファイルの名前（フォルダーは `:` でつなぐ）、プラグインのものは `<プラグイン>:<名前>`、同期されたものは `anthropic-skills:<名前>`（名前だけでは、組み込みの `/help` などと重なることがあるため）にする。同じ名前は、個人のスキル、フォルダーのスキル、個人のコマンド、フォルダーのコマンドの順に先のものを残す。`user-invocable: false` のものと、設定（`~/.claude/settings.json`、フォルダーの `.claude/settings.json`・`.claude/settings.local.json`）の `skillOverrides` で `off` にしたものは出さない。読むのは各ファイルの先頭 16KB で、説明は frontmatter の `description`（無ければ本文の最初の行）を1行にして200文字で切る
 
 ### セッションの休止
 

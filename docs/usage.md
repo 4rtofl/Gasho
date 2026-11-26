@@ -85,6 +85,10 @@ Gasho の外（Orca や端末）で起動した Claude Code が、サイドバ�
 
 使い終わった worktree は、行を右クリックして（スマホでは長押し）「削除…」で、中のセッションとまとめて消せる。確認のダイアログには、フォルダー・ブランチ・working server と、一緒に終わるセッションが出る。「ローカルのブランチ <ブランチ> も消す」は既定でチェックが付いている。未コミットの変更や push していない commit があるときは、件数を出して止まり、「変更を捨てて削除」をもう一度押したときだけ消す。リポジトリの main の worktree は消せない。
 
+### Agent に worktree で作業させる
+
+Gasho から起動したセッションの Agent に「worktree を作って作業して」「並行で進めて」と頼むと、Agent は worktree を作り、その中に Gasho のセッションを起動して指示する（スキル `/gasho:launch-gasho-session`）。起動したセッションはサイドバーに出るので、ほかのセッションと同じように作業を見守り、指示を足せる。Subagent で進めるよう頼んでも、worktree を使う作業はこの形になる（worktree の Subagent や `EnterWorktree` は gasho-daemon が止める）。worktree を使わない Subagent（調べものなど）は、そのまま動く。終わった worktree は、`/gasho:remove-gasho-worktree` でセッションごと片付けさせられる。仕組みは [spec.md の「worktree での作業」](spec.md#worktree-での作業)。Gasho の外（ターミナル）で起動した Claude Code には効かない。
+
 ### worktree をまとめて扱う
 
 worktree の行を 1 つ押したあと、Shift キーを押しながら別の行を押すと、その間の行（画面に並んでいる順。分け方のカテゴリをまたいでもよい）をすべて選ぶ。Esc を押すか、Shift キーなしで行を押すと、選択が外れる。選んだ行を右クリックすると、選んだ worktree をまとめて扱うメニューが開く。
@@ -208,7 +212,7 @@ Claude Code が権限の確認を出しているあいだは、入力欄の上�
 入力欄に `/` を打つと、そのセッションの Claude Code が読むスキルとカスタムコマンドを、名前と説明の先頭の 1 行ずつで、入力欄の上に並べる。
 
 - 続けて打った文字で絞り込む（`/impl` で `/impl-review` が残る。`/review` のように名前の途中の `-`・`:` の後ろからでも見つかる）。↑↓ で選んで Tab か Enter を押すと、入力欄に `/<名前> ` が入る（送りはしない）。スマホでは行を押す。Esc か、入力欄の外を押すと閉じる
-- 並べるのは、`~/.claude` のスキル（`skills/`）とコマンド（`commands/`）、セッションのフォルダーからリポジトリの一番上までの `.claude/skills` と `.claude/commands`、有効なプラグインのもの（`/<プラグイン>:<名前>`）、claude.ai から同期されたスキル（`/anthropic-skills:<名前>`）
+- 並べるのは、`~/.claude` のスキル（`skills/`）とコマンド（`commands/`）、セッションのフォルダーからリポジトリの一番上までの `.claude/skills` と `.claude/commands`、有効なプラグインのもの（`/<プラグイン>:<名前>`。Gasho が起動したセッションでは、gasho-daemon が読ませる `/gasho:launch-gasho-session` なども）、claude.ai から同期されたスキル（`/anthropic-skills:<名前>`）
 - Claude Code に組み込みのコマンド（`/model`・`/clear` など）、`user-invocable: false` のスキル、設定の `skillOverrides` で `off` にしたものは出さない
 - 一覧は、`/` を打ったときに gasho-daemon がセッションのフォルダーをもとに読み、1分たつまでは読み直さない
 

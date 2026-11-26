@@ -29,7 +29,7 @@ $GD session list --json
 
 ## 2. 自分のセッションを見つける
 
-`$GD session list --json` から、`cwd` が今の作業フォルダーで、`status` が `busy` のもの（このコマンドを動かしている自分）を選ぶ。返ってくる `name` が、写しから SendMessage で返事をもらう宛先になる。
+`$GD session list --json` から、`sessionId`（または `previousSessionIds`）が環境変数 `CLAUDE_CODE_SESSION_ID` と同じもの（このコマンドを動かしている自分）を選ぶ。その変数が無い Claude Code では、`cwd` が今の作業フォルダーで、`status` が `busy` のものを選ぶ。返ってくる `name` が、写しから SendMessage で返事をもらう宛先になる。
 
 - 見つからないとき: 今のセッションは Gasho が起動したものではないので、fork できない。利用者にそう伝える
 - 候補が 2 つ以上あるとき: 推測せず、利用者に確かめる

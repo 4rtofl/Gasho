@@ -169,4 +169,29 @@ test.describe("worktree の分け方（P18）", () => {
       await expect((await sidebar(page)).getByRole("button", { name: /^E2E feat/ })).toBeVisible();
     });
   });
+
+  test("#299: リポジトリが多く、画面が低くても、「分け方」と「リポジトリを登録・解除…」はスクロールせずに見える", async ({ page, hub, isMobile }) => {
+    test.skip(isMobile, "窓の高さを変えるのは PC の幅で");
+    await page.setViewportSize({ width: 1440, height: 600 });
+    const repo = (n: number) => `/work/repo-${String(n).padStart(2, "0")}`;
+    await hub.fakeDaemon({
+      name: "mac",
+      sessions: Array.from({ length: 21 }, (_, i) => fakeSession({ sessionId: `0b6f3a52-9a51-4c7e-8d2b-6c1f0e4a7e${String(i + 1).padStart(2, "0")}`, cwd: repo(i + 1), gitBranch: "main", worktree: { path: repo(i + 1), repo: repo(i + 1), branch: "main" } })),
+    });
+    await page.goto("/");
+    const nav = await sidebar(page);
+    await nav.getByRole("button", { name: /^絞り込みと分け方/ }).click();
+    const menu = page.getByRole("menu");
+    const box = menu.getByRole("group", { name: "リポジトリ" });
+    await expect(box.getByRole("menuitemcheckbox")).toHaveCount(21);
+    expect(await box.evaluate((e) => e.scrollHeight > e.clientHeight)).toBe(true);
+    expect(await menu.evaluate((e) => e.scrollHeight <= e.clientHeight)).toBe(true);
+    for (const item of [
+      menu.getByRole("menuitemcheckbox", { name: "すべて" }),
+      menu.getByRole("menuitemradio", { name: "分けない" }),
+      menu.getByRole("menuitemradio", { name: "E2E ブランチごと" }),
+      menu.getByRole("menuitem", { name: "リポジトリを登録・解除…" }),
+    ])
+      await expect(item).toBeInViewport({ ratio: 1 });
+  });
 });

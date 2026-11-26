@@ -352,8 +352,23 @@ export interface WorktreeCategory {
   hint?: string;
   /** The key of the worktree whose folder the "＋" at the right of the heading starts a session in. No "＋" without it. */
   launch?: string;
+  /**
+   * The repository the category stands for: its working server and its folder (WorktreeListWorktree.repo). Only with it
+   * does a right-click (a long press on a touch screen) on the heading open a menu, which takes the repository off the
+   * working server's registered ones. Leave it out of a category that is no repository's (「作業中」, 「リポジトリの外」).
+   * Plugin API 1.19.
+   */
+  repo?: WorktreeCategoryRepo;
   /** In the order they show by default (the person can drag them into another). */
   worktrees: WorktreeCategoryItem[];
+}
+
+/** The repository a category of the sidebar's worktrees stands for (P18). Plugin API 1.19. */
+export interface WorktreeCategoryRepo {
+  /** The working server (machine id). */
+  machine: string;
+  /** The repository's folder (of its main worktree), as WorktreeListWorktree.repo and RegisteredRepo.path name it. */
+  path: string;
 }
 
 /** A worktree's row the person dropped in another category of a grouping (P18). Plugin API 1.9. */

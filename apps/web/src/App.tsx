@@ -11,6 +11,7 @@ import { CloneRepoButton, RegisterRepos, RepoFilter } from "@/components/repo-fi
 import { ReposDialog } from "@/components/repos-dialog";
 import { SessionActionDialog, SessionContextMenu, type SessionActionRequest } from "@/components/session-menu";
 import { UnusedSessionsDialog } from "@/components/unused-sessions-dialog";
+import { RepoActionDialog, RepoContextMenu, type RepoActionRequest } from "@/components/repo-menu";
 import { WorktreeActionDialog, WorktreeContextMenu, type WorktreeActionRequest } from "@/components/worktree-menu";
 import { showNotice, useNotice } from "@/lib/notice";
 import { AgentMark } from "@/components/agent-mark";
@@ -246,6 +247,8 @@ export function App() {
   const [sessionAction, setSessionAction] = useState<SessionActionRequest | null>(null);
   // What was picked from a worktree row's menu (rename, remove); its dialog is open meanwhile.
   const [worktreeAction, setWorktreeAction] = useState<WorktreeActionRequest | null>(null);
+  // The repository whose category's menu (P18, a category's `repo`) is taking it off its working server.
+  const [repoAction, setRepoAction] = useState<RepoActionRequest | null>(null);
   // The worktrees' rows selected together (pressed with Shift), and the row pressed last without it, which a range of
   // them starts from. Esc lets them go, unless something else took it (a menu or a dialog closes) or it is typed.
   const [selectedRows, setSelectedRows] = useState<ReadonlySet<string>>(new Set());
@@ -523,6 +526,7 @@ export function App() {
     const waiting = rows.filter(({ w }) => w.machine.connected && w.sessions.some((s) => s.status === "waiting")).length;
     const target = c.launch ? groupingWorktrees.get(c.launch) : undefined;
     const canLaunch = target !== undefined && target.machine.connected && target.machine.canLaunch === true;
+    const repo = c.repo && { ...c.repo, title: c.title };
     return {
       id: c.id,
       title: c.title,
@@ -534,6 +538,14 @@ export function App() {
       action: canLaunch ? launchAction(c.title, target) : undefined,
       folded: isFolded,
       onFoldedChange: (f) => changeGroupingPrefs((p) => withFolded(p, c.id, f)),
+      // A category that stands for a repository: its heading's menu takes it off the working server.
+      wrap: repo
+        ? (button: ReactElement) => (
+            <RepoContextMenu repo={repo} onPick={setRepoAction}>
+              {button}
+            </RepoContextMenu>
+          )
+        : undefined,
       items: shown.map(({ item, w }) => worktreeRow(w, item.description)),
       sort: isFolded
         ? undefined
@@ -831,6 +843,7 @@ export function App() {
         }
       />
       <WorktreeActionDialog request={worktreeAction} onClose={() => setWorktreeAction(null)} />
+      <RepoActionDialog request={repoAction} onClose={() => setRepoAction(null)} />
       <UnusedSessionsDialog />
       <LaunchDialog
         open={launchOpen}

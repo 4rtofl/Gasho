@@ -2,7 +2,8 @@
 // person dragged the categories and their sessions into, and the folded categories (lib/session-list), one localStorage
 // key per plugin; and which plugin's list was shown last, so that the next page waits for it rather than showing the
 // worktrees first. Of the groupings of the worktrees (P18, lib/worktree-groupings): the one picked, and the same orders
-// and folding, one key per grouping. A private window or blocked storage keeps them for this page view only, as
+// and folding, one key per grouping. Of the worktrees nested under those they were started from (lib/worktree-nesting):
+// whether to nest them, and the parents folded. A private window or blocked storage keeps them for this page view only, as
 // lib/order does.
 import { useCallback, useSyncExternalStore } from "react";
 import type { CategoryPrefs, RememberedList } from "./session-list.ts";
@@ -118,4 +119,41 @@ export function rememberList(list: RememberedList | undefined): void {
   const now = read(REMEMBERED_KEY, checkRemembered) as RememberedList | undefined;
   if (now?.plugin === list?.plugin && now?.hideTabs === list?.hideTabs) return;
   write(REMEMBERED_KEY, list);
+}
+
+/** Whether the worktrees are nested under those they were started from (lib/worktree-nesting), and the parents folded. */
+const NESTING_KEY = "gasho.worktreeNesting";
+/** Folded parents kept at most: the oldest go first. */
+const MAX_FOLDED_PARENTS = 200;
+
+export interface NestingPrefs {
+  /** Nest them: on unless turned off here. */
+  on: boolean;
+  /** The keys of the parents folded. */
+  folded: string[];
+}
+
+const NESTING_DEFAULT: NestingPrefs = { on: true, folded: [] };
+
+function checkNesting(v: unknown): NestingPrefs {
+  if (!isRecord(v)) return NESTING_DEFAULT;
+  return { on: v.on !== false, folded: strings(v.folded) ? v.folded : [] };
+}
+
+const nestingNow = () => (read(NESTING_KEY, checkNesting) as NestingPrefs | undefined) ?? NESTING_DEFAULT;
+
+/** Whether this browser nests the sidebar's worktrees, and which parents it folded. */
+export function useNestingPrefs(): NestingPrefs {
+  return useSyncExternalStore(subscribe, nestingNow);
+}
+
+export function setNesting(on: boolean): void {
+  const now = nestingNow();
+  if (now.on !== on) write(NESTING_KEY, { ...now, on });
+}
+
+export function foldParent(key: string, folded: boolean): void {
+  const now = nestingNow();
+  const rest = now.folded.filter((k) => k !== key);
+  write(NESTING_KEY, { ...now, folded: folded ? [...rest, key].slice(-MAX_FOLDED_PARENTS) : rest });
 }

@@ -7,7 +7,8 @@
 // (`groupSort`), whose items can be dragged from one group into another (`itemMove`), and the width on a computer can
 // be changed by dragging the right edge (`ResizeHandle`, lib/widths), and an item's tooltip can show while the sidebar
 // is open too (`tip`, for the branch of a worktree that has a name), and items can be selected together (`selected`,
-// `onShiftClick`, for the worktrees pressed with Shift). On a Mac, iPhone and iPad, Ctrl+B in a box that text is
+// `onShiftClick`, for the worktrees pressed with Shift), and items can be nested under an item, which folds them (`nest`,
+// for the worktrees started from a worktree). On a Mac, iPhone and iPad, Ctrl+B in a box that text is
 // written in is left to the box (it moves the cursor back), and only ⌘B folds the sidebar there. Only the items of the
 // last section scroll, under the rest (the other sections and that section's title), which stays, as the list of
 // conversations does under the top row in EasyUI's Chat (with Data Table's shadow under it once scrolled).
@@ -72,7 +73,15 @@ export type SidebarItem = {
   selected?: boolean;
   /** Gasho: called in place of `onActiveChange` when the item is pressed with Shift (it selects the items up to it). */
   onShiftClick?: () => void;
+  /**
+   * Gasho: items nested under this one (the worktrees started from a worktree), drawn under it one step in, joined by a
+   * line, and moved with it when it is dragged (they are not dragged on their own). A mark at its left folds them; what
+   * shows while folded is up to `items`. In the icon-only sidebar they are items as the rest.
+   */
+  nest?: SidebarNest;
 };
+/** Gasho: the items nested under an item, and whether they are folded. */
+export type SidebarNest = { items: SidebarItem[]; folded: boolean; onFoldedChange: (folded: boolean) => void };
 /** Gasho: a button at the right of a section's title, such as "＋" to add an item. */
 export type SidebarAction = {
   label: string;
@@ -727,14 +736,50 @@ function Panel({
       </AnimatePresence>
     );
 
+    // Gasho: the items nested under it, and the mark at its left that folds them (not in the icon-only sidebar).
+    const nest = item.nest;
+    const nested = nest && nest.items.length > 0 && (
+      <div
+        role="group"
+        aria-label={`「${item.label}」の下`}
+        className={cn(
+          "space-y-0.5",
+          collapsed ? "pt-0.5" : "ml-[19px] mt-0.5 border-l border-neutral-200 pl-1 dark:border-neutral-800"
+        )}
+      >
+        {nest.items.map((c) => renderItem(c))}
+      </div>
+    );
+    const foldNest = nest && !collapsed && (
+      <button
+        type="button"
+        onClick={() => nest.onFoldedChange(!nest.folded)}
+        aria-expanded={!nest.folded}
+        aria-label={`「${item.label}」の下を${nest.folded ? "開く" : "畳む"}`}
+        title={nest.folded ? "開く" : "畳む"}
+        className="absolute -left-1 top-1/2 z-[1] grid h-6 w-4 -translate-y-1/2 place-items-center rounded text-neutral-400 outline-none transition-colors hover:text-neutral-900 focus-visible:ring-2 focus-visible:ring-ring/50 dark:text-neutral-500 dark:hover:text-white"
+      >
+        <ChevronRight className={cn("size-3 transition-transform duration-200", !nest.folded && "rotate-90")} />
+      </button>
+    );
+
     // Gasho: a session's context menu opens from its button.
-    const shown = item.wrap ? item.wrap(button) : button;
+    const wrapped = item.wrap ? item.wrap(button) : button;
+    const shown = foldNest ? (
+      <div className="relative">
+        {wrapped}
+        {foldNest}
+      </div>
+    ) : (
+      wrapped
+    );
 
     if (!sort) {
       return (
         <div key={item.id}>
           {shown}
           {children}
+          {nested}
         </div>
       );
     }
@@ -779,6 +824,7 @@ function Panel({
           )}
         </div>
         {children}
+        {nested}
       </motion.div>
     );
   };

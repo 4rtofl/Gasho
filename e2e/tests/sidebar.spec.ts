@@ -290,9 +290,12 @@ test.describe("絞り込み", () => {
     await shown("repo-12");
     for (let i = 12; i < 21; i++) await page.keyboard.press("ArrowDown");
     await shown("repo-21");
-    // Past the last row, "リポジトリを登録・解除…", always shown.
+    // Past the last row, "worktree を入れ子にする" and "リポジトリを登録・解除…", always shown.
+    await page.keyboard.press("ArrowDown");
+    await expect(menu.getByRole("menuitemcheckbox", { name: "worktree を入れ子にする" })).toBeFocused();
     await page.keyboard.press("ArrowDown");
     await expect(menu.getByRole("menuitem", { name: "リポジトリを登録・解除…" })).toBeFocused();
+    await page.keyboard.press("ArrowUp");
     await page.keyboard.press("ArrowUp");
     await shown("repo-21");
     await page.keyboard.press("Home");
@@ -348,7 +351,7 @@ test.describe("絞り込み", () => {
       await drag(b.x + b.width / 2, b.y + b.height - 16, b.y + 16);
       await expect.poll(() => box.evaluate((e) => e.scrollTop)).toBeGreaterThan(100);
       await expect(menu).toBeVisible();
-      await expect(menu.getByRole("menuitemcheckbox", { checked: true })).toHaveCount(1);
+      await expect(box.getByRole("menuitemcheckbox", { checked: true })).toHaveCount(0);
       await expect(menu.getByRole("menuitemcheckbox", { name: "すべて" })).toBeChecked();
 
       // Over "すべて", which does not scroll, nothing behind the menu moves.

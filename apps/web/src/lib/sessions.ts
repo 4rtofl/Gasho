@@ -54,6 +54,15 @@ export function shownStatus(s: Pick<SessionInfo, "status" | "background">): Sess
   return s.status === "idle" && (s.background?.length ?? 0) > 0 ? "busy" : s.status;
 }
 
+/**
+ * What removing a session stops: its work (`working`: Claude works, also only in the background, or waits for an
+ * answer), and the inputs waiting to be sent (`pending`). The "×" of its tab asks before removing only when there is
+ * either; the conversation itself can be opened again.
+ */
+export function workRemovalStops(s: Pick<SessionInfo, "status" | "background" | "pendingInputs">): { working: boolean; pending: number } {
+  return { working: shownStatus(s) === "busy" || s.status === "waiting", pending: s.pendingInputs ?? 0 };
+}
+
 /** A session's dot. The bell shows also while its working server is offline: what was not read stays so. */
 export function sessionDot(m: MachineInfo, s: SessionInfo, unread: ReadonlySet<string>): Dot {
   return { status: m.connected ? sessionDotStatus(s) : "unknown", unread: hasUnread(m.id, s, unread) };

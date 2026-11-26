@@ -21,6 +21,7 @@ import {
   worktreesByLastUse,
   worktreeStatus,
   worktreeTitle,
+  workRemovalStops,
 } from "../src/lib/sessions.ts";
 
 const session = (sessionId: string, extra: Partial<SessionInfo> = {}): SessionInfo => ({
@@ -281,6 +282,16 @@ test("a session idle while work it started runs on in the background shows as wo
   const mac = machine("mac", [running]);
   assert.equal(sessionDot(mac, running, new Set()).status, "busy");
   assert.equal(worktreeStatus({ machine: mac, sessions: [running] }), "busy");
+});
+
+test("removing a session stops work while Claude works (also only in the background) or waits for an answer, and drops inputs waiting to be sent", () => {
+  const task = { id: "t", kind: "shell", title: "tests" } as const;
+  assert.deepEqual(workRemovalStops(session("a", { status: "busy" })), { working: true, pending: 0 });
+  assert.deepEqual(workRemovalStops(session("b", { status: "idle", background: [task] })), { working: true, pending: 0 });
+  assert.deepEqual(workRemovalStops(session("c", { status: "waiting" })), { working: true, pending: 0 });
+  assert.deepEqual(workRemovalStops(session("d", { status: "idle", pendingInputs: 2 })), { working: false, pending: 2 });
+  assert.deepEqual(workRemovalStops(session("e", { status: "idle", hibernation: "hibernated" })), { working: false, pending: 0 });
+  assert.deepEqual(workRemovalStops(session("f", { status: "unknown" })), { working: false, pending: 0 });
 });
 
 test("a page open on an id from before /clear goes to the session that had it; one on a listed or unknown id stays", () => {

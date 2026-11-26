@@ -12,7 +12,7 @@ import { sessionLabel } from "@/lib/format";
 import { go, parseHash, useRoute } from "@/lib/route";
 import { forkName, MAX_SESSION_NAME, nameProblem } from "@/lib/session-names";
 import { hidesSessionTabs } from "@/lib/session-list";
-import { daemonAtLeast, shownStatus, tabAfterRemoval, worktreeId, worktreesByLastUse } from "@/lib/sessions";
+import { daemonAtLeast, tabAfterRemoval, workRemovalStops, worktreeId, worktreesByLastUse } from "@/lib/sessions";
 import { getAppState, sendCommand, useAppState } from "@/lib/store";
 import { keepOpenWhileComposing } from "@/lib/text-input";
 import { cn } from "@/lib/utils";
@@ -21,10 +21,11 @@ import { useSessionListMode } from "@/plugins/session-list";
 export type SessionAction = "rename" | "fork" | "remove";
 
 /**
- * Removes a session for a plugin (the SDK's useRemoveSession). When the screen shows it, the tab next to it opens in its
- * place, or its worktree once there is none. `via`: the plugin that asked, for the operations log.
+ * Removes a session without asking: for a plugin (the SDK's useRemoveSession), and for the "×" of a tab whose session
+ * has nothing to stop. When the screen shows it, the tab next to it opens in its place, or its worktree once there is
+ * none. `via`: the plugin that asked, for the operations log.
  */
-export async function removeSession(machine: string, sessionId: string, via: string): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function removeSession(machine: string, sessionId: string, via?: string): Promise<{ ok: true } | { ok: false; error: string }> {
   // As they are before it goes.
   const m = getAppState().machines.find((x) => x.id === machine);
   const session = m?.sessions.find((s) => s.sessionId === sessionId);
@@ -282,7 +283,7 @@ function RemoveDialog({ request: { machine, session }, onClose, rowAfter }: Dial
   const [error, setError] = useState<string>();
   // What the session is doing now (it may have started working since the menu was opened).
   const live = machines.find((m) => m.id === machine.id)?.sessions.find((s) => s.sessionId === session.sessionId) ?? session;
-  const working = shownStatus(live) === "busy" || live.status === "waiting";
+  const { working, pending } = workRemovalStops(live);
 
   const remove = async () => {
     setBusy(true);
@@ -316,7 +317,7 @@ function RemoveDialog({ request: { machine, session }, onClose, rowAfter }: Dial
     <>
       {sessionAgent(session) === "codex" ? `「${sessionLabel(session)}」を Gasho の一覧から外します。` : `「${sessionLabel(session)}」の Claude Code を終了し、Gasho の一覧から外します。`}
       {working && "作業の途中で止まります。"}
-      {live.pendingInputs ? `送信待ちの ${live.pendingInputs} 件は送りません。` : ""}
+      {pending ? `送信待ちの ${pending} 件は送りません。` : ""}
     </>,
     sessionAgent(session) === "codex" ? (
       <>会話は Codex に残り、{machine.name} の codex resume で開けます。</>

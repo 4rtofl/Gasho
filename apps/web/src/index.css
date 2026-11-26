@@ -7,7 +7,7 @@
 @import "gen-interface-jp/400.css";
 @import "gen-interface-jp/500.css";
 @import "gen-interface-jp/600.css";
-/* Gasho's theme (colors, fonts, radii) and its own utilities, in one file with the plugins (docs/plugins.md). */
+/* Gasho's theme (colors, fonts, radii, scrollbars) and its own utilities, in one file with the plugins (docs/plugins.md). */
 @import "@gasho/plugin-sdk/theme.css";
 
 @custom-variant dark (&:is(.dark *));

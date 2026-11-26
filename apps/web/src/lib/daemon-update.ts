@@ -76,3 +76,28 @@ export function pendingWork(m: MachineInfo): { inputs: number; requests: number 
   }
   return { inputs, requests };
 }
+
+/** How long 「すべて更新」 waits for one working server's update before going on to the next. */
+export const UPDATE_ALL_WAIT_MS = 10 * 60_000;
+
+/**
+ * Where a working server's update stands, as 「すべて更新」 waits for it before the next (DaemonUpdates): "running"
+ * until it is done ("done": running the new version, on trial or past it), it failed without changing anything
+ * ("failed", the row says why), or the working server is no longer registered ("gone"). `failedBefore` is the time of
+ * the failure the row showed before the update was started; `seen` is whether its progress has been seen (the answer
+ * to daemon.update may come before the working server's state says it started).
+ */
+export function updateOutcome(
+  m: MachineInfo | undefined,
+  version: string,
+  failedBefore: number | undefined,
+  seen: boolean,
+): "running" | "done" | "failed" | "gone" {
+  if (!m) return "gone";
+  const u = m.update;
+  if (!m.connected) return "running";
+  if (u?.failed && u.failed.version === version && u.failed.at !== failedBefore) return "failed";
+  const busy = u?.progress && u.progress.step !== "trial";
+  if (busy) return "running";
+  return seen || m.daemonVersion === version ? "done" : "running";
+}

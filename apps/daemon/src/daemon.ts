@@ -130,6 +130,7 @@ import {
   waitingForOf,
 } from "./sessions.ts";
 import { type HostHello, SessionTerminals, Terminals } from "./terminal.ts";
+import { type HeldTools, ToolHold } from "./tool-hold.ts";
 import { foldersRepos, RegisteredRepos } from "./repos.ts";
 import { changesProblem, removableWorktree, removeWorktree, worktreeChanges } from "./worktrees.ts";
 import { listSkills } from "./skills.ts";
@@ -199,6 +200,10 @@ const CLAUDE_OPERATIONS: readonly AgentOperation[] = [...INPUT_FEATURES, "fork",
 const ENTER_WAIT_MS = 8000;
 /** When it did not, how long to wait before looking at the box again. */
 const UNSURE_RETRY_MS = 20_000;
+/** How long a session's next tool call may wait while a message is typed into it as Claude works (see ToolHold). */
+const TOOL_HOLD_MS = 3000;
+/** …and how much of it is left at least when a key is pressed, for Claude Code to act on it. */
+const TOOL_HOLD_MARGIN_MS = 1000;
 /** When nothing could be typed, how long to wait before trying again. */
 const RETRY_MS = 5000;
 /** …for what gasho-daemon sends on its own, which waits while the prompt box holds text (someone may be typing). */
@@ -336,6 +341,8 @@ export class Daemon {
   private tokenDaysAt = 0;
   /** Permission requests held until they are answered (in Gasho, or elsewhere). */
   private permissions = new PermissionRequests(() => this.emitSessions());
+  /** Keeps a session's next tool call waiting while a message is typed into it as Claude works. */
+  private toolHold = new ToolHold();
   private canLaunch = false;
   /** Claude Code on this working server, as last looked for. */
   private claude: AgentInfo | undefined;
@@ -594,12 +601,16 @@ export class Daemon {
         const id = this.permissions.add(payload, reply);
         return id ? () => this.permissions.dropped(id) : undefined;
       },
+      onPreToolUse: (payload, answer) => (this.fromPlugin(payload) ? answer() : this.toolHold.preToolUse(payload, answer)),
       onEvent: (payload) => {
         if (this.fromPlugin(payload)) return;
+        this.toolHold.observe(payload);
         this.permissions.observe(payload);
         const ev = summarizeHook(payload);
         if (!ev) return;
         this.hookRelay.pass(ev);
+        // A message that waited for a tool call to end can go in now, before Claude's next step (see flushInput).
+        if (ev.event === "PostToolUse" || ev.event === "PostToolUseFailure") this.flushWaitingInputs();
         // Hooks often mean the status changed; refresh soon instead of waiting for the next poll.
         this.scheduleStatuses();
         this.scheduleRefresh(250);
@@ -2964,12 +2975,14 @@ export class Daemon {
       const paths = await this.saveAttachments(session.sessionId, files);
       message = [body, paths.map((p) => `@${p}`).join("\n")].filter(Boolean).join("\n\n");
     }
+    const plain = !model && !effort && ultracode === undefined && !files?.length && !/^[/!]/.test(body);
     this.managed.enqueue(session.sessionId, {
       id: m.requestId,
       text: message,
       ...(model ? { model } : {}),
       ...(effort ? { effort } : {}),
       ...(ultracode !== undefined ? { ultracode } : {}),
+      ...(plain ? { whileBusy: true } : {}),
     });
     if (session.hibernated) {
       // Saved with the session, and typed once it is back; the screen shows that it is coming back.
@@ -2989,7 +3002,8 @@ export class Daemon {
       log(`could not send the input to ${session.sessionId} yet`, e);
       failed = "Claude Code の画面を操作できませんでした。入力は待たせてあり、あとで送ります。";
     }
-    const queued = this.managed.pending(session.sessionId) > 0;
+    // This input's own: gasho-daemon's /rename may wait on, behind or before it.
+    const queued = this.managed.waiting(session.sessionId).some((i) => i.id === m.requestId);
     this.emitSessions();
     const warning = [...(outcome?.warnings ?? []), failed].filter(Boolean).join(" ");
     const unapplied = [...new Set(outcome?.unapplied ?? [])];
@@ -3039,9 +3053,9 @@ export class Daemon {
   }
 
   /**
-   * The session's status right now (not the last poll), so input is never typed into a busy session. Idle while only
-   * shells and monitors run on in the background (see sessionStatus). From its file while its Claude Code runs (see
-   * readStatuses), else from the list.
+   * The session's status right now (not the last poll), so input is typed into a busy session only as flushInput lets
+   * it. Idle while only shells and monitors run on in the background (see sessionStatus). From its file while its
+   * Claude Code runs (see readStatuses), else from the list.
    */
   private async currentStatus(pid: number): Promise<string | undefined> {
     const reg = isAlive(pid) ? await readRegistry(this.cfg.claudeDir, pid) : undefined;
@@ -3051,7 +3065,8 @@ export class Daemon {
   }
 
   /**
-   * Types the next waiting input if the session is idle and no dialog is open. One message per idle period. Returns
+   * Types the next waiting input if the session is idle and no dialog is open, or a plain text while Claude works (see
+   * QueuedInput.whileBusy) with its tool calls held (see ToolHold). One message per idle period. Returns
    * what happened to the switches asked for with it (undefined when nothing was tried). Throws when a /model picker
    * cannot be closed; the input is then back on the queue.
    */
@@ -3059,6 +3074,7 @@ export class Daemon {
     const m = this.managed.get(sessionId);
     if (!m || this.flushing.has(m.terminal)) return;
     this.flushing.add(m.terminal);
+    let held: HeldTools | undefined;
     try {
       // From here on by m.sessionId: /clear can give the session a new id while the input is typed (see followNewIds).
       if (m.hibernated || this.managed.pending(m.sessionId) === 0) return;
@@ -3068,18 +3084,27 @@ export class Daemon {
         return;
       }
       this.settleUntil.delete(m.sessionId);
-      if ((await this.currentStatus(m.pid)) !== "idle") {
-        // Busy after an Enter that came back "unsure": Claude Code took it.
+      const status = await this.currentStatus(m.pid);
+      const busy = status === "busy";
+      if (status !== "idle") {
+        // Busy after an Enter that came back "unsure", pressed while the session was idle: Claude Code took it.
         const head = this.managed.peek(m.sessionId);
-        if (head?.entered) head.seenBusy = true;
-        return;
+        if (head?.entered && !head.enteredWhileBusy) head.seenBusy = true;
+        if (!busy || this.managed.nextAt(m.sessionId, busy) < 0) return;
+        // A permission dialog that opens as Enter is pressed takes it as a yes: nothing is typed while one may still
+        // open, and the next tool call waits until the text is in.
+        held = this.toolHold.hold(m.sessionId, TOOL_HOLD_MS);
+        if (!held) return;
       }
       const screen = (await this.terminals.screen(m.terminal)).plain;
       // A /model picker (or its question) still open, e.g. from an Enter that Claude Code took late: close it first
-      // (Esc changes nothing there). Any other dialog, such as a permission request, is the person's to answer.
-      if (modelPickerOptions(screen).length > 0 || switchQuestion(screen)) await this.closePicker(m.terminal);
-      else if (dialogOpen(screen)) return;
-      const item = this.managed.next(m.sessionId);
+      // (Esc changes nothing there). Any other dialog, such as a permission request, is the person's to answer. While
+      // Claude works, Esc would stop it.
+      if (modelPickerOptions(screen).length > 0 || switchQuestion(screen)) {
+        if (busy) return;
+        await this.closePicker(m.terminal);
+      } else if (dialogOpen(screen) || (busy && noticeKey(screen) === "Esc")) return;
+      const item = this.managed.next(m.sessionId, busy);
       if (item === undefined) return;
       const out: InputOutcome = { ...(item.id ? { id: item.id } : {}), warnings: [], unapplied: [] };
       const later = (ms: number, why: string) => {
@@ -3099,7 +3124,7 @@ export class Daemon {
           return out;
         }
         // Not in the transcript: whatever an earlier try did to the prompt box, it is typed from the start.
-        for (const done of ["recheck", "typingAt", "entered", "enteredAt", "seenBusy"] as const) delete item[done];
+        for (const done of ["recheck", "typingAt", "entered", "enteredAt", "seenBusy", "enteredWhileBusy"] as const) delete item[done];
       }
       if (item.keptAt !== undefined && !item.entered) {
         // Saved first: after a restart, only an input marked so can have been typed.
@@ -3129,7 +3154,7 @@ export class Daemon {
             await this.setUltracode(m.terminal, item.ultracode, out);
           }
         }
-        typed = await this.typeInput(m.terminal, item.text, item.entered, item.auto);
+        typed = await this.typeInput(m.terminal, item.text, item.entered, item.auto, held?.until);
       } catch (e) {
         if (item.keptAt !== undefined) item.recheck = true;
         this.managed.unshift(m.sessionId, item);
@@ -3144,10 +3169,14 @@ export class Daemon {
         ...(item.id ? { id: item.id } : {}),
         text: item.text,
         ...(item.auto ? { auto: true } : {}),
+        ...(item.whileBusy ? { whileBusy: true } : {}),
         ...(item.keptAt !== undefined ? { keptAt: item.keptAt } : {}),
         ...(item.typingAt !== undefined ? { typingAt: item.typingAt } : {}),
       };
-      const entered = item.entered ? { entered: true, enteredAt: item.enteredAt ?? enteredAt, ...(item.seenBusy ? { seenBusy: true } : {}) } : {};
+      const busyEnter = busy || item.enteredWhileBusy ? { enteredWhileBusy: true } : {};
+      const entered = item.entered
+        ? { entered: true, enteredAt: item.enteredAt ?? enteredAt, ...(item.seenBusy ? { seenBusy: true } : {}), ...(item.enteredWhileBusy ? { enteredWhileBusy: true } : {}) }
+        : {};
       if (typed === "not-typed") {
         // Model, effort and ultracode are switched already; only the text waits for the next try. A text whose Enter
         // was pressed before stays marked so: it must never be pasted again.
@@ -3157,7 +3186,7 @@ export class Daemon {
       } else if (typed === "unsure") {
         // Enter was pressed, but the box still held the text: Claude Code may take it late. It is never typed again;
         // a later look drops it if it was taken, and presses Enter only if the box still holds it.
-        this.managed.unshift(m.sessionId, { ...base, entered: true, enteredAt: item.enteredAt ?? enteredAt });
+        this.managed.unshift(m.sessionId, { ...base, entered: true, enteredAt: item.enteredAt ?? enteredAt, ...busyEnter });
         later(UNSURE_RETRY_MS, `the input was not taken yet; looking again in ${UNSURE_RETRY_MS / 1000}s`);
         out.warnings.push(`送ったことを画面で確かめられませんでした。${UNSURE_RETRY_MS / 1000} 秒後に入力欄を見て、まだ残っていれば送ります。`);
       } else {
@@ -3167,6 +3196,8 @@ export class Daemon {
       this.emitSessions();
       return out;
     } finally {
+      held?.release();
+      if (held?.waited) log(`${m.name}: ${held.waited} tool call(s) waited while a message was typed`);
       this.flushing.delete(m.terminal);
       if (this.managed.typed(m.sessionId)) await this.managed.save().catch((e: unknown) => log(`could not save the inputs of ${m.name}`, e));
     }
@@ -3182,11 +3213,14 @@ export class Daemon {
    * the first one opened (Enter in the /model picker saves the default model for every session). With `entered`
    * (an earlier call returned "unsure"), nothing is typed: Enter is pressed again only if the box still holds the text.
    * With `keepTyped`, a box that holds text is left as it is (someone may be typing in the terminal), and nothing is typed.
+   * With `holdUntil` (Claude works, and its tool calls are held until then), the offer to set up auto mode is left open,
+   * as Esc would stop Claude, and no key is pressed late in the hold; nothing is typed then.
    * Returns "sent", "not-typed" (nothing was sent; try again later), or "unsure" (Enter may have been pressed, but the
    * box still holds the text).
    */
-  private async typeInput(session: string, text: string, entered = false, keepTyped = false): Promise<TypeResult> {
+  private async typeInput(session: string, text: string, entered = false, keepTyped = false, holdUntil?: number): Promise<TypeResult> {
     const look = () => this.terminals.screen(session).catch(() => undefined);
+    const inTime = () => holdUntil === undefined || Date.now() < holdUntil - TOOL_HOLD_MARGIN_MS;
     const waitFor = async (done: (s: Screen) => boolean, ms: number): Promise<Screen | undefined> => {
       for (let waited = 0; waited < ms; waited += 150) {
         await sleep(150);
@@ -3204,7 +3238,8 @@ export class Daemon {
         return "unsure";
       }
       // Taken: the box lets go of the text (or a picker, such as /model's, takes its place).
-      return (await waitFor((s) => !promptHolds(s, text), this.enterWaitMs)) ? "sent" : "unsure";
+      const ms = holdUntil === undefined ? this.enterWaitMs : Math.min(this.enterWaitMs, holdUntil - Date.now());
+      return (await waitFor((s) => !promptHolds(s, text), ms)) ? "sent" : "unsure";
     };
     const clear = (s: Screen) => this.terminals.keys(session, ...clearPromptKeys(promptBoxLines(s.plain)?.length ?? 1));
     // Right after a picker or a command, Claude Code is still redrawing; wait for the prompt box.
@@ -3214,9 +3249,10 @@ export class Daemon {
       // Taken after all if the box no longer holds the text. Otherwise press Enter, unless a notice above the box
       // (the survey, the offer to set up auto mode) has the keys.
       if (!promptHolds(ready, text)) return "sent";
-      return noticeKey(ready.plain) ? "not-typed" : enter();
+      return noticeKey(ready.plain) || !inTime() ? "not-typed" : enter();
     }
     const key = noticeKey(ready.plain);
+    if ((key === "Esc" && holdUntil !== undefined) || !inTime()) return "not-typed";
     if (key) {
       await this.terminals.keys(session, key);
       // Decide on what the screen shows now: had the notice not taken the key, a "0" is in the box.
@@ -3226,12 +3262,12 @@ export class Daemon {
     if (typedInBox(ready)) {
       if (keepTyped) return "not-typed";
       await clear(ready);
-      if (!(await waitFor((s) => typedInBox(s) === "", 1500))) return "not-typed";
+      if (!(await waitFor((s) => typedInBox(s) === "", 1500)) || !inTime()) return "not-typed";
     }
     await this.terminals.paste(session, text);
     // Enter only once the text is in the box. Otherwise an empty box after Enter could not tell "sent" from
     // "never typed" (a redraw can drop a paste).
-    if (!(await waitFor((s) => promptHolds(s, text), 2000))) {
+    if (!(await waitFor((s) => promptHolds(s, text), 2000)) || !inTime()) {
       const s = await look();
       if (s && typedInBox(s)) await clear(s);
       return "not-typed";
@@ -3483,7 +3519,7 @@ export class Daemon {
     // An input whose Enter came back "unsure" has been taken if the session is busy: it must not be sent again when
     // Claude Code puts the stopped text back into the box.
     const head = this.managed.peek(sessionId);
-    if (head?.entered) head.seenBusy = true;
+    if (head?.entered && !head.enteredWhileBusy) head.seenBusy = true;
     await this.terminals.keys(m.terminal, "Esc");
     this.lastStop.set(sessionId, Date.now());
     this.settleUntil.set(sessionId, Date.now() + INTERRUPT_SETTLE_MS);

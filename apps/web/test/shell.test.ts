@@ -55,7 +55,7 @@ test("a command and the output after it are one item; a page boundary between th
   );
 });
 
-test("a shell command sent from here stays (running) while the session works, and goes a while after it stops", () => {
+test("a shell command sent from here, and a message typed while the session works, stay while it works and go a while after it stops", () => {
   mock.timers.enable({ apis: ["setTimeout"] });
   try {
     const key = "m\u0000shell-session";
@@ -72,10 +72,22 @@ test("a shell command sent from here stays (running) while the session works, an
     mock.timers.tick(1);
     assert.deepEqual(shown(), []);
 
-    // A message to Claude goes SENT_GRACE_MS after it was typed, working or not.
-    const other = addPending(key, { text: "テストを流して", files: [], after: 3 });
+    // A message to Claude typed while the session works: Claude Code records it once the current step has ended.
+    const held = addPending(key, { text: "途中で伝えたいこと", files: [], after: 3 });
     sessionWorking(key, true);
+    settlePending(key, held, "sent");
+    assert.equal(pendingOf(key)[0]?.whileWorking, true);
+    mock.timers.tick(SENT_GRACE_MS * 5);
+    assert.deepEqual(shown(), ["途中で伝えたいこと:sent"]);
+    sessionWorking(key, false);
+    mock.timers.tick(SENT_GRACE_MS);
+    assert.deepEqual(shown(), []);
+
+    // One typed while the session was idle goes SENT_GRACE_MS after, even as the session works.
+    sessionWorking(key, false);
+    const other = addPending(key, { text: "テストを流して", files: [], after: 3 });
     settlePending(key, other, "sent");
+    sessionWorking(key, true);
     mock.timers.tick(SENT_GRACE_MS);
     assert.deepEqual(shown(), []);
   } finally {

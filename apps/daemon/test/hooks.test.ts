@@ -102,6 +102,30 @@ test("hook server answers 200 at once and rejects a wrong secret", async (t) => 
   }
 });
 
+test("hook server answers a PreToolUse only when onPreToolUse says: Claude Code goes on with the tool call then", async (t) => {
+  let answer: (() => void) | undefined;
+  const server = startHookServer({ host: "127.0.0.1", port: 0, secret: undefined, onEvent: () => undefined, onPreToolUse: (_p, a) => (answer = a) });
+  await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+  const { port } = server.address() as AddressInfo;
+  try {
+    const body = JSON.stringify({ hook_event_name: "PreToolUse", session_id: "s1", tool_use_id: "t1" });
+    let answered = false;
+    const res = fetch(`http://127.0.0.1:${port}/hooks`, { method: "POST", body, headers: { "content-type": "application/json" } }).then((r) => {
+      answered = true;
+      return r;
+    });
+    await t.waitFor(() => assert.ok(answer), WAIT);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(answered, false);
+    answer?.();
+    const r = await res;
+    assert.equal(r.status, 200);
+    assert.equal(await r.text(), "");
+  } finally {
+    server.close();
+  }
+});
+
 test("hook server refuses what a web page in a browser can send: an Origin, or a body that is not JSON (#99)", async () => {
   const received: Array<Record<string, unknown>> = [];
   const server = startHookServer({ host: "127.0.0.1", port: 0, secret: undefined, onEvent: (p) => received.push(p) });

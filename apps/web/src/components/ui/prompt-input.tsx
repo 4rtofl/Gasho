@@ -113,7 +113,10 @@ export interface PromptInputProps {
    * Called when the user sends. Throw / reject to put their message back in the box.
    */
   onSend: (payload: PromptSubmit) => void | Promise<void>;
-  /** true while the assistant is replying → the send button becomes Stop */
+  /**
+   * true while the assistant is replying → the send button becomes Stop while the box is empty (with text, it still
+   * sends), and Esc stops
+   */
   streaming?: boolean;
   onStop?: () => void;
 
@@ -822,7 +825,7 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
     !disabled && (shellMode ? !emptyShellInput(text.trim()) : text.trim().length > 0 || attachments.length > 0) && text.length <= maxLength;
 
   const submit = useCallback(async () => {
-    if (streaming || !canSend) return;
+    if (!canSend) return;
     if (shellMode && attachments.length > 0) {
       flashError("シェルのコマンドには、ファイルを添付できません。添付を外してください。");
       return;
@@ -845,7 +848,7 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
       setAttachments((a) => (a.length ? a : snapshot.attachments));
       flashError("送れませんでした。入力は欄に戻しました。");
     }
-  }, [attachments, canSend, change, currentModel, flashError, onSend, setAttachments, setText, shellMode, streaming, text]);
+  }, [attachments, canSend, change, currentModel, flashError, onSend, setAttachments, setText, shellMode, text]);
 
   useImperativeHandle(
     ref,
@@ -975,8 +978,9 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
       </>
     );
 
-  const sendLabel = streaming ? "停止" : shellMode ? "実行" : "送信";
-  const sendReady = streaming || canSend;
+  const stopShown = streaming && !text.trim() && attachments.length === 0;
+  const sendLabel = stopShown ? "停止" : shellMode ? "実行" : "送信";
+  const sendReady = stopShown || canSend;
 
   return (
     <div className={cx("relative w-full", className)} style={safeArea ? { paddingBottom: "env(safe-area-inset-bottom)" } : undefined}>
@@ -1208,11 +1212,11 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
               <motion.button
                 type="button"
                 aria-label={sendLabel}
-                title={streaming ? "停止（Esc）" : sendLabel}
+                title={stopShown ? "停止（Esc）" : sendLabel}
                 disabled={!sendReady}
-                onClick={() => (streaming ? onStop?.() : void submit())}
+                onClick={() => (stopShown ? onStop?.() : void submit())}
                 initial={false}
-                animate={{ borderRadius: streaming ? 14 : 20 }}
+                animate={{ borderRadius: stopShown ? 14 : 20 }}
                 whileTap={reduce ? undefined : { scale: 0.92 }}
                 transition={{ type: "spring", duration: 0.35, bounce: 0.25 }}
                 className={cx(
@@ -1227,7 +1231,7 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
                 <motion.span
                   className="absolute"
                   initial={false}
-                  animate={{ opacity: streaming ? 0 : 1, scale: streaming ? 0.4 : 1, y: streaming ? 8 : 0 }}
+                  animate={{ opacity: stopShown ? 0 : 1, scale: stopShown ? 0.4 : 1, y: stopShown ? 8 : 0 }}
                   transition={{ type: "spring", duration: 0.35, bounce: 0.2 }}
                 >
                   <Ico d={P.up} className="h-[18px] w-[18px]" sw={2.2} />
@@ -1235,7 +1239,7 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
                 <motion.span
                   className="absolute h-3 w-3 rounded-[3px] bg-current"
                   initial={false}
-                  animate={{ opacity: streaming ? 1 : 0, scale: streaming ? 1 : 0.3 }}
+                  animate={{ opacity: stopShown ? 1 : 0, scale: stopShown ? 1 : 0.3 }}
                   transition={{ type: "spring", duration: 0.35, bounce: 0.3 }}
                 />
               </motion.button>

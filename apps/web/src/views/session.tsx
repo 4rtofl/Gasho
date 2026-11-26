@@ -420,7 +420,8 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
   useEffect(() => {
     if (!s.pendingInputs) noneWaiting(key);
   }, [key, s.pendingInputs]);
-  // A shell command typed from here runs while the session works; Claude Code records it once it has ended.
+  // A shell command typed from here runs, and a message typed while the session works waits in Claude Code, while the
+  // session works; Claude Code records them later.
   useEffect(() => sessionWorking(key, s.status === "busy"), [key, s.status]);
 
   if (!s.managed) {

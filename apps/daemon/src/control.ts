@@ -253,8 +253,8 @@ export const SESSION_USAGE = `  session launch --cwd DIR [--name NAME] [--agent 
                                                    (a fork of a session that has it has it anyway). Prints {sessionId,
                                                    name, cwd, terminal, forkOf} as JSON
   session send <NAME|ID> (--text TEXT | --file FILE | -)
-                                                   type a message into a session Gasho started (it waits while the
-                                                   session works)
+                                                   type a message into a session Gasho started (while it works, a
+                                                   command such as /compact or !ls waits until it has ended)
   session list [--json]                            list the sessions Gasho started, with their agents; "(folder
                                                    missing)" (cwdMissing in JSON) marks one whose folder is gone
   session remove <NAME|ID>                         end a session Gasho started and take it away from Gasho (its

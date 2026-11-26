@@ -310,7 +310,11 @@ function PendingView({ message: p }: { message: PendingMessage }) {
           <FileChip key={i} name={name} />
         ))}
         <div className="text-right text-[length:calc(10px*var(--chat-scale,1))] text-muted-foreground">
-          {p.state === "queued" ? "送信待ち（作業が終わったら送ります）" : "送信中…"}
+          {p.state === "queued"
+            ? "送信待ち（作業が終わったら送ります）"
+            : p.whileWorking
+              ? "送信待ち（今の手順が終わったら届きます）"
+              : "送信中…"}
         </div>
       </div>
     </div>

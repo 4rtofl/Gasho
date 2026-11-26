@@ -2,10 +2,11 @@
 // the Gasho server refuses and how often it lets one try, the name it starts with, and a Gasho server that is down.
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
-import type { GashoHub } from "../harness/index.ts";
+import { fakeSession, type GashoHub } from "../harness/index.ts";
 import { expect, test } from "./fixtures.ts";
 import { expectConnection } from "./screen.ts";
 
+const SESSION = "5d2a7c1e-3b4f-4e8a-9c6d-1f0e2b3a4c5d";
 const WRONG_CODE = "コードが正しくないか、使用済みか、期限が切れています。";
 
 /** Uses up a code, as another browser that registered with it. */
@@ -38,9 +39,13 @@ test("登録していないブラウザーで開くと登録の画面が出て�
   await page.getByLabel("この端末の名前").fill("e2e-new");
   await page.getByRole("button", { name: "登録する" }).click();
   await expect(page.getByRole("heading", { name: "ホーム" })).toBeVisible();
+  // A session's footer names this browser.
+  const d = await hub.fakeDaemon({ name: "mac", sessions: [fakeSession({ sessionId: SESSION, cwd: "/work/gasho", name: "e2e-session" })] });
+  await page.goto(`/#/s/${encodeURIComponent(d.machineId)}/${SESSION}`);
   await expectConnection(page, true, "e2e-new");
 
   // Registered: the Gasho server set the cookie, and the next visit opens the home screen.
+  await page.goto("/");
   await page.reload();
   await expect(page.getByRole("heading", { name: "ホーム" })).toBeVisible();
 });

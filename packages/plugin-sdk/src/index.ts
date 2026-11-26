@@ -223,6 +223,29 @@ export interface ComposerFooterItem {
   component: ComponentType<ComposerFooterProps>;
 }
 
+/** A part in the footer of a session's screen (P21), and the session it is drawn for. */
+export interface SessionFooterProps {
+  machine: MachineInfo;
+  session: SessionInfo;
+}
+
+/**
+ * A part in the footer of a session's screen (P21): the line at the bottom of the session's column, with the connection,
+ * the working server's memory, the context window and the plan's usage limits. On the left after the memory, or on the
+ * right before the context window. The line is 28px high; what does not fit goes in a Popover. On a phone, parts that
+ * do not fit the width are left out. Plugin API 1.19.
+ */
+export interface SessionFooterItem {
+  id: string;
+  /** "left" or "right" (by default). */
+  side?: "left" | "right";
+  /** Where it goes among the plugins' parts on its side: a smaller one comes further left. By default 500. */
+  order?: number;
+  /** Whether it shows for this session. */
+  when?: (ctx: SessionContext) => boolean;
+  component: ComponentType<SessionFooterProps>;
+}
+
 /**
  * A worktree as the sidebar knows it, for the plugin that puts the sidebar's sessions in categories (P17). Plugin API
  * 1.7.
@@ -442,6 +465,8 @@ export interface PluginDefinition {
   worktreeViews?: Record<string, ComponentType<WorktreeViewProps>>;
   /** Parts in the line under a session's chat box (P14). Plugin API 1.4. */
   composerFooter?: ComposerFooterItem[];
+  /** Parts in the footer of a session's screen (P21). Plugin API 1.19. */
+  sessionFooter?: SessionFooterItem[];
   /** The sidebar's sessions in categories, in place of its list of worktrees (P17). Plugin API 1.7. */
   sessionList?: SessionListDefinition;
   /** Ways to put the sidebar's worktrees in categories, picked in the menu of the list (P18). Plugin API 1.8. */

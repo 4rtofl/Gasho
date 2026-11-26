@@ -197,24 +197,6 @@ function PanelView({ machine, sessionId, panel, docked }: { machine: string; ses
   return <FilePanel key={path} machine={machine} sessionId={sessionId} path={path} docked={docked} onClose={close} />;
 }
 
-function Connection({ connected, deviceName }: { connected: boolean; deviceName?: string }) {
-  const { collapsed } = useSidebar();
-  return (
-    <div
-      className="flex items-center gap-2 px-2.5 text-xs text-muted-foreground"
-      title={connected ? "Gasho サーバーに接続中" : "Gasho サーバーに再接続しています"}
-    >
-      <span className={cn("size-2 shrink-0 rounded-full", connected ? "bg-emerald-500" : "bg-red-500")} />
-      {!collapsed && (
-        <span className="truncate">
-          {connected ? "接続中" : "再接続中…"}
-          {deviceName && ` · ${deviceName}`}
-        </span>
-      )}
-    </div>
-  );
-}
-
 function Centered({ children }: { children: React.ReactNode }) {
   return <div className="flex min-h-dvh items-center justify-center bg-background p-4 text-sm text-muted-foreground">{children}</div>;
 }
@@ -232,7 +214,7 @@ export function App() {
   useLayoutEffect(() => {
     if (main.current) main.current.scrollTop = 0;
   }, [page]);
-  const { auth, me, machines, notifications, connected, plugins, catalog, latest, server, outdated } = useAppState();
+  const { auth, machines, notifications, connected, plugins, catalog, latest, server, outdated } = useAppState();
   // After /clear, the session goes on under a new id: its page (and the panel open beside it) goes there too, and shows
   // it already while the address changes.
   const movedTo = route.name === "session" ? movedSession(machines.find((m) => m.id === route.machine), route.sessionId)?.sessionId : undefined;
@@ -714,7 +696,6 @@ export function App() {
           if (inside || !mobileOpen) holdList(inside);
         }}
         header={<Brand away={gassho !== null} onGassho={setGassho} />}
-        footer={<Connection connected={connected} deviceName={me?.name} />}
       />
       <div className="flex min-w-0 flex-1 flex-col pt-(--safe-top)">
         {/* The Gasho server serves a new build of the screen, and this page did not reload itself: something is being written in it. */}
@@ -758,7 +739,7 @@ export function App() {
               Gasho
             </span>
           )}
-          {/* The connection shows in the sidebar's footer; here only while it is down. */}
+          {/* The connection shows in a session's footer (SessionFooter); here only while it is down. */}
           {!connected && <span className="ml-auto shrink-0 text-xs text-red-400">再接続中…</span>}
           {onScreen && <SessionHeaderToggle className={cn("-mr-1", connected && "ml-auto")} />}
         </header>

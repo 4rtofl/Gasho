@@ -46,6 +46,7 @@ import { HubClient } from "./hub-client.ts";
 import { type Install, type Layout, layoutOf } from "./install.ts";
 import { type MediaFailed, readMediaPart } from "./media.ts";
 import { readMemory } from "./memory.ts";
+import { PlanUsageReader, UsageError } from "./plan-usage.ts";
 import {
   answersMessage,
   dialogCall,
@@ -402,6 +403,8 @@ export class Daemon {
   private updater: Updater;
   /** gasho-daemon has begun to end (exit). */
   private exiting = false;
+  /** Reads the Claude.ai plan's usage limits with Claude Code's get_usage (usage.get): made when first asked. */
+  private planUsage: PlanUsageReader | undefined;
 
   /** How long the prompt box may take to let go of a text after Enter (see typeInput). */
   private enterWaitMs: number;
@@ -493,9 +496,22 @@ export class Daemon {
   async exit(code: number): Promise<void> {
     if (this.exiting) return;
     this.exiting = true;
+    this.planUsage?.stop();
     await this.plugins.stopAll().catch((e: unknown) => log("could not stop the plugins", e));
     await this.tokenDays.save();
     process.exit(code);
+  }
+
+  /** Answers usage.get with the plan's usage limits, or why they could not be read. */
+  private async sendUsage(): Promise<void> {
+    // In the plugins' data folder, where no Claude Code is taken for a session; "_" keeps it apart from a plugin's own.
+    this.planUsage ??= new PlanUsageReader({ claude: this.cfg.claudeBin, dir: path.join(this.cfg.pluginDataDir, "_usage") });
+    try {
+      this.hub.send({ type: "usage", usage: await this.planUsage.read() });
+    } catch (e) {
+      log("could not read the plan's usage limits", e);
+      this.hub.send({ type: "usage", error: e instanceof UsageError ? e.message : "使用量の上限を読めませんでした。" });
+    }
   }
 
   private async emitMemory(): Promise<void> {
@@ -1225,6 +1241,7 @@ export class Daemon {
       canEnd: true,
       canRemoveWorktree: true,
       canListSkills: true,
+      canReadUsage: true,
       agents: this.agentsFound(),
       update: this.updater.info(),
     });
@@ -1547,6 +1564,8 @@ export class Daemon {
       case "worktree.name.result":
         this.namings.get(m.requestId)?.(m.result);
         return;
+      case "usage.get":
+        return this.sendUsage();
       case "transcript.get":
         return this.sendTranscriptPage(m);
       case "git.graph.get":

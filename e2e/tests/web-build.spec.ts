@@ -32,8 +32,10 @@ async function newBuild(webDist: string | undefined): Promise<void> {
 const mark = (page: Page) => page.evaluate("window.e2eMark = true");
 const marked = (page: Page) => page.evaluate("window.e2eMark === true");
 
-test("書きかけが無ければ、ビルドが変わると自動で読み込み直す。60 秒以内に同じ版のためには 2 回目を読み込み直さず、帯を出す", async ({ page, hubOptions }) => {
-  await page.goto("/");
+test("書きかけが無ければ、ビルドが変わると自動で読み込み直す。60 秒以内に同じ版のためには 2 回目を読み込み直さず、帯を出す", async ({ page, hub, hubOptions }) => {
+  // Connected: a session's footer tells it.
+  const d = await hub.fakeDaemon({ name: "mac", sessions: [fakeSession({ sessionId: SESSION, cwd: "/work/gasho", name: "e2e-session" })] });
+  await page.goto(`/#/s/${encodeURIComponent(d.machineId)}/${SESSION}`);
   await expectConnection(page, true, "e2e-browser");
   await mark(page);
 

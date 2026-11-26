@@ -15,6 +15,7 @@ import type {
   MachineHookEvent,
   MachineInfo,
   MachineMemory,
+  MachineUsage,
   TokenDay,
   PluginCatalog,
   PluginCommand,
@@ -81,6 +82,8 @@ export interface State {
   machines: MachineInfo[];
   /** The latest memory of the working servers that tell it, by machine id. */
   memory: Record<string, MachineMemory>;
+  /** What the Gasho server knows of the working servers' plan usage limits (get_usage), by machine id. */
+  usage: Record<string, MachineUsage>;
   /** The last year's tokens per day, by machine id: absent until the home screen has asked for them. */
   tokenDays?: Record<string, TokenDay[]>;
   /** Whether a working server has told its tokens per day (an older gasho-daemon does not). */
@@ -135,6 +138,7 @@ const EMPTY: Omit<State, "auth"> = {
   connected: false,
   machines: [],
   memory: {},
+  usage: {},
   tokenDays: undefined,
   tokenDaysReported: false,
   notifications: [],
@@ -621,6 +625,7 @@ function handle(m: HubToClient): void {
         push: m.push,
         machines: m.machines,
         memory: m.memory ?? {},
+        usage: m.usage ?? {},
         notifications: m.notifications,
         events: m.events.slice(-MAX_EVENTS),
         operations: (m.operations ?? m.events.filter(isOperation)).slice(-MAX_OPERATIONS),
@@ -649,6 +654,11 @@ function handle(m: HubToClient): void {
       update({ memory: m.memory ? { ...memory, [m.machine]: m.memory } : memory });
       break;
     }
+    case "machine.usage": {
+      const { [m.machine]: _old, ...usage } = state.usage;
+      update({ usage: m.usage ? { ...usage, [m.machine]: m.usage } : usage });
+      break;
+    }
     case "token.days":
       update({ tokenDays: m.days, tokenDaysReported: m.reported });
       break;
@@ -660,6 +670,7 @@ function handle(m: HubToClient): void {
       break;
     case "machine.removed": {
       const { [m.id]: _gone, ...memory } = state.memory;
+      const { [m.id]: _usage, ...usage } = state.usage;
       const { [m.id]: _days, ...tokenDays } = state.tokenDays ?? {};
       const prefix = transcriptKey(m.id, "");
       const transcripts = Object.fromEntries(Object.entries(state.transcripts).filter(([k]) => !k.startsWith(prefix)));
@@ -669,6 +680,7 @@ function handle(m: HubToClient): void {
       update({
         machines: state.machines.filter((x) => x.id !== m.id),
         memory,
+        usage,
         ...(state.tokenDays ? { tokenDays } : {}),
         transcripts,
         graphs,

@@ -51,7 +51,7 @@ manifest、アイコン、`index.html` のホーム画面向けの meta（`apple
 
 済んだもの：
 
-- manifest（`display: standalone`）とアイコン（`apps/web/public/`）。アイコンは、Noto Emoji の 🙏 を画面の背景の色の上に置いた PNG（180・192・512 ピクセル）
+- manifest（`display: standalone`）とアイコン（`apps/web/public/`）。アイコンは Noto Emoji の 🙏 の PNG。iPhone 用（180 ピクセル）は画面の背景の色の上に置き、Android 用（192・512 ピクセル）は背景を透過にしてある
 - 画面に戻ったときと、ネットワークが戻ったときは、再接続の待ち時間（最大15秒）を待たずに、すぐつなぎ直す（`apps/web/src/lib/store.ts`）。iPhone は裏に回った Web アプリを止めるので、戻ったときには接続が切れていることが多い
 - Gasho サーバーは、Vite がハッシュを付けて `assets/` に書き出すファイルだけを長くキャッシュさせ、ほかのファイル（index.html、manifest、アイコン、ライセンス）は毎回確かめさせる。名前の変わらないファイルを変えたときに、端末に古いものが残らないようにするためである
 - スマホのセッション画面では、セッション名と状態を画面上部のバーに出し、セッションのヘッダーには出さない。ヘッダーを閉じたときの1行（約37px）がなくなり、会話がバーのすぐ下から始まる（`apps/web/src/App.tsx`、`apps/web/src/views/session.tsx`）

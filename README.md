@@ -95,6 +95,6 @@ LAN の中では通信が暗号化されない。端末のトークンも平文�
 
 画面のフォントは [Gen Interface JP](https://gen.typesetting.jp/)（Inter と Noto Sans JP を組み合わせた書体）で、npm の `gen-interface-jp` を使い、Gasho サーバーから配信する。外部の CDN には取りに行かない。使う太さは Regular・Medium・SemiBold の3つで、どれも文字の範囲ごとに分かれたファイルなので、ブラウザーは表示する文字を含むファイルだけを読み込む。ライセンスは SIL Open Font License 1.1 で、全文を `apps/web/public/licenses/gen-interface-jp-OFL.txt` に置き、画面と一緒に `/licenses/gen-interface-jp-OFL.txt` で配信している。
 
-ホーム画面のアイコン（`apps/web/public/icons/`）は、[Noto Emoji](https://github.com/googlefonts/noto-emoji) の 🙏（`2D/svg/emoji_u1f64f.svg`）を画面の背景の色の上に置き、PNG にしたもの。ライセンスは SIL Open Font License 1.1 で、全文を `apps/web/public/licenses/noto-emoji-OFL.txt` に置き、`/licenses/noto-emoji-OFL.txt` で配信している。
+ホーム画面のアイコン（`apps/web/public/icons/`）は、[Noto Emoji](https://github.com/googlefonts/noto-emoji) の 🙏（`2D/svg/emoji_u1f64f.svg`）を PNG にしたもの。Android が使う `icon-192.png`・`icon-512.png` は背景を透過にしてあり、Android はこれを白い丸の上に載せる。iPhone が使う `apple-touch-icon.png` は、画面の背景の色の上に置いてある（iPhone は透過した部分を黒で塗る）。ライセンスは SIL Open Font License 1.1 で、全文を `apps/web/public/licenses/noto-emoji-OFL.txt` に置き、`/licenses/noto-emoji-OFL.txt` で配信している。
 
 拍手の音（`apps/web/src/assets/clap.mp3`。サイドバーのロゴの隠し機能で鳴らす）は、Freesound にある Landau00 の [HandClap1.wav](https://freesound.org/people/Landau00/sounds/463687/) のプレビュー（MP3）をそのまま使っている。ライセンスは CC0 1.0（パブリックドメイン）。頭の無音を飛ばすことと、音量をそろえることは、鳴らすときに画面（`apps/web/src/lib/clap.ts`）で行う。

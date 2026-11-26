@@ -399,8 +399,15 @@ export function parseRecord(rec: Record<string, unknown>, meta: TranscriptMeta):
       if (typeof rec.bridgeSessionId === "string") meta.bridgeSessionId = toUrlSessionId(rec.bridgeSessionId);
       return null;
     case "attachment": {
+      const a = rec.attachment as
+        | { type?: unknown; identity?: { marketingName?: unknown; modelId?: unknown }; prompt?: unknown; commandMode?: unknown; origin?: { kind?: unknown } }
+        | undefined;
+      // A message the person sent while Claude worked, which Claude got before the turn ended: Claude Code records no
+      // user message for it, only this.
+      if (a?.type === "queued_command" && a.commandMode === "prompt" && a.origin?.kind === "human" && typeof a.prompt === "string" && rec.isSidechain !== true) {
+        return parseRecord({ ...rec, type: "user", message: { role: "user", content: a.prompt } }, meta);
+      }
       // Claude Code tells the model which model it is at the start of a turn.
-      const a = rec.attachment as { type?: unknown; identity?: { marketingName?: unknown; modelId?: unknown }; prompt?: unknown } | undefined;
       if (a?.type === "model" && rec.isSidechain !== true) {
         const name = str(a.identity?.marketingName) ?? (typeof a.identity?.modelId === "string" ? modelLabel(a.identity.modelId) : undefined);
         if (name) meta.model = meta.namedModel = name;

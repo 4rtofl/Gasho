@@ -105,14 +105,16 @@ export interface HookServerOptions {
    * closes before that (Claude Code gave up). Without it, PermissionRequest is answered at once like other hooks.
    */
   onPermissionRequest?: (payload: Record<string, unknown>, reply: HookReply) => (() => void) | undefined;
+  /** A PreToolUse: its response, with no decision, waits for `answer`. Without it, it is answered at once. */
+  onPreToolUse?: (payload: Record<string, unknown>, answer: () => void) => void;
   /** What the status line relay of a session Gasho started sent (POST /statusline; see statusline.ts). */
   onStatusLine?: (payload: Record<string, unknown>) => void;
 }
 
 /**
- * Answers every request at once with an empty 200, so a hook never delays Claude Code; a PermissionRequest is passed
- * to `onPermissionRequest` (and to `onEvent`) and answered when it says. The status line relay posts to /statusline,
- * with the same secret.
+ * Answers every request with an empty 200, at once except a PermissionRequest (passed to `onPermissionRequest`) and a
+ * PreToolUse (passed to `onPreToolUse`), answered when they say; each hook goes to `onEvent` too. The status line
+ * relay posts to /statusline, with the same secret.
  */
 export function startHookServer(opts: HookServerOptions): http.Server {
   let lastRejectLog = 0;
@@ -168,6 +170,8 @@ export function startHookServer(opts: HookServerOptions): http.Server {
         res.on("close", () => {
           if (!res.writableEnded) dropped?.();
         });
+      } else if (payload && payload.hook_event_name === "PreToolUse" && opts.onPreToolUse) {
+        opts.onPreToolUse(payload, () => reply(undefined));
       } else {
         reply(undefined);
       }

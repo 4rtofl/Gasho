@@ -130,30 +130,37 @@ test("↑/↓ で送った文を 30 件までさかのぼる。カーソルが�
   await expect(box).toHaveValue("メッセージ 3");
 });
 
-test("作業中は送信ボタンが「停止」になり、押すか Esc で止める", async ({ page, hub }) => {
+test("作業中は、入力欄が空なら送信ボタンが「停止」になり、押すか Esc で止める。文があれば送れる（#289）", async ({ page, hub }) => {
   let interrupts = 0;
   const daemon = await openSession(page, hub, { session: { status: "busy" } });
   daemon.handle("session.interrupt", (msg) =>
     ++interrupts === 1 ? commandResult(msg, { ok: true, warning: "止められなかった作業があります" }) : commandResult(msg, { ok: false, error: "止められませんでした" }),
   );
+  const stop = page.getByRole("button", { name: "停止" });
   await expect(sendButton(page)).toHaveCount(0);
-  const box = chatBox(page);
-  await box.fill("止まって");
-  // While Claude works, nothing is sent.
-  await box.press("ControlOrMeta+Enter");
-
-  await page.getByRole("button", { name: "停止" }).click();
+  await stop.click();
   await daemon.waitFor("session.interrupt", (m) => m.sessionId === SESSION_ID);
   await expect(page.getByText("止められなかった作業があります")).toBeVisible();
+
+  // With text in the box, the button sends it, and Esc still stops.
+  const box = chatBox(page);
+  await box.fill("次はテストも");
+  await expect(stop).toHaveCount(0);
+  await expect(sendButton(page)).toBeEnabled();
   await box.press("Escape");
   await expect(page.getByText("止められませんでした")).toBeVisible();
   expect(interrupts).toBe(2);
+  await expect(box).toHaveValue("次はテストも");
   expect(daemon.received.filter((m) => m.type === "session.input")).toHaveLength(0);
-  await expect(box).toHaveValue("止まって");
+  await box.press("ControlOrMeta+Enter");
+  expect(await daemon.waitFor("session.input")).toMatchObject({ sessionId: SESSION_ID, text: "次はテストも" });
+  await expect(box).toHaveValue("");
+  await expect(stop).toBeVisible();
 
   daemon.updateSession(SESSION_ID, { status: "idle" });
+  await expect(stop).toHaveCount(0);
+  await box.fill("終わった？");
   await expect(sendButton(page)).toBeEnabled();
-  await expect(page.getByRole("button", { name: "停止" })).toHaveCount(0);
 });
 
 test("「!」で始めるとシェルモードになる（札・枠・「実行」・添付できない）", async ({ page, hub }) => {

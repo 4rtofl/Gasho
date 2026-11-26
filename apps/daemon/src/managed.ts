@@ -599,6 +599,14 @@ export interface QueuedInput {
   effort?: EffortLevel;
   ultracode?: boolean;
   /**
+   * Typed while Claude works, too: Claude Code then holds it and gives it to Claude once the current step ends, as when
+   * it is typed in the terminal. Only a plain text: switches, files (Claude would have to open them itself), commands
+   * ("/", "!") wait until the work has ended.
+   */
+  whileBusy?: boolean;
+  /** Enter (see `entered`) was pressed while Claude worked: the session being busy since says nothing about it. */
+  enteredWhileBusy?: boolean;
+  /**
    * Enter was pressed for this text (at `enteredAt`), but the prompt box still held it when Gasho stopped waiting.
    * The text is never typed again (that could send it twice). A later try drops it if Claude Code has taken it
    * since, and presses Enter only if the box still holds it.
@@ -1212,8 +1220,21 @@ export class ManagedSessions {
     return q.length;
   }
 
-  next(sessionId: string): QueuedInput | undefined {
-    const item = this.queues.get(sessionId)?.shift();
+  /**
+   * Where the input to type next waits (-1: none). While Claude works (`busy`), it is the first one not gasho-daemon's
+   * own (see QueuedInput.auto; those wait for the session to be idle), and only if it may be typed then (see whileBusy).
+   */
+  nextAt(sessionId: string, busy = false): number {
+    const q = this.queues.get(sessionId) ?? [];
+    if (!busy) return q.length > 0 ? 0 : -1;
+    const at = q.findIndex((i) => !i.auto);
+    return q[at]?.whileBusy ? at : -1;
+  }
+
+  /** Takes the input to type next off the queue (see nextAt). */
+  next(sessionId: string, busy = false): QueuedInput | undefined {
+    const at = this.nextAt(sessionId, busy);
+    const item = at < 0 ? undefined : this.queues.get(sessionId)?.splice(at, 1)[0];
     if (item?.keptAt !== undefined) this.typing.set(sessionId, item);
     return item;
   }

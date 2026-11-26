@@ -9,6 +9,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { Daemon } from "../src/daemon.ts";
 import { readScreen } from "../src/managed.ts";
+import { DIALOG_DRAWN_MS, DIALOG_MAY_OPEN_MS, ToolHold } from "../src/tool-hold.ts";
 import { followTranscript, TranscriptTail } from "../src/transcript.ts";
 
 const RULE = "─".repeat(50);
@@ -22,6 +23,8 @@ class FakeClaude {
   mode: "prompt" | "picker" = "prompt";
   box = "";
   conversation = ["❯ 前の指示", "● はい"];
+  /** Lines drawn right above the prompt box, such as a notice. */
+  above: string[] = [];
   cursor = 0;
   model = 3;
   effort = 1;
@@ -34,6 +37,8 @@ class FakeClaude {
   noXHigh = -1;
   submitted: string[] = [];
   events: string[] = [];
+  /** Called on a paste, as it reaches the box. */
+  onPaste?: () => void;
   private queue: Key[] = [];
   private busyUntil = 0;
   private pending?: () => void;
@@ -62,6 +67,7 @@ class FakeClaude {
   private paste(text: string): void {
     if (this.mode === "picker") this.events.push("paste in the picker");
     else this.box += text;
+    this.onPaste?.();
   }
 
   private key(key: string): void {
@@ -118,7 +124,7 @@ class FakeClaude {
   /** The screen, as a dump of the terminal gives it (see dumpScreen). An empty box shows a suggestion, drawn dim. */
   ansi(): string {
     this.pump();
-    const head = [" ▐▛███▛█   Claude Code v2.1.322", ...this.conversation];
+    const head = [" ▐▛███▛█   Claude Code v2.1.322", ...this.conversation, ...this.above];
     if (this.mode === "prompt") {
       const box = (this.box ? `❯ ${this.box}` : "❯ \x1b[2m前の指示をもう一度\x1b[22m").split("\n").map((l, i) => (i === 0 ? l : `  ${l}`));
       return [...head, RULE, ...box, RULE, "  ⏵⏵ auto mode on (shift+tab to cycle)", ""].join("\n");
@@ -323,6 +329,94 @@ test("a text whose Enter may have been pressed is never pasted again, even when 
   c.ansi();
   assert.deepEqual(c.submitted, ["一度だけ送って"]);
   assert.equal(d.managed.pending(SID), 0);
+  await done();
+});
+
+test("while Claude works, a plain text is typed at once; a switch, a file or a command, and the texts behind it, wait until the work has ended", async () => {
+  const c = new FakeClaude();
+  const { d, done } = await setup(c);
+  d.currentStatus = async () => "busy";
+  d.toolHold.observe({ hook_event_name: "UserPromptSubmit", session_id: SID });
+  const send = (text: string, more: Record<string, unknown> = {}) => d.input({ type: "session.input", requestId: text, sessionId: SID, text, ...more });
+  // The name from the first message waits for the session to be idle; the text goes before it.
+  d.managed.enqueue(SID, { text: "/rename 名前", auto: true });
+  assert.equal((await send("ついでに README も直して")).queued, false);
+  assert.deepEqual(d.managed.waiting(SID), [{ text: "/rename 名前", auto: true }]);
+  d.managed.next(SID);
+  const file = { files: [{ name: "a.txt", data: Buffer.from("x").toString("base64") }] };
+  for (const [text, more] of [["/compact", {}], ["!git status", {}], ["この画像を見て", file], ["Opus で続けて", { model: "opus" }]] as const) {
+    assert.equal((await send(text, more)).queued, true, text);
+    assert.equal((await send("後ろの指示")).queued, true, `behind ${text}`);
+    assert.deepEqual(c.submitted, ["ついでに README も直して"], text);
+    d.managed.next(SID);
+    d.managed.next(SID);
+  }
+  // Esc, which would close the offer to set up auto mode, would stop Claude: the text waits.
+  c.above = [RULE, " Teach auto mode about your environment?", " 1. Yes", " 2. Not now", " Enter to confirm · Esc to cancel"];
+  assert.equal((await send("もう一つ")).queued, true);
+  assert.deepEqual(c.events, []);
+  d.currentStatus = async () => "idle";
+  c.above = [];
+  await d.flushInput(SID);
+  assert.deepEqual(c.submitted, ["ついでに README も直して", "もう一つ"]);
+  await done();
+});
+
+test("a text whose Enter, pressed while Claude works, came back unsure is not taken as sent by the session being busy", async () => {
+  const c = new FakeClaude();
+  const { d, done } = await setup(c);
+  d.currentStatus = async () => "busy";
+  d.toolHold.observe({ hook_event_name: "UserPromptSubmit", session_id: SID });
+  c.loseEnter = true;
+  const r = await d.input({ type: "session.input", requestId: "r", sessionId: SID, text: "途中で伝えたいこと" });
+  assert.match(r.warning, /まだ残っていれば送ります/);
+  d.settleUntil.clear();
+  await d.flushInput(SID);
+  await sleep(100);
+  c.ansi();
+  assert.deepEqual(c.submitted, ["途中で伝えたいこと"]);
+  assert.equal(d.managed.pending(SID), 0);
+  await done();
+});
+
+test("while Claude works, a text waits while a permission dialog may open, and Claude's next tool call waits until it is in", async () => {
+  const c = new FakeClaude();
+  const { d, done } = await setup(c);
+  // Its clock moves only when told to.
+  let now = Date.now();
+  d.toolHold = new ToolHold(() => now);
+  d.currentStatus = async () => "busy";
+  const hook = (hook_event_name: string, more: Record<string, unknown> = {}) => ({ hook_event_name, session_id: SID, ...more });
+  const send = (text: string) => d.input({ type: "session.input", requestId: text, sessionId: SID, text });
+  // Its hooks have not been seen to reach gasho-daemon (none came since it started): it waits until the work has ended.
+  assert.equal((await send("一つ目")).queued, true);
+  d.toolHold.observe(hook("UserPromptSubmit"));
+  // A tool call has gone on to its permission check: it may open a dialog.
+  d.toolHold.preToolUse(hook("PreToolUse", { tool_use_id: "t1" }), () => undefined);
+  await d.flushInput(SID);
+  assert.deepEqual(c.submitted, []);
+  d.toolHold.observe(hook("PostToolUse", { tool_use_id: "t1" }));
+  // A tool call that starts while the text is typed goes on once Claude Code has taken the Enter.
+  const answered: string[][] = [];
+  c.onPaste = () => d.toolHold.preToolUse(hook("PreToolUse", { tool_use_id: "t2" }), () => answered.push([...c.submitted]));
+  await d.flushInput(SID);
+  assert.deepEqual(c.submitted, ["一つ目"]);
+  assert.deepEqual(answered, [["一つ目"]]);
+  c.onPaste = undefined;
+  // That one has not ended, but can no longer open a dialog after a while.
+  assert.equal((await send("二つ目")).queued, true);
+  now += DIALOG_MAY_OPEN_MS - 1;
+  await d.flushInput(SID);
+  assert.deepEqual(c.submitted, ["一つ目"]);
+  now += 1;
+  await d.flushInput(SID);
+  assert.deepEqual(c.submitted, ["一つ目", "二つ目"]);
+  // A dialog that has just opened may not be drawn yet; once it is, it is on the screen, and nothing is typed.
+  d.toolHold.observe(hook("PermissionRequest"));
+  assert.equal((await send("三つ目")).queued, true);
+  now += DIALOG_DRAWN_MS;
+  await d.flushInput(SID);
+  assert.deepEqual(c.submitted, ["一つ目", "二つ目", "三つ目"]);
   await done();
 });
 

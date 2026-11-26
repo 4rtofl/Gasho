@@ -313,6 +313,21 @@ test("the model comes from the model attachment and from replies, but not from s
   assert.equal(modelLabel("gpt-x"), "gpt-x");
 });
 
+test("a message sent while Claude worked shows as the person's, but Claude Code's notices queued so do not", () => {
+  const queued = (prompt: string, origin: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
+    type: "attachment",
+    uuid: "q1",
+    timestamp: "2026-11-25T11:03:14.238Z",
+    attachment: { type: "queued_command", prompt, commandMode: "prompt", origin, humanTurn: true },
+    ...extra,
+  });
+  const entry = parseRecord(queued("QUEUED-ONE: what is 2+2?", { kind: "human" }), emptyMeta());
+  assert.deepEqual(entry, { uuid: "q1", ts: "2026-11-25T11:03:14.238Z", role: "user", blocks: [{ type: "text", text: "QUEUED-ONE: what is 2+2?" }], isSidechain: false });
+  const notice = "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>";
+  assert.equal(parseRecord(queued(notice, { kind: "task-notification" }), emptyMeta()), null);
+  assert.equal(parseRecord(queued("x", { kind: "human" }, { isSidechain: true }), emptyMeta()), null);
+});
+
 test("text pasted into Claude Code is shown without its wrapper", () => {
   const entry = parseRecord(
     { type: "user", uuid: "p1", message: { role: "user", content: '\n\n<pasted_content id="9546">\n一行目\n\n@/home/rg/x.png\n</pasted_content>' } },

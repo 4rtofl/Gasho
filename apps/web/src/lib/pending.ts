@@ -19,6 +19,11 @@ export interface PendingMessage {
    * work; "sent": typed into the session, so the conversation shows it shortly.
    */
   state: "sending" | "queued" | "sent";
+  /**
+   * Typed into the session while it worked ("sent"): Claude Code holds it until the current step ends, and records it
+   * only then. It stays shown while the session works (see sessionWorking).
+   */
+  whileWorking?: boolean;
   /** When the state last changed (ms, this browser's clock). */
   at: number;
 }
@@ -200,30 +205,35 @@ export function removePending(key: string, id: string): PendingMessage | undefin
 /**
  * What the working server did with a message: typed it into the session ("sent"; it is removed from here a while
  * later, by when the conversation shows it), or kept it waiting until the session has finished its work ("queued").
+ * `afterWork`: one it kept was typed in once the work had ended (see noneWaiting), so Claude Code does not hold it,
+ * even if the session already works on it.
  */
-export function settlePending(key: string, id: string, state: "queued" | "sent"): void {
+export function settlePending(key: string, id: string, state: "queued" | "sent", afterWork = false): void {
   const at = holder(key, id);
   if (!at) return;
   const list = lists.get(at) ?? [];
-  set(at, list.map((p) => (p.id === id ? { ...p, state, at: Date.now() } : p)));
+  // A shell command runs, and any other message typed while the session works waits in Claude Code, as long as the
+  // session works (see sessionWorking).
+  const shell = isShellInput(list.find((p) => p.id === id)?.text ?? "");
+  const whileWorking = state === "sent" && !shell && !afterWork && working.get(at) === true;
+  set(at, list.map((p) => (p.id === id ? { ...p, state, at: Date.now(), ...(whileWorking ? { whileWorking } : {}) } : p)));
   if (state === "sent") {
     clearTimeout(timers.get(id));
     timers.delete(id);
-    // A shell command runs as long as the session works (see sessionWorking).
-    const shell = isShellInput(list.find((p) => p.id === id)?.text ?? "");
-    if (!shell || !working.get(at)) timers.set(id, setTimeout(() => removePending(at, id), SENT_GRACE_MS));
+    if (!((shell || whileWorking) && working.get(at))) timers.set(id, setTimeout(() => removePending(at, id), SENT_GRACE_MS));
   }
 }
 
 /**
  * Whether the session is working. Claude Code records a shell command ("!") only once it has ended, so one typed into
- * the session from here stays shown, as running, while the session works; once it stops, the command goes
- * SENT_GRACE_MS later, by when the conversation shows it (a command that was stopped is not recorded at all).
+ * the session from here stays shown, as running, while the session works; so does a message typed while it worked,
+ * which Claude Code records once the current step has ended. Once the session stops, they go SENT_GRACE_MS later, by
+ * when the conversation shows them (a command that was stopped is not recorded at all).
  */
 export function sessionWorking(key: string, now: boolean): void {
   working.set(key, now);
   for (const p of lists.get(key) ?? []) {
-    if (p.state !== "sent" || !isShellInput(p.text)) continue;
+    if (p.state !== "sent" || !(isShellInput(p.text) || p.whileWorking)) continue;
     clearTimeout(timers.get(p.id));
     timers.delete(p.id);
     if (!now) timers.set(p.id, setTimeout(() => removePending(key, p.id), SENT_GRACE_MS));
@@ -232,7 +242,7 @@ export function sessionWorking(key: string, now: boolean): void {
 
 /** The session has no messages waiting on the working server any more: the ones that waited there were typed. */
 export function noneWaiting(key: string): void {
-  for (const p of lists.get(key) ?? []) if (p.state === "queued") settlePending(key, p.id, "sent");
+  for (const p of lists.get(key) ?? []) if (p.state === "queued") settlePending(key, p.id, "sent", true);
 }
 
 /**

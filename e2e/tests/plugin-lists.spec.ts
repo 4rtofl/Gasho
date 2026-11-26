@@ -1,9 +1,10 @@
 // The sidebar's lists that plugins decide (docs/plugins.md): the sessions in a plugin's categories (P17,
 // e2e/plugins/e2e-session-list), and the worktrees in the categories of a plugin's grouping (P18, e2e-groupings). When
 // the plugin's hook throws, or answers anew more than 20 times a second, the sidebar goes back to Gasho's list and says
-// so; the plugins screen tells why. The test makes the hooks do that by localStorage, which they read.
-import type { Locator, Page } from "@playwright/test";
-import { type FakeDaemon, fakeSession, type GashoHub } from "../harness/index.ts";
+// so; the plugins screen tells why. The test makes the hooks do that by localStorage, which they read. A category that
+// tells the repository it stands for (e2e-repo-groupings) has a menu on its heading, which takes the repository off.
+import type { Locator, Page, TestInfo } from "@playwright/test";
+import { commandResult, type FakeDaemon, fakeSession, type GashoHub } from "../harness/index.ts";
 import { expect, test } from "./fixtures.ts";
 import { card, plugin, sidebar } from "./plugin-helpers.ts";
 
@@ -167,6 +168,109 @@ test.describe("worktree の分け方（P18）", () => {
     await test.step("選んだ分け方は覚えたままで、フックが直ると分ける", async () => {
       await reloadWithMode(page, "e2e-groupings.mode", null);
       await expect((await sidebar(page)).getByRole("button", { name: /^E2E feat/ })).toBeVisible();
+    });
+  });
+});
+
+/**
+ * Opens the menu of a heading as one would: a right-click on a computer, a long press on a touch screen (Radix's menu
+ * opens on a touch held for 700 ms; Playwright has no long press, so the pointer events are sent).
+ */
+async function openHeadingMenu(page: Page, heading: Locator, testInfo: TestInfo): Promise<Locator> {
+  const menu = page.getByRole("menu");
+  if (testInfo.project.use.hasTouch) {
+    const box = await heading.boundingBox();
+    if (!box) throw new Error("the heading is not shown");
+    const el = await heading.elementHandle();
+    const at = { pointerType: "touch", isPrimary: true, bubbles: true, clientX: box.x + box.width / 2, clientY: box.y + box.height / 2 };
+    await el.dispatchEvent("pointerdown", at);
+    await expect(menu).toBeVisible();
+    await el.dispatchEvent("pointerup", at);
+    await el.dispose();
+  } else {
+    await heading.click({ button: "right" });
+  }
+  await expect(menu).toBeVisible();
+  return menu;
+}
+
+test.describe("リポジトリのカテゴリのメニュー（P18、API 1.19）", () => {
+  test.use({ hubOptions: { plugins: [plugin("e2e-repo-groupings")] } });
+
+  test("リポジトリを伝えたカテゴリの見出しのメニューで登録を外す。セッションのある worktree は残り、伝えないカテゴリにはメニューを出さない", async ({ page, hub }, testInfo) => {
+    const APP = "/work/app";
+    const daemon = await hub.fakeDaemon({
+      name: "mac",
+      repos: [
+        {
+          path: APP,
+          worktrees: [
+            { path: APP, branch: "main" },
+            { path: `${APP}-feat`, branch: "feat/1-a" },
+            { path: `${APP}-old`, branch: "fix/2-b" },
+          ],
+        },
+      ],
+      sessions: [
+        fakeSession({ sessionId: "0b6f3a52-9a51-4c7e-8d2b-6c1f0e4a7d21", cwd: `${APP}-feat`, name: "作業", gitBranch: "feat/1-a", worktree: { path: `${APP}-feat`, repo: APP, branch: "feat/1-a" } }),
+        fakeSession({ sessionId: "0b6f3a52-9a51-4c7e-8d2b-6c1f0e4a7d22", cwd: "/work/notes", name: "メモ" }),
+      ],
+    });
+    daemon.handle("repo.unregister", (msg) => {
+      daemon.setRepos(daemon.repos.filter((r) => r.path !== msg.path));
+      return commandResult(msg, { ok: true });
+    });
+    await page.goto("/");
+
+    const heading = async () => (await sidebar(page)).getByRole("button", { name: /^E2E app/ });
+    await test.step("リポジトリを伝えたカテゴリの見出しを右クリック（長押し）すると、名前とフォルダーと「登録を外す…」のメニューが出る", async () => {
+      const nav = await sidebar(page);
+      await expect(nav.getByRole("button", { name: /^main/ })).toBeVisible();
+      const menu = await openHeadingMenu(page, await heading(), testInfo);
+      await expect(menu).toContainText("E2E app");
+      await expect(menu).toContainText("mac · /work/app");
+      await expect(menu.getByRole("menuitem", { name: "登録を外す…" })).toBeEnabled();
+      await page.screenshot({ path: testInfo.outputPath("repo-menu.png") });
+      await page.keyboard.press("Escape");
+      await expect(menu).toHaveCount(0);
+    });
+
+    await test.step("リポジトリを伝えないカテゴリの見出しでは、メニューを出さない", async () => {
+      const nav = await sidebar(page);
+      const outside = nav.getByRole("button", { name: /^E2E リポジトリの外/ });
+      if (testInfo.project.use.hasTouch) {
+        const box = (await outside.boundingBox())!;
+        const at = { pointerType: "touch", isPrimary: true, bubbles: true, clientX: box.x + box.width / 2, clientY: box.y + box.height / 2 };
+        await outside.dispatchEvent("pointerdown", at);
+        await page.waitForTimeout(1000);
+        await outside.dispatchEvent("pointerup", at);
+      } else {
+        await outside.click({ button: "right" });
+      }
+      await expect(page.getByRole("menu")).toHaveCount(0);
+    });
+
+    await test.step("「登録を外す…」で、残るものと消えるものを確かめてから外す", async () => {
+      const menu = await openHeadingMenu(page, await heading(), testInfo);
+      await menu.getByRole("menuitem", { name: "登録を外す…" }).click();
+      const dialog = page.getByRole("alertdialog", { name: "リポジトリの登録を外しますか？" });
+      await expect(dialog).toContainText("フォルダーとファイルは消しません。");
+      await expect(dialog).toContainText("セッションのある worktree 1 件（セッション 1 件）は、登録を外したあとも一覧に残ります。");
+      await expect(dialog).toContainText("セッションの無い worktree 2 件は、一覧から消えます。");
+      await page.screenshot({ path: testInfo.outputPath("repo-unregister.png") });
+      await dialog.getByRole("button", { name: "登録を外す" }).click();
+      await expect(dialog).toHaveCount(0);
+      expect((await daemon.waitFor("repo.unregister")).path).toBe(APP);
+    });
+
+    await test.step("外したあとは、セッションのある worktree だけがカテゴリに残り、メニューはもう外せないと出す", async () => {
+      const nav = await sidebar(page);
+      await expect(nav.getByRole("button", { name: /^main/ })).toHaveCount(0);
+      await expect(nav.getByRole("button", { name: /^fix\/2-b/ })).toHaveCount(0);
+      await expect(nav.getByRole("button", { name: /^feat\/1-a/ })).toBeVisible();
+      const menu = await openHeadingMenu(page, await heading(), testInfo);
+      await expect(menu.getByRole("menuitem", { name: "登録を外す…" })).toBeDisabled();
+      await expect(menu).toContainText("mac に登録していないリポジトリです。");
     });
   });
 });

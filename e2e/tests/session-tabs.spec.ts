@@ -253,13 +253,17 @@ test("タブの × は、作業中と送信待ちのあるセッションでだ�
   });
   let fail!: () => void;
   const failed = new Promise<void>((r) => (fail = r));
+  let answer!: () => void;
+  const answered = new Promise<void>((r) => (answer = r));
   let calls = 0;
   daemon.handle("session.remove", async (m) => {
     if (calls++ === 0) {
       await failed;
       return commandResult(m, { ok: false, error: "削除できませんでした（E2E）" });
     }
+    // As gasho-daemon does: off the list first, the answer once Claude Code has ended.
     daemon.setSessions(daemon.sessions.filter((s) => s.sessionId !== m.sessionId));
+    await answered;
     return commandResult(m);
   });
   const close = (name: string) => tabsOf(page).getByRole("button", { name: `${name} を削除` });
@@ -285,7 +289,9 @@ test("タブの × は、作業中と送信待ちのあるセッションでだ�
 
   await close("一つ目").click();
   await expect(tab(page, "一つ目")).toHaveCount(0);
-  // It was open: the tab after it opens.
+  // It was open: the tab after it opens as soon as it is off the list, before the answer.
+  await expect(openTab(page)).toHaveText("二つ目");
+  answer();
   await expect(openTab(page)).toHaveText("二つ目");
   await expect(dialog).toHaveCount(0);
 });

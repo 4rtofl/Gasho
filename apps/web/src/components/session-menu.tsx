@@ -13,7 +13,7 @@ import { go, parseHash, useRoute } from "@/lib/route";
 import { forkName, MAX_SESSION_NAME, nameProblem } from "@/lib/session-names";
 import { hidesSessionTabs } from "@/lib/session-list";
 import { daemonAtLeast, tabAfterRemoval, workRemovalStops, worktreeId, worktreesByLastUse } from "@/lib/sessions";
-import { getAppState, sendCommand, useAppState } from "@/lib/store";
+import { getAppState, sendCommand, subscribeAppState, useAppState } from "@/lib/store";
 import { keepOpenWhileComposing } from "@/lib/text-input";
 import { cn } from "@/lib/utils";
 import { useSessionListMode } from "@/plugins/session-list";
@@ -30,14 +30,26 @@ export async function removeSession(machine: string, sessionId: string, via?: st
   const m = getAppState().machines.find((x) => x.id === machine);
   const session = m?.sessions.find((s) => s.sessionId === sessionId);
   const worktree = m && session && worktreesByLastUse([m]).find((w) => w.id === worktreeId(machine, session));
-  const r = await sendCommand(machine, { type: "session.remove", sessionId, via }, REMOVE_WAIT_MS);
-  if (!r.ok) return { ok: false, error: r.error ?? "削除できませんでした。" };
-  const route = parseHash(location.hash);
-  if (route.name === "session" && route.machine === machine && route.sessionId === sessionId) {
+  const leave = () => {
+    const route = parseHash(location.hash);
+    if (route.name !== "session" || route.machine !== machine || route.sessionId !== sessionId) return;
     const tab = worktree && tabAfterRemoval(worktree, sessionId);
     const path = worktree?.path ?? session?.worktree?.path ?? session?.cwd;
     go(tab ? { name: "session", machine, sessionId: tab.sessionId } : path ? { name: "worktree", machine, path } : { name: "home" }, { replace: true });
+  };
+  // gasho-daemon takes it off the list before it waits for Claude Code to end: its page goes then, not "not found" until
+  // the answer comes.
+  const stop = subscribeAppState(() => {
+    const listed = getAppState().machines.find((x) => x.id === machine)?.sessions.some((s) => s.sessionId === sessionId);
+    if (session && listed === false) leave();
+  });
+  try {
+    const r = await sendCommand(machine, { type: "session.remove", sessionId, via }, REMOVE_WAIT_MS);
+    if (!r.ok) return { ok: false, error: r.error ?? "削除できませんでした。" };
+  } finally {
+    stop();
   }
+  leave();
   return { ok: true };
 }
 

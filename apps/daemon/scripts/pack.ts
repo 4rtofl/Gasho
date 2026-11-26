@@ -15,6 +15,8 @@ fs.rmSync(out, { recursive: true, force: true });
 const tsc = path.resolve(daemon, "../../node_modules/.bin/tsc");
 execFileSync(tsc, ["-p", path.join(daemon, "tsconfig.build.json"), "--outDir", path.join(out, "lib")], { stdio: "inherit" });
 fs.chmodSync(path.join(out, "lib/cli.js"), 0o755);
+// The plugin that gasho-daemon loads into the sessions it starts (src/agent-worktrees.ts), next to lib/.
+fs.cpSync(path.join(daemon, "claude-plugin"), path.join(out, "claude-plugin"), { recursive: true });
 
 // The daemon's own dependencies (the sessions' terminals: node-pty and xterm.js), at the versions it was tested with;
 // the workspace's packages (@gasho/protocol) are only types, gone in the JavaScript.
@@ -27,7 +29,7 @@ const pkg = {
   description: "gasho-daemon: Gasho の working server で動き、Claude Code のセッションを Gasho サーバーにつなぐ",
   type: "module",
   bin: { "gasho-daemon": "lib/cli.js" },
-  files: ["lib"],
+  files: ["lib", "claude-plugin"],
   dependencies,
   engines: { node: ">=24" },
   repository: { type: "git", url: "git+https://github.com/4rtofl/Gasho.git", directory: "apps/daemon" },

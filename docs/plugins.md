@@ -694,6 +694,8 @@ function ImageView({ path, file, entries, openFile }: FileViewerProps) {
 
 型（`MachineInfo`、`SessionInfo`、`GitHubRepo` など）は、`@gasho/protocol` のものを SDK から使う。
 
+`SessionInfo.launchedBy` は、`gasho-daemon session launch` でほかのセッションから起動したセッションの親（`{sessionId, cwd}`）で、それを覚える gasho-daemon から入る（[spec.md の「worktree での作業」](spec.md#worktree-での作業)）。無いこともあるので、無ければ親が無いものとして扱う。
+
 ### worktree の削除（API 1.10）
 
 `useRemoveWorktree()` が返す関数は、次の引数を取り、Promise で結果を返す。サイドバーの確認のダイアログも、同じものを使う。

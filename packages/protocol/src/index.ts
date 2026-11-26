@@ -167,6 +167,23 @@ export interface SessionInfo {
   hibernation?: "hibernated" | "resuming";
   /** Why a hibernated session could not be brought back; `session.wake` tries again. Inputs sent to it are kept. */
   resumeError?: string;
+  /**
+   * Sessions started with `gasho-daemon session launch` from another session's Claude Code (a session's Agent sets
+   * up a worktree and starts a session in it; see the skill gasho:launch-gasho-session): that session. Absent for
+   * the rest, and from a gasho-daemon before it was added.
+   */
+  launchedBy?: SessionParent;
+}
+
+/**
+ * The session whose Claude Code started a session with `gasho-daemon session launch`, as it was then. A parent's id
+ * changes with /clear: `sessionId` is its id now while gasho-daemon keeps the parent (one of the sessions it started),
+ * and the id it had then otherwise (the parent may be gone). `cwd` stays: the worktree of the parent can outlive it.
+ */
+export interface SessionParent {
+  sessionId: string;
+  /** The parent's folder when it started the session. */
+  cwd: string;
 }
 
 /** A permission Claude Code asks for before using a tool. */

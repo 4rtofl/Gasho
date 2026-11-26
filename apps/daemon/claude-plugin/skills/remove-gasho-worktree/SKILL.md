@@ -28,8 +28,8 @@ $GD session list
 利用者がワークツリーを指定していればそれを使う。「マージしたものを」のように指定が無ければ、一覧から候補を作る。
 
 ```sh
-git -C /home/rg/repos/<Repo> fetch origin --prune
-git -C /home/rg/repos/<Repo> worktree list
+git -C <Repo> fetch origin --prune
+git -C <Repo> worktree list
 ```
 
 リポジトリのフォルダーそのもの（main のワークツリー）は消さない。
@@ -52,14 +52,14 @@ git -C /home/rg/repos/<Repo> worktree list
 ## 4. 消す
 
 ```sh
-$GD worktree remove /home/rg/repos/<Repo>-worktrees/<issue>-<slug>
+$GD worktree remove <ワークツリーのフォルダー>
 ```
 
 - 中のセッションを終わらせてから、ワークツリーのフォルダーを消す。ブランチは消さない
 - 結果は JSON で出る。`ended` は終わらせたセッション
 
 ```json
-{ "path": "/home/rg/repos/Gasho-worktrees/79-session-launch", "branch": "feat/79-session-launch", "ended": [{ "sessionId": "…", "name": "79-session-launch" }] }
+{ "path": "/home/u/src/Foo-worktrees/79-session-launch", "branch": "feat/79-session-launch", "ended": [{ "sessionId": "…", "name": "79-session-launch" }] }
 ```
 
 - 未コミットの変更や push していないコミットがあると、消さずにその件数をエラーで返す。そのワークツリーは残し、理由を報告する。`--force`（変更を捨てて消す）は、利用者がそのワークツリーについてはっきり頼んだときだけ使う

@@ -14,6 +14,7 @@ import { test } from "node:test";
 import { Daemon } from "../src/daemon.ts";
 import { chromeOnboardingOpen, dialogOpen, mcpQuestionOpen, plainScreen, trustQuestion, typedInBox } from "../src/managed.ts";
 import { RELAY_FILE, shellQuote } from "../src/statusline.ts";
+import { GUARD_FILE, GUARD_MATCHER, guardHooks, PLUGIN_DIR, SYSTEM_PROMPT } from "../src/agent-worktrees.ts";
 import type { TerminalStart } from "../src/terminal.ts";
 
 const RULE = "─".repeat(50);
@@ -276,6 +277,7 @@ test("with trust, the cursor is moved to yes before the one Enter, and the sessi
     assert.equal(started.length, 1);
     assert.deepEqual(started[0]?.args.slice(0, 2), ["--remote-control=clone-test", "--settings"]);
     assert.deepEqual(JSON.parse(started[0]?.args[2] ?? ""), {
+      hooks: guardHooks(),
       statusLine: { type: "command", command: `${shellQuote(process.execPath)} ${shellQuote(RELAY_FILE)}` },
     });
     assert.equal(started[0]?.env.GASHO_STATUSLINE_URL, "http://127.0.0.1:0/statusline");
@@ -1003,6 +1005,53 @@ test("the clean-up keeps what runs, what Gasho keeps and what is being opened, a
     await d.sweepClaudeTmp();
     assert.equal(await present(left!), false);
     for (const dir of [listed!, managed!, opening!]) assert.equal(await present(dir), true, dir);
+  } finally {
+    await done();
+  }
+});
+
+test("a session Gasho starts loads its plugin, the hook that stops work in a worktree, and the rule; the status line stays", async () => {
+  const { d, folder, started, done } = await setup();
+  try {
+    assert.equal((await d.launch(folder, "plain", true)).ok, true);
+    const args = started[0]?.args ?? [];
+    const settings = JSON.parse(args[args.indexOf("--settings") + 1] ?? "");
+    assert.ok(settings.statusLine.command.includes("statusline-relay"));
+    assert.equal(settings.hooks.PreToolUse[0].matcher, GUARD_MATCHER);
+    assert.ok(settings.hooks.PreToolUse[0].hooks[0].command.endsWith(`${shellQuote(GUARD_FILE)}`));
+    assert.equal(args[args.indexOf("--plugin-dir") + 1], PLUGIN_DIR);
+    assert.equal(args[args.indexOf("--append-system-prompt") + 1], SYSTEM_PROMPT);
+  } finally {
+    await done();
+  }
+});
+
+test("a launch from another session remembers it as the parent, by the id it has now", async () => {
+  const { d, folder, done } = await setup();
+  try {
+    const parentCwd = path.join(folder, "..");
+    d.managed.add({ sessionId: "parent-now", previousIds: ["parent-before"], terminal: "t-p", pid: 1, cwd: parentCwd, name: "parent", launchedAt: 1 });
+    assert.equal((await d.launch(folder, "child", true, "claude", false, undefined, undefined, "parent-before")).ok, true);
+    assert.deepEqual(d.managed.get(SID).launchedBy, { sessionId: "parent-now", cwd: parentCwd });
+    // The parent goes on under a new id (/clear): the child names it by that one.
+    const parent = d.managed.get("parent-now");
+    d.managed.sessions.delete("parent-now");
+    d.managed.add({ ...parent, sessionId: "parent-later", previousIds: ["parent-before", "parent-now"] });
+    assert.deepEqual(d.parentNow(d.managed.get(SID)), { sessionId: "parent-later", cwd: parentCwd });
+    assert.equal(d.controlSessions().find((s: { sessionId: string }) => s.sessionId === SID).launchedBy, "parent-later");
+    // Once Gasho no longer keeps the parent, it stays as it was remembered.
+    d.managed.sessions.delete("parent-later");
+    assert.deepEqual(d.parentNow(d.managed.get(SID)), { sessionId: "parent-now", cwd: parentCwd });
+  } finally {
+    await done();
+  }
+});
+
+test("a session gasho-daemon does not know of is no parent", async () => {
+  const { d, folder, done } = await setup();
+  try {
+    assert.equal((await d.launch(folder, "child", true, "claude", false, undefined, undefined, "stranger")).ok, true);
+    assert.equal(d.managed.get(SID).launchedBy, undefined);
   } finally {
     await done();
   }

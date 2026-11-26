@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { MachineInfo, ServerInfo } from "@gasho/protocol";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { DaemonUpdates } from "@/components/daemon-updates";
 import { connectHub, machine, session } from "./hub";
 
@@ -17,6 +17,8 @@ const linux = (extra: Partial<MachineInfo> = {}) =>
     ],
     { name: "Linux", daemonVersion: "0.21.4", update: { canUpdate: true, previous: "0.21.3" }, ...extra },
   );
+
+const mac = (extra: Partial<MachineInfo> = {}) => machine("mac", [], { name: "Mac", daemonVersion: "0.21.4", update: { canUpdate: true }, ...extra });
 
 const row = (name: string) => screen.getByText(name, { selector: "span" }).closest("li")!;
 
@@ -154,4 +156,46 @@ test("a working server's row says which Claude Code it has, above Codex, and how
   expect(within(row("Out")).getByText("Claude Code 2.1.327").parentElement?.textContent).toBe("Claude Code 2.1.327：ログインしていません");
   expect(within(row("Out")).getByText("claude auth login")).toBeTruthy();
   expect(within(row("Out")).queryByText(/^Codex/)).toBeNull();
+});
+
+test("「すべて更新」 updates the working servers one after another, each once the one before is done, and goes on past one that fails", async () => {
+  const user = userEvent.setup();
+  // Not counted: the Gasho server, one that cannot be updated from Gasho, and one offline.
+  const hub = await connectHub({
+    machines: [linux(), mac(), machine("old", [], { name: "Old", daemonVersion: "0.10.0" }), mac({ id: "away", name: "Away", connected: false })],
+    latest,
+    server,
+  });
+  render(<DaemonUpdates />);
+  await user.click(screen.getByRole("button", { name: "すべて更新（2）" }));
+
+  const dialog = screen.getByRole("alertdialog", { name: "2 台の gasho-daemon を更新しますか？" });
+  const items = within(within(dialog).getByRole("list", { name: "更新するもの" })).getAllByRole("listitem");
+  expect(items.map((i) => i.textContent)).toEqual([expect.stringContaining("Linux0.21.4 → 0.22.0"), expect.stringContaining("Mac0.21.4 → 0.22.0")]);
+  expect(within(items[0]!).getByText(/送るのを待っている入力が 2 件あります/)).toBeTruthy();
+  expect(within(dialog).getByText(/Gasho サーバーは含みません/)).toBeTruthy();
+  await user.click(within(dialog).getByRole("button", { name: "更新する" }));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+
+  // The first: started, and waited for.
+  expect(hub.commands().at(-1)).toMatchObject({ type: "daemon.update", machine: "linux", version: "0.22.0" });
+  expect(screen.getByRole("button", { name: "更新しています（1/2）：Linux" })).toHaveProperty("disabled", true);
+  await hub.answer({ ok: true });
+  await hub.say({ type: "machine", machine: linux({ update: { canUpdate: true, progress: { version: "0.22.0", step: "install", at: Date.now() } } }) });
+  expect(hub.commands()).toHaveLength(1);
+  await hub.say({ type: "machine", machine: linux({ update: { canUpdate: true, failed: { version: "0.22.0", error: "npm error 404", at: Date.now() } } }) });
+  expect(within(row("Linux")).getByText(/0.22.0 への更新に失敗しました（たった今）。何も変えていません。npm error 404/)).toBeTruthy();
+
+  // The next, though the first failed; refused, the row says why.
+  await vi.waitFor(() => expect(hub.commands().at(-1)).toMatchObject({ type: "daemon.update", machine: "mac", version: "0.22.0" }));
+  expect(screen.getByRole("button", { name: "更新しています（2/2）：Mac" })).toBeTruthy();
+  await hub.answer({ ok: false, error: "gasho-daemon は別の更新の途中です。" });
+  expect(within(row("Mac")).getByText("0.22.0 への更新を始められませんでした。gasho-daemon は別の更新の途中です。")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "すべて更新（2）" })).toBeTruthy();
+});
+
+test("「すべて更新」 is not shown when no gasho-daemon can be updated", async () => {
+  await connectHub({ machines: [linux({ daemonVersion: "0.22.0" }), machine("old", [], { name: "Old", daemonVersion: "0.10.0" })], latest, server });
+  render(<DaemonUpdates />);
+  expect(screen.queryByRole("button", { name: /すべて更新/ })).toBeNull();
 });

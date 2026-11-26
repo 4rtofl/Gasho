@@ -18,6 +18,9 @@ export type GroupingChoice = "none" | { plugin: string; grouping: string };
 /** The key of a plugin's grouping: what the menu tells it by, and what its preferences are kept under. */
 export const groupingKey = (plugin: string, grouping: string) => `${plugin}/${grouping}`;
 
+/** A category's repository's folder is at most this long (as the Gasho server takes it in repo.unregister). */
+const MAX_REPO_PATH = 1024;
+
 /** A grouping's id is at most this long. */
 const MAX_GROUPING_ID = 100;
 
@@ -91,6 +94,8 @@ export interface ListedWorktreeCategory {
   hint?: string;
   /** The key of a worktree of the context. */
   launch?: string;
+  /** The repository it stands for, on a working server of the context (API 1.19): its heading has a menu. */
+  repo?: { machine: string; path: string };
   worktrees: ListedWorktree[];
 }
 
@@ -101,15 +106,25 @@ export interface ListedWorktree {
   description?: string;
 }
 
+/** A category's `repo`, when it names a folder (an absolute path) on one of the working servers `machines`. */
+function repoOf(given: unknown, machines: ReadonlySet<string>): { machine: string; path: string } | undefined {
+  if (!isRecord(given)) return undefined;
+  const { machine, path } = given;
+  if (typeof machine !== "string" || !machines.has(machine)) return undefined;
+  if (typeof path !== "string" || !path.startsWith("/") || path.length > MAX_REPO_PATH) return undefined;
+  return { machine, path };
+}
+
 /**
  * The categories the hook gave, checked as P17's are (lib/session-list): a category without an id or a title, with an
  * id used before, or past the first MAX_CATEGORIES is left out; so is a worktree that is not in the context, or that a
- * category before already has (its first place counts), and a `launch` that names no worktree of the context. A
- * worktree's description that is a string with nothing in it asks for no line. The worktrees left out of every category
+ * category before already has (its first place counts), a `launch` that names no worktree of the context, and a `repo`
+ * that is not a folder (an absolute path) on a working server of the context. A worktree's description that is a string with nothing in it asks for no line. The worktrees left out of every category
  * go in one more at the end (OTHER_CATEGORY), in the context's order.
  */
 export function normalizeWorktreeCategories(given: unknown, ctx: WorktreeListContext): ListedWorktreeCategory[] {
   const known = new Set(ctx.worktrees.map((w) => w.key));
+  const machines = new Set(ctx.machines.map((m) => m.id));
   const placed = new Set<string>();
   const ids = new Set<string>([OTHER_CATEGORY]);
   const out: ListedWorktreeCategory[] = [];
@@ -130,7 +145,8 @@ export function normalizeWorktreeCategories(given: unknown, ctx: WorktreeListCon
     const description = text(c.description, MAX_TITLE);
     const hint = text(c.hint, MAX_HINT);
     const launch = typeof c.launch === "string" && known.has(c.launch) ? c.launch : undefined;
-    out.push({ id, title, ...(description ? { description } : {}), ...(hint ? { hint } : {}), ...(launch ? { launch } : {}), worktrees });
+    const repo = repoOf(c.repo, machines);
+    out.push({ id, title, ...(description ? { description } : {}), ...(hint ? { hint } : {}), ...(launch ? { launch } : {}), ...(repo ? { repo } : {}), worktrees });
   }
   const rest = ctx.worktrees.filter((w) => !placed.has(w.key));
   if (rest.length > 0) out.push({ id: OTHER_CATEGORY, title: "その他", worktrees: rest.map((w) => ({ key: w.key })) });

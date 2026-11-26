@@ -86,6 +86,10 @@ export default sdk.definePlugin({
   homeTiles: [{ id: "tile", title: "E2E タイル", size: "small", after: "operations", component: () => h(sdk.Tile, { title: "E2E タイル" }, h("p", null, "タイルの中身")) }],
   conversationEnd: [{ id: "end", component: ({ session }) => h("p", null, `会話の末尾 ${session.name}`) }],
   composerFooter: [{ id: "footer", component: () => h("span", null, "入力欄の下") }],
+  sessionFooter: [
+    { id: "right", component: () => h("span", null, "フッター右") },
+    { id: "left", side: "left", component: () => h("span", null, "フッター左") },
+  ],
   worktreeTabs: [
     {
       id: "tab",

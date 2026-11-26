@@ -11,6 +11,7 @@ import { CloneRepoButton, RegisterRepos, RepoFilter } from "@/components/repo-fi
 import { ReposDialog } from "@/components/repos-dialog";
 import { SessionActionDialog, SessionContextMenu, type SessionActionRequest } from "@/components/session-menu";
 import { UnusedSessionsDialog } from "@/components/unused-sessions-dialog";
+import { RepoActionDialog, RepoContextMenu, type RepoActionRequest } from "@/components/repo-menu";
 import { WorktreeActionDialog, WorktreeContextMenu, type WorktreeActionRequest } from "@/components/worktree-menu";
 import { showNotice, useNotice } from "@/lib/notice";
 import { AgentMark } from "@/components/agent-mark";
@@ -197,24 +198,6 @@ function PanelView({ machine, sessionId, panel, docked }: { machine: string; ses
   return <FilePanel key={path} machine={machine} sessionId={sessionId} path={path} docked={docked} onClose={close} />;
 }
 
-function Connection({ connected, deviceName }: { connected: boolean; deviceName?: string }) {
-  const { collapsed } = useSidebar();
-  return (
-    <div
-      className="flex items-center gap-2 px-2.5 text-xs text-muted-foreground"
-      title={connected ? "Gasho サーバーに接続中" : "Gasho サーバーに再接続しています"}
-    >
-      <span className={cn("size-2 shrink-0 rounded-full", connected ? "bg-emerald-500" : "bg-red-500")} />
-      {!collapsed && (
-        <span className="truncate">
-          {connected ? "接続中" : "再接続中…"}
-          {deviceName && ` · ${deviceName}`}
-        </span>
-      )}
-    </div>
-  );
-}
-
 function Centered({ children }: { children: React.ReactNode }) {
   return <div className="flex min-h-dvh items-center justify-center bg-background p-4 text-sm text-muted-foreground">{children}</div>;
 }
@@ -232,7 +215,7 @@ export function App() {
   useLayoutEffect(() => {
     if (main.current) main.current.scrollTop = 0;
   }, [page]);
-  const { auth, me, machines, notifications, connected, plugins, catalog, latest, server, outdated } = useAppState();
+  const { auth, machines, notifications, connected, plugins, catalog, latest, server, outdated } = useAppState();
   // After /clear, the session goes on under a new id: its page (and the panel open beside it) goes there too, and shows
   // it already while the address changes.
   const movedTo = route.name === "session" ? movedSession(machines.find((m) => m.id === route.machine), route.sessionId)?.sessionId : undefined;
@@ -246,6 +229,8 @@ export function App() {
   const [sessionAction, setSessionAction] = useState<SessionActionRequest | null>(null);
   // What was picked from a worktree row's menu (rename, remove); its dialog is open meanwhile.
   const [worktreeAction, setWorktreeAction] = useState<WorktreeActionRequest | null>(null);
+  // The repository whose category's menu (P18, a category's `repo`) is taking it off its working server.
+  const [repoAction, setRepoAction] = useState<RepoActionRequest | null>(null);
   // The worktrees' rows selected together (pressed with Shift), and the row pressed last without it, which a range of
   // them starts from. Esc lets them go, unless something else took it (a menu or a dialog closes) or it is typed.
   const [selectedRows, setSelectedRows] = useState<ReadonlySet<string>>(new Set());
@@ -523,6 +508,7 @@ export function App() {
     const waiting = rows.filter(({ w }) => w.machine.connected && w.sessions.some((s) => s.status === "waiting")).length;
     const target = c.launch ? groupingWorktrees.get(c.launch) : undefined;
     const canLaunch = target !== undefined && target.machine.connected && target.machine.canLaunch === true;
+    const repo = c.repo && { ...c.repo, title: c.title };
     return {
       id: c.id,
       title: c.title,
@@ -534,6 +520,14 @@ export function App() {
       action: canLaunch ? launchAction(c.title, target) : undefined,
       folded: isFolded,
       onFoldedChange: (f) => changeGroupingPrefs((p) => withFolded(p, c.id, f)),
+      // A category that stands for a repository: its heading's menu takes it off the working server.
+      wrap: repo
+        ? (button: ReactElement) => (
+            <RepoContextMenu repo={repo} onPick={setRepoAction}>
+              {button}
+            </RepoContextMenu>
+          )
+        : undefined,
       items: shown.map(({ item, w }) => worktreeRow(w, item.description)),
       sort: isFolded
         ? undefined
@@ -714,7 +708,6 @@ export function App() {
           if (inside || !mobileOpen) holdList(inside);
         }}
         header={<Brand away={gassho !== null} onGassho={setGassho} />}
-        footer={<Connection connected={connected} deviceName={me?.name} />}
       />
       <div className="flex min-w-0 flex-1 flex-col pt-(--safe-top)">
         {/* The Gasho server serves a new build of the screen, and this page did not reload itself: something is being written in it. */}
@@ -758,7 +751,7 @@ export function App() {
               Gasho
             </span>
           )}
-          {/* The connection shows in the sidebar's footer; here only while it is down. */}
+          {/* The connection shows in a session's footer (SessionFooter); here only while it is down. */}
           {!connected && <span className="ml-auto shrink-0 text-xs text-red-400">再接続中…</span>}
           {onScreen && <SessionHeaderToggle className={cn("-mr-1", connected && "ml-auto")} />}
         </header>
@@ -831,6 +824,7 @@ export function App() {
         }
       />
       <WorktreeActionDialog request={worktreeAction} onClose={() => setWorktreeAction(null)} />
+      <RepoActionDialog request={repoAction} onClose={() => setRepoAction(null)} />
       <UnusedSessionsDialog />
       <LaunchDialog
         open={launchOpen}

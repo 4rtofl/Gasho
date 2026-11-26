@@ -1287,7 +1287,13 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
           </div>
         </div>
       ) : (
-        <div className="flex min-h-[1.5rem] items-center justify-between gap-3 px-3 pt-2 text-[12px] text-neutral-500">
+        // Without a hint, an error or a part, the line takes no room (its live region stays, for an error to come).
+        <div
+          className={cx(
+            "flex items-center justify-between gap-3 px-3 text-[12px] text-neutral-500",
+            error || hintNode || footer ? "min-h-[1.5rem] pt-2" : "h-0 overflow-hidden",
+          )}
+        >
           <p role="alert" aria-live="polite" className={cx("min-w-0 truncate", error && "text-rose-500")}>
             {error}
           </p>

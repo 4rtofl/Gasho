@@ -285,6 +285,48 @@ export interface PlanLimits {
   at: number;
 }
 
+/**
+ * A usage limit as Claude Code's get_usage reads it: the share used (0-100), and when it starts again (ms since the
+ * epoch). Claude.ai gives some without a time (a window nothing has been used in yet).
+ */
+export interface PlanUsageWindow {
+  percent: number;
+  resetsAt?: number;
+}
+
+/**
+ * The Claude.ai plan's usage limits, as gasho-daemon read them with Claude Code's get_usage (as its /usage does). Unlike
+ * PlanLimits, they hold the weekly limits of single models (Fable, …). They are the account's: the same for every
+ * session that uses the working server's Claude Code login.
+ */
+export interface PlanUsage {
+  /** When they were read (ms since the epoch, the working server's clock). */
+  at: number;
+  /**
+   * false: get_usage cannot read them with the working server's Claude Code login: it does not use a Claude.ai plan
+   * (an API key and the like), or its token may not read the account's usage (claude setup-token).
+   */
+  available: boolean;
+  /** The 5-hour limit; some plans have none. */
+  fiveHour?: PlanUsageWindow;
+  /** The weekly limit, all models together. */
+  sevenDay?: PlanUsageWindow;
+  /** The weekly limit of the Sonnet models ("Current week (Sonnet only)" of /usage), on the plans /usage shows it for. */
+  sevenDaySonnet?: PlanUsageWindow;
+  /** The weekly limits of single models, named as Claude.ai names them. */
+  models: (PlanUsageWindow & { name: string })[];
+}
+
+/** What the Gasho server knows of a working server's plan usage (usage.get): kept in memory, also while it is offline. */
+export interface MachineUsage {
+  /** The latest limits read. */
+  usage?: PlanUsage;
+  /** Why the latest read failed, when it did (after `usage`, if any). */
+  error?: string;
+  /** A read is under way. */
+  reading?: boolean;
+}
+
 /** Tokens as Claude Code records them for each reply. */
 export interface TokenUsage {
   input: number;
@@ -522,6 +564,8 @@ export interface MachineInfo {
   canRemoveWorktree?: boolean;
   /** Whether gasho-daemon lists the skills and custom commands a session's Claude Code reads (session.skills). */
   canListSkills?: boolean;
+  /** Whether gasho-daemon reads the Claude.ai plan's usage limits with Claude Code's get_usage (usage.get). */
+  canReadUsage?: boolean;
   /** The agents found on this working server (absent from a gasho-daemon that does not look for them). */
   agents?: MachineAgents;
   /** Whether Gasho can update this gasho-daemon, and how an update goes (absent from one older than updates from Gasho). */
@@ -1043,6 +1087,8 @@ export type DaemonToHub =
       canRemoveWorktree?: boolean;
       /** Answers session.skills. */
       canListSkills?: boolean;
+      /** Answers usage.get. */
+      canReadUsage?: boolean;
       /** The agents found on the working server (sent again when they change). */
       agents?: MachineAgents;
       /** Whether Gasho can update it, and the update under way (sent again at each step). */
@@ -1071,6 +1117,8 @@ export type DaemonToHub =
    * from `sessions` and `capabilities` because it changes every time: the Gasho server keeps it in memory only.
    */
   | { type: "memory"; memory?: MachineMemory }
+  /** The answer to usage.get: the plan's usage limits, or why they could not be read. */
+  | { type: "usage"; usage?: PlanUsage; error?: string }
   /**
    * The tokens used per day: the whole last year once connected, then the days whose totals changed, at most once a
    * minute. Each is the day's total, so that telling it again changes nothing.
@@ -1106,7 +1154,12 @@ export type HubToDaemon =
    */
   | { type: "plugin.request"; requestId: string; plugin: string; sessionId?: string; method: string; params?: unknown; timeoutMs: number; write?: boolean }
   /** The answer to worktree.name. */
-  | { type: "worktree.name.result"; requestId: string; result: CommandResult };
+  | { type: "worktree.name.result"; requestId: string; result: CommandResult }
+  /**
+   * Reads the Claude.ai plan's usage limits with Claude Code's get_usage (answered with usage). A read of the last 30
+   * seconds is told again rather than read anew.
+   */
+  | { type: "usage.get" };
 
 // gasho-hub -> browser
 export type HubToClient =
@@ -1137,8 +1190,12 @@ export type HubToClient =
       heartbeat?: boolean;
       /** The latest memory of the connected working servers that tell it, by machine id (absent from an older Gasho server). */
       memory?: Record<string, MachineMemory>;
+      /** What it knows of the working servers' plan usage, by machine id (absent from an older Gasho server). */
+      usage?: Record<string, MachineUsage>;
     }
   | { type: "machine"; machine: MachineInfo }
+  /** What the Gasho server knows of a working server's plan usage, whenever it changed; absent once the server is removed. */
+  | { type: "machine.usage"; machine: string; usage?: MachineUsage }
   /** A working server's latest memory; `memory` is absent once it is no longer known (the server went offline, or cannot read it). */
   | { type: "machine.memory"; machine: string; memory?: MachineMemory }
   /**
@@ -1194,6 +1251,11 @@ export type ClientToHub =
   | { type: "latest.check" }
   /** The last year's tokens per day (answered with token.days; token.days.update follows what changes). */
   | { type: "token.days.get" }
+  /**
+   * Reads a working server's plan usage limits again (get_usage), unless those known are younger than `maxAgeMs` or a
+   * read is under way: answered with machine.usage, to every browser.
+   */
+  | { type: "usage.get"; machine: string; maxAgeMs: number }
   /** Updates the Gasho server to `version`, or goes back to it (answered with server.result). */
   | { type: "hub.update"; requestId: string; version: string }
   /** Changes the agent a new session starts with (answered with server.result; every browser gets the new server). */

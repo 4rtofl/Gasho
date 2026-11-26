@@ -9,9 +9,9 @@ const CAUTION_PERCENT = 80;
 const WARNING_PERCENT = 90;
 const GB = 1024 ** 3;
 
-type MemoryLevel = "normal" | "caution" | "warning";
+export type MemoryLevel = "normal" | "caution" | "warning";
 
-const LEVELS: Record<MemoryLevel, { word?: string; color: string; text: string }> = {
+export const MEMORY_LEVELS: Record<MemoryLevel, { word?: string; color: string; text: string }> = {
   normal: { color: CHART_BLUE, text: "text-foreground" },
   caution: { word: "注意", color: "#f59e0b", text: "text-amber-600 dark:text-amber-400" },
   warning: { word: "警告", color: "#ef4444", text: "text-red-600 dark:text-red-400" },
@@ -30,10 +30,15 @@ export function memoryLevel(percent: number): MemoryLevel {
 
 const gigabytes = (bytes: number) => (bytes / GB).toFixed(1);
 
+/** "9.9 / 16.0 GB" */
+export function memoryAmount(memory: MachineMemory): string {
+  return `${gigabytes(memory.used)} / ${gigabytes(memory.total)} GB`;
+}
+
 function Meter({ name, memory }: { name: string; memory: MachineMemory }) {
   const percent = memoryPercent(memory);
-  const level = LEVELS[memoryLevel(percent)];
-  const amount = `${gigabytes(memory.used)} / ${gigabytes(memory.total)} GB`;
+  const level = MEMORY_LEVELS[memoryLevel(percent)];
+  const amount = memoryAmount(memory);
   return (
     <>
       <div className="flex items-baseline justify-between gap-2">

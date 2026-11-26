@@ -47,20 +47,24 @@ export async function closeSidebar(page: Page): Promise<void> {
   await expect(page.getByRole("dialog", { name: "サイドバー" })).toBeHidden();
 }
 
-/** The connection as the screen tells it: 接続中 · <this browser's name> in the sidebar's footer, or 再接続中…. */
+/**
+ * The connection as a session's screen tells it, in its footer: 接続中 · <this browser's name>, or 再接続中…. On a phone
+ * the footer has only its dot: the top bar tells of a connection that is down, and the footer's details tell both.
+ */
 export async function expectConnection(page: Page, connected: boolean, deviceName: string, timeout?: number): Promise<void> {
+  const footer = page.getByTestId("session-footer");
   if (!onPhone(page)) {
-    await expect(page.getByText(`${connected ? "接続中" : "再接続中…"} · ${deviceName}`, { exact: true })).toBeVisible({ timeout });
+    await expect(footer.getByText(`${connected ? "接続中" : "再接続中…"} · ${deviceName}`, { exact: true })).toBeVisible({ timeout });
     return;
   }
-  // The top bar tells only of a connection that is down; the drawer's footer tells both.
   const topBar = page.getByRole("banner").getByText("再接続中…", { exact: true });
   if (!connected) {
     await expect(topBar).toBeVisible({ timeout });
     return;
   }
   await expect(topBar).toBeHidden({ timeout });
-  await openSidebar(page);
-  await expect(page.getByRole("dialog", { name: "サイドバー" }).getByText(`接続中 · ${deviceName}`, { exact: true })).toBeVisible();
-  await closeSidebar(page);
+  await footer.getByRole("button", { name: /^接続中。/ }).click();
+  await expect(page.getByRole("dialog", { name: "使用量" }).getByText(`接続中 · ${deviceName}`, { exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "使用量" })).toBeHidden();
 }

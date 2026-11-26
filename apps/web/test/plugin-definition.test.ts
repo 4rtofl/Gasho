@@ -42,7 +42,7 @@ test("a web.js definition that would fail to be drawn is refused, saying what to
   };
   for (const d of [undefined, null, [], "plugin", () => ({})]) assert.match(refused(d), /^web\.js が、プラグイン/);
   // Every place of the SDK's PluginDefinition is checked, each a list of items with an id or an object.
-  for (const k of ["sidebar", "sessionHeader", "homeTiles", "conversationEnd", "composerFooter", "worktreeTabs", "fileViewers"]) {
+  for (const k of ["sidebar", "sessionHeader", "homeTiles", "conversationEnd", "composerFooter", "sessionFooter", "worktreeTabs", "fileViewers"]) {
     assert.equal(refused({ [k]: {} }), `${k} は配列にしてください。`);
     assert.equal(refused({ [k]: [{ id: "" }] }), `${k} の項目に id がありません。`);
   }
@@ -51,6 +51,7 @@ test("a web.js definition that would fail to be drawn is refused, saying what to
   for (const extensions of [undefined, "png", [], ["."], ["png", 3]]) {
     assert.equal(refused({ fileViewers: [{ id: "v", extensions }] }), 'fileViewers の v の extensions は、拡張子（"png" など）の配列にしてください。');
   }
+  assert.equal(refused({ sessionFooter: [{ id: "f", side: "top" }] }), 'sessionFooter の f の side は "left" か "right" にしてください。');
   for (const k of ["pages", "sessionPanels", "pagePanels", "worktreeViews"]) assert.equal(refused({ [k]: [] }), `${k} はオブジェクトにしてください。`);
   assert.equal(refused({ pagePanels: "notes" }), "pagePanels はオブジェクトにしてください。");
   assert.equal(refused({ settings: {} }), "settings は部品にしてください。");

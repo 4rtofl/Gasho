@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { MachineInfo } from "@gasho/protocol";
-import { changesUrl, compareVersions, newerPublished, pendingWork, trialLabel, updateTo, updateToTell } from "../src/lib/daemon-update.ts";
+import { changesUrl, compareVersions, newerPublished, pendingWork, trialLabel, updateOutcome, updateTo, updateToTell } from "../src/lib/daemon-update.ts";
 
 const machine = (o: Partial<MachineInfo>): MachineInfo => ({ id: "m", name: "ubuntu", connected: true, lastSeen: 0, sessions: [], ...o });
 
@@ -52,4 +52,23 @@ test("the inputs to send and the permission requests an update would affect are 
   });
   assert.deepEqual(pendingWork(m), { inputs: 2, requests: 1 });
   assert.equal(changesUrl("0.15.0", "0.16.0"), "https://github.com/4rtofl/Gasho/compare/daemon-v0.15.0...daemon-v0.16.0");
+});
+
+test("「すべて更新」 waits for a working server's update until it runs the new version, fails, or the working server goes", () => {
+  const progress = (step: "install" | "restart" | "trial") => ({ canUpdate: true, progress: { version: "0.16.0", step, at: 1 } });
+  // Answered before its state says it started: still to come.
+  assert.equal(updateOutcome(machine({ daemonVersion: "0.15.0", update: { canUpdate: true } }), "0.16.0", undefined, false), "running");
+  assert.equal(updateOutcome(machine({ daemonVersion: "0.15.0", update: progress("install") }), "0.16.0", undefined, true), "running");
+  // Restarting: away until it connects again.
+  assert.equal(updateOutcome(machine({ connected: false, daemonVersion: "0.15.0", update: progress("restart") }), "0.16.0", undefined, true), "running");
+  // Back with the new version, on trial or past it.
+  assert.equal(updateOutcome(machine({ daemonVersion: "0.16.0", update: progress("trial") }), "0.16.0", undefined, true), "done");
+  assert.equal(updateOutcome(machine({ daemonVersion: "0.16.0", update: { canUpdate: true } }), "0.16.0", undefined, false), "done");
+  // Its progress seen and gone, as when it went back by itself.
+  assert.equal(updateOutcome(machine({ daemonVersion: "0.15.0", update: { canUpdate: true } }), "0.16.0", undefined, true), "done");
+  // A failure since it was started; the one shown before does not count.
+  const failed = { canUpdate: true, failed: { version: "0.16.0", error: "npm error", at: 5 } };
+  assert.equal(updateOutcome(machine({ daemonVersion: "0.15.0", update: failed }), "0.16.0", undefined, false), "failed");
+  assert.equal(updateOutcome(machine({ daemonVersion: "0.15.0", update: failed }), "0.16.0", 5, false), "running");
+  assert.equal(updateOutcome(undefined, "0.16.0", undefined, true), "gone");
 });

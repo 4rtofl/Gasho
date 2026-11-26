@@ -6,6 +6,7 @@ import { AlertDialog } from "radix-ui";
 import { useEffect, useRef, useState } from "react";
 import type { AgentInfo, AgentKind, MachineInfo, ServerInfo } from "@gasho/protocol";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG_PANEL } from "@/components/dialog-styles";
+import { ConfirmUpdateAll, UpdateAllButton, useUpdateAll } from "@/components/update-all";
 import { AGENT_LOGIN_COMMAND, AGENT_NAME, AGENT_STATUS_LABEL, CODEX_CHECKED_VERSION, codexOutdated } from "@/lib/agents";
 import {
   changesUrl,
@@ -17,12 +18,15 @@ import {
   STEP_LABEL,
   trialLabel,
   trialLength,
+  UPDATE_ALL_WAIT_MS,
+  updateOutcome,
   updateTo,
+  updateToTell,
 } from "@/lib/daemon-update";
 import { relativeTime } from "@/lib/format";
 import { HUB_INSTALL_COMMAND, HUB_STEP_LABEL, hubChangesUrl, hubNewerPublished, hubUpdateTo } from "@/lib/server-update";
 import { useRoute } from "@/lib/route";
-import { checkLatest, sendCommand, updateServer, useAppState } from "@/lib/store";
+import { checkLatest, getAppState, sendCommand, subscribeAppState, updateServer, useAppState } from "@/lib/store";
 import { useNow } from "@/lib/use-now";
 import { cn, copyToClipboard } from "@/lib/utils";
 
@@ -51,6 +55,33 @@ function keepInTab(started: Record<string, string>): void {
   } catch {
     // kept for this page only: a reload does not say "updated"
   }
+}
+
+/**
+ * Waits for a working server's update, started by 「すべて更新」, to be done or to fail (updateOutcome): "timeout" after
+ * UPDATE_ALL_WAIT_MS, and "left" when the screen goes.
+ */
+function waitForUpdate(id: string, version: string, failedBefore: number | undefined, signal: AbortSignal): Promise<string> {
+  return new Promise((resolve) => {
+    let seen = false;
+    const check = () => {
+      const m = getAppState().machines.find((x) => x.id === id);
+      if (m?.update?.progress?.version === version && m.update.progress.step !== "trial") seen = true;
+      const outcome = updateOutcome(m, version, failedBefore, seen);
+      if (outcome !== "running") finish(outcome);
+    };
+    const finish = (outcome: string) => {
+      unsubscribe();
+      clearTimeout(timer);
+      signal.removeEventListener("abort", left);
+      resolve(outcome);
+    };
+    const left = () => finish("left");
+    const unsubscribe = subscribeAppState(check);
+    const timer = setTimeout(() => finish("timeout"), UPDATE_ALL_WAIT_MS);
+    signal.addEventListener("abort", left);
+    check();
+  });
 }
 
 /** A command to run on the working server, copied with a click. */
@@ -107,6 +138,24 @@ export function DaemonUpdates() {
   useEffect(() => {
     if (opened) ref.current?.scrollIntoView({ block: "start" });
   }, [opened]);
+  // 「すべて更新」: the working servers whose gasho-daemon can be updated now (as the sidebar's badge counts them), one
+  // after another, each once its update is done. Not the Gasho server: its restart drops this page's connection.
+  const updatable = machines.filter((m) => updateToTell(m, latest));
+  const [askingAll, setAskingAll] = useState(false);
+  const all = useUpdateAll(async ({ id }, signal) => {
+    const { machines: now, latest: newest } = getAppState();
+    const m = now.find((x) => x.id === id);
+    const to = m && updateTo(m, newest);
+    // Updated or gone meanwhile.
+    if (!m || !to) return undefined;
+    const failedBefore = m.update?.failed?.at;
+    const r = await sendCommand(id, { type: "daemon.update", version: to }, 20_000);
+    if (!r.ok) return `${to} への更新を始められませんでした。${r.error ?? ""}`;
+    setStarted((s) => ({ ...s, [id]: to }));
+    const outcome = await waitForUpdate(id, to, failedBefore, signal);
+    // "failed": the row says why, as for an update of its own.
+    return outcome === "timeout" ? `${to} への更新が10分たっても終わらないので、待たずに次の working server に進みました。` : undefined;
+  });
 
   return (
     <section ref={ref} className="scroll-mt-4 space-y-3 rounded-2xl border border-border bg-surface/40 p-4">
@@ -128,12 +177,15 @@ export function DaemonUpdates() {
           {latest?.error && <p className="mt-1 text-xs text-red-400">{latest.error}</p>}
           {latest?.hubError && <p className="mt-1 text-xs text-muted-foreground">{latest.hubError}</p>}
         </div>
-        {latest && (
-          <button type="button" className={SMALL_BUTTON} disabled={!connected || latest.checking} onClick={checkLatest}>
-            <RefreshCw className={cn("size-3.5", latest.checking && "animate-spin")} />
-            今すぐ調べる
-          </button>
-        )}
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+          <UpdateAllButton count={updatable.length} progress={all.progress} disabled={!connected} onClick={() => setAskingAll(true)} />
+          {latest && (
+            <button type="button" className={SMALL_BUTTON} disabled={!connected || latest.checking} onClick={checkLatest}>
+              <RefreshCw className={cn("size-3.5", latest.checking && "animate-spin")} />
+              今すぐ調べる
+            </button>
+          )}
+        </div>
       </div>
 
       <ul className="divide-y divide-border rounded-xl border border-border bg-background">
@@ -156,6 +208,9 @@ export function DaemonUpdates() {
               machine={m}
               now={now}
               updated={started[m.id] !== undefined && started[m.id] === m.daemonVersion}
+              updating={all.progress?.item.id === m.id}
+              updatingAll={Boolean(all.progress)}
+              failure={all.failures[m.id]}
               onUpdate={(version) => setAsking({ machine: m, version })}
             />
           ))}
@@ -175,14 +230,44 @@ export function DaemonUpdates() {
           machine={asking.machine}
           version={asking.version}
           onClose={() => setAsking(undefined)}
-          onStarted={() => setStarted((s) => ({ ...s, [asking.machine.id]: asking.version }))}
+          onStarted={() => {
+            setStarted((s) => ({ ...s, [asking.machine.id]: asking.version }));
+            all.forget(asking.machine.id);
+          }}
+        />
+      )}
+      {askingAll && (
+        <ConfirmUpdateAllDaemons
+          machines={updatable}
+          serverToo={Boolean(connected && hubUpdateTo(server, latest))}
+          onClose={() => setAskingAll(false)}
+          onConfirm={() => void all.run(updatable.map((m) => ({ id: m.id, name: m.name })))}
         />
       )}
     </section>
   );
 }
 
-function MachineRow({ machine: m, now, updated, onUpdate }: { machine: MachineInfo; now: number; updated: boolean; onUpdate: (version: string) => void }) {
+function MachineRow({
+  machine: m,
+  now,
+  updated,
+  updating,
+  updatingAll,
+  failure,
+  onUpdate,
+}: {
+  machine: MachineInfo;
+  now: number;
+  updated: boolean;
+  /** 「すべて更新」 is updating it now. */
+  updating: boolean;
+  /** 「すべて更新」 goes on: its own buttons wait. */
+  updatingAll: boolean;
+  /** Why 「すべて更新」 could not update it (not a failure the working server tells of: the row says that one). */
+  failure?: string;
+  onUpdate: (version: string) => void;
+}) {
   const { latest } = useAppState();
   const u = m.update;
   const to = updateTo(m, latest);
@@ -241,7 +326,7 @@ function MachineRow({ machine: m, now, updated, onUpdate }: { machine: MachineIn
   }
 
   return (
-    <li className="flex flex-wrap items-start justify-between gap-3 p-3">
+    <li className="flex flex-wrap items-start justify-between gap-3 p-3" aria-current={updating || undefined}>
       <div className="min-w-0 flex-1">
         <p className="flex flex-wrap items-baseline gap-x-2 text-sm">
           <span className="font-medium">{m.name}</span>
@@ -260,23 +345,91 @@ function MachineRow({ machine: m, now, updated, onUpdate }: { machine: MachineIn
             {u.failed.version} への更新に失敗しました（{relativeTime(u.failed.at, now)}）。何も変えていません。{u.failed.error}
           </p>
         )}
+        {failure && <p className="mt-1 text-xs text-red-400">{failure}</p>}
       </div>
       {(to || previous) && (
         <div className="flex shrink-0 flex-wrap justify-end gap-2">
           {previous && (
-            <button type="button" className={SMALL_BUTTON} onClick={() => onUpdate(previous)}>
+            <button type="button" className={SMALL_BUTTON} disabled={updatingAll} onClick={() => onUpdate(previous)}>
               <RotateCcw className="size-3.5" />
               {previous} に戻す
             </button>
           )}
           {to && (
-            <button type="button" className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground" onClick={() => onUpdate(to)}>
+            <button
+              type="button"
+              className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+              disabled={updatingAll}
+              onClick={() => onUpdate(to)}
+            >
               {to} に更新
             </button>
           )}
         </div>
       )}
     </li>
+  );
+}
+
+/** 「すべて更新」's dialog: the working servers it updates, one after another, and what waits on each. */
+function ConfirmUpdateAllDaemons({
+  machines,
+  serverToo,
+  onClose,
+  onConfirm,
+}: {
+  machines: MachineInfo[];
+  /** The Gasho server can be updated too (by its own row). */
+  serverToo: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const { latest } = useAppState();
+  const trials = machines.map((m) => m.update?.trialMs);
+  const items = machines.map((m) => {
+    const to = updateTo(m, latest) ?? "";
+    const from = m.daemonVersion;
+    const { inputs, requests } = pendingWork(m);
+    return {
+      id: m.id,
+      label: (
+        <span className="flex flex-wrap items-baseline gap-x-2">
+          <span className="font-medium">{m.name}</span>
+          <span className="font-mono text-xs text-muted-foreground">
+            {from ? `${from} → ${to}` : to}
+          </span>
+        </span>
+      ),
+      detail: (inputs > 0 || requests > 0 || from) && (
+        <>
+          {inputs > 0 && <p>送るのを待っている入力が {inputs} 件あります。送り終えてから切り替えます。5分たっても残っているときは、この working server の更新をやめます。</p>}
+          {requests > 0 && <p>権限の確認を待っているものが {requests} 件あります。動かし直したあとは Gasho から答えられなくなるので、端末か公式アプリで答えてください。</p>}
+          {from && (
+            <a href={changesUrl(from, to)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-foreground underline-offset-2 hover:underline">
+              {from} からの変更を GitHub で見る
+              <ExternalLink className="size-3.5" />
+            </a>
+          )}
+        </>
+      ),
+    };
+  });
+  const notes = [
+    "1台ずつ、新しいバージョンを取り込み、起動できることを確かめてから切り替えて、gasho-daemon を動かし直します。1台の更新が終わってから、次の working server に進みます。うまくいかなかった working server は何も変えずに、残りを続けます。",
+    "セッションは止まりません。動かし直すあいだ（10秒ほど）は、その working server の様子が届きません。",
+    trials.every((t) => t !== undefined) &&
+      `新しいバージョンがうまく起動しなかったとき（${new Set(trials).size === 1 && trials[0] !== undefined ? `${trialLength(trials[0])}のうちに止まったとき` : "確かめているうちに止まったとき"}）は、自動で前のバージョンに戻します。`,
+    "この画面を離れると、そのとき更新している working server のあとは更新しません。",
+    serverToo && "Gasho サーバーは含みません（更新するあいだ、この画面とのつながりが切れるため）。Gasho サーバーの行から更新してください。",
+  ].filter((l): l is string => typeof l === "string");
+  return (
+    <ConfirmUpdateAll
+      title={`${machines.length} 台の gasho-daemon を更新しますか？`}
+      items={items}
+      notes={notes}
+      onClose={onClose}
+      onConfirm={onConfirm}
+    />
   );
 }
 

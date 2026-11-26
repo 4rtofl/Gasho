@@ -76,6 +76,9 @@ function defaultAnswer(d: FakeDaemon, msg: HubToDaemon): Answer {
       return { type: "media", requestId: msg.requestId, notFound: true };
     case "plugin.request":
       return { type: "plugin.response", requestId: msg.requestId, error: "fake daemon: no plugins run here" };
+    case "usage.get":
+      // Asked only of a fake daemon whose capabilities say canReadUsage.
+      return { type: "usage", error: "fake daemon: no usage" };
     default:
       // The commands of sessions, folders and repositories.
       return commandResult(msg);

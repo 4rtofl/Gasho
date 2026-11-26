@@ -11,6 +11,7 @@ import type { CatalogPlugin, MachineInfo, PluginCatalog, PluginDaemonState, Plug
 import { BUTTON_DANGER, BUTTON_PRIMARY, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG_PANEL } from "@/components/dialog-styles";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { ConfirmUpdateAll, UpdateAllButton, useUpdateAll } from "@/components/update-all";
 import { relativeTime } from "@/lib/format";
 import { notInCatalog, updatesOf } from "@/lib/plugin-catalog";
 import { byGenre, genreName, genreOf } from "@/lib/plugin-genres";
@@ -56,6 +57,17 @@ export function PluginsView() {
   }, [connected]);
   const sorted = [...infos].sort((a, b) => a.manifest.name.localeCompare(b.manifest.name, "ja"));
   const updates = updatesOf(infos, catalog);
+  // 「すべて更新」: the plugins that can be updated now (as the sidebar's badge counts them), one after another.
+  const updatable = sorted.filter((i) => {
+    const u = updates.get(i.id);
+    return u && apiSupported(u.api);
+  });
+  const [askingAll, setAskingAll] = useState(false);
+  const all = useUpdateAll(async ({ id }) => {
+    const version = updates.get(id)?.version;
+    const r = await sendPluginCommand({ type: "plugin.update", plugin: id }, INSTALL_WAIT_MS);
+    return r.ok ? undefined : `${version ? `${version} に` : ""}更新できませんでした。${r.error ?? ""}`;
+  });
   const missing = notInCatalog(infos, catalog);
   const installed = new Set(infos.map((i) => i.id));
   const available = (catalog?.plugins ?? []).filter((p) => !installed.has(p.id)).sort((a, b) => a.name.localeCompare(b.name, "ja"));
@@ -80,12 +92,15 @@ export function PluginsView() {
           <h1 className="text-xl font-semibold tracking-tight">プラグイン</h1>
           <CatalogStatus catalog={catalog} />
         </div>
-        {catalog && (
-          <button type="button" className={BUTTON} disabled={catalog.loading} onClick={() => requestCatalog(true)}>
-            <RefreshCw className={cn("size-3.5", catalog.loading && "animate-spin")} />
-            再読み込み
-          </button>
-        )}
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+          <UpdateAllButton count={updatable.length} progress={all.progress} disabled={!connected} onClick={() => setAskingAll(true)} />
+          {catalog && (
+            <button type="button" className={BUTTON} disabled={catalog.loading} onClick={() => requestCatalog(true)}>
+              <RefreshCw className={cn("size-3.5", catalog.loading && "animate-spin")} />
+              再読み込み
+            </button>
+          )}
+        </div>
       </div>
 
       <section aria-labelledby="installed" className="space-y-3">
@@ -107,6 +122,10 @@ export function PluginsView() {
                 update={updates.get(info.id)}
                 missing={missing.has(info.id)}
                 note={noteOf(info)}
+                updating={all.progress?.item.id === info.id}
+                updatingAll={Boolean(all.progress)}
+                failure={all.failures[info.id]}
+                onUpdated={() => all.forget(info.id)}
                 onRemove={() => setRemoving(info)}
               />
             ))}
@@ -155,6 +174,31 @@ export function PluginsView() {
 
       {adding && <AddDialog plugin={adding} onClose={() => setAdding(undefined)} />}
       {removing && <RemoveDialog info={removing} onClose={() => setRemoving(undefined)} />}
+      {askingAll && (
+        <ConfirmUpdateAll
+          title={`${updatable.length} 個のプラグインを更新しますか？`}
+          items={updatable.map((info) => ({
+            id: info.id,
+            label: (
+              <span className="flex flex-wrap items-baseline gap-x-2">
+                <span className="font-medium">{info.manifest.name}</span>
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  {info.manifest.version ? `${info.manifest.version} → ` : ""}
+                  {updates.get(info.id)?.version}
+                </span>
+              </span>
+            ),
+            detail: permissionsText(updates.get(info.id)?.permissions),
+          }))}
+          notes={[
+            "1つずつ順に、GashoPlugins の新しいバージョンを取ってきて入れ替えます。入れ替えると、開いている画面と gasho-daemon で、すぐに新しいバージョンが動きます。",
+            "うまくいかなかったプラグインはそのままにして、残りを続けます。",
+            "この画面を離れると、そのとき更新しているプラグインのあとは更新しません。",
+          ]}
+          onClose={() => setAskingAll(false)}
+          onConfirm={() => void all.run(updatable.map((info) => ({ id: info.id, name: info.manifest.name })))}
+        />
+      )}
     </div>
   );
 }
@@ -186,6 +230,10 @@ function PluginCard({
   update,
   missing,
   note,
+  updating,
+  updatingAll,
+  failure,
+  onUpdated,
   onRemove,
 }: {
   info: PluginInfo;
@@ -200,6 +248,14 @@ function PluginCard({
   missing: boolean;
   /** Why this enabled plugin is not used in full: a theme or a session list that another one's stands in for. */
   note?: string;
+  /** 「すべて更新」 is updating it now. */
+  updating: boolean;
+  /** 「すべて更新」 goes on: its own 「更新」 waits. */
+  updatingAll: boolean;
+  /** Why 「すべて更新」 could not update it. */
+  failure?: string;
+  /** Its own 「更新」 was pressed: a failure of 「すべて更新」 is forgotten. */
+  onUpdated: () => void;
   onRemove: () => void;
 }) {
   const [busy, setBusy] = useState<"change" | "update">();
@@ -207,6 +263,7 @@ function PluginCard({
   const m = info.manifest;
   const hasSettings = Object.keys(m.settings ?? {}).length > 0;
   const run = async (cmd: Parameters<typeof sendPluginCommand>[0], what: "change" | "update" = "change") => {
+    if (what === "update") onUpdated();
     setBusy(what);
     setError(undefined);
     const r = await sendPluginCommand(cmd, what === "update" ? INSTALL_WAIT_MS : undefined);
@@ -215,8 +272,10 @@ function PluginCard({
   };
   const problem = info.error ?? (info.enabled ? loadError : undefined);
   const canUpdate = update && apiSupported(update.api);
+  // While 「すべて更新」 updates it, it is busy as when its own 「更新」 was pressed.
+  const state = busy ?? (updating ? "update" : undefined);
   return (
-    <li className="space-y-3 rounded-2xl border border-border bg-surface/40 p-4">
+    <li className="space-y-3 rounded-2xl border border-border bg-surface/40 p-4" aria-current={updating || undefined}>
       {/* The switch and the buttons stay at the top right, below the text only on a phone. */}
       <div className="flex flex-wrap items-start justify-between gap-3 sm:flex-nowrap">
         <div className="min-w-0 sm:flex-1">
@@ -244,9 +303,14 @@ function PluginCard({
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           {canUpdate && (
-            <button type="button" className={BUTTON} disabled={Boolean(busy)} onClick={() => void run({ type: "plugin.update", plugin: info.id }, "update")}>
-              {busy === "update" ? <LoaderCircle className="size-3.5 animate-spin" /> : <ArrowUpCircle className="size-3.5" />}
-              {busy === "update" ? "更新しています…" : "更新"}
+            <button
+              type="button"
+              className={BUTTON}
+              disabled={Boolean(state) || updatingAll}
+              onClick={() => void run({ type: "plugin.update", plugin: info.id }, "update")}
+            >
+              {state === "update" ? <LoaderCircle className="size-3.5 animate-spin" /> : <ArrowUpCircle className="size-3.5" />}
+              {state === "update" ? "更新しています…" : "更新"}
             </button>
           )}
           {hasSettings && info.enabled && (
@@ -261,12 +325,12 @@ function PluginCard({
           )}
           <Switch
             checked={info.enabled}
-            disabled={Boolean(busy)}
+            disabled={Boolean(state)}
             onCheckedChange={(enabled) => void run({ type: "plugin.enable", plugin: info.id, enabled })}
             aria-label={`${m.name} を有効にする`}
             title={info.enabled ? "有効" : "無効"}
           />
-          <button type="button" className={REMOVE_BUTTON} disabled={Boolean(busy)} onClick={onRemove} aria-label={`${m.name} を外す`} title="外す">
+          <button type="button" className={REMOVE_BUTTON} disabled={Boolean(state)} onClick={onRemove} aria-label={`${m.name} を外す`} title="外す">
             <Trash2 className="size-4" />
           </button>
         </div>
@@ -274,6 +338,7 @@ function PluginCard({
 
       {problem && <p className="text-xs text-red-400">{problem}</p>}
       {error && <p className="text-xs text-red-400">{error}</p>}
+      {failure && canUpdate && <p className="text-xs text-red-400">{failure}</p>}
       {note && <p className="text-xs text-amber-400">{note}</p>}
       {permissionsText(m.permissions) && <p className="text-xs text-muted-foreground">{permissionsText(m.permissions)}</p>}
       {/* Disabled, it runs nowhere: every working server would only say so. */}

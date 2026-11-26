@@ -72,7 +72,7 @@ test.describe("部品", () => {
     });
   });
 
-  test("セッションのヘッダーの項目・パネル・会話の末尾・入力欄の下", async ({ page, hub, context, isMobile }) => {
+  test("セッションのヘッダーの項目・パネル・会話の末尾・入力欄の下・Footer", async ({ page, hub, context, isMobile }) => {
     const d = await machine(hub);
     await context.route("https://example.com/**", (r) => r.fulfill({ contentType: "text/plain", body: "e2e" }));
     const opened: string[] = [];
@@ -84,6 +84,12 @@ test.describe("部品", () => {
       const end = main.getByText("会話の末尾 作業");
       await expect(end).toBeVisible();
       await expect(main.getByText("入力欄の下", { exact: true })).toBeVisible();
+      // The footer of the session's screen (P21): "left" after the memory, the others on the right.
+      const footer = page.getByTestId("session-footer");
+      const left = (await footer.getByText("フッター左").boundingBox())!;
+      const right = (await footer.getByText("フッター右").boundingBox())!;
+      expect(left.x).toBeLessThan(right.x);
+      if (!isMobile) expect((await footer.getByText("mac メモリ").boundingBox())!.x).toBeLessThan(left.x);
       const last = (await main.getByText("はい、どうぞ。").boundingBox())!;
       const box = (await end.boundingBox())!;
       const input = (await page.getByPlaceholder("Agent への指示を入力…").boundingBox())!;

@@ -246,6 +246,56 @@ test("削除で、作業中・送信待ちの件数・開き直し方の文が�
   await expect(page).toHaveURL(new RegExp(`#/w/${daemon.machineId}/`));
 });
 
+test("タブの × は、作業中と送信待ちのあるセッションでだけ確認を出し、ほかはすぐ削除して、削除できなければ理由を出す", async ({ page, hub }) => {
+  const daemon = await openTabs(page, hub, {
+    open: ONE,
+    sessions: [tabSession(ONE, "一つ目", 3 * HOUR), tabSession(TWO, "二つ目", 2 * HOUR, { status: "busy" }), tabSession(THREE, "三つ目", 1 * HOUR, { pendingInputs: 1 })],
+  });
+  let fail!: () => void;
+  const failed = new Promise<void>((r) => (fail = r));
+  let answer!: () => void;
+  const answered = new Promise<void>((r) => (answer = r));
+  let calls = 0;
+  daemon.handle("session.remove", async (m) => {
+    if (calls++ === 0) {
+      await failed;
+      return commandResult(m, { ok: false, error: "削除できませんでした（E2E）" });
+    }
+    // As gasho-daemon does: off the list first, the answer once Claude Code has ended.
+    daemon.setSessions(daemon.sessions.filter((s) => s.sessionId !== m.sessionId));
+    await answered;
+    return commandResult(m);
+  });
+  const close = (name: string) => tabsOf(page).getByRole("button", { name: `${name} を削除` });
+  const dialog = page.getByRole("alertdialog", { name: "セッションを削除しますか？" });
+
+  await close("二つ目").click();
+  await expect(dialog).toContainText("作業の途中で止まります。");
+  await dialog.getByRole("button", { name: "キャンセル" }).click();
+  await close("三つ目").click();
+  await expect(dialog).toContainText("送信待ちの 1 件は送りません。");
+  await dialog.getByRole("button", { name: "キャンセル" }).click();
+  expect(daemon.received.filter((m) => m.type === "session.remove")).toHaveLength(0);
+
+  // Nothing to stop: removed at once, and the × cannot be pressed again meanwhile.
+  await close("一つ目").click();
+  expect(await daemon.waitFor("session.remove")).toMatchObject({ sessionId: ONE });
+  await expect(close("一つ目")).toBeDisabled();
+  await expect(dialog).toHaveCount(0);
+  fail();
+  // At the top of the screen: on a phone, the tabs' row has no room left for it.
+  await expect(page.getByText("「一つ目」：削除できませんでした（E2E）")).toBeVisible();
+  await expect(close("一つ目")).toBeEnabled();
+
+  await close("一つ目").click();
+  await expect(tab(page, "一つ目")).toHaveCount(0);
+  // It was open: the tab after it opens as soon as it is off the list, before the answer.
+  await expect(openTab(page)).toHaveText("二つ目");
+  answer();
+  await expect(openTab(page)).toHaveText("二つ目");
+  await expect(dialog).toHaveCount(0);
+});
+
 test("オフラインと gasho-daemon 0.9 未満では、メニューの項目を押せず、理由が出る", async ({ page, hub }, testInfo) => {
   const old = await hub.fakeDaemon({
     name: "old",

@@ -11,13 +11,14 @@ import { CloneRepoButton, RegisterRepos, RepoFilter } from "@/components/repo-fi
 import { ReposDialog } from "@/components/repos-dialog";
 import { SessionActionDialog, SessionContextMenu, type SessionActionRequest } from "@/components/session-menu";
 import { UnusedSessionsDialog } from "@/components/unused-sessions-dialog";
+import { RepoActionDialog, RepoContextMenu, type RepoActionRequest } from "@/components/repo-menu";
 import { WorktreeActionDialog, WorktreeContextMenu, type WorktreeActionRequest } from "@/components/worktree-menu";
 import { showNotice, useNotice } from "@/lib/notice";
 import { AgentMark } from "@/components/agent-mark";
 import { LaunchMenu } from "@/components/launch-menu";
 import { launchAgentFor, launchTitle, sessionAgent, showsAgents } from "@/lib/agents";
 import { StatusDot } from "@/components/status-badge";
-import { Sidebar, SidebarTrigger, useSidebar, type SidebarAction, type SidebarGroup, type SidebarItem, type SidebarMove, type SidebarSection } from "@/components/ui/sidebar";
+import { Sidebar, SidebarTrigger, useSidebar, type SidebarAction, type SidebarGroup, type SidebarItem, type SidebarMove, type SidebarNest, type SidebarSection } from "@/components/ui/sidebar";
 import { updateToTell } from "@/lib/daemon-update";
 import { hubUpdateToTell } from "@/lib/server-update";
 import { useChoices } from "@/lib/flag";
@@ -28,7 +29,7 @@ import { DESKTOP, useMediaQuery, useWindowWidth } from "@/lib/media";
 import { arrangeSessions, rememberSessions, reorderShown, useSavedOrder } from "@/lib/order";
 import { notInCatalog, updateCount } from "@/lib/plugin-catalog";
 import { go, isOldGitHubLink, pageOf, useRoute, type SessionPanel } from "@/lib/route";
-import { rememberWorktrees, useRememberedWorktrees } from "@/lib/remembered-worktrees";
+import { rememberParents, rememberWorktrees, useRememberedParents, useRememberedWorktrees } from "@/lib/remembered-worktrees";
 import {
   arrangeCategories,
   hasOrder,
@@ -46,7 +47,7 @@ import {
   type HeldOrder,
   type ListedSession,
 } from "@/lib/session-list";
-import { useGroupingPrefs, useSessionListPrefs } from "@/lib/session-list-prefs";
+import { foldParent, setNesting, useGroupingPrefs, useNestingPrefs, useSessionListPrefs } from "@/lib/session-list-prefs";
 import { useSessionLauncher } from "@/lib/session-launch";
 import {
   movedSession,
@@ -79,6 +80,7 @@ import {
   type HeldWorktreeList,
   type PendingMove,
 } from "@/lib/worktree-groupings";
+import { launchFolders, nestCategories, nestWorktrees, shownWhileFolded, worktreeParents } from "@/lib/worktree-nesting";
 import { PANEL_WIDTH_MAX, PANEL_WIDTH_MIN, clampPanelWidth, defaultPanelWidth, panelOverlays, usePanelWidth } from "@/lib/widths";
 import { PluginBadgeProbes, PluginPagePanelView, PluginPageView, PluginPanelView, usePluginBadges } from "@/plugins/parts";
 import { usePluginRegistry } from "@/plugins/registry";
@@ -197,24 +199,6 @@ function PanelView({ machine, sessionId, panel, docked }: { machine: string; ses
   return <FilePanel key={path} machine={machine} sessionId={sessionId} path={path} docked={docked} onClose={close} />;
 }
 
-function Connection({ connected, deviceName }: { connected: boolean; deviceName?: string }) {
-  const { collapsed } = useSidebar();
-  return (
-    <div
-      className="flex items-center gap-2 px-2.5 text-xs text-muted-foreground"
-      title={connected ? "Gasho サーバーに接続中" : "Gasho サーバーに再接続しています"}
-    >
-      <span className={cn("size-2 shrink-0 rounded-full", connected ? "bg-emerald-500" : "bg-red-500")} />
-      {!collapsed && (
-        <span className="truncate">
-          {connected ? "接続中" : "再接続中…"}
-          {deviceName && ` · ${deviceName}`}
-        </span>
-      )}
-    </div>
-  );
-}
-
 function Centered({ children }: { children: React.ReactNode }) {
   return <div className="flex min-h-dvh items-center justify-center bg-background p-4 text-sm text-muted-foreground">{children}</div>;
 }
@@ -232,7 +216,7 @@ export function App() {
   useLayoutEffect(() => {
     if (main.current) main.current.scrollTop = 0;
   }, [page]);
-  const { auth, me, machines, notifications, connected, plugins, catalog, latest, server, outdated } = useAppState();
+  const { auth, machines, notifications, connected, plugins, catalog, latest, server, outdated } = useAppState();
   // After /clear, the session goes on under a new id: its page (and the panel open beside it) goes there too, and shows
   // it already while the address changes.
   const movedTo = route.name === "session" ? movedSession(machines.find((m) => m.id === route.machine), route.sessionId)?.sessionId : undefined;
@@ -246,6 +230,8 @@ export function App() {
   const [sessionAction, setSessionAction] = useState<SessionActionRequest | null>(null);
   // What was picked from a worktree row's menu (rename, remove); its dialog is open meanwhile.
   const [worktreeAction, setWorktreeAction] = useState<WorktreeActionRequest | null>(null);
+  // The repository whose category's menu (P18, a category's `repo`) is taking it off its working server.
+  const [repoAction, setRepoAction] = useState<RepoActionRequest | null>(null);
   // The worktrees' rows selected together (pressed with Shift), and the row pressed last without it, which a range of
   // them starts from. Esc lets them go, unless something else took it (a menu or a dialog closes) or it is typed.
   const [selectedRows, setSelectedRows] = useState<ReadonlySet<string>>(new Set());
@@ -294,6 +280,16 @@ export function App() {
   const allWorktrees = useMemo(() => worktreesByLastUse(machines, remembered), [machines, remembered]);
   const repos = useMemo(() => repoChoices(allWorktrees), [allWorktrees]);
   const narrowed = useMemo(() => repos.filter((r) => repoKeys.includes(r.key)), [repos, repoKeys]);
+  // The worktrees nested under those they were started from (lib/worktree-nesting): the folders their sessions were
+  // started from, kept once those sessions are gone, and with them each one's parent among those listed.
+  const nesting = useNestingPrefs();
+  const launched = useMemo(() => launchFolders(allWorktrees), [allWorktrees]);
+  useEffect(() => rememberParents(launched), [launched]);
+  const keptParents = useRememberedParents();
+  const parents = useMemo(
+    () => (nesting.on ? worktreeParents(allWorktrees, new Map([...keptParents, ...launched])) : new Map<string, string>()),
+    [nesting.on, allWorktrees, keptParents, launched],
+  );
   // A plugin's grouping of the worktrees (docs/plugins.md, P18): what its hook gets (those narrowed to, in the order of
   // last use, not the one dragged into), which list shows, the grouping's order dragged into and its folded categories,
   // and what is held while the pointer is over the list.
@@ -475,18 +471,36 @@ export function App() {
   // "最後に使った順に戻す" are then the grouping's.
   const grouped = groupings.mode.kind !== "flat";
   const groupingFolded = new Set(groupingPrefs.folded ?? []);
-  // Each category's rows, and those that show: folded, only the open worktree's (where the person is).
+  // The worktrees nested under those they were started from: in Gasho's list, and in a grouping's categories, where a
+  // child shows in its parent's category. A folded parent still shows the way to the open worktree.
+  const flatTree = nestWorktrees(
+    listed.map((w) => w.id),
+    parents,
+  );
+  const categoryTree = nestCategories(
+    worktreeCategories.map((c) => ({ id: c.id, keys: c.worktrees.flatMap((w) => (byId.has(w.key) ? [w.key] : [])) })),
+    parents,
+  );
+  const children = grouped ? categoryTree.children : flatTree.children;
+  const foldedParents = new Set(nesting.folded);
+  const nestedShown = (key: string): string[] => (foldedParents.has(key) ? shownWhileFolded(key, children, openWorktree) : (children.get(key) ?? []));
+  const allUnder = (key: string): string[] => (children.get(key) ?? []).flatMap((k) => [k, ...allUnder(k)]);
+  const shownUnder = (key: string): string[] => nestedShown(key).flatMap((k) => [k, ...shownUnder(k)]);
+  // The grouping's descriptions of the rows, which a child takes to its parent's category.
+  const lines = new Map(worktreeCategories.flatMap((c) => c.worktrees.map((w) => [w.key, w.description] as const)));
+  // Each category's rows (its own and the children under them), and those that show: folded, only the open worktree's
+  // (where the person is), as it is, not under its parent.
   const categoryRows = worktreeCategories.map((c) => {
     const isFolded = groupingFolded.has(c.id);
-    const rows = c.worktrees.flatMap((item) => {
-      const w = byId.get(item.key);
-      return w ? [{ item, w }] : [];
-    });
-    return { c, isFolded, rows, shown: rows.filter(({ w }) => !isFolded || w.id === openWorktree) };
+    const roots = categoryTree.roots.get(c.id) ?? [];
+    const rows = roots.flatMap((k) => [k, ...allUnder(k)]).flatMap((k) => byId.get(k) ?? []);
+    return { c, isFolded, roots, rows, shown: rows.filter((w) => !isFolded || w.id === openWorktree) };
   });
   // The worktrees' rows in the order they show, and those of them selected together (a menu or a drag of one of them
   // does the same to all, when they are several).
-  const shownRows = grouped ? categoryRows.flatMap((x) => x.shown.map(({ w }) => w.id)) : listed.map((w) => w.id);
+  const shownRows = grouped
+    ? categoryRows.flatMap((x) => (x.isFolded ? x.shown.map((w) => w.id) : x.roots.flatMap((k) => [k, ...shownUnder(k)])))
+    : flatTree.roots.flatMap((k) => [k, ...shownUnder(k)]);
   const selection = shownRows.filter((id) => selectedRows.has(id));
   const selectedShown = new Set(selection);
   const together = selection.length > 1 ? selection.flatMap((id) => byId.get(id) ?? []) : undefined;
@@ -518,11 +532,31 @@ export function App() {
       </WorktreeContextMenu>
     ),
   });
+  const waits = (w: WorktreeSessions) => w.machine.connected && w.sessions.some((s) => s.status === "waiting");
+  // A row with the rows nested under it. Folded, it tells that a worktree hidden under it waits for an answer.
+  const treeRow = (w: WorktreeSessions): SidebarItem => {
+    const row = worktreeRow(w, grouped ? lines.get(w.id) : undefined);
+    const under = children.get(w.id);
+    if (!under?.length) return row;
+    const folded = foldedParents.has(w.id);
+    const shown = new Set(shownUnder(w.id));
+    const hiddenWaiting = folded && allUnder(w.id).some((k) => !shown.has(k) && byId.get(k) && waits(byId.get(k)!));
+    const nest: SidebarNest = {
+      items: nestedShown(w.id).flatMap((k) => {
+        const c = byId.get(k);
+        return c ? [treeRow(c)] : [];
+      }),
+      folded,
+      onFoldedChange: (f) => foldParent(w.id, f),
+    };
+    return { ...row, badge: row.badge ?? (hiddenWaiting ? "確認" : undefined), nest };
+  };
   const groupingWorktrees = new Map(groupingContext.worktrees.map((w) => [w.key, w]));
-  const worktreeGroups: SidebarGroup[] = categoryRows.map(({ c, isFolded, rows, shown }) => {
-    const waiting = rows.filter(({ w }) => w.machine.connected && w.sessions.some((s) => s.status === "waiting")).length;
+  const worktreeGroups: SidebarGroup[] = categoryRows.map(({ c, isFolded, roots, rows, shown }) => {
+    const waiting = rows.filter(waits).length;
     const target = c.launch ? groupingWorktrees.get(c.launch) : undefined;
     const canLaunch = target !== undefined && target.machine.connected && target.machine.canLaunch === true;
+    const repo = c.repo && { ...c.repo, title: c.title };
     return {
       id: c.id,
       title: c.title,
@@ -534,7 +568,15 @@ export function App() {
       action: canLaunch ? launchAction(c.title, target) : undefined,
       folded: isFolded,
       onFoldedChange: (f) => changeGroupingPrefs((p) => withFolded(p, c.id, f)),
-      items: shown.map(({ item, w }) => worktreeRow(w, item.description)),
+      // A category that stands for a repository: its heading's menu takes it off the working server.
+      wrap: repo
+        ? (button: ReactElement) => (
+            <RepoContextMenu repo={repo} onPick={setRepoAction}>
+              {button}
+            </RepoContextMenu>
+          )
+        : undefined,
+      items: isFolded ? shown.map((w) => worktreeRow(w, lines.get(w.id))) : roots.flatMap((k) => byId.get(k) ?? []).map(treeRow),
       sort: isFolded
         ? undefined
         : { onReorder: (keys) => changeGroupingPrefs((p) => withSessionOrder(p, c.id, keys, worktreeCategories.map((x) => x.id))) },
@@ -616,6 +658,8 @@ export function App() {
           groupings={groupings.options}
           grouping={groupings.picked}
           onGroup={groupings.pick}
+          nested={nesting.on}
+          onNest={setNesting}
         />
         <CloneRepoButton onClick={() => setCloneOpen(true)} />
       </>
@@ -625,7 +669,7 @@ export function App() {
       : {
           onReorder: (ids) => setWorktreeOrder(rememberSessions(reorderShown(worktrees.map((w) => w.id), ids), worktreeOrder)),
         },
-    items: grouped ? [] : listed.map((w) => worktreeRow(w)),
+    items: grouped ? [] : flatTree.roots.flatMap((k) => byId.get(k) ?? []).map(treeRow),
     groups: grouped ? worktreeGroups : undefined,
     groupSort: grouped ? { onReorder: (ids) => changeGroupingPrefs((p) => withCategoryOrder(p, ids)) } : undefined,
     itemMove: grouped && groupings.move ? moveRow : undefined,
@@ -714,7 +758,6 @@ export function App() {
           if (inside || !mobileOpen) holdList(inside);
         }}
         header={<Brand away={gassho !== null} onGassho={setGassho} />}
-        footer={<Connection connected={connected} deviceName={me?.name} />}
       />
       <div className="flex min-w-0 flex-1 flex-col pt-(--safe-top)">
         {/* The Gasho server serves a new build of the screen, and this page did not reload itself: something is being written in it. */}
@@ -758,7 +801,7 @@ export function App() {
               Gasho
             </span>
           )}
-          {/* The connection shows in the sidebar's footer; here only while it is down. */}
+          {/* The connection shows in a session's footer (SessionFooter); here only while it is down. */}
           {!connected && <span className="ml-auto shrink-0 text-xs text-red-400">再接続中…</span>}
           {onScreen && <SessionHeaderToggle className={cn("-mr-1", connected && "ml-auto")} />}
         </header>
@@ -831,6 +874,7 @@ export function App() {
         }
       />
       <WorktreeActionDialog request={worktreeAction} onClose={() => setWorktreeAction(null)} />
+      <RepoActionDialog request={repoAction} onClose={() => setRepoAction(null)} />
       <UnusedSessionsDialog />
       <LaunchDialog
         open={launchOpen}

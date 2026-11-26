@@ -192,12 +192,19 @@ test("「!」で始めるとシェルモードになる（札・枠・「実行�
   expect(daemon.received.filter((m) => m.type === "session.input")).toHaveLength(1);
 });
 
-test("「n/20000」で文字数を出し、20000 文字を超えると送れない", async ({ page, hub }) => {
+test("「n/20000」で文字数を出し、20000 文字を超えると送れない。スマホでは上限に近づいたときだけ入力欄の中に出す", async ({ page, hub, isMobile }) => {
   const daemon = await openSession(page, hub);
   const box = chatBox(page);
-  await expect(page.getByText("0/20000")).toBeVisible();
   await box.fill("あいう");
-  await expect(page.getByText("3/20000")).toBeVisible();
+  if (isMobile) {
+    await expect(page.getByText("3/20000")).toHaveCount(0);
+    await box.fill("あ".repeat(17_001));
+    await expect(page.getByText("17001/20000")).toBeVisible();
+  } else {
+    await expect(page.getByText("3/20000")).toBeVisible();
+    await box.fill("");
+    await expect(page.getByText("0/20000")).toBeVisible();
+  }
 
   await box.fill("あ".repeat(20_001));
   const count = page.getByText("20001/20000");

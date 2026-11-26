@@ -22,7 +22,8 @@ export function controlSocketOf(stateDir: string): string {
 }
 
 export type ControlRequest =
-  | { op: "session.launch"; cwd: string; name?: string; trust?: boolean; agent?: AgentKind; chrome?: boolean }
+  /** `launchedBy`: the id of the session whose Claude Code asks (its CLAUDE_CODE_SESSION_ID), remembered as the parent. */
+  | { op: "session.launch"; cwd: string; name?: string; trust?: boolean; agent?: AgentKind; chrome?: boolean; launchedBy?: string }
   /** `chrome`: the copy has Claude in Chrome; without it, it has it when the session has it. */
   | { op: "session.fork"; sessionId: string; name?: string; chrome?: boolean }
   | { op: "session.input"; sessionId: string; text: string }
@@ -53,6 +54,8 @@ export interface ControlSession {
   pendingInputs?: number;
   /** Its folder is gone (removed with `git worktree remove`, say): only `session remove` takes it away. */
   cwdMissing?: boolean;
+  /** Started with `session launch` from another session: that session's id (its id now, while Gasho keeps it). */
+  launchedBy?: string;
 }
 
 /** A session that worktree.remove ended. */
@@ -149,6 +152,7 @@ export function parseRequest(v: unknown): ControlRequest {
     case "session.launch": {
       const name = s("name", true);
       const agent = agentOf(s("agent", true));
+      const launchedBy = s("launchedBy", true);
       return {
         op: "session.launch",
         cwd: s("cwd")!,
@@ -156,6 +160,7 @@ export function parseRequest(v: unknown): ControlRequest {
         ...(r.trust === true ? { trust: true } : {}),
         ...(agent ? { agent } : {}),
         ...(r.chrome === true ? { chrome: true } : {}),
+        ...(launchedBy ? { launchedBy } : {}),
       };
     }
     case "session.fork": {
@@ -282,6 +287,11 @@ export interface SessionCliIO {
   /** Says what happens meanwhile (stderr). */
   note: (s: string) => void;
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * The session whose Claude Code runs the command (CLAUDE_CODE_SESSION_ID, which Claude Code gives the commands it
+   * runs): a launch remembers it as the parent. Absent when run outside Claude Code.
+   */
+  callerSessionId?: string;
   /** How long a launch with a name waits for Claude Code to list the session under it. */
   renameWaitMs?: number;
   pollMs?: number;
@@ -321,6 +331,7 @@ export async function sessionCommand(args: string[], io: SessionCliIO): Promise<
         ...(args.includes("--trust") ? { trust: true } : {}),
         ...(agent ? { agent } : {}),
         ...(args.includes("--chrome") ? { chrome: true } : {}),
+        ...(io.callerSessionId ? { launchedBy: io.callerSessionId } : {}),
       });
       const sessionId = launched.sessionId;
       if (!sessionId) throw new Error("gasho-daemon started no session");
@@ -354,6 +365,7 @@ export async function sessionCommand(args: string[], io: SessionCliIO): Promise<
             ...(session.agent !== "claude" ? { agent: session.agent } : {}),
             ...(session.terminal ? { terminal: session.terminal } : {}),
             ...(session.chrome ? { chrome: true } : {}),
+            ...(session.launchedBy ? { launchedBy: session.launchedBy } : {}),
             ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}),
           },
           null,

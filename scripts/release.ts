@@ -90,7 +90,7 @@ export const PACKAGES: Package[] = [
     tagPrefix: "daemon-v",
     major: 0,
     // @gasho/protocol is left out: gasho-daemon uses only its types, which are gone in the JavaScript.
-    sources: ["apps/daemon/src", "apps/daemon/scripts", "apps/daemon/package.json", "apps/daemon/tsconfig.json", "apps/daemon/tsconfig.build.json", "tsconfig.base.json"],
+    sources: ["apps/daemon/src", "apps/daemon/claude-plugin", "apps/daemon/scripts", "apps/daemon/package.json", "apps/daemon/tsconfig.json", "apps/daemon/tsconfig.build.json", "tsconfig.base.json"],
     apiFile: "apps/daemon/src/plugins.ts",
     versionFiles: [DAEMON_TS],
     readVersion: () => DAEMON_VERSION_RE.exec(read(DAEMON_TS))?.[1] ?? fail(`DAEMON_VERSION not found in ${DAEMON_TS}`),

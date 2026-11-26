@@ -31,7 +31,9 @@ import { loadSkills, useSkills } from "@/lib/skills";
 import { loadTranscript, sendCommand, type SentResult, transcriptKey, type TranscriptState, useAppState } from "@/lib/store";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
-import { PluginComposerFooter, PluginConversationEnd, PluginHeaderItems } from "@/plugins/parts";
+import { PluginComposerFooter, PluginConversationEnd, PluginHeaderItems, useComposerFooterParts } from "@/plugins/parts";
+import { SessionFooter } from "@/components/session-footer";
+import { DESKTOP, useMediaQuery } from "@/lib/media";
 import type { LaunchInitial } from "@/views/launch";
 
 /**
@@ -211,6 +213,7 @@ export function SessionView({
           source={source}
         />
       </div>
+      <SessionFooter machine={m} session={s} />
     </div>
   );
 }
@@ -332,6 +335,8 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
   const [error, setError] = useState<string>();
   const [warning, setWarning] = useState<string>();
   const input = useRef<PromptInputHandle>(null);
+  const phone = !useMediaQuery(DESKTOP);
+  const composerParts = useComposerFooterParts();
   // Sent when the connection closed before their results came: put back in the box only when asked (see UNKNOWN_SENT).
   const [unsent, setUnsent] = useUnsent(key);
   // One the conversation shows as it was sent was typed into the session after all.
@@ -542,9 +547,12 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
         maxFileSizeMB={10}
         maxLength={20_000}
         placeholder="Agent への指示を入力…"
-        showCount
+        // A phone leaves out the line of the count (the footer is right below): the count shows in the box near the
+        // limit, and the line only for the plugins' parts (P14) and errors.
+        showCount={!phone}
+        hint={phone ? false : undefined}
         shell={canDo(machine, s, "shell")}
-        footer={<PluginComposerFooter machine={machine} session={s} />}
+        footer={composerParts ? <PluginComposerFooter machine={machine} session={s} /> : undefined}
         ref={input}
       />
       {(status || error || warning) && (

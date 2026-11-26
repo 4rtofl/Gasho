@@ -132,7 +132,16 @@ function fakeDaemon(o: { listedAs: string; renameShows?: boolean }) {
     calls.push(req);
     switch (req.op) {
       case "session.launch":
-        session = { sessionId: SID, name: o.listedAs, ...(req.name ? { gashoName: req.name } : {}), cwd: req.cwd, terminal: "gasho-x-1234", agent: "claude", status: "idle" };
+        session = {
+          sessionId: SID,
+          name: o.listedAs,
+          ...(req.name ? { gashoName: req.name } : {}),
+          cwd: req.cwd,
+          terminal: "gasho-x-1234",
+          agent: "claude",
+          status: "idle",
+          ...(req.launchedBy ? { launchedBy: req.launchedBy } : {}),
+        };
         return { ok: true, sessionId: SID };
       case "session.rename":
         if (session && o.renameShows !== false) session = { ...session, name: req.name, gashoName: undefined };
@@ -547,4 +556,15 @@ test("fork waits until Claude Code lists the copy under its own name, and says s
       assert.match(r.warning, /does not list the copy as "src-chrome" yet/);
     }
   }
+});
+
+test("launch from a session's Claude Code passes that session on as the parent, and says it remembered it", async () => {
+  const f = fakeDaemon({ listedAs: "wt-9f" });
+  const { io: cli, out } = io(f.request, { callerSessionId: "parent-id" });
+  await sessionCommand(["launch", "--cwd", "/repo/wt"], cli);
+  assert.deepEqual(f.calls[0], { op: "session.launch", cwd: "/repo/wt", launchedBy: "parent-id" });
+  assert.equal(JSON.parse(out.join("\n")).launchedBy, "parent-id");
+  assert.deepEqual(parseRequest({ op: "session.launch", cwd: "/a", launchedBy: "p" }), { op: "session.launch", cwd: "/a", launchedBy: "p" });
+  assert.deepEqual(parseRequest({ op: "session.launch", cwd: "/a", launchedBy: "" }), { op: "session.launch", cwd: "/a" });
+  assert.throws(() => parseRequest({ op: "session.launch", cwd: "/a", launchedBy: 1 }), /launchedBy must be a string/);
 });

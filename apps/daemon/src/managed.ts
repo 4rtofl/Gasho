@@ -9,7 +9,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { BackgroundTaskKind, EffortLevel, ModelOption, SessionModel } from "@gasho/protocol";
+import type { BackgroundTaskKind, EffortLevel, ModelOption, SessionModel, SessionParent } from "@gasho/protocol";
 import type { PermissionMode } from "./hibernate.ts";
 import { log } from "./util.ts";
 
@@ -784,6 +784,11 @@ export interface ManagedSession {
   cwd: string;
   name: string;
   launchedAt: number;
+  /**
+   * Started with `gasho-daemon session launch` from another session's Claude Code: that session, with the id it had
+   * then (SessionInfo.launchedBy gives its id now).
+   */
+  launchedBy?: SessionParent;
   /** A fork: the session it was forked from, and when (its transcript starts with a copy of that conversation). */
   forkOf?: string;
   forkedAt?: number;

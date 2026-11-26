@@ -1,6 +1,6 @@
 // The tabs above a session: the sessions Gasho shows in the same worktree, in the order they started. A tab opens its
-// session, and its "×" asks to remove it as the menu's 削除 does; a right-click (a long press on a phone) opens the
-// session's menu (see session-menu). The button before the
+// session, and its "×" removes it (asking first, as the menu's 削除 does, when that stops its work); a right-click (a
+// long press on a phone) opens the session's menu (see session-menu). The button before the
 // tabs lists the worktree's past conversations (see session-history); "＋" after them starts a new session in it. The
 // plugins' tabs of the worktree come last (docs/plugins.md, P15). While a plugin's categories list the sessions in the
 // sidebar (P17, hideSessionTabs), the sessions' tabs and their "＋" are left out: the sidebar has them. Above the tabs,
@@ -14,14 +14,15 @@ import { LaunchMenu } from "@/components/launch-menu";
 import { OutsideSessions } from "@/components/outside-sessions";
 import { SessionHeaderToggle } from "@/components/session-header-toggle";
 import { SessionHistory } from "@/components/session-history";
-import { SessionContextMenu, sessionActionsUnavailable, type SessionActionRequest } from "@/components/session-menu";
+import { removeSession, SessionContextMenu, sessionActionsUnavailable, type SessionActionRequest } from "@/components/session-menu";
 import { StatusDot } from "@/components/status-badge";
 import { launchAgentFor, launchTitle, sessionAgent, showsAgents } from "@/lib/agents";
 import { sessionLabel } from "@/lib/format";
+import { showNotice } from "@/lib/notice";
 import { go, type WorktreeView } from "@/lib/route";
 import { useSessionLauncher } from "@/lib/session-launch";
 import { hidesSessionTabs } from "@/lib/session-list";
-import { sessionDot, unreadSessions, type WorktreeSessions } from "@/lib/sessions";
+import { sessionDot, unreadSessions, workRemovalStops, type WorktreeSessions } from "@/lib/sessions";
 import { useAppState } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { PluginWorktreeTabs } from "@/plugins/parts";
@@ -177,21 +178,45 @@ export function SessionTabs({
 
 /**
  * The "×" at the right of a session's tab: the × of EasyUI's Badge with `onRemove` (easyui.site/components/badge),
- * changed for Gasho: Gasho's focus ring, and a larger target for a finger. It asks before removing, in the same dialog
- * as the menu's 削除, and can be used when the menu's items can.
+ * changed for Gasho: Gasho's focus ring, and a larger target for a finger. When removing stops the session's work or
+ * drops its inputs waiting to be sent, it asks first, in the same dialog as the menu's 削除; else it removes the session
+ * at once, spinning until it is gone, and tells at the top of the screen why it could not (the tabs' row may have no
+ * room left for it on a phone). It can be used when the menu's items can.
  */
 function CloseTabButton({ machine, session, onAction }: { machine: MachineInfo; session: SessionInfo; onAction: (request: SessionActionRequest) => void }) {
   const unavailable = sessionActionsUnavailable(machine);
+  const { working, pending } = workRemovalStops(session);
+  const asks = working || pending > 0;
+  const [removing, setRemoving] = useState(false);
+  const close = async () => {
+    if (asks) {
+      onAction({ action: "remove", machine, session });
+      return;
+    }
+    setRemoving(true);
+    const r = await removeSession(machine.id, session.sessionId);
+    // Once removed, the tab goes as the list comes: it spins until then.
+    if (r.ok) return;
+    setRemoving(false);
+    showNotice(`「${sessionLabel(session)}」：${r.error}`);
+  };
   return (
     <button
       type="button"
-      onClick={() => onAction({ action: "remove", machine, session })}
-      disabled={unavailable !== undefined}
+      onClick={() => void close()}
+      disabled={unavailable !== undefined || removing}
       aria-label={`${sessionLabel(session)} を削除`}
-      title={unavailable ?? "削除…"}
-      className="mr-1.5 grid size-5 shrink-0 place-items-center rounded-full opacity-60 outline-none transition hover:bg-white/15 hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-25 pointer-coarse:size-8"
+      title={unavailable ?? (removing ? "削除しています…" : asks ? "削除…" : "削除")}
+      className={cn(
+        "mr-1.5 grid size-5 shrink-0 place-items-center rounded-full opacity-60 outline-none transition hover:bg-white/15 hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-25 pointer-coarse:size-8",
+        removing && "disabled:opacity-60",
+      )}
     >
-      <X className="size-3 pointer-coarse:size-3.5" />
+      {removing ? (
+        <LoaderCircle className="size-3 animate-spin motion-reduce:animate-none pointer-coarse:size-3.5" />
+      ) : (
+        <X className="size-3 pointer-coarse:size-3.5" />
+      )}
     </button>
   );
 }

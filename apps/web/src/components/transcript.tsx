@@ -726,7 +726,8 @@ export function Transcript({
           <div
             ref={footerBox}
             className="sticky bottom-0 z-10 flex max-h-(--transcript-height) flex-col px-4 md:px-6"
-            style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+            // The session's footer below takes the iPhone's home indicator (its safe area): only a small gap here.
+            style={{ paddingBottom: "0.5rem" }}
           >
             {/* The conversation behind the chat box: blurred and darkened, fading in from above. The bottom
                 padding of the list keeps the newest entry clear of it when scrolled to the end. */}

@@ -292,6 +292,74 @@ test.describe("操作", () => {
   });
 });
 
+test.describe("すべて更新", () => {
+  test("更新できるプラグインを確かめてから 1 つずつ更新し、失敗したものはカードに理由を出して残りを続ける", async ({ page, hub }) => {
+    await addPlugin(hub, plugin("e2e-daemon"));
+    await addPlugin(hub, plugin("e2e-reload"));
+    await addPlugin(hub, plugin("e2e-theme-a"));
+    await addPlugin(hub, plugin("e2e-theme-b"), { link: true });
+    const next = await copyTestPlugin(hub, "e2e-daemon", (m) => ({ ...m, version: "1.1.0" }));
+    const release = await releasePlugin(hub, next, { delayMs: 3_000 });
+    await hub.gh.set({
+      answers: catalogWith({
+        releases: [release],
+        plugins: [
+          // Listed without a release to download: its update fails.
+          listedPlugin({ id: "e2e-reload", name: "E2E 入れ替え", version: "1.2.0" }),
+          // Not counted: one needs an API this Gasho does not have, the other is being developed (linked).
+          listedPlugin({ id: "e2e-theme-a", name: "E2E 夜", version: "2.0.0", api: "1.99" }),
+          listedPlugin({ id: "e2e-theme-b", name: "E2E 朝", version: "2.0.0" }),
+        ],
+      }),
+    });
+    await page.goto("/#/plugins");
+    const main = page.getByRole("main");
+    const installed = page.getByRole("region", { name: "入れたもの" });
+    const daemon = card(installed, "E2E daemon");
+    const reload = card(installed, "E2E 入れ替え");
+    await main.getByRole("button", { name: "再読み込み" }).click();
+
+    await test.step("「再読み込み」の隣に、更新できるプラグインの数を出す", async () => {
+      await expect(main.getByRole("button", { name: "すべて更新（2）" })).toBeVisible({ timeout: 30_000 });
+    });
+
+    const dialog = page.getByRole("alertdialog", { name: "2 個のプラグインを更新しますか？" });
+    await test.step("押すと、更新するプラグインとバージョンを出して確かめる。キャンセルすると何もしない", async () => {
+      await main.getByRole("button", { name: "すべて更新（2）" }).click();
+      const items = dialog.getByRole("list", { name: "更新するもの" }).getByRole("listitem");
+      await expect(items).toHaveText([/E2E daemon\s*1\.0\.0 → 1\.1\.0/, /E2E 入れ替え\s*1\.0\.0 → 1\.2\.0/]);
+      await dialog.getByRole("button", { name: "キャンセル" }).click();
+      await expect(dialog).toBeHidden();
+      await expect(daemon.getByText("（1.1.0 に更新できる）")).toBeVisible();
+    });
+
+    await test.step("「更新する」で 1 つずつ更新し、更新しているプラグインをボタンとカードに出す", async () => {
+      await main.getByRole("button", { name: "すべて更新（2）" }).click();
+      await dialog.getByRole("button", { name: "更新する" }).click();
+      await expect(main.getByRole("button", { name: "更新しています（1/2）：E2E daemon" })).toBeDisabled();
+      await expect(daemon.getByRole("button", { name: "更新しています…" })).toBeDisabled();
+      await expect(reload.getByRole("button", { name: "更新", exact: true })).toBeDisabled();
+    });
+
+    await test.step("失敗したプラグインのカードに理由を出し、ほかのものは更新を終える", async () => {
+      await expect(reload.getByText(/^1\.2\.0 に更新できませんでした。/)).toBeVisible({ timeout: 60_000 });
+      await expect(daemon.getByText("1.1.0", { exact: true })).toBeVisible();
+      await expect(daemon.getByText(/に更新できる/)).toHaveCount(0);
+      await expect(main.getByRole("button", { name: "すべて更新（1）" })).toBeEnabled();
+      await expect(reload.getByRole("button", { name: "更新", exact: true })).toBeEnabled();
+    });
+  });
+
+  test("更新できるプラグインが無いときは、ボタンを出さない", async ({ page, hub }) => {
+    await addPlugin(hub, plugin("e2e-daemon"));
+    await hub.gh.set({ answers: catalogWith({ plugins: [listedPlugin({ id: "e2e-daemon", name: "E2E daemon" })] }) });
+    await page.goto("/#/plugins");
+    await expect(card(page.getByRole("region", { name: "入れたもの" }), "E2E daemon")).toBeVisible();
+    await expect(page.getByText(/4rtofl\/GashoPlugins の一覧（.*確認）/)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("button", { name: /すべて更新/ })).toHaveCount(0);
+  });
+});
+
 test.describe("GashoPlugins にあるもの", () => {
   // The first reading fails: no list has been read yet.
   test.use({ hubOptions: { gh: [{ args: READ_CATALOG, stderr: "HTTP 502: Bad Gateway\n", exitCode: 1 }] } });

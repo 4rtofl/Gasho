@@ -62,3 +62,33 @@
     display: none;
   }
 }
+/* Gasho's scrollbars, in the look of the easyui.site components: a thin, round thumb in the color of the borders, a
+   darker one under the pointer, and no track or arrows. The same shape in the light and dark themes, the colors from
+   the theme's variables. Gasho's screen and the plugins' parts get it from this file. Chromium and Safari draw it from
+   ::-webkit-scrollbar; Firefox, which has no such element, from scrollbar-width and scrollbar-color (Chromium would
+   drop ::-webkit-scrollbar for these, so they are only for a browser without it). In the base layer, so that a place
+   that hides its scrollbar (scrollbar-none, the sidebar, the tabs) still hides it. */
+@layer base {
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background: var(--border-hover);
+  }
+  ::-webkit-scrollbar-thumb:hover,
+  ::-webkit-scrollbar-thumb:active {
+    background: var(--muted-foreground);
+  }
+  @supports not selector(::-webkit-scrollbar) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: var(--border-hover) transparent;
+    }
+  }
+}

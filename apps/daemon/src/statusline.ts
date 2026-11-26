@@ -82,6 +82,8 @@ export function statusLineLaunch(o: {
   user: StatusLineSetting | undefined;
   node?: string;
   relay?: string;
+  /** More settings to pass in the same `--settings`: the hooks of agent-worktrees.ts. */
+  more?: Record<string, unknown>;
 }): { args: string[]; env: Record<string, string> } {
   const { user } = o;
   const statusLine: StatusLineSetting = {
@@ -92,7 +94,7 @@ export function statusLineLaunch(o: {
     ...(user?.hideVimModeIndicator ? { hideVimModeIndicator: true } : {}),
   };
   return {
-    args: ["--settings", JSON.stringify({ statusLine })],
+    args: ["--settings", JSON.stringify({ ...o.more, statusLine })],
     env: {
       [RELAY_URL_ENV]: statusLineUrl(o.port),
       ...(o.secret ? { [RELAY_SECRET_ENV]: o.secret } : {}),

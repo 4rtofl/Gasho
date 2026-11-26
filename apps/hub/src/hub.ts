@@ -20,6 +20,8 @@ import type {
   MachineAgents,
   MachineInfo,
   MachineMemory,
+  MachineUsage,
+  PlanUsage,
   TokenDay,
   MediaPart,
   PermissionRequestInfo,
@@ -380,6 +382,27 @@ function tokenDaysOf(v: unknown): TokenDay[] {
     .slice(-400);
 }
 
+const isWindow = (w: unknown): boolean => {
+  const x = w as { percent?: unknown; resetsAt?: unknown } | undefined;
+  return typeof x?.percent === "number" && Number.isFinite(x.percent) && (x.resetsAt === undefined || (typeof x.resetsAt === "number" && Number.isFinite(x.resetsAt)));
+};
+
+/** Whether a working server's plan usage (usage) has what the browsers read of it. */
+export function isPlanUsage(v: unknown): v is PlanUsage {
+  const u = v as PlanUsage | undefined;
+  return (
+    typeof u?.at === "number" &&
+    typeof u.available === "boolean" &&
+    [u.fiveHour, u.sevenDay, u.sevenDaySonnet].every((w) => w === undefined || isWindow(w)) &&
+    Array.isArray(u.models) &&
+    u.models.length <= 20 &&
+    u.models.every((m) => isWindow(m) && typeof m.name === "string" && m.name.length > 0 && m.name.length <= 40)
+  );
+}
+
+/** How long a read of the plan usage (usage.get) may take before the Gasho server stops waiting: gasho-daemon gives it 90 s. */
+export const USAGE_WAIT_MS = 100_000;
+
 function isMemory(v: unknown): v is MachineMemory {
   const m = v as MachineMemory | undefined;
   return typeof m?.total === "number" && typeof m.used === "number" && Number.isFinite(m.total) && m.total > 0 && m.used >= 0 && m.used <= m.total;
@@ -568,6 +591,12 @@ export class Hub {
   private machines = new Map<string, MachineInfo>();
   /** The connected working servers' latest memory: never written to the database, it changes at every reading. */
   private memory = new Map<string, MachineMemory>();
+  /** What is known of the working servers' plan usage (usage.get): in memory only, kept while one is offline. */
+  private usage = new Map<string, MachineUsage>();
+  /** The reads of the plan usage under way, by machine id: given up after USAGE_WAIT_MS. */
+  private usageReads = new Map<string, NodeJS.Timeout>();
+  /** When each working server last answered usage.get, by the Gasho server's clock (its own may be off). */
+  private usageAnswered = new Map<string, number>();
   /** The working servers that told their tokens per day since the Gasho server started. */
   private tellTokenDays = new Set<string>();
   private daemons = new Map<string, DaemonPeer>();
@@ -673,6 +702,13 @@ export class Hub {
           this.broadcast({ type: "machine.memory", machine: id, memory: msg.memory });
         } else this.forgetMemory(id);
         break;
+      case "usage": {
+        const before = this.usage.get(id);
+        this.usageAnswered.set(id, Date.now());
+        if (isPlanUsage(msg.usage)) this.setUsage(id, { usage: msg.usage });
+        else this.setUsage(id, { ...(before?.usage ? { usage: before.usage } : {}), error: typeof msg.error === "string" ? msg.error.slice(0, 300) : "使用量の上限を読めませんでした。" });
+        break;
+      }
       case "token.days": {
         const days = tokenDaysOf(msg.days);
         this.tellTokenDays.add(id);
@@ -698,6 +734,7 @@ export class Hub {
         m.canEnd = msg.canEnd === true || undefined;
         m.canRemoveWorktree = msg.canRemoveWorktree === true || undefined;
         m.canListSkills = msg.canListSkills === true || undefined;
+        m.canReadUsage = msg.canReadUsage === true || undefined;
         m.agents = agentsOf(msg.agents);
         m.update = updateInfoFor(m.daemonVersion, msg.update);
         this.broadcast({ type: "machine", machine: m });
@@ -806,6 +843,11 @@ export class Hub {
       this.broadcast({ type: "machine", machine: m });
     }
     this.forgetMemory(id);
+    // A read under way will not be answered; what was read stays, shown as of its time.
+    if (this.usageReads.has(id)) {
+      const { reading: _r, ...known } = this.usage.get(id) ?? {};
+      this.setUsage(id, known);
+    }
     const error = "working server との接続が切れました。";
     this.failPending((req) => req.machine === id, error);
     this.failCommands((c) => c.machine === id, error);
@@ -863,6 +905,7 @@ export class Hub {
       ...(this.push ? { push: this.push.info(peer.deviceId) } : {}),
       heartbeat: true,
       memory: Object.fromEntries(this.memory),
+      usage: Object.fromEntries(this.usage),
     });
   }
 
@@ -1008,6 +1051,9 @@ export class Hub {
         break;
       case "latest.check":
         if (this.latest) void this.latest.check(true);
+        break;
+      case "usage.get":
+        if (typeof msg.machine === "string" && typeof msg.maxAgeMs === "number") this.readUsage(msg.machine, msg.maxAgeMs);
         break;
       case "token.days.get": {
         const days = this.store.tokenDays();
@@ -1406,6 +1452,10 @@ export class Hub {
       }
       // The daemon was taken out of `daemons` before it was closed, so onDaemonClose leaves this to be done here.
       this.memory.delete(id);
+      clearTimeout(this.usageReads.get(id));
+      this.usageReads.delete(id);
+      this.usage.delete(id);
+      this.usageAnswered.delete(id);
       this.tellTokenDays.delete(id);
       if (this.machines.delete(id)) {
         const error = "working server の登録が外されました。";
@@ -1441,6 +1491,41 @@ export class Hub {
       this.machines.set(id, m);
     }
     return m;
+  }
+
+  /**
+   * Asks a working server to read its plan usage again (get_usage), unless what is known is younger than `maxAgeMs`
+   * (by the working server's clock, as `at` is) or a read is under way. Every browser is told how it goes.
+   */
+  private readUsage(id: string, maxAgeMs: number): void {
+    const daemon = this.daemons.get(id);
+    const m = this.machines.get(id);
+    if (!daemon || !m?.canReadUsage || this.usageReads.has(id)) return;
+    const known = this.usage.get(id);
+    const answered = this.usageAnswered.get(id);
+    // A failure is asked again sooner: within a minute at most.
+    const maxAge = known?.error ? Math.min(maxAgeMs, 60_000) : maxAgeMs;
+    if (answered !== undefined && Date.now() - answered < Math.max(0, maxAge)) return;
+    const timer = setTimeout(() => {
+      this.usageReads.delete(id);
+      this.usageAnswered.set(id, Date.now());
+      this.setUsage(id, { ...(this.usage.get(id)?.usage ? { usage: this.usage.get(id)?.usage } : {}), error: "使用量の上限を、時間内に読めませんでした。" });
+    }, USAGE_WAIT_MS);
+    timer.unref?.();
+    this.usageReads.set(id, timer);
+    this.usage.set(id, { ...known, reading: true });
+    this.broadcast({ type: "machine.usage", machine: id, usage: this.usage.get(id) });
+    daemon.send({ type: "usage.get" });
+  }
+
+  /** What is known of a working server's plan usage, to every browser; a read under way is over. */
+  private setUsage(id: string, usage: MachineUsage): void {
+    clearTimeout(this.usageReads.get(id));
+    this.usageReads.delete(id);
+    const next: MachineUsage = { ...usage };
+    delete next.reading;
+    this.usage.set(id, next);
+    this.broadcast({ type: "machine.usage", machine: id, usage: next });
   }
 
   /** Stops telling a working server's memory, to the browsers too, when it was known. */

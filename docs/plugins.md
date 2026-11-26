@@ -1176,7 +1176,7 @@ npm run hub:plugin -- remove github                                 # 外す（�
 
 `web.js` には、`react`、`react-dom`、`react/jsx-runtime`、`@gasho/plugin-sdk` を入れず、Gasho が持っているものを使う。React が1つのページに2つあるとフックが動かず、SDK のフックは Gasho の状態を読む必要があるからである。Gasho は、プラグインを読み込む前に、これらを1つのオブジェクトにまとめて `globalThis` に置く。SDK のビルドのコマンドは、プラグインのコードにあるこれらの import を、そのオブジェクトから読む小さなモジュールに置き換える。アイコンなど、ほかのパッケージは `web.js` の中に入れる。
 
-Gasho の CSS（Tailwind CSS）には、Gasho のコードが使うクラスしか入っていない。そのため、プラグインは自分の CSS（`web.css`）を持つ。プラグインの CSS は SDK の `plugin.css` を読み込み、SDK のビルドのコマンドが、プラグインのコードから、Gasho と同じテーマで CSS を作る。テーマは、`bg-surface-raised` や `text-muted-foreground` などの色と、角の丸みである。ブラウザーの既定のスタイルを打ち消す部分（preflight）は、Gasho の CSS がすでに持っているので入れない。テーマは SDK の `theme.css` に置き、Gasho 自身の `index.css` もこのファイルを読み込んで、両方の色をそろえる。
+Gasho の CSS（Tailwind CSS）には、Gasho のコードが使うクラスしか入っていない。そのため、プラグインは自分の CSS（`web.css`）を持つ。プラグインの CSS は SDK の `plugin.css` を読み込み、SDK のビルドのコマンドが、プラグインのコードから、Gasho と同じテーマで CSS を作る。テーマは、`bg-surface-raised` や `text-muted-foreground` などの色と、角の丸みと、スクロールバーの見た目（テーマの色の細いつまみ。隠すときは `scrollbar-none` のクラスを付ける）である。ブラウザーの既定のスタイルを打ち消す部分（preflight）は、Gasho の CSS がすでに持っているので入れない。テーマは SDK の `theme.css` に置き、Gasho 自身の `index.css` もこのファイルを読み込んで、両方の色をそろえる。
 
 プラグインの CSS は、そのプラグインの部品の中にだけ当てる。プラグインのクラスは、Gasho のクラスと同じ Tailwind CSS の層に入り、Gasho の CSS より後にあるので、そのまま足すと Gasho の要素にも当たる。たとえば、プラグインの `.flex` が、Gasho のヘッダーの `md:hidden` を上書きし、広い画面でもスマホ用のヘッダーが出る。ほかのプラグインの部品にも同じことが起きる。そこで画面は、`web.css` のスタイルの規則を、部品を包む要素（`data-gasho-plugin="<ID>"`）の中だけに当たるように書き換えてから足す。テーマの変数（`theme` の層）、`@property`、`@keyframes` は、ページ全体に当てる。
 

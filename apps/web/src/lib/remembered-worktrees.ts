@@ -79,3 +79,55 @@ export function useRememberedWorktrees(): RememberedWorktree[] {
     read,
   );
 }
+
+// The folders the worktrees were started from (lib/worktree-nesting, launchFolders), by the worktree's key: a child
+// stays under its parent once its sessions, which tell the folder, are gone.
+const PARENTS_KEY = "gasho.worktreeParents";
+/** Kept at most: the oldest go first. */
+const MAX_PARENTS = 300;
+const NO_PARENTS: ReadonlyMap<string, string> = new Map();
+let parents: ReadonlyMap<string, string> | undefined;
+
+function readParents(): ReadonlyMap<string, string> {
+  if (parents) return parents;
+  try {
+    const saved = JSON.parse(localStorage.getItem(PARENTS_KEY) ?? "[]") as unknown;
+    parents = new Map(
+      Array.isArray(saved)
+        ? saved.filter((e): e is [string, string] => Array.isArray(e) && e.length === 2 && typeof e[0] === "string" && typeof e[1] === "string")
+        : [],
+    );
+  } catch {
+    parents = NO_PARENTS;
+  }
+  return parents;
+}
+
+/** Keeps these folders (by the worktree's key): new and changed ones last, so that the oldest go first. */
+export function rememberParents(folders: ReadonlyMap<string, string>): void {
+  const current = readParents();
+  const changed = [...folders].filter(([k, cwd]) => current.get(k) !== cwd);
+  if (changed.length === 0) return;
+  const next = new Map(current);
+  for (const [k, cwd] of changed) {
+    next.delete(k);
+    next.set(k, cwd);
+  }
+  parents = new Map([...next].slice(-MAX_PARENTS));
+  try {
+    localStorage.setItem(PARENTS_KEY, JSON.stringify([...parents]));
+  } catch {
+    // kept for this page view only
+  }
+  for (const l of listeners) l();
+}
+
+export function useRememberedParents(): ReadonlyMap<string, string> {
+  return useSyncExternalStore(
+    (l) => {
+      listeners.add(l);
+      return () => listeners.delete(l);
+    },
+    readParents,
+  );
+}

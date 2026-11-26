@@ -1,6 +1,7 @@
 // The repositories the sidebar's worktrees are narrowed to, checked in a menu at the right of their title. When plugins
 // offer groupings of the worktrees (docs/plugins.md, P18), the menu also picks one of them, or none. It also opens the
-// dialog that registers repositories with a working server (repos-dialog). While a plugin's categories list the
+// dialog that registers repositories with a working server (repos-dialog). Under "表示", it turns on or off the nesting
+// of the worktrees under those they were started from (lib/worktree-nesting). While a plugin's categories list the
 // sessions instead (P17), they need no narrowing: a button opens that dialog alone. Beside the menu, a button opens the
 // dialog that clones a repository (clone-repo-dialog).
 //
@@ -68,6 +69,8 @@ export function RepoFilter({
   groupings = [],
   grouping,
   onGroup,
+  nested,
+  onNest,
 }: {
   choices: RepoChoice[];
   /** The repositories the worktrees are narrowed to, of choices; none: all of them. */
@@ -82,6 +85,9 @@ export function RepoFilter({
   /** The key of the grouping in use; undefined: "分けない". */
   grouping?: string;
   onGroup?: (key: string | undefined) => void;
+  /** Whether the worktrees are nested under those they were started from ("worktree を入れ子にする"). */
+  nested: boolean;
+  onNest: (on: boolean) => void;
 }) {
   // Focus goes back to the button when the menu closes, unless the dialog is opening from it.
   const registering = useRef(false);
@@ -124,11 +130,11 @@ export function RepoFilter({
             <span className="min-w-0 flex-1 truncate">すべて</span>
           </DropdownMenu.CheckboxItem>
           {choices.length > 0 && (
-            // About eight rows (32px each); at least two on a window too low for the rest, when the menu scrolls whole.
+            // About eight rows (32px each); at least one on a window too low for the rest, when the menu scrolls whole.
             <DropdownMenu.Group
               aria-label="リポジトリ"
               onFocus={revealFocused}
-              className="max-h-64 min-h-16 shrink overflow-y-auto overscroll-contain"
+              className="max-h-64 min-h-8 shrink overflow-y-auto overscroll-contain"
             >
               {choices.map((c) => (
                 <DropdownMenu.CheckboxItem
@@ -166,6 +172,12 @@ export function RepoFilter({
               </DropdownMenu.RadioGroup>
             </Section>
           )}
+          <Section label="表示">
+            <DropdownMenu.CheckboxItem checked={nested} onCheckedChange={onNest} onSelect={keepOpen} className={MENU_ITEM}>
+              <DrawCheckbox checked={nested} />
+              <span className="min-w-0 flex-1 truncate">worktree を入れ子にする</span>
+            </DropdownMenu.CheckboxItem>
+          </Section>
           <Section>
             <DropdownMenu.Item
               onSelect={() => {

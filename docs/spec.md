@@ -241,7 +241,7 @@ gasho-daemon は、Claude Code を起動するたびに（新しいセッショ�
 
 カスタムエージェントの定義（`.claude/agents/*.md`）の frontmatter で `isolation: worktree` を指定したものは、呼び出しの `tool_input` に `isolation` が無いので止めない。
 
-`gasho-daemon session launch` は、呼んだセッションを親として覚える。Claude Code は、Bash などで動かすコマンドに、そのセッションの ID を環境変数 `CLAUDE_CODE_SESSION_ID` で渡す。CLI はそれを `launchedBy` として control socket に送り、gasho-daemon は、その ID のセッション（Gasho が起動したもの。`/clear` の前の ID でもよい。ほかに gasho-daemon が見ているセッションでもよい）の ID と作業フォルダーを、新しいセッションの記録（`managed.json` の `launchedBy`）に残す。gasho-daemon が知らない ID なら残さない。Gasho サーバーには `SessionInfo.launchedBy`（`{sessionId, cwd}`）で送る。`sessionId` は、親が Gasho に残っているあいだは親の今の ID（`/clear` で変わったら新しい ID）、残っていなければ覚えたときの ID。`cwd` は覚えたときの親の作業フォルダーで、親のセッションが消えても残る。サイドバーで worktree を親の worktree の子として入れ子に出すとき（#301）は、子のセッションの `launchedBy.cwd` が入っている worktree を親にする。Codex のセッションと、Gasho の画面から起動したセッションには付かない。
+`gasho-daemon session launch` は、呼んだセッションを親として覚える。Claude Code は、Bash などで動かすコマンドに、そのセッションの ID を環境変数 `CLAUDE_CODE_SESSION_ID` で渡す。CLI はそれを `launchedBy` として control socket に送り、gasho-daemon は、その ID のセッション（Gasho が起動したもの。`/clear` の前の ID でもよい。ほかに gasho-daemon が見ているセッションでもよい）の ID と作業フォルダーを、新しいセッションの記録（`managed.json` の `launchedBy`）に残す。gasho-daemon が知らない ID なら残さない。Gasho サーバーには `SessionInfo.launchedBy`（`{sessionId, cwd}`）で送る。`sessionId` は、親が Gasho に残っているあいだは親の今の ID（`/clear` で変わったら新しい ID）、残っていなければ覚えたときの ID。`cwd` は覚えたときの親の作業フォルダーで、親のセッションが消えても残る。サイドバーは、子のセッションの `launchedBy.cwd` が入っている worktree を親にして、worktree を親の worktree の子として入れ子に出す（[usage.md の「入れ子」](usage.md#入れ子)）。Codex のセッションと、Gasho の画面から起動したセッションには付かない。
 
 ### 操作の規則
 

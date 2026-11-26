@@ -496,7 +496,7 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
             else setPicks((p) => (p.ultracode === ultra ? { ...p, ultracode: undefined } : p));
           }
         }}
-        // While Claude is working, the send button turns into a stop button (Esc also stops).
+        // While Claude is working, the send button turns into a stop button while the box is empty (Esc also stops).
         streaming={busy}
         onStop={() => void stop()}
         disabled={offline}

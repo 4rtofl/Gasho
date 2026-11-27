@@ -3,8 +3,8 @@
 import type { Page } from "@playwright/test";
 import type { AskedQuestion, PermissionRequestInfo, SessionInfo } from "@gasho/protocol";
 import { commandResult, type FakeDaemon, type FakeDaemonOptions, type GashoHub } from "../harness/index.ts";
-import { expect, test } from "./fixtures.ts";
-import { chatBox, openSession, SESSION_ID } from "./session-helpers.ts";
+import { chatBox, expect, test } from "./fixtures.ts";
+import { openSession, SESSION_ID } from "./session-helpers.ts";
 
 /** Opens a session in a worktree, waiting on what `session` says, and waits for its chat box. */
 async function openCards(page: Page, hub: GashoHub, session: Partial<SessionInfo>, daemon: FakeDaemonOptions = {}): Promise<FakeDaemon> {

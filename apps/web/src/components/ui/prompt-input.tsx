@@ -5,13 +5,17 @@
 // `shell`, a text that starts with "!" is shown as a shell command (Claude Code's shell mode). With `commands`, a text
 // that starts with "/" offers Claude Code's skills above the box (SlashMenu, from EasyUI's Combobox). The keyboard
 // hint shows where it fits on the line, not by the window's width (Hint). The Stop button grows a little and darkens
-// under the pointer, like the buttons of EasyUI's Small Floating Dock and the primary variant of its Button.
+// under the pointer, like the buttons of EasyUI's Small Floating Dock and the primary variant of its Button. The text is
+// typed into a CodeMirror editor instead of the textarea, which shows Markdown formatted (lib/markdown-editor): EasyUI
+// has no box that does.
 
+import { history, historyKeymap, insertNewline, standardKeymap } from "@codemirror/commands";
+import { Annotation, Compartment, EditorState, Prec } from "@codemirror/state";
+import { EditorView, keymap, placeholder as placeholderText } from "@codemirror/view";
 import {
   forwardRef,
-  type ClipboardEvent,
   type DragEvent,
-  type KeyboardEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   useCallback,
   useEffect,
@@ -25,6 +29,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, animate, motion, useMotionValue, useReducedMotion } from "framer-motion";
+import { editorTheme, markdownLooks } from "@/lib/markdown-editor";
 import { motionTransitions } from "@/lib/motion-tokens";
 import { emptyShellInput, isShellInput } from "@/lib/shell";
 import { matchSlash, slashQuery, type SlashCommand, type SlashMatch } from "@/lib/slash";
@@ -226,7 +231,7 @@ function kindOf(f: { name: string; type: string }): Kind {
   return "file";
 }
 
-const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+const hasFiles = (e: { dataTransfer: DataTransfer | null }) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
 
 /* ---------------------------------- Icons ---------------------------------- */
 
@@ -346,7 +351,7 @@ function ModelPicker({
   }, [open, place]);
   useEffect(() => () => clearTimeout(typed.current.t), []);
 
-  const onListKey = (e: KeyboardEvent) => {
+  const onListKey = (e: ReactKeyboardEvent) => {
     const n = models.length;
     if (e.key === "ArrowDown") setActive((a) => (a + 1) % n);
     else if (e.key === "ArrowUp") setActive((a) => (a - 1 + n) % n);
@@ -578,8 +583,12 @@ function SlashMenu({
 const TEXT = "text-[16px] leading-6 sm:text-[15px]"; // 16px on phones stops iOS zooming into the field
 /** Fades the right end of the toolbar while more tools are scrolled out of view there. */
 const TOOLS_FADE = "linear-gradient(to right, black calc(100% - 1.5rem), transparent)";
-const PAD_X = "px-3";
-const PAD_Y = "py-2";
+
+/** A change of the editor's text made from the box's text (a sent text called back, the box emptied), not typed. */
+const fromBox = Annotation.define<boolean>();
+// Enter is the box's (it sends, or adds a line: see onKey), so that no binding of CodeMirror's adds a line for the Enter
+// that ends a Japanese conversion.
+const KEYS = keymap.of([...standardKeymap.filter((b) => b.key !== "Enter"), ...historyKeymap]);
 
 export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function PromptInput(
   {
@@ -617,9 +626,15 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
   const reduce = useReducedMotion();
   const uid = useId();
   const fileInput = useRef<HTMLInputElement>(null);
-  const textRef = useRef<HTMLTextAreaElement>(null);
-  const mirrorRef = useRef<HTMLDivElement>(null);
-  const cardRef = useRef<HTMLDivElement>(null);
+  const hostRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
+  const [parts] = useState(() => ({
+    history: new Compartment(),
+    looks: new Compartment(),
+    attrs: new Compartment(),
+    editable: new Compartment(),
+    placeholder: new Compartment(),
+  }));
   const dragDepth = useRef(0);
   const errTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -681,38 +696,100 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
   }, []);
   const enter = enterToSend ?? finePointer;
 
-  /* ------------------------- auto-growing textarea ------------------------- */
-  // A hidden mirror measures the wrapped text, and a motion value glides the real
-  // textarea to that height (so it opens *and* closes smoothly).
+  /* --------------------------------- editor -------------------------------- */
+  // What the editor calls: set anew at each render, so that it sees the box as it is now.
+  const onKey = useRef<(e: KeyboardEvent, view: EditorView) => boolean>(() => false);
+  const onPaste = useRef<(e: ClipboardEvent) => boolean>(() => false);
+  const onTyped = useRef<(value: string) => void>(() => {});
+  const onFocus = useRef<(focused: boolean) => void>(() => {});
+  const onHeight = useRef<(view: EditorView) => void>(() => {});
+  // Made once: what it shows besides the text is set by the effects below, and its text comes from the store.
+  useLayoutEffect(() => {
+    const view = new EditorView({
+      parent: hostRef.current!,
+      state: EditorState.create({
+        doc: store.get().text,
+        extensions: [
+          parts.history.of(history()),
+          Prec.highest(
+            EditorView.domEventHandlers({
+              keydown: (e, v) => onKey.current(e, v),
+              paste: (e) => onPaste.current(e),
+              // A file dropped is attached (the box's onDrop): CodeMirror would put what is in it into the text.
+              drop: (e) => hasFiles(e),
+            }),
+          ),
+          KEYS,
+          EditorView.lineWrapping,
+          EditorView.updateListener.of((u) => {
+            if (u.docChanged && !u.transactions.some((t) => t.annotation(fromBox))) onTyped.current(u.state.doc.toString());
+            if (u.focusChanged) onFocus.current(u.view.hasFocus);
+            if (u.heightChanged || u.geometryChanged) onHeight.current(u.view);
+          }),
+          editorTheme,
+          parts.looks.of([]),
+          parts.attrs.of([]),
+          parts.editable.of([]),
+          parts.placeholder.of([]),
+        ],
+      }),
+    });
+    viewRef.current = view;
+    return () => {
+      view.destroy();
+      viewRef.current = null;
+    };
+  }, []);
+
+  /** Puts `value` in the editor with the cursor at `caret` and nothing to undo, as a textarea does when given a value. */
+  const putText = useCallback(
+    (value: string, caret: number) => {
+      const view = viewRef.current;
+      if (!view) return;
+      if (view.state.doc.toString() === value) {
+        view.dispatch({ selection: { anchor: caret } });
+        return;
+      }
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: value },
+        selection: { anchor: caret },
+        annotations: fromBox.of(true),
+        effects: parts.history.reconfigure([]),
+      });
+      view.dispatch({ effects: parts.history.reconfigure(history()) });
+    },
+    [parts],
+  );
+  /** Changes the text from here (not typed): in the editor at once, and in the store. */
+  const replaceText = (value: string, caret: number) => {
+    putText(value, caret);
+    setText(value);
+  };
+  // A change of the store from outside the editor (sent, put back after a failed send, setValue): the cursor at the end.
+  useLayoutEffect(() => {
+    const view = viewRef.current;
+    if (view && view.state.doc.toString() !== text) putText(text, text.length);
+  }, [text, putText]);
+
+  /* ---------------------- the box as tall as its text ---------------------- */
+  // A motion value glides the editor to the height of its text (so it opens *and* closes smoothly), once the editor has
+  // measured it.
   const h = useMotionValue(40);
   const [atMax, setAtMax] = useState(false);
-  const first = useRef(true);
-  const measure = useCallback(() => {
-    const m = mirrorRef.current;
-    if (!m) return;
-    const want = clamp(m.offsetHeight, 0, maxHeight);
-    setAtMax(m.offsetHeight > maxHeight);
-    if (first.current) {
-      h.set(want);
-      first.current = false;
-    } else {
-      animate(h, want, reduce ? { duration: 0 } : { type: "spring", duration: 0.34, bounce: 0 });
-    }
-  }, [h, maxHeight, reduce]);
-  useLayoutEffect(measure, [text, measure]);
+  const shownHeight = useRef<number | undefined>(undefined);
+  onHeight.current = (view) => {
+    const full = view.contentHeight;
+    const want = clamp(full, 0, maxHeight);
+    setAtMax(full > maxHeight);
+    if (shownHeight.current === want) return;
+    if (shownHeight.current === undefined) h.set(want);
+    else animate(h, want, reduce ? { duration: 0 } : { type: "spring", duration: 0.34, bounce: 0 });
+    shownHeight.current = want;
+  };
   useLayoutEffect(() => {
-    const el = cardRef.current;
-    if (!el) return;
-    let lastW = el.clientWidth;
-    const ro = new ResizeObserver(() => {
-      if (el.clientWidth !== lastW) {
-        lastW = el.clientWidth;
-        measure();
-      }
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [measure]);
+    const view = viewRef.current;
+    if (view) view.scrollDOM.style.overflowY = atMax ? "auto" : "hidden";
+  }, [atMax]);
 
   /* ------------------------------ attachments ------------------------------ */
   const flashError = useCallback((msg: string) => {
@@ -813,21 +890,21 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
   const putCommand = (name: string) => {
     const value = `/${name} `;
     histIdx.current = -1;
-    setText(value);
-    requestAnimationFrame(() => {
-      const el = textRef.current;
-      el?.focus({ preventScroll: true });
-      el?.setSelectionRange(value.length, value.length);
-    });
+    replaceText(value, value.length);
+    viewRef.current?.focus();
   };
 
   /* -------------------------------- sending -------------------------------- */
   // A shell command needs something after its "!".
-  const canSend =
-    !disabled && (shellMode ? !emptyShellInput(text.trim()) : text.trim().length > 0 || attachments.length > 0) && text.length <= maxLength;
+  const sendable = (t: string, files: number, asShell: boolean) =>
+    !disabled && (asShell ? !emptyShellInput(t.trim()) : t.trim().length > 0 || files > 0) && t.length <= maxLength;
+  const canSend = sendable(text, attachments.length, shellMode);
 
   const submit = useCallback(async () => {
-    if (!canSend) return;
+    // From the store, not this render: the editor may hand over the last keys typed at the key that sends.
+    const { text, attachments } = store.get();
+    const shellMode = shell && isShellInput(text.trimStart());
+    if (!sendable(text, attachments.length, shellMode)) return;
     if (shellMode && attachments.length > 0) {
       flashError("シェルのコマンドには、ファイルを添付できません。添付を外してください。");
       return;
@@ -850,12 +927,12 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
       setAttachments((a) => (a.length ? a : snapshot.attachments));
       flashError("送れませんでした。入力は欄に戻しました。");
     }
-  }, [attachments, canSend, change, currentModel, flashError, onSend, setAttachments, setText, shellMode, text]);
+  }, [change, currentModel, disabled, flashError, maxLength, onSend, setAttachments, setText, shell, store]);
 
   useImperativeHandle(
     ref,
     () => ({
-      focus: () => textRef.current?.focus(),
+      focus: () => viewRef.current?.focus(),
       clear: () => {
         setText("");
         setAttachments([]);
@@ -866,74 +943,109 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
     [addFiles, setAttachments, setText],
   );
   useEffect(() => {
-    if (autoFocus) textRef.current?.focus({ preventScroll: true });
+    if (autoFocus) viewRef.current?.focus();
   }, [autoFocus]);
 
-  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (composing(e)) return;
+  /** A key in the editor; true when the box did something with it (CodeMirror then does nothing more). */
+  onKey.current = (e, view) => {
+    if (composing({ nativeEvent: e, keyCode: e.keyCode })) return false;
     if (slashShown && slash !== undefined) {
       const n = matches.length;
       const plain = !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey;
       if (e.key === "Escape") {
         setClosedAt(slash);
         // Closes the rows only, and a second Esc stops the reply. A note has nothing to close: the Esc also stops it.
-        if (n > 0) {
-          e.preventDefault();
-          return;
-        }
+        if (n > 0) return true;
       }
       if (n > 0 && plain && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
-        e.preventDefault();
         const down = e.key === "ArrowDown";
         setPicked(slashActive < 0 ? (down ? 0 : n - 1) : (slashActive + (down ? 1 : -1) + n) % n);
-        return;
+        return true;
       }
       const hit = e.key === "Tab" ? matches[Math.max(slashActive, 0)] : e.key === "Enter" ? matches[slashActive] : undefined;
       if (hit && plain) {
-        e.preventDefault();
         putCommand(hit.command.name);
-        return;
+        return true;
       }
     }
     if (e.key === "Escape" && streaming) {
-      e.preventDefault();
       onStop?.();
-      return;
+      return true;
     }
     if (e.key === "Enter") {
       const mod = e.metaKey || e.ctrlKey;
       if (mod || (enter && !e.shiftKey && !e.altKey)) {
-        e.preventDefault();
         void submit();
-        return;
+        return true;
       }
+      return insertNewline(view);
     }
-    const el = e.currentTarget;
     const history = store.get().history;
-    if (e.key === "ArrowUp" && history.length && el.selectionStart === 0 && el.selectionEnd === 0 && !e.shiftKey) {
-      if (histIdx.current === -1) unsent.current = text;
+    const typed = view.state.doc.toString();
+    const at = view.state.selection.main;
+    if (e.key === "ArrowUp" && history.length && at.empty && at.head === 0 && !e.shiftKey) {
+      if (histIdx.current === -1) unsent.current = typed;
       const next = Math.min(histIdx.current + 1, history.length - 1);
-      if (next !== histIdx.current || text !== history[next]) {
-        e.preventDefault();
+      if (next !== histIdx.current || typed !== history[next]) {
         histIdx.current = next;
-        setText(history[next]);
-        requestAnimationFrame(() => el.setSelectionRange(0, 0));
+        // At the start, so that ↑ goes on further back.
+        replaceText(history[next], 0);
+        return true;
       }
-    } else if (e.key === "ArrowDown" && histIdx.current >= 0 && el.selectionStart === el.value.length && !e.shiftKey) {
-      e.preventDefault();
+    } else if (e.key === "ArrowDown" && histIdx.current >= 0 && at.from === typed.length && !e.shiftKey) {
       const next = histIdx.current - 1;
       histIdx.current = next;
-      setText(next < 0 ? unsent.current : history[next]);
+      const value = next < 0 ? unsent.current : history[next];
+      replaceText(value, value.length);
+      return true;
     }
+    return false;
   };
 
-  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
-    const files = pastedFiles(e.clipboardData, allowAttachments && !disabled);
-    if (files.length) {
-      e.preventDefault();
-      addFiles(files);
-    }
+  onPaste.current = (e) => {
+    const files = e.clipboardData ? pastedFiles(e.clipboardData, allowAttachments && !disabled) : [];
+    if (!files.length) return false;
+    addFiles(files);
+    return true;
   };
+  onTyped.current = (value) => {
+    histIdx.current = -1;
+    setText(value);
+  };
+  onFocus.current = (focused) => {
+    clearTimeout(blurTimer.current);
+    if (focused) setFocused(true);
+    else blurTimer.current = setTimeout(() => setFocused(false), 200);
+  };
+
+  // What the editor shows besides the text, as the box's props and state change.
+  useLayoutEffect(() => {
+    viewRef.current?.dispatch({ effects: parts.looks.reconfigure(shellMode ? [] : markdownLooks) });
+  }, [parts, shellMode]);
+  useLayoutEffect(() => {
+    viewRef.current?.dispatch({
+      effects: parts.editable.reconfigure([EditorView.editable.of(!disabled), EditorState.readOnly.of(disabled)]),
+    });
+  }, [parts, disabled]);
+  useLayoutEffect(() => {
+    viewRef.current?.dispatch({ effects: parts.placeholder.reconfigure(placeholder ? placeholderText(placeholder) : []) });
+  }, [parts, placeholder]);
+  const attrs = JSON.stringify({
+    "aria-label": shellMode ? "シェルのコマンド" : "メッセージ",
+    "aria-describedby": `${uid}-hint`,
+    ...(disabled ? { "aria-disabled": "true" } : {}),
+    ...(commands ? { "aria-autocomplete": "list" } : {}),
+    ...(slashShown && matches.length > 0 ? { "aria-controls": `${uid}-commands` } : {}),
+    ...(slashShown && slashActive >= 0 ? { "aria-activedescendant": `${uid}-commands-${slashActive}` } : {}),
+    enterkeyhint: enter ? "send" : "enter",
+    // As a textarea has them.
+    spellcheck: "true",
+    autocorrect: "on",
+    autocapitalize: "sentences",
+  });
+  useLayoutEffect(() => {
+    viewRef.current?.dispatch({ effects: parts.attrs.reconfigure(EditorView.contentAttributes.of(JSON.parse(attrs))) });
+  }, [parts, attrs]);
 
   /* ----------------------------- drag and drop ----------------------------- */
   const dragProps = allowAttachments
@@ -1011,7 +1123,6 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
       </AnimatePresence>
 
       <div
-        ref={cardRef}
         {...dragProps}
         className={cx(
           "relative rounded-[24px] bg-white p-2 ring-1 transition-[box-shadow] duration-200 dark:bg-surface",
@@ -1075,52 +1186,12 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
           )}
         </AnimatePresence>
 
-        {/* textarea (with its hidden measuring twin) */}
-        <div className="relative overflow-hidden">
-          <div
-            ref={mirrorRef}
-            aria-hidden
-            className={cx("pointer-events-none invisible absolute inset-x-0 top-0 whitespace-pre-wrap break-words", PAD_X, PAD_Y, TEXT, shellMode && "font-mono")}
-            style={{ overflowWrap: "anywhere" }}
-          >
-            {text + "\u200b"}
-          </div>
-          <motion.textarea
-            ref={textRef}
-            value={text}
-            rows={1}
-            disabled={disabled}
-            maxLength={maxLength + 400}
-            placeholder={placeholder}
-            aria-label={shellMode ? "シェルのコマンド" : "メッセージ"}
-            aria-describedby={`${uid}-hint`}
-            aria-autocomplete={commands ? "list" : undefined}
-            aria-controls={slashShown && matches.length > 0 ? `${uid}-commands` : undefined}
-            aria-activedescendant={slashShown && slashActive >= 0 ? `${uid}-commands-${slashActive}` : undefined}
-            enterKeyHint={enter ? "send" : "enter"}
-            onChange={(e) => {
-              histIdx.current = -1;
-              setText(e.target.value);
-            }}
-            onKeyDown={onKeyDown}
-            onPaste={onPaste}
-            onFocus={() => {
-              clearTimeout(blurTimer.current);
-              setFocused(true);
-            }}
-            onBlur={() => {
-              blurTimer.current = setTimeout(() => setFocused(false), 200);
-            }}
-            style={{ height: h, overflowY: atMax ? "auto" : "hidden" }}
-            className={cx(
-              "block w-full resize-none bg-transparent text-neutral-900 outline-none placeholder:text-neutral-400 dark:text-neutral-100 dark:placeholder:text-neutral-500",
-              PAD_X,
-              PAD_Y,
-              TEXT,
-              shellMode && "font-mono",
-            )}
-          />
-        </div>
+        {/* the editor (CodeMirror), as tall as its text */}
+        <motion.div
+          ref={hostRef}
+          style={{ height: h }}
+          className={cx("overflow-hidden text-neutral-900 dark:text-neutral-100", TEXT, shellMode && "font-mono")}
+        />
 
         {/* toolbar */}
         <div className="mt-1 flex items-center justify-between gap-2">

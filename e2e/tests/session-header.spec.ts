@@ -1,7 +1,7 @@
 // The session screen's header, and what it shows instead of a session it does not show.
 import { fakeSession, textEntry } from "../harness/index.ts";
-import { expect, test } from "./fixtures.ts";
-import { chatBox, OTHER_SESSION_ID, openSession, SESSION_ID, sessionPath } from "./session-helpers.ts";
+import { chatBox, expect, test } from "./fixtures.ts";
+import { OTHER_SESSION_ID, openSession, SESSION_ID, sessionPath } from "./session-helpers.ts";
 
 test("Gasho の外のセッションと見つからないセッションは、理由の文と「ホーム」だけを出す", async ({ page, hub }) => {
   const daemon = await openSession(page, hub, {

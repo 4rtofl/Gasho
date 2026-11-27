@@ -3,7 +3,7 @@
 // (P14), a worktree's tab and screen (P15); what shows when the plugin is not there, disabled, or cannot be loaded; and
 // a part that throws while it is drawn. The plugin is e2e/plugins/e2e-parts, linked before the Gasho server starts.
 import { type FakeDaemon, fakeSession, type GashoHub, textEntry } from "../harness/index.ts";
-import { expect, test } from "./fixtures.ts";
+import { chatBox, expect, test } from "./fixtures.ts";
 import { card, plugin, showHeader, sidebar } from "./plugin-helpers.ts";
 
 const SESSION = "0b6f3a52-9a51-4c7e-8d2b-6c1f0e4a7d10";
@@ -104,7 +104,7 @@ test.describe("部品", () => {
       if (!isMobile) expect((await footer.getByText("mac メモリ").boundingBox())!.x).toBeLessThan(left.x);
       const last = (await main.getByText("はい、どうぞ。").boundingBox())!;
       const box = (await end.boundingBox())!;
-      const input = (await page.getByPlaceholder("Agent への指示を入力…").boundingBox())!;
+      const input = (await chatBox(page).boundingBox())!;
       expect(last.y).toBeLessThan(box.y);
       expect(box.y).toBeLessThan(input.y);
     });

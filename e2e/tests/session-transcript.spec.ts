@@ -2,9 +2,8 @@
 // and where it is scrolled to.
 import type { SentFiles } from "@gasho/protocol";
 import { fakeSession, textEntry, transcriptPage } from "../harness/index.ts";
-import { expect, test } from "./fixtures.ts";
+import { chatBox, expect, test } from "./fixtures.ts";
 import {
-  chatBox,
   entry,
   gate,
   mediaAnswer,

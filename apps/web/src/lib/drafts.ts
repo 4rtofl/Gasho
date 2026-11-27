@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useSyncExternalStore, type RefObject } from "react";
 import type { EffortLevel, SessionModel } from "@gasho/protocol";
 import { createPromptDraft, type PromptDraftStore } from "@/components/ui/prompt-input";
+import { caretIn, putCaret } from "./markdown-editor";
 import type { SentAs } from "./pending";
 
 /** What is picked in the chat box, to switch (for this session only) when the next message is sent. */
@@ -36,7 +37,7 @@ interface Draft {
   /** The chat box on screen (see useDraftBox). */
   box?: HTMLElement;
   /** Where the cursor was in the box when the session got its new id (see moveDraft). */
-  caret?: [start: number, end: number];
+  caret?: [anchor: number, head: number];
 }
 
 /** Keyed by transcriptKey(machine, sessionId). */
@@ -72,8 +73,8 @@ export function moveDraft(from: string, to: string): void {
   const d = drafts.get(from);
   if (!d) return;
   // Being typed in: the box drawn for the new id takes the cursor where it was, and the typing goes on there.
-  const typing = document.activeElement;
-  if (typing instanceof HTMLTextAreaElement && d.box?.contains(typing)) d.caret = [typing.selectionStart, typing.selectionEnd];
+  const caret = d.box && caretIn(d.box);
+  if (caret) d.caret = caret;
   // A message whose result never came and that waited in the session is typed into the new conversation: it is looked
   // for from its first entry, as lib/pending's movePending does.
   if (d.unsent.length > 0) d.unsent = d.unsent.map((u) => ({ ...u, sent: { ...u.sent, after: 0 } }));
@@ -90,11 +91,7 @@ export function useDraftBox(key: string, ref: RefObject<HTMLElement | null>): vo
     d.box = box;
     const caret = d.caret;
     delete d.caret;
-    const text = caret && box.querySelector("textarea");
-    if (text) {
-      text.focus({ preventScroll: true });
-      text.setSelectionRange(...caret);
-    }
+    if (caret) putCaret(box, caret);
     return () => {
       if (d.box === box) delete d.box;
     };

@@ -2,7 +2,7 @@
 // tiles' charts, the tiles' order and the columns of the grid, with fake gasho-daemons.
 import type { Page } from "@playwright/test";
 import type { FakeDaemon } from "../harness/index.ts";
-import { expect, test } from "./fixtures.ts";
+import { chatBox, expect, test } from "./fixtures.ts";
 import { drag, pointOn, sendHook, startDrag, worktreeSession } from "./home-sidebar.ts";
 
 test.describe.configure({ mode: "parallel" });
@@ -278,7 +278,7 @@ test.describe("最近の操作と送った指示", () => {
   /** Sends instructions from the session's screen, each once the fake daemon has it. */
   async function sendInstructions(page: Page, daemon: FakeDaemon, sessionId: string, texts: string[]) {
     for (const text of texts) {
-      await page.getByPlaceholder("Agent への指示を入力…").fill(text);
+      await chatBox(page).fill(text);
       await page.getByRole("button", { name: "送信" }).click();
       await daemon.waitFor("session.input", (m) => m.sessionId === sessionId && m.text === text);
     }

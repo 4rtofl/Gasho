@@ -5,7 +5,7 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { AlertTriangle, ArrowDown, ChevronRight, FoldVertical, Image as ImageIcon, LoaderCircle, Paperclip, Wrench } from "lucide-react";
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { TranscriptBlock, TranscriptEntry } from "@gasho/protocol";
-import { MarkdownText } from "@/components/markdown";
+import { MarkdownText, UserMarkdown } from "@/components/markdown";
 import { type MediaSource, SentFiles, SentFilesSource } from "@/components/sent-files";
 import { ANSWER_ATTR, useAnswerSelection, type TrackedSelection } from "@/lib/answer-selection";
 import { chatTextStyle, useChatTextSize } from "@/lib/chat-text";
@@ -181,8 +181,11 @@ function ToolsFold({ calls }: { calls: ToolUse[] }) {
 /** A file sent from Gasho: the daemon saved it and mentioned it on a line of its own as @path. */
 const ATTACHMENT_LINE = /^@(\S*\/gasho\/attachments\/[^/\s]+\/(\S+))$/;
 
-/** What the user typed, as typed, with the files sent from Gasho shown as chips. */
-function UserText({ text }: { text: string }) {
+/**
+ * What the user typed, with the files sent from Gasho shown as chips. The rest is Markdown like Claude's text, or, with
+ * `markdown` false, as typed.
+ */
+function UserText({ text, markdown }: { text: string; markdown: boolean }) {
   const parts: ({ kind: "text"; text: string } | { kind: "file"; name: string; path: string })[] = [];
   for (const line of text.split("\n")) {
     const m = ATTACHMENT_LINE.exec(line.trim());
@@ -196,11 +199,13 @@ function UserText({ text }: { text: string }) {
       {parts.map((p, i) =>
         p.kind === "file" ? (
           <FileChip key={i} name={p.name} title={p.path} />
-        ) : p.text.trim() ? (
+        ) : !p.text.trim() ? null : markdown ? (
+          <UserMarkdown key={i} text={p.text} />
+        ) : (
           <p key={i} className="whitespace-pre-wrap break-words leading-relaxed">
             {p.text.replace(/^\n+|\n+$/g, "")}
           </p>
-        ) : null,
+        ),
       )}
     </>
   );
@@ -215,16 +220,19 @@ function FileChip({ name, title }: { name: string; title?: string }) {
   );
 }
 
-/** Claude's text is Markdown, and an answer the plugins' parts can be shown by (P22); what the user typed is shown as typed. */
-function BlockView({ block, markdown = false }: { block: TranscriptBlock; markdown?: boolean }) {
+/**
+ * Claude's text and the user's are Markdown (`markdown`); the rest (a system entry's) is shown as typed. Claude's is an
+ * answer the plugins' parts can be shown by (P22).
+ */
+function BlockView({ block, markdown = false }: { block: TranscriptBlock; markdown?: "claude" | "user" | false }) {
   switch (block.type) {
     case "text":
-      return markdown ? (
+      return markdown === "claude" ? (
         <div {...{ [ANSWER_ATTR]: "" }}>
           <MarkdownText text={block.text} />
         </div>
       ) : (
-        <UserText text={block.text} />
+        <UserText text={block.text} markdown={markdown === "user"} />
       );
     case "tool_use":
       return block.sent ? <SentFilesView block={block} /> : <ToolFold block={block} />;
@@ -285,7 +293,7 @@ function EntryView({ entry }: { entry: TranscriptEntry }) {
       <div className="flex justify-end">
         <div className="max-w-[85%] space-y-2 rounded-2xl rounded-br-md bg-primary/10 px-3.5 py-2.5 text-sm">
           {entry.blocks.map((b, i) => (
-            <BlockView key={i} block={b} />
+            <BlockView key={i} block={b} markdown="user" />
           ))}
           {time && <div className="text-right text-[length:calc(10px*var(--chat-scale,1))] text-muted-foreground">{time}</div>}
         </div>
@@ -296,7 +304,7 @@ function EntryView({ entry }: { entry: TranscriptEntry }) {
     <div className={cn("space-y-2 text-sm", onlyResults && "pl-5")}>
       {entry.isSidechain && <SidechainLabel />}
       {entry.blocks.map((b, i) => (
-        <BlockView key={i} block={b} markdown={entry.role === "assistant"} />
+        <BlockView key={i} block={b} markdown={entry.role === "assistant" ? "claude" : "user"} />
       ))}
     </div>
   );
@@ -324,7 +332,7 @@ function PendingView({ message: p }: { message: PendingMessage }) {
   return (
     <div className="flex justify-end">
       <div className="max-w-[85%] space-y-2 rounded-2xl rounded-br-md bg-primary/10 px-3.5 py-2.5 text-sm">
-        {p.text && <p className="whitespace-pre-wrap break-words leading-relaxed">{p.text}</p>}
+        {p.text && <UserMarkdown text={p.text} />}
         {p.files.map((name, i) => (
           <FileChip key={i} name={name} />
         ))}

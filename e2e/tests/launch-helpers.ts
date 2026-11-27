@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import type { Locator, Page } from "@playwright/test";
 import type { CommandResult, HubToDaemon, SessionInfo } from "@gasho/protocol";
 import { commandResult, type FakeDaemon, fakeSession } from "../harness/index.ts";
-import { expect } from "./fixtures.ts";
+import { chatBox, expect } from "./fixtures.ts";
 import { plugin } from "./plugin-helpers.ts";
 import { onPhone } from "./screen.ts";
 
@@ -40,7 +40,7 @@ export async function expectSessionOpen(page: Page, daemon: FakeDaemon, cwd: str
   const last = () => daemon.sessions.findLast((x) => x.cwd === cwd)?.sessionId;
   await expect.poll(last, { message: `a session in ${cwd}` }).toBeDefined();
   await expect(page).toHaveURL(new RegExp(`#/s/${encodeURIComponent(daemon.machineId)}/${last()}$`));
-  await expect(page.getByPlaceholder("Agent への指示を入力…")).toBeVisible();
+  await expect(chatBox(page)).toBeVisible();
 }
 
 /**

@@ -27,6 +27,7 @@ export default {
     crash: () => { throw new Error("secret detail"); },
     slow: (params, ctx) => new Promise((resolve) => ctx.signal.addEventListener("abort", () => resolve("aborted"))),
     sh: async (params, ctx) => (await ctx.exec("echo", ["hi"])).stdout.trim(),
+    command: (params, ctx) => ctx.exec(params.command, params.args),
     missing: async (params, ctx) => { try { await ctx.exec("no-such-command-gasho", []); } catch (e) { return e.code; } },
     ghRead: async (params, ctx) => (await ctx.github.read(params.args)).stdout.trim(),
     ghWrite: async (params, ctx) => (await ctx.github.write(params.args, { repo: "o/n" })).stdout.trim(),
@@ -230,6 +231,20 @@ test("onSessionStop that does not answer in time leaves Gasho's own notification
     const from = Date.now();
     assert.equal(await runner.sessionStop("s1"), undefined);
     assert.ok(Date.now() - from < SESSION_STOP_MS + 1000);
+  } finally {
+    await runner.stopAll();
+  }
+});
+
+test("a plugin's ctx.exec refuses direct agy commands and simple shell calls", async () => {
+  const { runner, call, state, until } = setup();
+  try {
+    runner.update([{ id: "hello", hash: HASH1, run: true, settings: {} }]);
+    await until(() => state()?.state === "running");
+    assert.match((await call("command", { params: { command: "/dev/null/agy", args: ["acp"] } })).error ?? "", /Gasho の画面から/);
+    assert.match((await call("command", { params: { command: "sh", args: ["-c", "pwd && /dev/null/agy acp"] } })).error ?? "", /Gasho の画面から/);
+    assert.match((await call("command", { params: { command: "sh", args: ["-lc", "/dev/null/agy acp"] } })).error ?? "", /Gasho の画面から/);
+    assert.equal((await call("sh")).result, "hi");
   } finally {
     await runner.stopAll();
   }
@@ -476,6 +491,7 @@ test("gasho-daemon ends (an update, a signal) only once its plugins' daemon part
     claudeDir: path.join(dir, "claude-dir"),
     claudeBin: "claude",
     codexBin: "codex",
+    agyBin: "/nonexistent/gasho-test-agy",
     ghBin: "gh",
     pollIntervalMs: 60_000,
     stateDir: dir,

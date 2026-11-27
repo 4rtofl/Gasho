@@ -132,11 +132,12 @@ const MAX_ENDS = 100;
 const MODELS = new Set(["default", "opus", "fable", "sonnet", "haiku"]);
 const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 const FEATURES = new Set<InputFeature>(["model", "effort", "ultracode", "files"]);
-const AGENT_KINDS: readonly AgentKind[] = ["claude", "codex"];
+const AGENT_KINDS: readonly AgentKind[] = ["claude", "codex", "antigravity"];
 const AGENT_STATUSES = new Set<unknown>(["available", "loginRequired", "unknown"] satisfies AgentStatus[]);
 const AGENT_OPERATIONS = new Set<unknown>(["model", "effort", "ultracode", "files", "fork", "background", "skills", "shell"] satisfies AgentOperation[]);
 /** Where the agent a new session starts with is kept (meta). */
 const DEFAULT_AGENT_KEY = "default_agent";
+const ANTIGRAVITY_SCREEN_ONLY = "Antigravity の起動、発言、権限への回答は Gasho の画面から行ってください。";
 /** Where the effort level a new session of Claude Code starts with is kept (meta; "" for Claude Code's own default). */
 const DEFAULT_EFFORT_KEY = "default_effort";
 /** Where the model a new session of Claude Code starts with is kept (meta; "" for Claude Code's own default). */
@@ -443,12 +444,15 @@ interface PendingCommand {
 }
 
 /** Checks a command from a browser; returns an error message or undefined. */
-export function validateCommand(cmd: SessionCommand): string | undefined {
+export function validateCommand(cmd: SessionCommand, agent?: AgentKind): string | undefined {
   if ("sessionId" in cmd && (typeof cmd.sessionId !== "string" || !cmd.sessionId || cmd.sessionId.length > MAX_SESSION_ID)) {
     return "セッションの指定が正しくありません。";
   }
   switch (cmd.type) {
+    case "antigravity.open":
+      return cmd.screen === true ? undefined : ANTIGRAVITY_SCREEN_ONLY;
     case "session.launch":
+      if (cmd.agent === "antigravity" && cmd.screen !== true) return ANTIGRAVITY_SCREEN_ONLY;
       if (typeof cmd.cwd !== "string" || !cmd.cwd.startsWith("/") || cmd.cwd.length > 1024) return "フォルダーを絶対パスで指定してください。";
       if (cmd.name !== undefined && (typeof cmd.name !== "string" || cmd.name.length > 60)) return "名前は60文字までです。";
       if (cmd.trust !== undefined && typeof cmd.trust !== "boolean") return "信頼の指定が正しくありません。";
@@ -472,6 +476,7 @@ export function validateCommand(cmd: SessionCommand): string | undefined {
       if (cmd.effort !== undefined && !EFFORTS.has(cmd.effort)) return "Effort の指定が正しくありません。";
       if (cmd.ultracode !== undefined && typeof cmd.ultracode !== "boolean") return "Ultracode の指定が正しくありません。";
       if (cmd.via !== undefined && (typeof cmd.via !== "string" || !/^[a-z][a-z0-9-]{1,31}$/.test(cmd.via))) return "送ったプラグインの指定が正しくありません。";
+      if (agent === "antigravity") return files.length ? "Antigravity にはファイルを添付できません。" : undefined;
       // These change Claude Code's defaults for every new session; the chat box switches them for this session.
       if (/^\s*\/model(?=\s|$)/i.test(cmd.text)) {
         return "モデルは、入力欄のモデルの選択で切り替えてください。/model で切り替えると、これから始めるすべてのセッションの既定のモデルも変わります。";
@@ -671,6 +676,7 @@ export class Hub {
       // Said again by its capabilities and plugin.status; an update that ended with the restart is over.
       m.update = undefined;
       m.pluginApi = undefined;
+      if (m.agents?.antigravity) delete m.agents.antigravity;
       this.store.saveMachine(m);
       this.store.touchDevice(device.id);
       peer.send({ type: "welcome" });
@@ -717,9 +723,10 @@ export class Hub {
         break;
       }
       case "transcript.append":
-        this.broadcast({ type: "transcript.append", machine: id, sessionId: msg.sessionId, entries: msg.entries });
+        this.broadcast({ type: "transcript.append", machine: id, sessionId: msg.sessionId, entries: msg.entries, ...(msg.reset === true ? { reset: true } : {}) });
         break;
       case "capabilities":
+        if (this.daemons.get(id) !== peer) break;
         m.canLaunch = msg.canLaunch;
         m.folders = msg.folders;
         m.folderRepos = Array.isArray(msg.folderRepos) ? msg.folderRepos : undefined;
@@ -950,7 +957,7 @@ export class Hub {
     const model = this.defaultModel();
     return {
       ...server.info(),
-      defaultAgent: this.store.getMeta(DEFAULT_AGENT_KEY) === "codex" ? "codex" : "claude",
+      defaultAgent: AGENT_KINDS.find((agent) => agent === this.store.getMeta(DEFAULT_AGENT_KEY)) ?? "claude",
       ...(effort ? { defaultEffort: effort } : {}),
       ...(model ? { defaultModel: model } : {}),
     };
@@ -1137,6 +1144,7 @@ export class Hub {
         else if (msg.type === "plugin.request") peer.send({ type: "plugin.response", requestId: msg.requestId, error: "この Gasho サーバーではプラグインを使えません。" });
         else peer.send({ type: "plugin.result", requestId: msg.requestId, result: { ok: false, error: "この Gasho サーバーではプラグインを使えません。" } });
         break;
+      case "antigravity.open":
       case "session.launch":
       case "session.input":
       case "session.interrupt":
@@ -1169,10 +1177,12 @@ export class Hub {
     // A listing changes nothing: it goes on while an update waits.
     const listing = cmd.type === "session.history" || cmd.type === "session.skills";
     if (this.holding !== undefined && !listing) return reply({ ok: false, error: this.holding });
-    const invalid = validateCommand(cmd) ?? this.unsupported(machine, cmd);
+    const sessionId = "sessionId" in cmd ? cmd.sessionId : undefined;
+    const agent = sessionId ? this.machines.get(machine)?.sessions.find((s) => s.sessionId === sessionId)?.agent : undefined;
+    const invalid = validateCommand(cmd, agent) ?? this.unsupported(machine, cmd, agent);
     if (invalid) return reply({ ok: false, error: invalid });
     // Every launch of Claude Code from Gasho (the screen's, a plugin's) starts with the default effort level and model.
-    if (cmd.type === "session.launch" && cmd.agent !== "codex") {
+    if (cmd.type === "session.launch" && (cmd.agent === undefined || cmd.agent === "claude")) {
       const effort = this.defaultEffort();
       const model = this.defaultModel();
       if (cmd.effort === undefined && effort) cmd = { ...cmd, effort };
@@ -1206,6 +1216,7 @@ export class Hub {
       "session.history": REQUEST_TIMEOUT_MS,
       "session.skills": REQUEST_TIMEOUT_MS,
       "session.resume": LAUNCH_TIMEOUT_MS,
+      "antigravity.open": LAUNCH_TIMEOUT_MS,
       // Answered at once; the session's state tells how it goes.
       "session.wake": REQUEST_TIMEOUT_MS,
       "session.end": REMOVE_TIMEOUT_MS,
@@ -1254,7 +1265,7 @@ export class Hub {
         return [
           cmd.cwd,
           cmd.trust && "[trust]",
-          cmd.agent === "codex" && "[codex]",
+          cmd.agent && cmd.agent !== "claude" && `[${cmd.agent}]`,
           cmd.model && cmd.model !== "default" && `[model: ${cmd.model}]`,
           cmd.effort && `[effort: ${cmd.effort}]`,
         ]
@@ -1316,6 +1327,7 @@ export class Hub {
       case "daemon.update":
         // From which version to which.
         return `${this.machines.get(machine)?.daemonVersion ?? "?"} → ${cmd.version}`;
+      case "antigravity.open":
       case "session.interrupt":
       case "session.history":
       case "session.skills":
@@ -1332,8 +1344,14 @@ export class Hub {
   }
 
   /** A command that asks for more than the working server's gasho-daemon can do: the error to show, or undefined. */
-  private unsupported(machine: string, cmd: SessionCommand): string | undefined {
+  private unsupported(machine: string, cmd: SessionCommand, agent?: AgentKind): string | undefined {
     const m = this.machines.get(machine);
+    if (cmd.type === "session.launch" && cmd.agent === "antigravity" && !m?.agents?.antigravity?.canLaunch) {
+      return "この working server で Antigravity を起動できません。Antigravity CLI のインストールと gasho-daemon の更新を確認してください。";
+    }
+    if ((cmd.type === "session.input" || cmd.type === "permission.answer") && agent === "antigravity") {
+      if (cmd.screen !== true || (cmd.type === "session.input" && cmd.via !== undefined)) return ANTIGRAVITY_SCREEN_ONLY;
+    }
     if (cmd.type === "daemon.update") return m?.update?.canUpdate ? undefined : (m?.update?.reason ?? UPDATE_TOO_OLD);
     // A gasho-daemon that does not read `agent` (0.30.0 reports Codex, but cannot start it) would start Claude Code instead.
     if (cmd.type === "session.launch" && cmd.agent === "codex" && m && !m.agents?.codex?.canLaunch) {

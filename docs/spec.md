@@ -184,10 +184,23 @@ Codex のセッションは、Codex の常駐の app-server のスレッドで�
 - Codex のセッションを起動できると gasho-daemon が知らせていない working server への起動は、Gasho サーバーが断る（`AgentInfo.canLaunch`）。gasho-daemon 0.30.0 は Codex の状態を知らせるが `session.launch` の `agent` を読まないので、届くと Claude Code が起動してしまうためである
 - モデル、Effort、Ultracode の切り替えは適用しない（`unapplied` で返す）。ファイルの添付、フォーク、バックグラウンドの作業の停止は断る
 - 画面は、gasho-daemon が知らせるエージェントごとのできる操作（`AgentInfo.operations`）を見て、モデル、Effort、Ultracode、ファイルの添付、フォーク、バックグラウンドの作業の一覧、`/` の候補、`!` のシェルを出すかを決める
-- 既定のエージェントは Gasho サーバーの `meta` に保存し、どのブラウザーでも同じにする。初めは Claude Code である。＋ボタンは既定のエージェントで起動し、その working server で Codex を使えないときは Claude Code で起動する。＋ボタンを右クリック（タッチでは長押し）すると、その場でエージェントを選べる。ここで選んでも既定は変わらない。Codex が入っていない working server では、メニューを出さない
-- 起動フォームには、Codex が入っている working server でだけエージェントの欄を出す。初めの値は既定のエージェントである
-- Codex を使える working server が1つでもあれば、サイドバーのセッションの行、タブ、セッション画面の見出しにエージェントの印（Claude Code は CC、Codex は Cx）を出す。サイドバーの worktree の行には出さない
+- 既定のエージェントは Gasho サーバーの `meta` に保存し、どのブラウザーでも同じにする。初めは Claude Code である。＋ボタンは、使える場合は既定のエージェントで起動する。既定が使えないときは Claude Code を使う。Claude Code の端末を作れず Antigravity を起動できる場合は Antigravity を使う。＋ボタンを右クリック（タッチでは長押し）すると、その場でエージェントを選べる。ここで選んでも既定は変わらない。Codex も Antigravity も候補にない working server では、メニューを出さない
+- 起動フォームには、Codex か Antigravity が候補にある working server でエージェントの欄を出す。初めの値は＋ボタンと同じである
+- Codex や Antigravity を使える working server が1つでもあるか、Antigravity のセッションが一覧にあれば、サイドバーのセッションの行、タブ、セッション画面の見出しにエージェントの印を出す。サイドバーの worktree の行には出さない
 - プラグインが起動するセッションは、プラグインが `agent` を指定しない限り Claude Code である
+
+### Antigravity のセッション（#331）
+
+Antigravity は、個人が working server でログインした Antigravity CLI を使う。gasho-daemon は、起動時と5分ごとに `agy --version` で CLI を探す。実行ファイルは環境変数 `GASHO_AGY_BIN`、未指定なら PATH 上の `agy` を使う。「端末」には見つかった版と「ログイン状態は未確認」を出す。
+
+- 起動は Gasho の画面から行う。セッションごとに改変していない `agy acp` を子プロセスとして起動し、標準入出力で ACP v1 の JSON-RPC をやり取りする。Gasho は CLI を同梱せず、認証情報や設定ファイルも読まない。`authenticate` は呼ばず、エラー `-32000` では working server の端末でログインするよう案内する
+- `initialize` でファイルシステムと端末の機能を提供せず、`session/new`、`session/load`、`session/resume` に渡す `mcpServers` は空にする。`session/prompt` には、利用者が画面から送ったテキストをそのまま渡す。発言の生成、システムプロンプトやルールの追加、自動再送やタイトル生成は行わない。ターン中の発言は完了まで待たせ、順番に送る。接続が途切れたときは、待機中の発言を破棄し、破棄したことと発言の本文を会話に残す。gasho-daemon を起動し直すと、待機中の発言は消える
+- 画面からの割り込みは `session/cancel` を送る。ACP から権限の確認が届いたら通知し、画面の「許可」または「拒否」を待つ。一度だけの許可（`allow_once`）と拒否（`reject_once`）を扱い、拒否の選択肢がなければ取り消す。ターンを中断したときも、未回答の確認を取り消す。Gasho は自動で許可せず、`--dangerously-skip-permissions` を付けない。CLI にあらかじめ登録された権限のルールは、CLI 自身が適用する
+- Gasho の名前、セッション ID、会話は working server 上の `antigravity-sessions.json` に保存する。名前の変更は Gasho に反映する。削除すると子プロセスを止めて Gasho の記録を外す。CLI が保存した会話は残る
+- gasho-daemon を起動し直したあとは一覧と保存済みの会話が見える。画面で「Antigravity の会話を開く」を押すか、次の発言を送ったときに限り、接続して `session/load` で会話を再生する。CLI が `session/load` を提供せず `session/resume` を提供する場合は、保存済みの表示を保って再開する。どちらも未対応なら再開できないと表示する
+- Antigravity は設定の既定エージェント、＋ボタンのメニュー、起動フォームで選べる。入力欄のモデル、Effort、Ultracode、添付、スキル、シェル実行、フォーク、バックグラウンド作業の一覧は出さない。Antigravity を起動できるとその接続で通知した gasho-daemon にだけ起動を中継する。古い gasho-daemon がエージェントの指定を見落として Claude Code を起動するのを防ぐためである
+- control socket の `session.launch`（`--agent antigravity`）と、Antigravity に対する `session.input`、`session.fork` を断る。画面プラグインの `useLaunchSession` と `useSendInput` も断る。daemon プラグインは control socket でも同じ制限を受け、`ctx.exec` での `agy` の直接起動や、対応するシェルの `-c` や `-lc` 内での単純な起動も断る。名前の変更、一覧、削除は使える
+- Gasho が起動した Claude Code では、PreToolUse hook が Bash ツールのコマンド位置にある `agy` を拒否する。絶対・相対パス、`;`、`&&`、`||`、`|` の後ろも対象にする。変数代入、`env` や `timeout`、シェルの `-c` や `-lc`、バッククォートなどの内側にある単純な起動も拒否し、`which agy` や `grep agy file` は通す。Node.js と Rust に同じ動作を実装する。これは誤実行を防ぐ仕組みで、任意のシェル構文や、プラグインが持つ実行権限を隔離する仕組みは持たない。Codex に同等の hook を入れられるかは未確認
 
 ### セッションの端末
 
@@ -239,7 +252,7 @@ Gasho が起動したセッション（フォークを含む）の Agent が wor
 
 gasho-daemon は、Claude Code を起動するたびに（新しいセッション、フォーク、休止からの再開）、次のものを付ける。どれも利用者・プロジェクトの設定ファイルは書き換えず、そのプロセスのあいだだけ効く。Gasho の外（ターミナルで直接）起動した Claude Code には付かない。
 
-- PreToolUse の hook（`--settings` の `hooks`。ステータスラインと同じ `--settings` に入れる）: マッチャーは `Agent|Task|EnterWorktree`。gasho-daemon の `worktree-guard-hook` を動かし（Rust の端末か Node.js。決め方はステータスラインの中継と同じ）、`EnterWorktree` と、`tool_input.isolation` が `"worktree"` の `Agent`（古い名前の `Task` も）を `permissionDecision: "deny"` で止める。理由には、スキル `gasho:launch-gasho-session` の手順（`git worktree add` で worktree を作り、`gasho-daemon session launch` で起動して指示する）を書く。ほかの呼び出しには何も返さない。`--settings` の hooks は、利用者とプロジェクトの hooks に足され、置き換えない（Claude Code 2.1.332 で確かめた）
+- PreToolUse の hook（`--settings` の `hooks`。ステータスラインと同じ `--settings` に入れる）: マッチャーは `Agent|Task|EnterWorktree|Bash`。gasho-daemon の `worktree-guard-hook` を動かし（Rust の端末か Node.js。決め方はステータスラインの中継と同じ）、`EnterWorktree` と、`tool_input.isolation` が `"worktree"` の `Agent`（古い名前の `Task` も）を `permissionDecision: "deny"` で止める。理由には、スキル `gasho:launch-gasho-session` の手順（`git worktree add` で worktree を作り、`gasho-daemon session launch` で起動して指示する）を書く。Bash での `agy` の実行も、Antigravity のセッションの節に記した条件で止める。ほかの呼び出しには何も返さない。`--settings` の hooks は、利用者とプロジェクトの hooks に足され、置き換えない（Claude Code 2.1.332 で確かめた）
 - 同じ決まりを `--append-system-prompt` で足し、最初からその手順を選ばせる
 - `--plugin-dir` で、gasho-daemon のプラグイン `gasho`（`apps/daemon/claude-plugin`。npm のパッケージでは `lib/` の隣の `claude-plugin/`）を読ませる。スキル `gasho:launch-gasho-session`（worktree を作ってセッションを起動し、指示する）、`gasho:remove-gasho-worktree`（worktree をセッションごと片付ける）、`gasho:verify-in-chrome`（自分を Chrome つきでフォークして確かめさせる）が入る。どのリポジトリのセッションでも使えるよう、リポジトリの `.claude/skills` には置かない。画面の「/」の候補（S19）にも、Gasho が起動したセッションではこれらを出す
 

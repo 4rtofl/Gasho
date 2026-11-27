@@ -743,12 +743,14 @@ export interface GashoSdk {
    * Sends a message to a session (needs the permission "session.input"), as the chat box does. Plugin API 1.12: the
    * model, the effort level and ultracode to switch to first (SendInput), and what was not switched (SendInputResult).
    * Plugin API 1.17: `unknown` when the connection closed before the result came (the message may have been typed).
+   * Antigravity sessions accept input from the Gasho screen only (plugin API 1.22).
    */
   useSendInput(): (input: SendInput) => Promise<CallResult<SendInputResult>>;
   /**
    * Starts a session in a folder of a working server (needs the permission "session.launch"), as "新しいセッション" does.
    * Plugin API 1.1. `agent` (plugin API 1.16): Claude Code unless it says "codex"; the default agent of the settings is
-   * not used, because what plugins send may rely on Claude Code's skills and slash commands.
+   * not used, because what plugins send may rely on Claude Code's skills and slash commands. Antigravity can only
+   * be started from the Gasho screen (plugin API 1.22).
    */
   useLaunchSession(): (input: { machine: string; cwd: string; name?: string; trust?: boolean; agent?: AgentKind }) => Promise<LaunchResult>;
   /**

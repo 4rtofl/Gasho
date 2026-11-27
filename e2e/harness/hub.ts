@@ -51,6 +51,7 @@ export interface DaemonOptions {
    * (paths from HOME).
    */
   folders?: string[];
+  antigravity?: boolean;
   /** More settings of gasho-daemon (GASHO_*). */
   env?: Record<string, string>;
 }
@@ -213,6 +214,7 @@ export class GashoHub {
       XDG_DATA_HOME: path.join(stateDir, "data"),
       XDG_CACHE_HOME: path.join(stateDir, "cache"),
       ...o.env,
+      GASHO_AGY_BIN: o.antigravity ? path.join(GASHO_DIR, "e2e/harness/bin/agy.ts") : "/dev/null/agy",
     });
     await runScript("gasho-daemon register", DAEMON_CLI, ["register", "--server", this.url, "--code", await this.pairingCode(), "--name", name], env);
     const creds = JSON.parse(await fsp.readFile(path.join(stateDir, "daemon.json"), "utf8")) as { machineId: string };

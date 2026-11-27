@@ -46,6 +46,7 @@ export function isolatedEnv(home: string, more: Record<string, string> = {}): Re
     XDG_DATA_HOME: path.join(home, ".local", "share"),
     XDG_CACHE_HOME: path.join(home, ".cache"),
     XDG_STATE_HOME: path.join(home, ".local", "state"),
+    GASHO_AGY_BIN: "/dev/null/agy",
     ...more,
   };
 }

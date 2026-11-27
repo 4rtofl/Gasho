@@ -703,6 +703,11 @@ function handle(m: HubToClient): void {
       const key = transcriptKey(m.machine, m.sessionId);
       const cur = state.transcripts[key];
       if (!cur) break;
+      if (m.reset) {
+        setTranscript(key, { entries: [], start: 0, total: 0, loading: false });
+        requestPage(m.machine, m.sessionId, undefined);
+        break;
+      }
       const add = m.entries.filter((e) => !cur.entries.some((c) => sameEntry(c, e)));
       if (add.length === 0) break;
       setTranscript(key, { ...cur, entries: [...cur.entries, ...add], total: cur.total + add.length });

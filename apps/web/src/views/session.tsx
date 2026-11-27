@@ -339,6 +339,8 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
   useDraftBox(key, box);
   const [error, setError] = useState<string>();
   const [warning, setWarning] = useState<string>();
+  const [opening, setOpening] = useState(false);
+  const isAntigravity = sessionAgent(s) === "antigravity";
   const input = useRef<PromptInputHandle>(null);
   const phone = !useMediaQuery(DESKTOP);
   const composerParts = useComposerFooterParts();
@@ -424,7 +426,7 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
     );
   }
 
-  const busy = s.status === "busy";
+  const busy = s.status === "busy" || (isAntigravity && s.status === "waiting");
   const offline = !machine.connected;
   const status = offline
     ? "working server がオフラインです。"
@@ -449,7 +451,28 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
       <PermissionRequests machine={machine} session={s} />
       {showsBackground && <BackgroundTasks machine={machine} session={s} open={backgroundOpen} />}
       <HibernationNotice machine={machine} session={s} />
+      {isAntigravity && s.status === "unknown" && machine.connected && (
+        <button
+          type="button"
+          className="mb-2 self-start rounded-md border border-border px-3 py-1.5 text-xs disabled:opacity-50"
+          disabled={opening}
+          onClick={async () => {
+            setOpening(true);
+            setError(undefined);
+            try {
+              const r = await sendCommand(machine.id, { type: "antigravity.open", sessionId: s.sessionId, screen: true });
+              if (!r.ok) setError(r.error ?? "会話を開けませんでした。");
+
+            } finally {
+              setOpening(false);
+            }
+          }}
+        >
+          {opening ? "接続中…" : "Antigravity の会話を開く"}
+        </button>
+      )}
       <PromptInput
+        preserveWhitespace={isAntigravity}
         onSend={async ({ text, files }) => {
           setError(undefined);
           setWarning(undefined);
@@ -459,9 +482,9 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
           };
           if (files.reduce((n, f) => n + f.size, 0) > MAX_FILES_BYTES) fail("添付できるのは、合わせて 10MB までです。");
           // Switch only what was picked and differs from what the session uses (any pick, while its model is not known).
-          const switchTo = picked && picked !== current ? picked : undefined;
-          const effort = pickedEffort && pickedEffort !== s.effort ? pickedEffort : undefined;
-          const ultra = pickedUltracode !== undefined && pickedUltracode !== ultracode ? pickedUltracode : undefined;
+          const switchTo = features.includes("model") && picked && picked !== current ? picked : undefined;
+          const effort = features.includes("effort") && pickedEffort && pickedEffort !== s.effort ? pickedEffort : undefined;
+          const ultra = features.includes("ultracode") && pickedUltracode !== undefined && pickedUltracode !== ultracode ? pickedUltracode : undefined;
           // Shown at the end of the conversation at once: Claude Code records the message only once it is typed into
           // the session, after switching the model (/model) and the like.
           const sentAt = Date.now();
@@ -475,6 +498,7 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
                 type: "session.input",
                 sessionId: s.sessionId,
                 text,
+                ...(isAntigravity ? { screen: true } : {}),
                 ...(switchTo ? { model: switchTo } : {}),
                 ...(effort ? { effort } : {}),
                 ...(ultra !== undefined ? { ultracode: ultra } : {}),

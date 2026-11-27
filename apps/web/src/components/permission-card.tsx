@@ -55,7 +55,7 @@ const sendOnModEnter = (submit: () => void) => (e: KeyboardEvent<HTMLTextAreaEle
  * was taken, and the card waits to leave (a question answered as a message leaves once its dialog has closed); it can
  * be answered again if it is still there after a while.
  */
-function useAnswer(machine: MachineInfo, sessionId: string, permissionId: string) {
+function useAnswer(machine: MachineInfo, sessionId: string, permissionId: string, agent?: AgentKind) {
   const [sending, setSending] = useState<string>();
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string>();
@@ -68,7 +68,7 @@ function useAnswer(machine: MachineInfo, sessionId: string, permissionId: string
     setSending(which);
     setError(undefined);
     try {
-      const res = await sendCommand(machine.id, { type: "permission.answer", sessionId, permissionId, ...answer });
+      const res = await sendCommand(machine.id, { type: "permission.answer", sessionId, permissionId, ...answer, ...(agent === "antigravity" ? { screen: true } : {}) });
       // Once answered, the request leaves the session's list and this card with it.
       if (res.ok) setSent(true);
       else setError(res.error ?? "答えられませんでした。");
@@ -89,9 +89,9 @@ interface CardProps {
 }
 
 function PermissionCard({ machine, sessionId, request: r, agent = "claude" }: CardProps) {
-  const { sending, error, send, disabled } = useAnswer(machine, sessionId, r.id);
+  const { sending, error, send, disabled } = useAnswer(machine, sessionId, r.id, agent);
   // A question or a plan from a gasho-daemon that cannot pass the answer on: "allow" would spend the request.
-  const unanswerable = r.toolName === "AskUserQuestion" || r.toolName === "ExitPlanMode";
+  const unanswerable = agent === "claude" && (r.toolName === "AskUserQuestion" || r.toolName === "ExitPlanMode");
 
   return (
     <div className={cn(CARD, "border-amber-500/40")}>
@@ -120,7 +120,7 @@ function PermissionCard({ machine, sessionId, request: r, agent = "claude" }: Ca
         </p>
       )}
       <div className="flex flex-wrap items-center gap-2 px-3 pt-2 pb-2.5">
-        {!unanswerable && (
+        {!unanswerable && !r.denyOnly && (
           <button type="button" disabled={disabled} onClick={() => void send("allow", { decision: "allow" })} className={PRIMARY}>
             {sending === "allow" ? "送信中…" : "許可"}
           </button>
@@ -140,7 +140,13 @@ function PermissionCard({ machine, sessionId, request: r, agent = "claude" }: Ca
           type="button"
           disabled={disabled}
           onClick={() => void send("deny", { decision: "deny" })}
-          title={agent === "codex" ? "Codex に拒否を伝えます。Codex は、拒否されたことを受けて応答します" : "Claude は作業を止めて、次の指示を待ちます"}
+          title={
+            agent === "codex"
+              ? "Codex に拒否を伝えます。Codex は、拒否されたことを受けて応答します"
+              : agent === "antigravity"
+                ? "Antigravity に拒否を伝えます"
+                : "Claude は作業を止めて、次の指示を待ちます"
+          }
           className={cn(BUTTON, "text-red-400 hover:bg-red-500/10")}
         >
           {sending === "deny" ? "送信中…" : r.toolName === "AskUserQuestion" ? "答えずに止める" : "拒否"}

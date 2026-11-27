@@ -201,6 +201,8 @@ export interface PermissionRequestInfo {
    * a permanent rule for this request; absent when it does not, and "always" cannot be answered.
    */
   always?: string;
+  /** ACP did not offer permission for this call alone. */
+  denyOnly?: boolean;
   /**
    * AskUserQuestion: the questions Claude asks the person. "allow" answers them with `answers`; without answers,
    * Claude Code would keep its own dialog open. Absent when gasho-daemon cannot pass answers on (before this field).
@@ -498,7 +500,7 @@ export interface MachineMemory {
 }
 
 /** The coding agents Gasho knows. */
-export type AgentKind = "claude" | "codex";
+export type AgentKind = "claude" | "codex" | "antigravity";
 
 /**
  * Whether an agent can be used on a working server. available: it is logged in. loginRequired: it is installed but not
@@ -1070,7 +1072,7 @@ export interface DaemonPluginStatus {
 export type DaemonToHub =
   | { type: "hello"; machineId: string; token: string; daemonVersion: string }
   | { type: "sessions"; sessions: SessionInfo[] }
-  | { type: "transcript.append"; sessionId: string; entries: TranscriptEntry[] }
+  | { type: "transcript.append"; sessionId: string; entries: TranscriptEntry[]; reset?: true }
   | ({ type: "transcript.page"; requestId: string; sessionId: string } & TranscriptPage)
   | { type: "hook"; event: HookEvent }
   | {
@@ -1216,7 +1218,7 @@ export type HubToClient =
   | { type: "latest"; latest: LatestVersions }
   | { type: "machine.removed"; id: string }
   | ({ type: "transcript.page"; machine: string; sessionId: string } & TranscriptPage)
-  | { type: "transcript.append"; machine: string; sessionId: string; entries: TranscriptEntry[] }
+  | { type: "transcript.append"; machine: string; sessionId: string; entries: TranscriptEntry[]; reset?: true }
   | { type: "notification"; notification: GashoNotification }
   | { type: "notification.read"; ids: string[] }
   | { type: "event"; event: MachineHookEvent }
@@ -1344,7 +1346,8 @@ export type SessionCommand =
    * (ServerInfo.defaultEffort) to a launch of Claude Code without one. A model that does not have it starts with one it
    * has, or none. `model`: likewise (`--model`, ServerInfo.defaultModel); "default" passes nothing.
    */
-  | { type: "session.launch"; cwd: string; name?: string; trust?: boolean; agent?: AgentKind; effort?: EffortLevel; model?: SessionModel }
+  | { type: "session.launch"; cwd: string; name?: string; trust?: boolean; agent?: AgentKind; effort?: EffortLevel; model?: SessionModel; screen?: true }
+  | { type: "antigravity.open"; sessionId: string; screen: true }
   /** Makes the folder `name` inside the folder `parent` (gasho-daemon 0.10.0 and later). */
   | { type: "folder.create"; parent: string; name: string }
   /**
@@ -1375,6 +1378,7 @@ export type SessionCommand =
       files?: InputFile[];
       /** Sent by a plugin (its id), for the operations log. */
       via?: string;
+      screen?: true;
     }
   /**
    * Stops Claude's turn (Esc). When the turn has ended and Claude waits only for its subagents and workflows in the
@@ -1436,6 +1440,7 @@ export type SessionCommand =
       sessionId: string;
       permissionId: string;
       decision: PermissionDecision;
+      screen?: true;
       answers?: QuestionAnswer[];
       mode?: PlanMode;
       message?: string;

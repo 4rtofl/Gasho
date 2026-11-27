@@ -1645,3 +1645,27 @@ test("days older than the heatmap shows are forgotten, and so are a working serv
   store.revokeDevice(machineId);
   assert.deepEqual(store.tokenDays(now), {});
 });
+
+test("Antigravity launch requires capabilities from the current daemon connection and the screen route", () => {
+  const { hub, machineId, machineToken, browserId } = setup();
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const launch = { type: "session.launch", requestId: "r", machine: machineId, cwd: "/work", agent: "antigravity" } as const;
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.30.0" });
+  hub.onClientMessage(c, { ...launch, screen: true });
+  assert.equal(d.sent.some((m) => m.type === "session.launch"), false);
+  assert.match((c.sent.at(-1) as { result?: { error?: string } })?.result?.error ?? "", /起動できません/);
+
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: false, folders: [], agents: { antigravity: { status: "unknown", canLaunch: true, operations: [] } } });
+  hub.onClientMessage(c, launch);
+  assert.equal(d.sent.some((m) => m.type === "session.launch"), false);
+  assert.match((c.sent.at(-1) as { result?: { error?: string } })?.result?.error ?? "", /Gasho の画面から/);
+  hub.onClientMessage(c, { ...launch, screen: true });
+  assert.deepEqual(d.sent.at(-1), { type: "session.launch", requestId: (d.sent.at(-1) as { requestId: string }).requestId, cwd: "/work", agent: "antigravity", screen: true });
+
+  const replacement = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(replacement, { type: "hello", machineId, token: machineToken, daemonVersion: "0.30.0" });
+  hub.onClientMessage(c, { ...launch, screen: true });
+  assert.equal(replacement.sent.some((m) => m.type === "session.launch"), false);
+});

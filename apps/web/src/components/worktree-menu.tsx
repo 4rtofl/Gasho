@@ -298,7 +298,7 @@ function RemoveDialog({ worktree, onClose }: { worktree: WorktreeSessions; onClo
             <div className="mt-2 space-y-1.5 text-sm text-muted-foreground">
               <p>
                 {sessions.length > 0
-                  ? sessions.some((s) => s.agent === "codex")
+                  ? sessions.some((s) => s.agent && s.agent !== "claude")
                     ? `中の ${sessions.length} 件のセッションを終了し、worktree のフォルダーを削除します（git worktree remove）。`
                     : `中の ${sessions.length} 件のセッションの Claude Code を終了し、worktree のフォルダーを削除します（git worktree remove）。`
                   : "worktree のフォルダーを削除します（git worktree remove）。"}
@@ -576,7 +576,7 @@ function BatchRemoveDialog({ worktrees, onClose }: { worktrees: WorktreeSessions
             <div className="mt-2 space-y-1.5 text-sm text-muted-foreground">
               <p>
                 {sessions.length > 0
-                  ? sessions.some((s) => s.agent === "codex")
+                  ? sessions.some((s) => s.agent && s.agent !== "claude")
                     ? `中の ${sessions.length} 件のセッションを終了し、worktree のフォルダーを削除します（git worktree remove）。`
                     : `中の ${sessions.length} 件のセッションの Claude Code を終了し、worktree のフォルダーを削除します（git worktree remove）。`
                   : "worktree のフォルダーを削除します（git worktree remove）。"}

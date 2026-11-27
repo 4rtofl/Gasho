@@ -7,6 +7,7 @@
 // web parts (ctx.emit, "event"), which gasho-daemon passes on to the Gasho server at most once a second per topic.
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { runsAgy } from "./agent-worktrees.ts";
 import { exec, type ExecOptions, type ExecResult } from "./exec.ts";
 import type { FromHost, GitHubAnswer, GitHubAsk, SessionWire, ToHost } from "./plugin-ipc.ts";
 
@@ -118,6 +119,19 @@ function sessionOf(w: SessionWire) {
   };
 }
 
+function pluginExec(command: string, args: string[], options?: ExecOptions, signal?: AbortSignal): Promise<ExecResult> {
+  if (typeof command === "string" && Array.isArray(args)) {
+    const bin = path.basename(command);
+    const configured = path.basename(process.env.GASHO_AGY_BIN || "agy");
+    const inlineFlag = ["sh", "bash", "dash", "zsh"].includes(bin) ? args.findIndex((arg) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(arg)) : -1;
+    const inline = inlineFlag >= 0 ? args[inlineFlag + 1] : undefined;
+    if (bin === "agy" || bin === configured || (typeof inline === "string" && (runsAgy(inline) || runsAgy(inline, configured)))) {
+      return Promise.reject(userError("プラグインから Antigravity を起動できません。Gasho の画面から操作してください。"));
+    }
+  }
+  return exec(command, args, options, signal);
+}
+
 function baseContext() {
   return {
     machine,
@@ -125,7 +139,7 @@ function baseContext() {
     dataDir,
     folders: () => [...folders],
     log,
-    exec: (c: string, a: string[], o?: ExecOptions) => exec(c, a, o),
+    exec: (c: string, a: string[], o?: ExecOptions) => pluginExec(c, a, o),
     github: githubOf(),
     emit,
   };
@@ -164,7 +178,7 @@ async function call(m: Extract<ToHost, { t: "call" }>): Promise<void> {
       ...baseContext(),
       session: m.session ? sessionOf(m.session) : undefined,
       signal: controller.signal,
-      exec: (c: string, a: string[], o?: ExecOptions) => exec(c, a, o, controller.signal),
+      exec: (c: string, a: string[], o?: ExecOptions) => pluginExec(c, a, o, controller.signal),
       github: githubOf(m.id, controller.signal),
     };
     const data = m.hook ? await def?.onSessionStop?.(ctx) : await method?.(m.params, ctx);

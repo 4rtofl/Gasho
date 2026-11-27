@@ -18,7 +18,7 @@ export interface LaunchInput {
 function launchSession(machine: string, input: LaunchInput): Promise<CommandResult> {
   return sendCommand(
     machine,
-    { type: "session.launch", cwd: input.cwd, name: input.name, ...(input.trust ? { trust: true } : {}), ...launchAgentField(input.agent ?? "claude") },
+    { type: "session.launch", cwd: input.cwd, name: input.name, ...(input.trust ? { trust: true } : {}), ...launchAgentField(input.agent ?? "claude"), ...(input.agent === "antigravity" ? { screen: true } : {}) },
     LAUNCH_WAIT_MS,
   );
 }

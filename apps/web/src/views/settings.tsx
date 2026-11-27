@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { AccordionSection } from "@/components/ui/unfold-accordion";
 import { MorphingButton, type MorphingButtonStatus } from "@/components/ui/morphing-button";
 import { SemiGauge } from "@/components/ui/semi-gauge";
-import { AGENT_NAME, codexOffered } from "@/lib/agents";
+import { AGENT_NAME, EXTRA_AGENTS, offeredAgents } from "@/lib/agents";
 import { CHAT_TEXT_DEFAULT, CHAT_TEXT_MAX, CHAT_TEXT_MIN, useChatTextSize } from "@/lib/chat-text";
 import { go } from "@/lib/route";
 import { useSettingsSectionOpen } from "@/lib/settings-sections";
@@ -158,13 +158,14 @@ export function SettingsView() {
 /** How long the copy button says how the copy went. */
 const COPIED_MS = 2000;
 
-/** The agent a new session starts with. Shown once Codex is installed on some working server. */
+/** The agent a new session starts with. Shown where Codex or Antigravity is offered. */
 export function DefaultAgentSection() {
   const { server, machines } = useAppState();
   const [error, setError] = useState<string>();
   const [open, setOpen] = useSettingsSectionOpen("default-agent");
   const current = server?.defaultAgent;
-  if (!current || !machines.some(codexOffered)) return null;
+  const agents = EXTRA_AGENTS.filter((agent) => machines.some((m) => offeredAgents(m).includes(agent)));
+  if (!current || !agents.length) return null;
   const pick = async (agent: AgentKind) => {
     setError(undefined);
     const r = await setDefaultAgent(agent);
@@ -179,7 +180,7 @@ export function DefaultAgentSection() {
       actions={<span className="text-sm">{AGENT_NAME[current]}</span>}
     >
       <div role="radiogroup" aria-label="既定のエージェント" className="flex flex-wrap gap-2">
-        {(["claude", "codex"] as const).map((agent) => (
+        {(["claude", ...agents] as const).map((agent) => (
           <button
             key={agent}
             type="button"

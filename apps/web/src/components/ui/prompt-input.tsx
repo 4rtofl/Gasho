@@ -115,6 +115,7 @@ export interface PromptInputProps {
    * Called when the user sends. Throw / reject to put their message back in the box.
    */
   onSend: (payload: PromptSubmit) => void | Promise<void>;
+  preserveWhitespace?: boolean;
   /**
    * true while the assistant is replying → the send button becomes Stop while the box is empty (with text, it still
    * sends), and Esc stops
@@ -584,6 +585,7 @@ const PAD_Y = "py-2";
 export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function PromptInput(
   {
     onSend,
+    preserveWhitespace = false,
     streaming = false,
     onStop,
     models = DEFAULT_MODELS,
@@ -832,7 +834,7 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
       flashError("シェルのコマンドには、ファイルを添付できません。添付を外してください。");
       return;
     }
-    const payload: PromptSubmit = { text: text.trim(), files: attachments.map((a) => a.file), model: currentModel };
+    const payload: PromptSubmit = { text: preserveWhitespace ? text : text.trim(), files: attachments.map((a) => a.file), model: currentModel };
     const snapshot = { text, attachments };
     histIdx.current = -1;
     change((d) => ({

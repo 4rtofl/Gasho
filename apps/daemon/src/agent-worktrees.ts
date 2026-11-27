@@ -4,8 +4,8 @@
 // Gasho's sight. gasho-daemon starts each Claude Code with
 // - its plugin (claude-plugin, next to src/ and lib/: the skills) with `--plugin-dir`,
 // - a PreToolUse hook in its `--settings` (the Rust terminal host's `worktree-guard-hook` where that runs, else
-//   worktree-guard-hook.ts, next to this file; see sessionCommands in statusline.ts) that stops those two tools and says
-//   what to do instead, and
+//   worktree-guard-hook.ts, next to this file; see sessionCommands in statusline.ts) that enforces the worktree rule
+//   and blocks accidental agy calls, and
 // - the same rule in `--append-system-prompt`, so that Claude picks the session from the start.
 // None of these touches the person's settings: they hold for the sessions Gasho starts, and only while they run.
 // This file uses only Node.js's own modules: the hook's script imports it, and starts at every call of those tools.
@@ -26,8 +26,8 @@ export const GUARD_FILE = path.join(path.dirname(here), `worktree-guard-hook${pa
 /** The hook's command on Node.js, as words. */
 export const NODE_GUARD: readonly string[] = [process.execPath, GUARD_FILE];
 
-/** The tools the hook looks at: the Agent tool (Task in older Claude Code) and EnterWorktree. */
-export const GUARD_MATCHER = "Agent|Task|EnterWorktree";
+/** The tools the hook looks at: the Agent tool (Task in older Claude Code), EnterWorktree and Bash. */
+export const GUARD_MATCHER = "Agent|Task|EnterWorktree|Bash";
 
 /** What to do instead, shown to Claude when a tool is stopped and appended to the system prompt. */
 const INSTEAD =
@@ -48,13 +48,23 @@ export interface GuardReply {
 }
 
 /**
- * The hook's answer to a PreToolUse payload: a denial for EnterWorktree and for a subagent in a worktree, nothing for
- * the rest (Claude Code then goes on as without the hook).
+ * The hook's answer to a PreToolUse payload when it blocks a tool.
  */
 export function guardReply(payload: unknown): GuardReply | undefined {
   if (!payload || typeof payload !== "object") return undefined;
   const p = payload as Record<string, unknown>;
   const input = p.tool_input && typeof p.tool_input === "object" ? (p.tool_input as Record<string, unknown>) : {};
+  // Antigravity の FAQ は agent から agy を呼ぶ使い方をサポートしていない（アカウント停止の対象になりうる）。
+  // Bash でのうっかり実行を防ぐため、コマンド位置だけを見る。回避はできる。#331
+  if (p.tool_name === "Bash" && typeof input.command === "string" && runsAgy(input.command)) {
+    return {
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: "agent から agy は実行できません。Antigravity を使うときは、利用者が Gasho の画面から操作してください。",
+      },
+    };
+  }
   let what: string;
   if (p.tool_name === "EnterWorktree") what = "EnterWorktree";
   else if ((p.tool_name === "Agent" || p.tool_name === "Task") && input.isolation === "worktree") what = `${p.tool_name} の isolation: "worktree"`;
@@ -69,6 +79,72 @@ export function guardReply(payload: unknown): GuardReply | undefined {
         "worktree を使わない Subagent はそのまま使ってよい。",
     },
   };
+}
+
+export function runsAgy(command: string, name = "agy"): boolean {
+  const words: string[] = [];
+  let word: string | undefined;
+  let quote = "";
+  let escaped = false;
+  const chars = command[Symbol.iterator]();
+  for (const c of chars) {
+    if (escaped) {
+      if (c !== "\n") word = (word ?? "") + c;
+      escaped = false;
+    } else if (c === "\\" && quote !== "'") {
+      escaped = true;
+    } else if (c === "`" && quote !== "'") {
+      let body = "";
+      for (const part of chars) {
+        if (part === "`" && !escaped) {
+          if (runsAgy(body, name)) return true;
+          break;
+        }
+        body += part;
+        escaped = part === "\\" && !escaped;
+      }
+    } else if (quote) {
+      if (c === quote) quote = "";
+      else word += c;
+    } else if (c === "'" || c === '"') {
+      quote = c;
+      word ??= "";
+    } else if (" \t\r\n;|&()<>".includes(c)) {
+      if (word !== undefined) words.push(word);
+      word = undefined;
+      if ("\n;|&()".includes(c)) {
+        if (runsAgyWords(words, name)) return true;
+        words.length = 0;
+      }
+    } else {
+      word = (word ?? "") + c;
+    }
+  }
+  if (word !== undefined) words.push(word);
+  return runsAgyWords(words, name);
+}
+
+function runsAgyWords(words: string[], name: string): boolean {
+  let i = 0;
+  while (i < words.length) {
+    const word = words[i++]!;
+    if (/^[a-zA-Z_][a-zA-Z_0-9]*=/.test(word) || ["{", "if", "then", "elif", "else", "while", "until", "do"].includes(word)) continue;
+
+    const bin = path.posix.basename(word);
+    if (bin === name) return true;
+    if (["env", "sudo", "nohup", "exec", "xargs"].includes(bin)) continue;
+    if (bin === "timeout") {
+      i++;
+      continue;
+    }
+    if (["sh", "bash", "dash", "zsh"].includes(bin)) {
+      for (; words[i]?.startsWith("-") && words[i] !== "--"; i++) {
+        if (/^-[a-zA-Z]*c[a-zA-Z]*$/.test(words[i]!) && words[i + 1] !== undefined) return runsAgy(words[i + 1]!, name);
+      }
+    }
+    return false;
+  }
+  return false;
 }
 
 /** A word for the shell, as it is (Claude Code runs a hook's command with bash). */

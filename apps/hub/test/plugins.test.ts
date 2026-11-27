@@ -70,7 +70,7 @@ test("checkManifest takes a good manifest and says what is wrong with a bad one"
   assert.match(bad({}, "other"), /フォルダーの名前/);
   assert.match(bad({ api: "2.0" }), /API 2\.0/);
   assert.match(bad({ api: "1.23" }), /API 1\.23/);
-  assert.match(bad({ api: "1.22" }), /この Gasho は 1\.21 までです/);
+  assert.match(bad({ api: "1.23" }), /この Gasho は 1\.22 までです/);
   assert.match(bad({ version: "1" }), /version/);
   assert.match(bad({ genre: "Dev Tools" }), /genre/);
   assert.match(bad({ genre: ["devtools"] }), /genre/);

@@ -15,7 +15,7 @@ import { WorktreeActionDialog, WorktreeContextMenu, type WorktreeActionRequest }
 import { showNotice, useNotice } from "@/lib/notice";
 import { AgentMark } from "@/components/agent-mark";
 import { LaunchMenu } from "@/components/launch-menu";
-import { launchAgentFor, launchTitle, sessionAgent, showsAgents } from "@/lib/agents";
+import { canLaunchOn, launchAgentFor, launchTitle, sessionAgent, showsAgents } from "@/lib/agents";
 import { StatusDot } from "@/components/status-badge";
 import { Sidebar, SidebarTrigger, useSidebar, type SidebarAction, type SidebarGroup, type SidebarItem, type SidebarMove, type SidebarNest, type SidebarSection } from "@/components/ui/sidebar";
 import { updateToTell } from "@/lib/daemon-update";
@@ -447,7 +447,7 @@ export function App() {
       return found?.m.connected && found.s.status === "waiting";
     }).length;
     const target = c.launch ? listWorktrees.get(c.launch) : undefined;
-    const canLaunch = target !== undefined && target.machine.connected && target.machine.canLaunch === true;
+    const canLaunch = target !== undefined && canLaunchOn(target.machine);
     return {
       id: c.id,
       title: c.title,
@@ -553,7 +553,7 @@ export function App() {
   const worktreeGroups: SidebarGroup[] = categoryRows.map(({ c, isFolded, roots, rows, shown }) => {
     const waiting = rows.filter(waits).length;
     const target = c.launch ? groupingWorktrees.get(c.launch) : undefined;
-    const canLaunch = target !== undefined && target.machine.connected && target.machine.canLaunch === true;
+    const canLaunch = target !== undefined && canLaunchOn(target.machine);
     const repo = c.repo && { ...c.repo, title: c.title };
     return {
       id: c.id,

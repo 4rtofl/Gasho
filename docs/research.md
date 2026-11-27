@@ -249,3 +249,24 @@ code.claude.com の次のページを、2026年11月11日に読んだ。
 - Hooks、Hooks guide
 - Legal and compliance、Headless
 - Agent SDK（overview、sessions、permissions、streaming input）
+
+## Antigravity CLI と ACP（#331）
+
+2026年11月27日に原文を確認した。個人の Google ログインで、利用者が Gasho の画面から手で操作する ACP 接続を検討した。
+
+- 追加規約6項は、第三者のソフトウェア、ツール、サービスからのアクセスを規約違反とし、OpenClaw と Antigravity OAuth の組み合わせを例に挙げる。停止やアカウント終了の対象になりうるとも記載している。 [Google Antigravity 追加規約](https://antigravity.google/terms)
+- FAQ は、第三者のコーディングエージェントやアプリで `agy` を包む使い方や、アカウントの切り替えの自動化を個人向けプランでサポートしないとしている。 [Antigravity FAQ](https://antigravity.google/docs/faq)
+- ACP の文書は、任意の ACP クライアントが Antigravity CLI を起動できると説明している。作業フォルダーで `agy acp` を起動し、標準入出力で ACP v1 を使う。 [Antigravity ACP の文書](https://antigravity.google/docs/ide/extensions/acp/)
+- 2026年10月8日の Google スタッフ表示のあるフォーラム回答は、Codex や Claude Code から `agy` を包む使い方は個人向けではサポートせず、ACP 対応エディタをサポートする例に挙げている。 [Google AI Developers Forum の回答](https://discuss.ai.google.dev/t/is-google-ai-pro-antigravity-cli-automation-with-codex-permitted/187241/2)
+
+ACP 対応は公開されている一方、Gasho のような画面クライアントが個人向けプランで許されるかは規約上グレーである。利用者は、認証情報を扱わず、画面から利用者が送った発言だけを渡し、権限の確認も利用者が答える条件で、個人向けの連携を実装することを決めた。Claude Code の hook とプラグインの制限もこの条件に従う。
+
+### 実機の確認手順
+
+本物の Antigravity CLI と Google アカウントでの動作は未確認。Codex のセッションに同等の hook を設定できるかも未確認。
+
+1. ログイン済みの working server を選び、画面から Antigravity を起動する。短い発言を送り、入力と応答が会話に出ることを確かめる
+2. 確認が出る操作を2回頼み、1回は許可し、1回は拒否する。画面に確認と通知が出て、それぞれの回答に沿って進むことを確かめる
+3. 応答中に「停止」を押し、割り込みが表示されることを確かめる。メニューで名前を変更する
+4. gasho-daemon を起動し直し、一覧に名前が残ることを確かめる。「Antigravity の会話を開く」または次の発言で、対応する CLI では会話が続き、未対応なら理由が出ることを確かめる。最後に画面から削除し、一覧から消えることを確かめる
+5. 未ログインの working server で起動し、端末で `agy` を起動してログインするよう表示されることを確かめる

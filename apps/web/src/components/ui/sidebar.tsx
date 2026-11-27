@@ -8,8 +8,8 @@
 // be changed by dragging the right edge (`ResizeHandle`, lib/widths), and an item's tooltip can show while the sidebar
 // is open too (`tip`, for the branch of a worktree that has a name), and items can be selected together (`selected`,
 // `onShiftClick`, for the worktrees pressed with Shift), and items can be nested under an item, which folds them (`nest`,
-// for the worktrees started from a worktree). On a Mac, iPhone and iPad, Ctrl+B in a box that text is
-// written in is left to the box (it moves the cursor back), and only ⌘B folds the sidebar there. Only the items of the
+// for the worktrees started from a worktree), and the active item scrolls into view when it changes. ⌘B is one of the
+// screen's shortcuts (lib/shortcuts): ⌥⌘B and ⇧⌘B are left to the browser. Only the items of the
 // last section scroll, under the rest (the other sections and that section's title), which stays, as the list of
 // conversations does under the top row in EasyUI's Chat (with Data Table's shadow under it once scrolled).
 
@@ -19,6 +19,7 @@ import { ChevronRight, GripVertical, PanelLeft } from "lucide-react";
 import { useWindowWidth } from "../../lib/media";
 import { SIDEBAR_WIDTH_DEFAULT, SIDEBAR_WIDTH_MAX, SIDEBAR_WIDTH_MIN, clampSidebarWidth, useSidebarWidth } from "../../lib/widths";
 import { groupDrop, itemsByGroup, useSortable, type Sortable } from "../../lib/sortable";
+import { shortcutOf } from "../../lib/shortcuts";
 import { appleKeys, typingIn } from "../../lib/text-input";
 import { cn } from "../../lib/utils";
 import { ResizeHandle } from "../resize-handle";
@@ -187,8 +188,7 @@ export function Sidebar({
   // ⌘B / Ctrl+B
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
-        if (!e.metaKey && appleKeys(navigator.userAgent) && typingIn(e.target)) return;
+      if (shortcutOf(e, appleKeys(navigator.userAgent), typingIn(e.target)) === "sidebar") {
         e.preventDefault();
         if (window.matchMedia("(min-width: 768px)").matches) setCollapsed(!collapsed);
         else setMobileOpen(!mobileOpen);
@@ -544,6 +544,10 @@ function Panel({
   // stops or starts scrolling by itself, as its scrollTop changes then without a scroll event.
   const [scrolled, setScrolled] = React.useState(false);
   React.useLayoutEffect(() => setScrolled((listPart.current?.scrollTop ?? 0) > 2), [together]);
+  // Gasho: an item made active from elsewhere than the list (⌥⌘↓, or a worktree opened from ⌘K) comes into its view.
+  React.useEffect(() => {
+    listPart.current?.querySelector('[aria-current="page"]')?.scrollIntoView({ block: "nearest" });
+  }, [activeId]);
 
   // Gasho: the mouse is over the list, and the last mouse event that reached the list through React's tree (a row's
   // menu, drawn outside the list, is in it). The list's onMouseLeave did not come once a category's "＋" failed to

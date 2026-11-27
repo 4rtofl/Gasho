@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { FolderGit2, Home, KeyRound, ListRestart, LoaderCircle, Plus, Puzzle, Settings, X } from "lucide-react";
+import { ArrowDown, ArrowUp, BookOpen, FolderGit2, Home, KeyRound, ListRestart, LoaderCircle, PanelLeft, Plus, Puzzle, Settings, Trash2, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import type { SessionListWorktree } from "@gasho/plugin-sdk";
 import { GasshoOverlay } from "@/components/gassho";
@@ -9,7 +9,7 @@ import { PanelBarContext } from "@/components/side-panel";
 import { CloneRepoDialog } from "@/components/clone-repo-dialog";
 import { CloneRepoButton, RegisterRepos, RepoFilter } from "@/components/repo-filter";
 import { ReposDialog } from "@/components/repos-dialog";
-import { SessionActionDialog, SessionContextMenu, type SessionActionRequest } from "@/components/session-menu";
+import { SessionActionDialog, SessionContextMenu, sessionActionsUnavailable, type SessionActionRequest } from "@/components/session-menu";
 import { RepoActionDialog, RepoContextMenu, type RepoActionRequest } from "@/components/repo-menu";
 import { WorktreeActionDialog, WorktreeContextMenu, type WorktreeActionRequest } from "@/components/worktree-menu";
 import { showNotice, useNotice } from "@/lib/notice";
@@ -17,6 +17,7 @@ import { AgentMark } from "@/components/agent-mark";
 import { LaunchMenu } from "@/components/launch-menu";
 import { launchAgentFor, launchTitle, sessionAgent, showsAgents } from "@/lib/agents";
 import { StatusDot } from "@/components/status-badge";
+import { CommandPalette, type CommandPaletteItem } from "@/components/ui/command-palette";
 import { Sidebar, SidebarTrigger, useSidebar, type SidebarAction, type SidebarGroup, type SidebarItem, type SidebarMove, type SidebarNest, type SidebarSection } from "@/components/ui/sidebar";
 import { updateToTell } from "@/lib/daemon-update";
 import { hubUpdateToTell } from "@/lib/server-update";
@@ -48,6 +49,7 @@ import {
 } from "@/lib/session-list";
 import { foldParent, setNesting, useGroupingPrefs, useNestingPrefs, useSessionListPrefs } from "@/lib/session-list-prefs";
 import { useSessionLauncher } from "@/lib/session-launch";
+import { appleBrowser, shortcutKeys, useShortcuts } from "@/lib/shortcuts";
 import {
   movedSession,
   narrowWorktrees,
@@ -198,6 +200,12 @@ function PanelView({ machine, sessionId, panel, docked }: { machine: string; ses
   return <FilePanel key={path} machine={machine} sessionId={sessionId} path={path} docked={docked} onClose={close} />;
 }
 
+/** The screen's keyboard shortcuts (lib/shortcuts), with what they do now. */
+function Shortcuts({ on }: { on: Parameters<typeof useShortcuts>[0] }) {
+  useShortcuts(on);
+  return null;
+}
+
 function Centered({ children }: { children: React.ReactNode }) {
   return <div className="flex min-h-dvh items-center justify-center bg-background p-4 text-sm text-muted-foreground">{children}</div>;
 }
@@ -223,6 +231,9 @@ export function App() {
     if (movedTo && route.name === "session") go({ ...route, sessionId: movedTo }, { replace: true });
   }, [route, movedTo]);
   const [mobileOpen, setMobileOpen] = useState(false);
+  // The sidebar folded to its icons on a computer (⌘B), and the palette opened with ⌘K.
+  const [collapsed, setCollapsed] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   // The logo's easter egg while it is out (where the logo's 🙏 was when it started), drawn over everything.
   const [gassho, setGassho] = useState<GasshoFrom | null>(null);
   // What was picked from a session tab's menu (rename, fork, remove); its dialog is open meanwhile.
@@ -714,6 +725,110 @@ export function App() {
         : route.name === "plugin"
         ? (pluginItems.find((i) => i.plugin === route.plugin && i.page.id === route.page)?.id ?? "")
         : route.name;
+  // A row of the sidebar opened (pressed, moved to with ⌥⌘↑↓, or picked from ⌘K).
+  const openItem = (id: string) => {
+    if (id === "home" || id === "devices" || id === "settings" || id === "plugins") return go({ name: id });
+    const item = pluginItems.find((i) => i.id === id);
+    if (item) return go({ name: "plugin", plugin: item.plugin, page: item.page.id, params: item.page.params ?? {} });
+    // A session's row of the plugin's categories.
+    const row = listMode.kind !== "gasho" ? shownByKey.get(id) : undefined;
+    if (row) return go({ name: "session", machine: row.m.id, sessionId: row.s.sessionId });
+    const w = worktrees.find((x) => x.id === id);
+    if (!w) return;
+    // Pressed without Shift: the rows selected together are let go, and a range starts from this one.
+    rangeStart.current = w.id;
+    setSelectedRows(new Set());
+    const s = sessionToOpen(w);
+    go(s ? { name: "session", machine: w.machine.id, sessionId: s.sessionId } : { name: "worktree", machine: w.machine.id, path: w.path });
+  };
+  // ⌥⌘↓ / ⌥⌘↑: the row under or over the open one in the sidebar's list, as it shows (the worktrees, or the sessions of
+  // a plugin's categories), the first or the last from elsewhere. They stop at the list's ends.
+  const listRows = listMode.kind === "gasho" ? shownRows : groups.flatMap((g) => g.items.map((i) => i.id));
+  const rowFrom = (step: 1 | -1): string | undefined => {
+    const at = listRows.indexOf(activeId);
+    return at < 0 ? (step > 0 ? listRows[0] : listRows.at(-1)) : listRows[at + step];
+  };
+  const moveTo = (step: 1 | -1) => {
+    const id = rowFrom(step);
+    if (id) openItem(id);
+  };
+  // ⌥⌘W: the open session's removal, always asked first (a key is pressed by mistake more easily than its tab's ×).
+  const openMachine = route.name === "session" ? machines.find((m) => m.id === route.machine) : undefined;
+  const removable = openMachine && openSession?.managed ? { machine: openMachine, session: openSession } : undefined;
+  const removeUnavailable = removable ? sessionActionsUnavailable(removable.machine) : "セッションを開いているときに使えます。";
+  const removeOpen = () => {
+    if (!removable) return;
+    if (removeUnavailable) return showNotice(removeUnavailable);
+    setSessionAction({ action: "remove", ...removable });
+  };
+  const toggleSidebar = () => {
+    if (desktop) return setCollapsed(!collapsed);
+    setMobileOpen(true);
+    holdList(true);
+  };
+  // ⌘K: what can be done (each with its shortcut), the pages, the worktrees and the sessions, to be found by their names.
+  const apple = appleBrowser();
+  const rowsAre = listMode.kind === "gasho" ? "の worktree " : "のセッション";
+  const paletteItems: CommandPaletteItem[] = [
+    {
+      id: "sidebar",
+      group: "操作",
+      label: desktop && !collapsed ? "サイドバーを畳む" : "サイドバーを開く",
+      icon: <PanelLeft />,
+      keys: shortcutKeys("sidebar", apple),
+      run: toggleSidebar,
+    },
+    {
+      id: "next",
+      group: "操作",
+      label: `1 つ下${rowsAre}へ移る`,
+      icon: <ArrowDown />,
+      keys: shortcutKeys("next", apple),
+      unavailable: rowFrom(1) ? undefined : `サイドバーの一番下${rowsAre}です。`,
+      run: () => moveTo(1),
+    },
+    {
+      id: "previous",
+      group: "操作",
+      label: `1 つ上${rowsAre}へ移る`,
+      icon: <ArrowUp />,
+      keys: shortcutKeys("previous", apple),
+      unavailable: rowFrom(-1) ? undefined : `サイドバーの一番上${rowsAre}です。`,
+      run: () => moveTo(-1),
+    },
+    {
+      id: "remove",
+      group: "操作",
+      label: "開いているセッションを削除…",
+      icon: <Trash2 />,
+      keys: shortcutKeys("remove", apple),
+      unavailable: removeUnavailable,
+      run: removeOpen,
+    },
+    { id: "launch", group: "操作", label: "新しいセッション…", icon: <Plus />, run: () => openLaunch() },
+    { id: "repos", group: "操作", label: "リポジトリを登録・解除…", icon: <FolderGit2 />, run: () => setReposOpen(true) },
+    { id: "clone", group: "操作", label: "リポジトリを clone…", icon: <BookOpen />, run: () => setCloneOpen(true) },
+    ...sections[0]!.items.map((i) => ({ id: `page:${i.id}`, group: "ページ", label: i.label, icon: i.icon, run: () => openItem(i.id) })),
+    ...worktrees.map((w) => ({
+      id: `worktree:${w.id}`,
+      group: "worktree",
+      label: worktreeTitle(w),
+      description: [w.repo, machines.length > 1 ? w.machine.name : undefined, w.name ? worktreeOrigin(w) : undefined].filter(Boolean).join(" · ") || undefined,
+      icon: <StatusDot {...worktreeDot(w, unreadOnes)} />,
+      run: () => openItem(w.id),
+    })),
+    ...ownWorktrees.flatMap((w) =>
+      w.sessions.map((s) => ({
+        id: `session:${sessionKey(w.machine.id, s.sessionId)}`,
+        group: "セッション",
+        label: sessionLabel(s),
+        description: [worktreeTitle(w), machines.length > 1 ? w.machine.name : undefined].filter(Boolean).join(" · "),
+        icon: <StatusDot {...sessionDot(w.machine, s, unreadOnes)} />,
+        run: () => go({ name: "session", machine: w.machine.id, sessionId: s.sessionId }),
+      })),
+    ),
+  ];
+
   const panel = route.name === "session" ? route.panel : undefined;
   // A panel of a plugin's page (P19), shown as a session's panel is.
   const pagePanel = route.name === "plugin" ? route.panel : undefined;
@@ -732,21 +847,9 @@ export function App() {
       <Sidebar
         sections={sections}
         activeId={activeId}
-        onActiveChange={(id) => {
-          if (id === "home" || id === "devices" || id === "settings" || id === "plugins") return go({ name: id });
-          const item = pluginItems.find((i) => i.id === id);
-          if (item) return go({ name: "plugin", plugin: item.plugin, page: item.page.id, params: item.page.params ?? {} });
-          // A session's row of the plugin's categories.
-          const row = listMode.kind !== "gasho" ? shownByKey.get(id) : undefined;
-          if (row) return go({ name: "session", machine: row.m.id, sessionId: row.s.sessionId });
-          const w = worktrees.find((x) => x.id === id);
-          if (!w) return;
-          // Pressed without Shift: the rows selected together are let go, and a range starts from this one.
-          rangeStart.current = w.id;
-          setSelectedRows(new Set());
-          const s = sessionToOpen(w);
-          go(s ? { name: "session", machine: w.machine.id, sessionId: s.sessionId } : { name: "worktree", machine: w.machine.id, path: w.path });
-        }}
+        onActiveChange={openItem}
+        collapsed={collapsed}
+        onCollapsedChange={setCollapsed}
         mobileOpen={mobileOpen}
         onMobileOpenChange={(open) => {
           setMobileOpen(open);
@@ -872,6 +975,8 @@ export function App() {
         }
       />
       <WorktreeActionDialog request={worktreeAction} onClose={() => setWorktreeAction(null)} />
+      <Shortcuts on={{ palette: () => setPaletteOpen((o) => !o), next: () => moveTo(1), previous: () => moveTo(-1), remove: removeOpen }} />
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} items={paletteItems} />
       <RepoActionDialog request={repoAction} onClose={() => setRepoAction(null)} />
       <LaunchDialog
         open={launchOpen}

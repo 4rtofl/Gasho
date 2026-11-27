@@ -90,6 +90,7 @@ export default sdk.definePlugin({
     { id: "right", component: () => h("span", null, "フッター右") },
     { id: "left", side: "left", component: () => h("span", null, "フッター左") },
   ],
+  answerSelection: [{ id: "selection", component: ({ text, answer, start, end, session }) => h("p", null, `選んだ文 ${text} ${start}〜${end} ${answer} ${session.name}`) }],
   worktreeTabs: [
     {
       id: "tab",

@@ -461,6 +461,43 @@ export interface FileViewer {
   component: ComponentType<FileViewerProps>;
 }
 
+/**
+ * Text selected in one of Claude's answers in a session's conversation (P22). The answer is its text as the
+ * conversation shows it: without Markdown's marks, a newline between its paragraphs, list items and lines. Plugin API
+ * 1.21.
+ */
+export interface AnswerSelection {
+  /** The text selected, without white space at its ends: `answer.slice(start, end)`. */
+  text: string;
+  /** The whole answer the text was selected in. */
+  answer: string;
+  /** Where the selected text starts in `answer` (a string index). */
+  start: number;
+  /** Where it ends in `answer` (a string index, after its last character). */
+  end: number;
+}
+
+/** A part shown by text selected in one of Claude's answers (P22): the selection, and the session it was made in. */
+export interface AnswerSelectionProps extends AnswerSelection {
+  machine: MachineInfo;
+  session: SessionInfo;
+}
+
+/**
+ * A part shown next to text selected in one of Claude's answers in a session's conversation (P22): in a popup below
+ * the selection (above it when there is no room), in the look of the SDK's Popover. Only Claude's answers: not what
+ * the user wrote, nor what tools returned. It is drawn anew for every selection, and goes away when the text is no
+ * longer selected, on Esc and on a press outside it. Pressing in it keeps it. Plugin API 1.21.
+ */
+export interface AnswerSelectionItem {
+  id: string;
+  /** Where it goes among the plugins' parts in the popup: a smaller one comes higher. By default 500. */
+  order?: number;
+  /** Whether it shows for this selection. With no part to show, there is no popup. */
+  when?: (ctx: SessionContext & { selection: AnswerSelection }) => boolean;
+  component: ComponentType<AnswerSelectionProps>;
+}
+
 /** What the web part of a plugin adds to Gasho's screen (its web.js exports it as default). */
 export interface PluginDefinition {
   sidebar?: SidebarItem[];
@@ -488,6 +525,8 @@ export interface PluginDefinition {
   worktreeGroupings?: WorktreeGrouping[];
   /** Views of files in a session's file panel, in place of Gasho's (P20). Plugin API 1.18. */
   fileViewers?: FileViewer[];
+  /** Parts shown next to text selected in Claude's answers (P22). Plugin API 1.21. */
+  answerSelection?: AnswerSelectionItem[];
 }
 
 /** A call of a method of the plugin's daemon part (P7). */

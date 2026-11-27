@@ -31,7 +31,7 @@ import { loadSkills, useSkills } from "@/lib/skills";
 import { loadTranscript, sendCommand, type SentResult, transcriptKey, type TranscriptState, useAppState } from "@/lib/store";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
-import { PluginComposerFooter, PluginConversationEnd, PluginHeaderItems, useComposerFooterParts } from "@/plugins/parts";
+import { PluginAnswerSelection, PluginComposerFooter, PluginConversationEnd, PluginHeaderItems, useAnswerSelectionParts, useComposerFooterParts } from "@/plugins/parts";
 import { SessionFooter } from "@/components/session-footer";
 import { DESKTOP, useMediaQuery } from "@/lib/media";
 import type { LaunchInitial } from "@/views/launch";
@@ -76,6 +76,7 @@ export function SessionView({
   // Where the conversation's images and videos are read from.
   const online = m?.connected === true;
   const source = useMemo(() => ({ machine, sessionId, online }), [machine, sessionId, online]);
+  const selectable = useAnswerSelectionParts();
 
   if (!m || !s || !shown) return <SessionNotShown machine={m} machineId={machine} sessionId={sessionId} listed={s !== undefined} />;
 
@@ -211,6 +212,7 @@ export function SessionView({
           footer={<Composer machine={m} session={s} transcript={t} />}
           end={<PluginConversationEnd machine={m} session={s} />}
           source={source}
+          selection={selectable ? (sel, close) => <PluginAnswerSelection machine={m} session={s} selection={sel} onClose={close} /> : undefined}
         />
       </div>
       <SessionFooter machine={m} session={s} />

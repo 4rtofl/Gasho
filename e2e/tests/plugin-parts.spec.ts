@@ -18,6 +18,18 @@ function machine(hub: GashoHub): Promise<FakeDaemon> {
   });
 }
 
+/** Selects "どうぞ" in Claude's answer, and says where the bottom of the selection is. */
+const SELECT_DOUZO = `(() => {
+  const walker = document.createTreeWalker(document.querySelector("[data-answer]"), NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const at = n.nodeValue.indexOf("どうぞ");
+    if (at < 0) continue;
+    document.getSelection().setBaseAndExtent(n, at, n, at + 3);
+    return document.getSelection().getRangeAt(0).getBoundingClientRect().bottom;
+  }
+  throw new Error("回答がありません");
+})()`;
+
 const sessionUrl = (d: FakeDaemon, more = "") => `/#/s/${encodeURIComponent(d.machineId)}/${SESSION}${more}`;
 const worktreeUrl = (d: FakeDaemon, more = "") => `/#/w/${encodeURIComponent(d.machineId)}/${encodeURIComponent(FOLDER)}${more}`;
 
@@ -95,6 +107,16 @@ test.describe("部品", () => {
       const input = (await page.getByPlaceholder("Agent への指示を入力…").boundingBox())!;
       expect(last.y).toBeLessThan(box.y);
       expect(box.y).toBeLessThan(input.y);
+    });
+
+    await test.step("回答の文を選ぶと、選んだ範囲の下に部品を出し、Esc で消す", async () => {
+      // As a long press on a phone or a double click selects a word.
+      const bottom = await page.evaluate<number>(SELECT_DOUZO);
+      const part = page.getByText("選んだ文 どうぞ 3〜6 はい、どうぞ。 作業");
+      await expect(part).toBeVisible();
+      expect((await part.boundingBox())!.y).toBeGreaterThan(bottom);
+      await page.keyboard.press("Escape");
+      await expect(part).toBeHidden();
     });
 
     await test.step("panel の項目は、そのパネルを開き、開いているあいだ選んだ状態で出す", async () => {

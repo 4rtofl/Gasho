@@ -423,7 +423,7 @@ export const sdk: GashoSdk = {
       if (!info.manifest.permissions?.includes("session.launch")) {
         return { ok: false, error: `${info.manifest.name} には、セッションを起動する権限がありません（gasho-plugin.json の permissions）。` };
       }
-      const r = await launchSession(machine, { cwd, name: name?.trim() || undefined, trust, agent }, { fromPlugin: true });
+      const r = await launchSession(machine, { cwd, name: name?.trim() || undefined, trust, agent });
       if (r.ok && r.sessionId) return { ok: true, sessionId: r.sessionId };
       if (r.needsTrust) {
         return { ok: false, error: "Claude Code がこのフォルダーを信頼するかを聞いています。", needsTrust: true, ...(r.trustWarnings ? { trustWarnings: r.trustWarnings } : {}) };

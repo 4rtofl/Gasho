@@ -231,6 +231,7 @@ Claude Code は、Context Window の使用量と、Claude.ai のプランで決�
 - `--settings` はユーザーとプロジェクトの設定より優先されるので、そのままでは利用者のステータスラインが消える。gasho-daemon は起動の前に、フォルダーのローカルの設定、プロジェクトの設定、ユーザー設定の順に `statusLine` を探し、そのコマンドを中継のコマンドに渡す。中継のコマンドは、同じ JSON でそれを bash で実行し、出力をそのまま返す。`padding` と `refreshInterval` も引き継ぐ
 - 中継のコマンドは、gasho-daemon に送れなくても、利用者のステータスラインの出力は返す
 - Gasho が起動していないセッションには付けないので、その `context` と `limits` はない
+- 中継のコマンドと、次の節（worktree での作業）の hook は、Claude Code がステータスラインを更新するたび・ツールを呼ぶたびに起動する。gasho-daemon は、Rust の端末（`gasho-terminal-host`）があるマシンでは、そのバイナリの `statusline-relay` と `worktree-guard-hook` で動かし、Node.js を立ち上げない。最初のセッションを起動するときに `gasho-terminal-host statusline-relay` を流して決め、ログに残す。動かないマシン（バイナリが無い、中継のコマンドが入る前にビルドしたもの）では、Node.js のスクリプト（`statusline-relay.ts`・`worktree-guard-hook.ts`）で動かす
 
 ### worktree での作業
 
@@ -238,7 +239,7 @@ Gasho が起動したセッション（フォークを含む）の Agent が wor
 
 gasho-daemon は、Claude Code を起動するたびに（新しいセッション、フォーク、休止からの再開）、次のものを付ける。どれも利用者・プロジェクトの設定ファイルは書き換えず、そのプロセスのあいだだけ効く。Gasho の外（ターミナルで直接）起動した Claude Code には付かない。
 
-- PreToolUse の hook（`--settings` の `hooks`。ステータスラインと同じ `--settings` に入れる）: マッチャーは `Agent|Task|EnterWorktree`。gasho-daemon の `worktree-guard-hook` を node で動かし、`EnterWorktree` と、`tool_input.isolation` が `"worktree"` の `Agent`（古い名前の `Task` も）を `permissionDecision: "deny"` で止める。理由には、スキル `gasho:launch-gasho-session` の手順（`git worktree add` で worktree を作り、`gasho-daemon session launch` で起動して指示する）を書く。ほかの呼び出しには何も返さない。`--settings` の hooks は、利用者とプロジェクトの hooks に足され、置き換えない（Claude Code 2.1.332 で確かめた）
+- PreToolUse の hook（`--settings` の `hooks`。ステータスラインと同じ `--settings` に入れる）: マッチャーは `Agent|Task|EnterWorktree`。gasho-daemon の `worktree-guard-hook` を動かし（Rust の端末か Node.js。決め方はステータスラインの中継と同じ）、`EnterWorktree` と、`tool_input.isolation` が `"worktree"` の `Agent`（古い名前の `Task` も）を `permissionDecision: "deny"` で止める。理由には、スキル `gasho:launch-gasho-session` の手順（`git worktree add` で worktree を作り、`gasho-daemon session launch` で起動して指示する）を書く。ほかの呼び出しには何も返さない。`--settings` の hooks は、利用者とプロジェクトの hooks に足され、置き換えない（Claude Code 2.1.332 で確かめた）
 - 同じ決まりを `--append-system-prompt` で足し、最初からその手順を選ばせる
 - `--plugin-dir` で、gasho-daemon のプラグイン `gasho`（`apps/daemon/claude-plugin`。npm のパッケージでは `lib/` の隣の `claude-plugin/`）を読ませる。スキル `gasho:launch-gasho-session`（worktree を作ってセッションを起動し、指示する）、`gasho:remove-gasho-worktree`（worktree をセッションごと片付ける）、`gasho:verify-in-chrome`（自分を Chrome つきでフォークして確かめさせる）が入る。どのリポジトリのセッションでも使えるよう、リポジトリの `.claude/skills` には置かない。画面の「/」の候補（S19）にも、Gasho が起動したセッションではこれらを出す
 

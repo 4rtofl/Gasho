@@ -2,7 +2,8 @@
 // the status line, with what it reports as JSON on stdin. It sends the session's id, its context window and the plan's
 // usage limits to gasho-daemon, and runs the status line command the user set up (if any) with the same JSON, printing
 // what that prints. It uses only Node.js's own modules, so that it starts fast, and never fails the status line:
-// gasho-daemon being away only means that nothing is sent.
+// gasho-daemon being away only means that nothing is sent. Where the Rust terminal host runs, it does this instead
+// (terminal-host/src/statusline_relay.rs; sessionCommands in statusline.ts).
 import { spawn } from "node:child_process";
 
 /**

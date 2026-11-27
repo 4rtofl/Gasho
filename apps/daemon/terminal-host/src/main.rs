@@ -1,9 +1,12 @@
 // The terminal of one session that gasho-daemon started, in Rust: what ../../src/terminal-host.ts does, with the same
 // socket protocol (HOST_PROTOCOL in terminal.ts) and the same settings file, so that gasho-daemon tells the two apart by
 // nothing but their memory. The screen is kept by alacritty_terminal instead of xterm.js. Run by gasho-daemon only:
-// `gasho-terminal-host <config.json>`.
+// `gasho-terminal-host <config.json>`. The same binary is the status line command and the PreToolUse hook of the
+// sessions gasho-daemon starts (`gasho-terminal-host statusline-relay` and `… worktree-guard-hook`; see statusline.ts).
 mod pty;
 mod screen;
+mod statusline_relay;
+mod worktree_guard;
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -609,16 +612,21 @@ fn listen(host: &Arc<Host>) {
 
 fn main() {
     let arg = std::env::args().nth(1).unwrap_or_default();
-    if arg == "--version" {
-        println!(
-            "gasho-terminal-host {} (protocol {PROTOCOL})",
-            env!("CARGO_PKG_VERSION")
-        );
-        return;
-    }
-    if arg.is_empty() {
-        eprintln!("usage: gasho-terminal-host <config.json>");
-        std::process::exit(2);
+    match arg.as_str() {
+        "--version" => {
+            println!(
+                "gasho-terminal-host {} (protocol {PROTOCOL})",
+                env!("CARGO_PKG_VERSION")
+            );
+            return;
+        }
+        "statusline-relay" => std::process::exit(statusline_relay::run()),
+        "worktree-guard-hook" => return worktree_guard::run(),
+        "" => {
+            eprintln!("usage: gasho-terminal-host <config.json> | statusline-relay | worktree-guard-hook");
+            std::process::exit(2);
+        }
+        _ => {}
     }
     let config_file = PathBuf::from(&arg);
     let cfg = read_config(&config_file).unwrap_or_else(|e| {

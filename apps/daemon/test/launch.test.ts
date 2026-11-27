@@ -13,7 +13,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { Daemon } from "../src/daemon.ts";
 import { chromeOnboardingOpen, dialogOpen, mcpQuestionOpen, plainScreen, trustQuestion, typedInBox } from "../src/managed.ts";
-import { RELAY_FILE, shellQuote } from "../src/statusline.ts";
+import { NODE_COMMANDS, RELAY_FILE, shellQuote } from "../src/statusline.ts";
 import { GUARD_FILE, GUARD_MATCHER, guardHooks, PLUGIN_DIR, SYSTEM_PROMPT } from "../src/agent-worktrees.ts";
 import type { TerminalStart } from "../src/terminal.ts";
 
@@ -227,6 +227,8 @@ async function setup(o: { mcp?: boolean; chrome?: boolean; warnings?: string[]; 
     claudeTmpDir: path.join(dir, "claude-tmp"),
   } as ConstructorParameters<typeof Daemon>[0]) as unknown as Record<string, any>;
   d.canLaunch = true;
+  // The scripts on Node.js, whether or not the Rust terminal host is built here.
+  d.sessionCommands = Promise.resolve(NODE_COMMANDS);
   const started: TerminalStart[] = [];
   d.terminals = {
     // The terminal answers with Claude Code's PID; `claude agents` (the fake) lists this process.

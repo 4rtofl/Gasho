@@ -37,7 +37,8 @@ const HOST_FILE = fileURLToPath(new URL(`./terminal-host${path.extname(fileURLTo
 export const NODE_HOST: readonly string[] = [process.execPath, HOST_FILE];
 /**
  * The Rust terminal host for this machine, beside lib/ in the npm package (or src/ in the repository, built there by
- * scripts/terminal-host.ts). The package has it for macOS arm64 and Linux x64 only.
+ * scripts/terminal-host.ts). The package has it for macOS arm64 and Linux x64 only. It is also the status line's and
+ * the hook's command of the sessions (sessionCommands in statusline.ts).
  */
 export const NATIVE_HOST = fileURLToPath(new URL(`../native/${process.platform}-${process.arch}/gasho-terminal-host`, import.meta.url));
 

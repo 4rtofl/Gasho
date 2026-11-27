@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -7,7 +8,8 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { startHookServer } from "../src/hooks.ts";
-import { isInside, RELAY_FILE, shellQuote, statusLineLaunch, statusLineOf, userStatusLine } from "../src/statusline.ts";
+import { isInside, NODE_COMMANDS, sessionCommands, shellQuote, statusLineLaunch, statusLineOf, userStatusLine } from "../src/statusline.ts";
+import { NATIVE_HOST } from "../src/terminal.ts";
 
 /** How t.waitFor waits for what the hook server does after answering: up to 5 seconds, for a machine under load. */
 const WAIT = { interval: 10, timeout: 5_000 };
@@ -78,7 +80,7 @@ test("userStatusLine takes the folder's local settings, then its shared ones, th
 
 test("statusLineLaunch makes the relay the status line, keeping the user's padding, interval and command", () => {
   const user = { type: "command" as const, command: "~/bin/line --short", padding: 2, refreshInterval: 10 };
-  const { args, env } = statusLineLaunch({ port: 7741, secret: "s3cret", user, node: "/opt/node 24/bin/node", relay: "/lib/statusline-relay.js" });
+  const { args, env } = statusLineLaunch({ port: 7741, secret: "s3cret", user, relay: ["/opt/node 24/bin/node", "/lib/statusline-relay.js"] });
   assert.equal(args[0], "--settings");
   assert.deepEqual(JSON.parse(args[1] ?? ""), {
     statusLine: { type: "command", command: "'/opt/node 24/bin/node' '/lib/statusline-relay.js'", padding: 2, refreshInterval: 10 },
@@ -89,11 +91,11 @@ test("statusLineLaunch makes the relay the status line, keeping the user's paddi
     GASHO_STATUSLINE_COMMAND: "~/bin/line --short",
   });
   // Without a status line of the user's, and without a secret.
-  const bare = statusLineLaunch({ port: 7741, secret: undefined, user: undefined, node: "node", relay: "/r.js" });
+  const bare = statusLineLaunch({ port: 7741, secret: undefined, user: undefined, relay: ["node", "/r.js"] });
   assert.deepEqual(JSON.parse(bare.args[1] ?? ""), { statusLine: { type: "command", command: "'node' '/r.js'" } });
   assert.deepEqual(bare.env, { GASHO_STATUSLINE_URL: "http://127.0.0.1:7741/statusline" });
   // Other settings go in the same --settings.
-  const more = statusLineLaunch({ port: 7741, secret: undefined, user: undefined, node: "node", relay: "/r.js", more: { hooks: { Stop: [] } } });
+  const more = statusLineLaunch({ port: 7741, secret: undefined, user: undefined, relay: ["node", "/r.js"], more: { hooks: { Stop: [] } } });
   assert.deepEqual(JSON.parse(more.args[1] ?? ""), { hooks: { Stop: [] }, statusLine: { type: "command", command: "'node' '/r.js'" } });
 });
 
@@ -116,67 +118,100 @@ test("isInside tells a plugin's own folder from the rest", () => {
   assert.ok(isInside(`${root}/..data`, root));
 });
 
+/** The relays, each with the reason it is skipped here, if it is. */
+const RELAYS: { name: string; command: readonly string[]; skip: string | false }[] = [
+  { name: "Node.js", command: NODE_COMMANDS.statusLine, skip: false },
+  {
+    name: "Rust",
+    command: [NATIVE_HOST, "statusline-relay"],
+    skip: !existsSync(NATIVE_HOST) && "the Rust terminal host is not built here (node apps/daemon/scripts/terminal-host.ts)",
+  },
+];
+
 /**
  * Runs the relay as Claude Code would: the JSON on stdin, the environment statusLineLaunch gives. The send may take
  * up to 10 seconds instead of 2, for a machine under load.
  */
-function runRelay(env: Record<string, string>, input: string): Promise<{ code: number | null; stdout: string }> {
+function runRelay(command: readonly string[], env: Record<string, string>, input: string): Promise<{ code: number | null; stdout: string }> {
   return new Promise((resolve) => {
     const full = { PATH: process.env.PATH ?? "", HOME: os.tmpdir(), GASHO_STATUSLINE_SEND_MS: "10000", ...env };
-    const child = execFile(process.execPath, [RELAY_FILE], { env: full, timeout: 15_000 }, (e, stdout) =>
+    const child = execFile(command[0] ?? "", command.slice(1), { env: full, timeout: 15_000 }, (e, stdout) =>
       resolve({ code: e ? ((e as { code?: number }).code ?? 1) : 0, stdout }),
     );
     child.stdin?.end(input);
   });
 }
 
-test("the relay sends the context window and the limits, and prints the user's status line", async () => {
-  const got: { headers: http.IncomingHttpHeaders; body: unknown }[] = [];
-  const server = http.createServer((req, res) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (c: Buffer) => chunks.push(c));
-    req.on("end", () => {
-      got.push({ headers: req.headers, body: JSON.parse(Buffer.concat(chunks).toString("utf8")) });
-      res.writeHead(200).end();
+for (const { name, command, skip } of RELAYS) {
+  test(`the relay on ${name} sends the context window and the limits, and prints the user's status line`, { skip }, async () => {
+    const got: { headers: http.IncomingHttpHeaders; body: unknown }[] = [];
+    const server = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        got.push({ headers: req.headers, body: JSON.parse(Buffer.concat(chunks).toString("utf8")) });
+        res.writeHead(200).end();
+      });
     });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const { port } = server.address() as AddressInfo;
+    try {
+      const { env } = statusLineLaunch({
+        port,
+        secret: "s3cret",
+        // Reads the JSON as a status line command does; must not see the relay's own variables.
+        user: { type: "command", command: `printf '%s|%s|%s' "$(cat | head -c 13)" "\${GASHO_STATUSLINE_SECRET:-none}" "\${GASHO_STATUSLINE_SEND_MS:-none}"; exit 3` },
+      });
+      const r = await runRelay(command, env, JSON.stringify(AFTER_REPLY));
+      assert.equal(r.stdout, `{"session_id"|none|none`);
+      assert.equal(r.code, 3);
+      assert.equal(got.length, 1);
+      assert.equal(got[0]?.headers["x-gasho-secret"], "s3cret");
+      // What the hook server takes (#99).
+      assert.equal(got[0]?.headers["content-type"], "application/json");
+      assert.equal(got[0]?.headers.origin, undefined);
+      assert.deepEqual(got[0]?.body, { session_id: AFTER_REPLY.session_id, context_window: AFTER_REPLY.context_window, rate_limits: AFTER_REPLY.rate_limits });
+
+      // No status line of the user's: nothing is printed, and the update is still sent.
+      const bare = await runRelay(command, statusLineLaunch({ port, secret: undefined, user: undefined }).env, JSON.stringify(AFTER_REPLY));
+      assert.deepEqual(bare, { code: 0, stdout: "" });
+      assert.equal(got.length, 2);
+    } finally {
+      server.close();
+    }
   });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
-  const { port } = server.address() as AddressInfo;
+
+  test(`the relay on ${name} prints the user's status line when gasho-daemon is away, and takes input that is not JSON`, { skip }, async () => {
+    // A port nothing listens on.
+    const probe = http.createServer();
+    await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", () => resolve()));
+    const { port } = probe.address() as AddressInfo;
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+    const { env } = statusLineLaunch({ port, secret: undefined, user: { type: "command", command: "printf away" } });
+    assert.deepEqual(await runRelay(command, env, JSON.stringify(AFTER_REPLY)), { code: 0, stdout: "away" });
+    assert.deepEqual(await runRelay(command, env, "not json"), { code: 0, stdout: "away" });
+  });
+}
+
+test("the sessions run the Rust host's status line and hook where it runs them, else Node.js's scripts", async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-commands-"));
+  const said: string[] = [];
   try {
-    const { env } = statusLineLaunch({
-      port,
-      secret: "s3cret",
-      // Reads the JSON as a status line command does; must not see the relay's own variables.
-      user: { type: "command", command: `printf '%s|%s|%s' "$(cat | head -c 13)" "\${GASHO_STATUSLINE_SECRET:-none}" "\${GASHO_STATUSLINE_SEND_MS:-none}"; exit 3` },
+    assert.equal(await sessionCommands((s) => said.push(s), path.join(dir, "missing")), NODE_COMMANDS);
+    assert.equal(said.length, 0);
+    // A host built before the relay was in it reads "statusline-relay" as its settings file, and fails: say so.
+    const old = path.join(dir, "gasho-terminal-host");
+    await fs.writeFile(old, `#!/bin/sh\necho "cannot read $1" >&2\nexit 1\n`, { mode: 0o755 });
+    assert.equal(await sessionCommands((s) => said.push(s), old), NODE_COMMANDS);
+    assert.match(said[0] ?? "", /gasho-terminal-host does not run the status line here \(.*cannot read statusline-relay.*\); status lines and hooks run on Node\.js$/s);
+    if (!existsSync(NATIVE_HOST)) return t.skip("the Rust terminal host is not built here (node apps/daemon/scripts/terminal-host.ts)");
+    assert.deepEqual(await sessionCommands(() => undefined, NATIVE_HOST), {
+      statusLine: [NATIVE_HOST, "statusline-relay"],
+      guard: [NATIVE_HOST, "worktree-guard-hook"],
     });
-    const r = await runRelay(env, JSON.stringify(AFTER_REPLY));
-    assert.equal(r.stdout, `{"session_id"|none|none`);
-    assert.equal(r.code, 3);
-    assert.equal(got.length, 1);
-    assert.equal(got[0]?.headers["x-gasho-secret"], "s3cret");
-    // What the hook server takes (#99).
-    assert.equal(got[0]?.headers["content-type"], "application/json");
-    assert.equal(got[0]?.headers.origin, undefined);
-    assert.deepEqual(got[0]?.body, { session_id: AFTER_REPLY.session_id, context_window: AFTER_REPLY.context_window, rate_limits: AFTER_REPLY.rate_limits });
-
-    // No status line of the user's: nothing is printed, and the update is still sent.
-    const bare = await runRelay(statusLineLaunch({ port, secret: undefined, user: undefined }).env, JSON.stringify(AFTER_REPLY));
-    assert.deepEqual(bare, { code: 0, stdout: "" });
-    assert.equal(got.length, 2);
   } finally {
-    server.close();
+    await fs.rm(dir, { recursive: true, force: true });
   }
-});
-
-test("the relay prints the user's status line when gasho-daemon is away, and takes input that is not JSON", async () => {
-  // A port nothing listens on.
-  const probe = http.createServer();
-  await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", () => resolve()));
-  const { port } = probe.address() as AddressInfo;
-  await new Promise<void>((resolve) => probe.close(() => resolve()));
-  const { env } = statusLineLaunch({ port, secret: undefined, user: { type: "command", command: "printf away" } });
-  assert.deepEqual(await runRelay(env, JSON.stringify(AFTER_REPLY)), { code: 0, stdout: "away" });
-  assert.deepEqual(await runRelay(env, "not json"), { code: 0, stdout: "away" });
 });
 
 test("the hook server passes what the relay sends to onStatusLine, with the same secret", async (t) => {

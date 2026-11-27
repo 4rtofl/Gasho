@@ -42,7 +42,7 @@ import { mayHibernate, type PermissionMode, resumeArgs, resumeModel } from "./hi
 import { TokenDays } from "./token-days.ts";
 import { TokenCounter } from "./tokens.ts";
 import { startHookServer, summarizeHook } from "./hooks.ts";
-import { isInside, statusLineLaunch, statusLineOf, userStatusLine } from "./statusline.ts";
+import { isInside, NODE_COMMANDS, sessionCommands, statusLineLaunch, statusLineOf, userStatusLine, type SessionCommands } from "./statusline.ts";
 import { agentWorktreeArgs, guardHooks, PLUGIN_DIR } from "./agent-worktrees.ts";
 import { HubClient } from "./hub-client.ts";
 import { type Install, type Layout, layoutOf } from "./install.ts";
@@ -346,6 +346,8 @@ export class Daemon {
   private worktrees = new Map<string, { at: number; worktree?: SessionWorktree }>();
   /** The terminals of the sessions Gasho started (built-in; zellij for those from gasho-daemon 0.10 and before). */
   private terminals: SessionTerminals;
+  /** The status line's and the hook's commands of the sessions Gasho starts, chosen at the first launch. */
+  private sessionCommands: Promise<SessionCommands> | undefined;
   private managed: ManagedSessions;
   private tokenDays: TokenDays;
   private tokenDaysAt = 0;
@@ -2085,13 +2087,19 @@ export class Daemon {
         return {};
       },
     );
+    this.sessionCommands ??= sessionCommands((s) => log(s)).then((c) => {
+      log(`status lines and hooks run on ${c === NODE_COMMANDS ? "Node.js" : c.statusLine[0]}`);
+      return c;
+    });
+    const commands = await this.sessionCommands;
     // Its status line reports the context window and the plan's usage limits to gasho-daemon (statusline.ts).
     const statusLine = statusLineLaunch({
       port: this.cfg.hookPort,
       secret: this.cfg.hookSecret,
       user: await userStatusLine(dir, this.cfg.claudeDir).catch(() => undefined),
+      relay: commands.statusLine,
       // Work in a worktree goes to a session of its own there, which Gasho shows (agent-worktrees.ts).
-      more: { hooks: guardHooks() },
+      more: { hooks: guardHooks(commands.guard) },
     });
     let pid: number;
     try {

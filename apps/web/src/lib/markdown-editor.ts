@@ -211,7 +211,19 @@ const preview = ViewPlugin.fromClass(
       }
     }
   },
-  { decorations: (p) => p.decorations },
+  {
+    decorations: (p) => p.decorations,
+    eventObservers: {
+      // When the composed text came in before the composition ended, no update may come after it, and the looks would
+      // stay as they were until the next key. This runs before CodeMirror marks the composition ended, and an empty
+      // transaction is dispatched as view.update([]) does not update the plugins.
+      compositionend(_e, view) {
+        setTimeout(() => {
+          if (this.stale && !view.composing) view.dispatch({});
+        });
+      },
+    },
+  },
 );
 
 /** The marks hidden and the text styled, as in the conversation. Left out for a shell command. */

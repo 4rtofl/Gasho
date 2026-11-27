@@ -7,6 +7,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef,
 import type { TranscriptBlock, TranscriptEntry } from "@gasho/protocol";
 import { MarkdownText } from "@/components/markdown";
 import { type MediaSource, SentFiles, SentFilesSource } from "@/components/sent-files";
+import { ANSWER_ATTR, useAnswerSelection, type TrackedSelection } from "@/lib/answer-selection";
 import { chatTextStyle, useChatTextSize } from "@/lib/chat-text";
 import { clockTime } from "@/lib/format";
 import type { PendingMessage } from "@/lib/pending";
@@ -202,11 +203,17 @@ function FileChip({ name, title }: { name: string; title?: string }) {
   );
 }
 
-/** Claude's text is Markdown; what the user typed is shown as typed. */
+/** Claude's text is Markdown, and an answer the plugins' parts can be shown by (P22); what the user typed is shown as typed. */
 function BlockView({ block, markdown = false }: { block: TranscriptBlock; markdown?: boolean }) {
   switch (block.type) {
     case "text":
-      return markdown ? <MarkdownText text={block.text} /> : <UserText text={block.text} />;
+      return markdown ? (
+        <div {...{ [ANSWER_ATTR]: "" }}>
+          <MarkdownText text={block.text} />
+        </div>
+      ) : (
+        <UserText text={block.text} />
+      );
     case "tool_use":
       return block.sent ? <SentFilesView block={block} /> : <ToolFold block={block} />;
     case "tool_result":
@@ -455,7 +462,8 @@ interface Anchor {
  * conversation does not show yet; they come after its entries. `end`: what comes after them (the plugins' parts at the
  * end of the conversation, P13); it takes no room while it shows nothing. `onLoadOlder` asks for the page before what
  * is loaded. `source`: the session, to read the images and videos Claude sent from; while its working server is
- * offline, a conversation not read yet says why it is not shown.
+ * offline, a conversation not read yet says why it is not shown. `selection`: what is shown by text selected in one of
+ * Claude's answers (the plugins' parts, P22), and the function that ends it; without it, selections are not read.
  */
 export function Transcript({
   state,
@@ -464,6 +472,7 @@ export function Transcript({
   footer,
   end,
   source,
+  selection: shownBySelection,
 }: {
   state: TranscriptState | undefined;
   pending?: PendingMessage[];
@@ -471,6 +480,7 @@ export function Transcript({
   footer?: ReactNode;
   end?: ReactNode;
   source?: MediaSource;
+  selection?: (selection: TrackedSelection, close: () => void) => ReactNode;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const rowsBox = useRef<HTMLDivElement>(null);
@@ -492,6 +502,7 @@ export function Transcript({
   // under a finger or during a fling stops it, or is undone by it (iOS). Until then, the entries before the one that
   // was first (`holdFrom`) stay off screen.
   const [holdFrom, setHoldFrom] = useState<string>();
+  const [selection, closeSelection] = useAnswerSelection(rowsBox, shownBySelection !== undefined);
 
   const all = state?.entries ?? NO_ENTRIES;
   const holdAt = holdFrom ? all.findIndex((e) => e.uuid === holdFrom) : -1;
@@ -719,6 +730,7 @@ export function Transcript({
               {end}
             </div>
           )}
+          {selection && shownBySelection?.(selection, closeSelection)}
         </div>
         {hasFooter && (
           // At most as tall as the conversation's box: a footer taller than it would keep its top out of view (it sticks

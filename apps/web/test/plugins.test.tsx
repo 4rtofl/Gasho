@@ -1,8 +1,11 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { FileContent, PluginInfo } from "@gasho/protocol";
+import type { FileContent, PluginInfo, TranscriptEntry } from "@gasho/protocol";
 import { beforeEach, expect, test, vi } from "vitest";
-import { PluginConversationEnd, PluginHeaderItems, PluginPageView, PluginPanelView, PluginSettingsSections } from "@/plugins/parts";
+import { MarkdownText } from "@/components/markdown";
+import { Transcript } from "@/components/transcript";
+import { answerSelection, answerText } from "@/lib/answer-selection";
+import { PluginAnswerSelection, PluginConversationEnd, PluginHeaderItems, PluginPageView, PluginPanelView, PluginSettingsSections } from "@/plugins/parts";
 import { FilePanel } from "@/views/files";
 import { connectHub, machine, session } from "./hub";
 
@@ -250,6 +253,121 @@ test("the file panel shows a file as Gasho does when the plugin's view of it thr
   await hub.say({ type: "plugins", plugins: [info({ enabled: false })] });
   expect(screen.getByRole("img", { name: "a.png" })).toBeTruthy();
   expect(screen.queryByText("a.png（120 バイト、s1）")).toBeNull();
+});
+
+/** The first text node in `root` that has `text`. */
+function textNode(text: string, root: Node = document.body): Text {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) if (n.nodeValue?.includes(text)) return n as Text;
+  throw new Error(`「${text}」がありません`);
+}
+
+/** A range over where `text` first is in its first text node in `root`. */
+function rangeOf(text: string, root?: Node): Range {
+  const node = textNode(text, root);
+  const at = node.nodeValue!.indexOf(text);
+  const range = document.createRange();
+  range.setStart(node, at);
+  range.setEnd(node, at + text.length);
+  return range;
+}
+
+/** Selects `range` in the page, as a reader does. */
+function select(range?: Range) {
+  const selection = document.getSelection()!;
+  selection.removeAllRanges();
+  if (range) selection.addRange(range);
+  document.dispatchEvent(new Event("selectionchange"));
+}
+
+test("an answer's text is what the conversation shows, a line for each of its blocks, and a selection across its marks is found in it (P22)", () => {
+  const answer = ["Gasho の **hub** が中継する。", "", "- 1 つ目", "- 2 つ目", "", "```ts", "const a = 1;", "```", "", "| 名前 | 数 |", "| --- | --- |", "| hub | 1 |"].join("\n");
+  const { container } = render(
+    <div data-answer="">
+      <MarkdownText text={answer} />
+    </div>,
+  );
+  const root = container.firstElementChild!;
+  // Without the code block's language and its copy button.
+  expect(answerText(root).text.trimEnd()).toBe("Gasho の hub が中継する。\n1 つ目\n2 つ目\nconst a = 1;\n名前\t数\nhub\t1");
+
+  const range = document.createRange();
+  range.setStart(textNode("Gasho の"), "Gasho ".length);
+  range.setEnd(textNode("が中継する"), " が".length);
+  const found = answerSelection(range, container);
+  expect(found?.text).toBe("の hub が");
+  expect(found && found.answer.slice(found.start, found.end)).toBe("の hub が");
+  // From the code block's copy button: from the code block on.
+  const code = document.createRange();
+  code.setStart(textNode("コピー"), 0);
+  code.setEnd(textNode("const a"), "const".length);
+  expect(answerSelection(code, container)?.text).toBe("const");
+  // White space only, and outside an answer: nothing.
+  const space = document.createRange();
+  space.setStart(textNode("Gasho の"), "Gasho".length);
+  space.setEnd(textNode("Gasho の"), "Gasho ".length);
+  expect(answerSelection(space, container)).toBeUndefined();
+  expect(answerSelection(rangeOf("Gasho"), document.createElement("div"))).toBeUndefined();
+});
+
+const said = (uuid: string, role: TranscriptEntry["role"], text: string): TranscriptEntry => ({ uuid, role, blocks: [{ type: "text", text }] });
+
+test("a plugin's part shows by text selected in Claude's answers, with the answer and where the text is in it, and not by what the user wrote (P22)", async () => {
+  // The page has no layout here, so the popup is always out of view (hidden, with no names for a screen reader): it
+  // is found by its mark and its text, and pressed all the same.
+  const user = userEvent.setup({ pointerEventsCheck: 0 });
+  const hub = await connectHub({ machines: [m1], plugins: [info()] });
+  const entries = [said("u1", "user", "hub とは？"), said("a1", "assistant", "Gasho の **hub** が中継する。")];
+  render(
+    <Transcript
+      state={{ entries, start: 0, total: 2, loading: false }}
+      onLoadOlder={() => {}}
+      selection={(selection, close) => <PluginAnswerSelection machine={m1} session={s1} selection={selection} onClose={close} />}
+    />,
+  );
+  const answer = () => document.querySelector("[data-answer]")!;
+  const popup = () => document.querySelector<HTMLElement>("[data-answer-selection]");
+
+  // What the user wrote shows nothing.
+  select(rangeOf("hub とは"));
+  await new Promise((r) => setTimeout(r, 400));
+  expect(popup()).toBeNull();
+
+  select(rangeOf("hub", answer()));
+  await waitFor(() => expect(popup()).toBeTruthy());
+  const shown = popup()!;
+  expect(shown.getAttribute("aria-label")).toBe("選んだ文");
+  expect(within(shown).getByText("「hub」8〜11（本文のとおり、s1、s1）")).toBeTruthy();
+  expect(within(shown).getByText("本文：Gasho の hub が中継する。")).toBeTruthy();
+  // Pressing a button in it keeps it.
+  await user.click(within(shown).getByText("意味"));
+  expect(await within(shown).findByText("「hub」の意味")).toBeTruthy();
+  await new Promise((r) => setTimeout(r, 400));
+  expect(popup()).toBe(shown);
+  // Pressing its text clears the selection, and keeps it too.
+  await user.click(within(shown).getByText("「hub」の意味"));
+  await new Promise((r) => setTimeout(r, 400));
+  expect(document.getSelection()?.toString()).toBe("");
+  expect(popup()).toBe(shown);
+  // Another selection while it shows (a long press on a phone does not press outside it): the part is drawn anew.
+  select(rangeOf("中継", answer()));
+  expect(await screen.findByText("「中継」13〜15（本文のとおり、s1、s1）")).toBeTruthy();
+  expect(screen.getByText("意味")).toBeTruthy();
+
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(popup()).toBeNull());
+
+  // Gone once nothing is selected.
+  select(rangeOf("中継", answer()));
+  await waitFor(() => expect(popup()).toBeTruthy());
+  select();
+  await waitFor(() => expect(popup()).toBeNull());
+
+  // And once the plugin is disabled.
+  select(rangeOf("中継", answer()));
+  await waitFor(() => expect(popup()).toBeTruthy());
+  await hub.say({ type: "plugins", plugins: [info({ enabled: false })] });
+  expect(popup()).toBeNull();
 });
 
 test("the settings screen opened for a plugin opens its section and scrolls to it once it is drawn, also when opened before the snapshot", async () => {

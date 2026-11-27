@@ -42,7 +42,7 @@ test("a web.js definition that would fail to be drawn is refused, saying what to
   };
   for (const d of [undefined, null, [], "plugin", () => ({})]) assert.match(refused(d), /^web\.js が、プラグイン/);
   // Every place of the SDK's PluginDefinition is checked, each a list of items with an id or an object.
-  for (const k of ["sidebar", "sessionHeader", "homeTiles", "conversationEnd", "composerFooter", "sessionFooter", "worktreeTabs", "fileViewers"]) {
+  for (const k of ["sidebar", "sessionHeader", "homeTiles", "conversationEnd", "composerFooter", "sessionFooter", "worktreeTabs", "fileViewers", "answerSelection"]) {
     assert.equal(refused({ [k]: {} }), `${k} は配列にしてください。`);
     assert.equal(refused({ [k]: [{ id: "" }] }), `${k} の項目に id がありません。`);
   }

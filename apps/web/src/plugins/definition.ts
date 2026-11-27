@@ -19,7 +19,7 @@ const bare = (extension: string) => extension.replace(/^\./, "").toLowerCase();
 /** What a web.js exports, checked enough that drawing it cannot fail on its shape. */
 export function checkDefinition(d: unknown): PluginDefinition {
   if (!isRecord(d)) throw new Error("web.js が、プラグイン（export default definePlugin({ … })）を書き出していません。");
-  for (const k of ["sidebar", "sessionHeader", "homeTiles", "conversationEnd", "composerFooter", "sessionFooter", "worktreeTabs", "fileViewers"] as const) {
+  for (const k of ["sidebar", "sessionHeader", "homeTiles", "conversationEnd", "composerFooter", "sessionFooter", "worktreeTabs", "fileViewers", "answerSelection"] as const) {
     if (d[k] !== undefined && !Array.isArray(d[k])) throw new Error(`${k} は配列にしてください。`);
     for (const item of (d[k] as unknown[] | undefined) ?? []) {
       if (!isRecord(item) || typeof item.id !== "string" || !item.id) throw new Error(`${k} の項目に id がありません。`);

@@ -1,6 +1,6 @@
 // A plugin's web part for the tests of the plugins' parts, written as a plugin's build turns one into: React and the
 // SDK come from what Gasho's screen shares (globalThis.__gasho, sdk.tsx). The screen loads it as it loads any (registry.ts).
-import type { FileViewerProps, GashoSdk } from "@gasho/plugin-sdk";
+import type { AnswerSelectionProps, FileViewerProps, GashoSdk } from "@gasho/plugin-sdk";
 import type * as ReactType from "react";
 
 const { modules } = (globalThis as unknown as { __gasho: { modules: { react: typeof ReactType; "@gasho/plugin-sdk": GashoSdk } } }).__gasho;
@@ -97,6 +97,19 @@ function Shot({ path, file, entries, openFile }: FileViewerProps) {
   );
 }
 
+/** Its part by text selected in Claude's answers (P22): what it got, and a button that keeps what it shows. */
+function Word({ text, answer, start, end, session }: AnswerSelectionProps) {
+  const [asked, setAsked] = React.useState(false);
+  const ctx = sdk.useSessionContext();
+  return h(
+    "div",
+    null,
+    h("p", null, `「${text}」${start}〜${end}（${answer.slice(start, end) === text ? "本文のとおり" : "本文と違う"}、${session.sessionId}、${ctx?.session.sessionId}）`),
+    h("p", null, `本文：${answer.replaceAll("\n", "⏎")}`),
+    asked ? h("p", null, `「${text}」の意味`) : h("button", { type: "button", onClick: () => setAsked(true) }, "意味"),
+  );
+}
+
 export default sdk.definePlugin({
   pages: {
     list: ({ params }) => h(sdk.Page, { title: "メモの一覧" }, `ページ ${params.tag ?? ""}`),
@@ -109,6 +122,8 @@ export default sdk.definePlugin({
   sessionPanels: { notes: Notes },
   // With and without the dot, in either case: they are the same.
   fileViewers: [{ id: "shots", extensions: [".PNG", "gif"], component: Shot }],
+  // Only for a word: `when` decides.
+  answerSelection: [{ id: "word", when: ({ selection }) => selection.text.length <= 20, component: Word }],
   conversationEnd: [
     {
       id: "end",

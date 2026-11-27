@@ -83,7 +83,7 @@ LAN の中では通信が暗号化されない。端末のトークンも平文�
 | ディレクトリ | 中身 |
 |---|---|
 | `apps/hub` | gasho-hub（Gasho サーバー）。各 working server からの情報をまとめて保存し、画面に配信する。端末の登録も管理する |
-| `apps/daemon` | gasho-daemon。各 working server で動き、セッションの起動と入力、会話・hooks のイベントの送信を受け持つ。`claude-plugin/` は、起動するセッションに読ませる Claude Code のプラグイン（スキル `gasho:launch-gasho-session` など） |
+| `apps/daemon` | gasho-daemon。各 working server で動き、セッションの起動と入力、会話・hooks のイベントの送信を受け持つ。`claude-plugin/` は、起動するセッションに読ませる Claude Code のプラグイン（スキル `gasho:launch-gasho-session` など）。`terminal-host/` は、セッションの端末の Rust 版（`node apps/daemon/scripts/terminal-host.ts` で cargo がビルドし、`native/` に置く） |
 | `apps/web` | gasho-web。画面（Vite・React・Tailwind CSS・easyui.site の部品） |
 | `packages/protocol` | 3つで共有する型 |
 | `packages/plugin-sdk` | プラグインの SDK |

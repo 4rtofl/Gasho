@@ -5,6 +5,9 @@
 # plugin-sdk-v<version>) and publishes. Run it by hand to release at once.
 # The 15-minute rhythm comes from a Cloudflare Worker (infra/release-trigger) that dispatches this workflow: GitHub's
 # own schedule never fired for it.
+# gasho-daemon's package has its Rust terminal host (apps/daemon/terminal-host) for macOS arm64 and Linux x64: the plan
+# job decides what to release, the native job builds the host on a runner of each machine, and the release job takes
+# them into the package. Both build from the commit the plan was made on.
 name: Release
 
 on:
@@ -20,17 +23,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  plan:
     runs-on: ubuntu-latest
+    outputs:
+      plan: ${{ steps.plan.outputs.plan }}
+      base: ${{ steps.plan.outputs.base }}
+      release: ${{ steps.plan.outputs.release }}
+      daemon: ${{ steps.plan.outputs.daemon }}
+      hub: ${{ steps.plan.outputs.hub }}
+      todo: ${{ steps.plan.outputs.todo }}
+      native: ${{ steps.plan.outputs.native }}
     steps:
-      # main needs the approval of its code owner (a repository ruleset), and only the repository's deploy keys may push
-      # to it directly. The release commit goes through the write deploy key in RELEASE_DEPLOY_KEY: checkout makes origin
-      # an SSH remote with it, and release.ts pushes there. GitHub Actions itself cannot be an exception to the ruleset.
       - uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
-          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -41,30 +48,81 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - if: steps.plan.outputs.release == 'true'
+
+  native:
+    needs: plan
+    if: needs.plan.outputs.native == 'true'
+    strategy:
+      matrix:
+        include:
+          - platform: darwin-arm64
+            runner: macos-14
+          - platform: linux-x64
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.base }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node apps/daemon/scripts/terminal-host.ts ${{ matrix.platform }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: terminal-host-${{ matrix.platform }}
+          path: apps/daemon/native/
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: [plan, native]
+    # The native job is skipped when gasho-daemon is not released.
+    if: ${{ !cancelled() && needs.plan.outputs.todo == 'true' && needs.native.result != 'failure' }}
+    runs-on: ubuntu-latest
+    env:
+      PLAN: ${{ needs.plan.outputs.plan }}
+      # gasho-daemon's package is not built without the terminal host of each machine (apps/daemon/scripts/pack.ts).
+      GASHO_NATIVE_REQUIRED: "1"
+    steps:
+      # main needs the approval of its code owner (a repository ruleset), and only the repository's deploy keys may push
+      # to it directly. The release commit goes through the write deploy key in RELEASE_DEPLOY_KEY: checkout makes origin
+      # an SSH remote with it, and release.ts pushes there. GitHub Actions itself cannot be an exception to the ruleset.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.base }}
+          fetch-depth: 0
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://npm.pkg.github.com
+          scope: "@4rtofl"
+      - if: needs.native.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: terminal-host-*
+          path: apps/daemon/native
+          merge-multiple: true
+      # An artifact does not keep the mode; the tests run the Linux one.
+      - if: needs.native.result == 'success'
+        run: chmod 755 apps/daemon/native/*/gasho-terminal-host
+      - if: needs.plan.outputs.release == 'true'
         run: node scripts/release.ts apply
-        env:
-          PLAN: ${{ steps.plan.outputs.plan }}
-      - if: steps.plan.outputs.todo == 'true'
+      - if: needs.plan.outputs.todo == 'true'
         run: npm ci
-      - if: steps.plan.outputs.release == 'true'
+      - if: needs.plan.outputs.release == 'true'
         run: npm run typecheck
-      - if: steps.plan.outputs.daemon == 'true'
+      - if: needs.plan.outputs.daemon == 'true'
         run: node --test --disable-warning=ExperimentalWarning "apps/daemon/test/*.test.ts"
-      - if: steps.plan.outputs.hub == 'true'
+      - if: needs.plan.outputs.hub == 'true'
         run: node --test --disable-warning=ExperimentalWarning "apps/hub/test/*.test.ts" "apps/web/test/*.test.ts"
-      - if: steps.plan.outputs.release == 'true'
+      - if: needs.plan.outputs.release == 'true'
         run: node scripts/release.ts pack
-        env:
-          PLAN: ${{ steps.plan.outputs.plan }}
       - id: commit
-        if: steps.plan.outputs.release == 'true'
+        if: needs.plan.outputs.release == 'true'
         run: node scripts/release.ts commit
+      - run: node scripts/release.ts publish
         env:
-          PLAN: ${{ steps.plan.outputs.plan }}
-      - if: steps.plan.outputs.todo == 'true'
-        run: node scripts/release.ts publish
-        env:
-          PLAN: ${{ steps.plan.outputs.plan }}
           TAGS: ${{ steps.commit.outputs.tags }}
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

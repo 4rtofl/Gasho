@@ -7,6 +7,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef,
 import type { TranscriptBlock, TranscriptEntry } from "@gasho/protocol";
 import { MarkdownText, UserMarkdown } from "@/components/markdown";
 import { type MediaSource, SentFiles, SentFilesSource } from "@/components/sent-files";
+import { ANSWER_ATTR, useAnswerSelection, type TrackedSelection } from "@/lib/answer-selection";
 import { chatTextStyle, useChatTextSize } from "@/lib/chat-text";
 import { clockTime } from "@/lib/format";
 import type { PendingMessage } from "@/lib/pending";
@@ -109,6 +110,20 @@ function resultLabel(r: ToolResult): string {
   return `${r.isError ? "エラー" : "結果"}（${r.content.length.toLocaleString()} 文字）`;
 }
 
+/**
+ * A call's tool and what it worked on, on one line of a fold. A long name (an MCP tool's,
+ * mcp__claude-in-chrome__list_connected_browsers) would push the line past a phone's width, so both are cut with "…":
+ * what it worked on first (its shrink outweighs the name's), then the name, once nothing of the other is left.
+ */
+function ToolLabel({ call }: { call: ToolUse }) {
+  return (
+    <>
+      <span className="min-w-0 truncate font-mono font-medium text-foreground/90">{call.name}</span>
+      <span className="min-w-0 shrink-[1000] truncate font-mono">{call.summary ?? toolSummary(call.input)}</span>
+    </>
+  );
+}
+
 /** A tool call and, once it has come, its result, in one fold. In a group, the group's icon stands for its own. */
 function ToolFold({ block, nested = false }: { block: ToolUse; nested?: boolean }) {
   const result = useContext(ToolResults).of(block.id);
@@ -118,8 +133,7 @@ function ToolFold({ block, nested = false }: { block: ToolUse; nested?: boolean 
       summary={
         <span className="flex min-w-0 flex-1 items-center gap-2">
           {!nested && <Wrench className={cn("size-3.5 shrink-0", result?.isError && "text-red-400")} />}
-          <span className="shrink-0 font-mono font-medium text-foreground/90">{block.name}</span>
-          <span className="truncate font-mono">{block.summary ?? toolSummary(block.input)}</span>
+          <ToolLabel call={block} />
           {result?.isError && <span className="ml-auto shrink-0 text-red-400">エラー</span>}
         </span>
       }
@@ -151,8 +165,7 @@ function ToolsFold({ calls }: { calls: ToolUse[] }) {
           <span className="shrink-0 tabular-nums">ツール {calls.length} 回</span>
           {latest && (
             <span className="flex min-w-0 items-center gap-2 group-open/tools:hidden">
-              <span className="shrink-0 font-mono font-medium text-foreground/90">{latest.name}</span>
-              <span className="truncate font-mono">{latest.summary ?? toolSummary(latest.input)}</span>
+              <ToolLabel call={latest} />
             </span>
           )}
           {errors > 0 && <span className="ml-auto shrink-0 text-red-400">エラー {errors} 回</span>}
@@ -207,11 +220,20 @@ function FileChip({ name, title }: { name: string; title?: string }) {
   );
 }
 
-/** Claude's text and the user's are Markdown (`markdown`); the rest (a system entry's) is shown as typed. */
+/**
+ * Claude's text and the user's are Markdown (`markdown`); the rest (a system entry's) is shown as typed. Claude's is an
+ * answer the plugins' parts can be shown by (P22).
+ */
 function BlockView({ block, markdown = false }: { block: TranscriptBlock; markdown?: "claude" | "user" | false }) {
   switch (block.type) {
     case "text":
-      return markdown === "claude" ? <MarkdownText text={block.text} /> : <UserText text={block.text} markdown={markdown === "user"} />;
+      return markdown === "claude" ? (
+        <div {...{ [ANSWER_ATTR]: "" }}>
+          <MarkdownText text={block.text} />
+        </div>
+      ) : (
+        <UserText text={block.text} markdown={markdown === "user"} />
+      );
     case "tool_use":
       return block.sent ? <SentFilesView block={block} /> : <ToolFold block={block} />;
     case "tool_result":
@@ -460,7 +482,8 @@ interface Anchor {
  * conversation does not show yet; they come after its entries. `end`: what comes after them (the plugins' parts at the
  * end of the conversation, P13); it takes no room while it shows nothing. `onLoadOlder` asks for the page before what
  * is loaded. `source`: the session, to read the images and videos Claude sent from; while its working server is
- * offline, a conversation not read yet says why it is not shown.
+ * offline, a conversation not read yet says why it is not shown. `selection`: what is shown by text selected in one of
+ * Claude's answers (the plugins' parts, P22), and the function that ends it; without it, selections are not read.
  */
 export function Transcript({
   state,
@@ -469,6 +492,7 @@ export function Transcript({
   footer,
   end,
   source,
+  selection: shownBySelection,
 }: {
   state: TranscriptState | undefined;
   pending?: PendingMessage[];
@@ -476,6 +500,7 @@ export function Transcript({
   footer?: ReactNode;
   end?: ReactNode;
   source?: MediaSource;
+  selection?: (selection: TrackedSelection, close: () => void) => ReactNode;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const rowsBox = useRef<HTMLDivElement>(null);
@@ -497,6 +522,7 @@ export function Transcript({
   // under a finger or during a fling stops it, or is undone by it (iOS). Until then, the entries before the one that
   // was first (`holdFrom`) stay off screen.
   const [holdFrom, setHoldFrom] = useState<string>();
+  const [selection, closeSelection] = useAnswerSelection(rowsBox, shownBySelection !== undefined);
 
   const all = state?.entries ?? NO_ENTRIES;
   const holdAt = holdFrom ? all.findIndex((e) => e.uuid === holdFrom) : -1;
@@ -630,7 +656,9 @@ export function Transcript({
       // relative: an absolutely placed element with no placed parent of its own (a plugin's sr-only status line at the
       // end of the conversation) is placed in here. Otherwise it is placed in the screen's main box, where the end of
       // the conversation would be unscrolled, and makes that box scroll below the conversation.
-      className="relative h-full overflow-y-auto"
+      // overflow-x-hidden: a row wider than the box (a long word, a tool's long name) is not to scroll the whole
+      // conversation sideways; what scrolls sideways (a code block, a table) does so in a box of its own.
+      className="relative h-full overflow-x-hidden overflow-y-auto"
       // The rows on screen are kept in place here (keepAnchor); the browser's own anchoring would move them twice.
       style={{ overflowAnchor: "none" }}
       onScroll={(e) => {
@@ -724,6 +752,7 @@ export function Transcript({
               {end}
             </div>
           )}
+          {selection && shownBySelection?.(selection, closeSelection)}
         </div>
         {hasFooter && (
           // At most as tall as the conversation's box: a footer taller than it would keep its top out of view (it sticks

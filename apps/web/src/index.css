@@ -99,6 +99,21 @@
     --safe-left: env(safe-area-inset-left, 0px);
 }
 
+/* The Home Screen app reaches the bottom edge of the screen (4rtofl/Gasho#312). In iOS 26, with viewport-fit=cover and
+   the black-translucent status bar (index.html), the viewport of a Home Screen app is shorter than the screen by the
+   status bar's height (WebKit bug 301108): 100dvh, 100% and position: fixed stop there, and the rest of the screen,
+   under the session's footer, is left empty. It is short only while the page is shorter than the screen: a page as
+   tall as the screen gets the whole screen. So the page is made that tall here, the 100% (the short viewport) and the
+   status bar's height. Once the viewport is the whole screen, 100lvh (the screen) is the lower of the two, and the page
+   is no taller than the viewport: it does not scroll. On a computer, Android and in Safari's tabs, --safe-top is 0 or
+   the viewport is not short, and this is the viewport's height already: nothing changes. The workaround of frappe-ui
+   (frappe/frappe-ui#1289), measured in the iOS 26.2 simulator. */
+@media (display-mode: standalone) {
+  html {
+    min-height: min(100lvh, calc(100% + var(--safe-top)));
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

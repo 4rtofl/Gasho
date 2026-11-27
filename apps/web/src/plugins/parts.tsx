@@ -1,11 +1,14 @@
 // Where the plugins' parts go on Gasho's screen (docs/plugins.md): sidebar items and their badges (P1), pages (P2),
 // session header items (P3), session panels (P4), settings (P5), home tiles (P6), the end of a session's
-// conversation (P13), the line under its chat box (P14), a worktree's tabs and their screens (P15) and the view of a
-// file in a session's file panel (P20). Every part is drawn in the scope of its plugin (the SDK's hooks find it there)
-// and inside an error boundary of its own, so that a plugin that throws shows an error in its place while the rest of
-// Gasho goes on.
-import { Component, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+// conversation (P13), the line under its chat box (P14), a worktree's tabs and their screens (P15), the view of a
+// file in a session's file panel (P20) and the popup by text selected in Claude's answers (P22). Every part is drawn
+// in the scope of its plugin (the SDK's hooks find it there) and inside an error boundary of its own, so that a plugin
+// that throws shows an error in its place while the rest of Gasho goes on.
+import { Popover as RadixPopover } from "radix-ui";
+import { Component, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type {
+  AnswerSelection,
+  AnswerSelectionItem,
   ComposerFooterItem,
   SessionFooterItem,
   ConversationEndItem,
@@ -25,6 +28,7 @@ import type {
 import type { MachineInfo, PluginInfo, PluginSettingSpec, SessionInfo } from "@gasho/protocol";
 import { SidePanel } from "@/components/side-panel";
 import { AccordionSection } from "@/components/ui/unfold-accordion";
+import { SELECTION_POPUP_ATTR, type TrackedSelection } from "@/lib/answer-selection";
 import { go, hrefOf, useRoute, type PagePanel, type Route, type SessionPanel, type WorktreeView } from "@/lib/route";
 import type { WorktreeSessions } from "@/lib/sessions";
 import { setSettingsSectionOpen, useSettingsSectionOpen } from "@/lib/settings-sections";
@@ -422,6 +426,95 @@ function SessionFooterPart({ part, item, machine, session }: { part: PluginPart;
       {/* What throws is left out: the line is too small for the notice with "もう一度" (as P14). */}
       <Part part={part} fallback={null}>
         <Shown machine={machine} session={session} />
+      </Part>
+    </SessionScopeContext.Provider>
+  );
+}
+
+// ---- the popup by text selected in Claude's answers (P22) ----
+
+/** Whether a plugin shows parts by text selected in Claude's answers (P22): without any, selections are not read. */
+export function useAnswerSelectionParts(): boolean {
+  const { parts } = usePluginRegistry();
+  return parts.some((p) => (p.def.answerSelection?.length ?? 0) > 0);
+}
+
+/**
+ * The plugins' parts by text selected in one of Claude's answers, in a popup below the selection (above it when there
+ * is no room), in the look of the SDK's Popover. It follows the selection as the conversation scrolls, and is hidden
+ * while the selection is out of view. Esc and a press outside it end it (`onClose`).
+ */
+export function PluginAnswerSelection({
+  machine,
+  session,
+  selection,
+  onClose,
+}: {
+  machine: MachineInfo;
+  session: SessionInfo;
+  selection: TrackedSelection;
+  onClose: () => void;
+}) {
+  const { parts } = usePluginRegistry();
+  const items = ordered(parts, (def) => def.answerSelection);
+  // contextElement: the popup moves as what scrolls the answer scrolls, and is hidden when the answer is scrolled away.
+  const anchor = useMemo(
+    () => ({ current: { getBoundingClientRect: () => selection.range.getBoundingClientRect(), contextElement: selection.container } }),
+    [selection],
+  );
+  if (items.length === 0) return null;
+  const selected: AnswerSelection = { text: selection.text, answer: selection.answer, start: selection.start, end: selection.end };
+  return (
+    <RadixPopover.Root open modal={false} onOpenChange={(open) => !open && onClose()}>
+      <RadixPopover.Anchor virtualRef={anchor} />
+      <RadixPopover.Portal>
+        <RadixPopover.Content
+          {...{ [SELECTION_POPUP_ATTR]: "" }}
+          side="bottom"
+          align="center"
+          sideOffset={8}
+          collisionPadding={12}
+          hideWhenDetached
+          aria-label="選んだ文"
+          // The focus stays where it was: the popup comes and goes with the selection, as the reader reads.
+          onOpenAutoFocus={(e) => e.preventDefault()}
+          onCloseAutoFocus={(e) => e.preventDefault()}
+          className="z-50 outline-none"
+        >
+          <div className="flex w-max max-w-[min(24rem,calc(100vw-24px))] flex-col gap-1 rounded-xl border border-border bg-surface p-1.5 text-sm text-foreground shadow-xl empty:hidden">
+            {items.map(({ part, item }) => (
+              // Drawn anew for every selection; a `when` that throws leaves the part out, as a header item's does.
+              <Part key={`${part.info.id}.${item.id}.${selection.id}`} part={part} fallback={null} bare>
+                <AnswerSelectionPart part={part} item={item} machine={machine} session={session} selection={selected} />
+              </Part>
+            ))}
+          </div>
+        </RadixPopover.Content>
+      </RadixPopover.Portal>
+    </RadixPopover.Root>
+  );
+}
+
+function AnswerSelectionPart({
+  part,
+  item,
+  machine,
+  session,
+  selection,
+}: {
+  part: PluginPart;
+  item: AnswerSelectionItem;
+  machine: MachineInfo;
+  session: SessionInfo;
+  selection: AnswerSelection;
+}) {
+  const ctx: SessionContext = { machine, session, daemon: readiness(part.info, machine.id) };
+  if (item.when && !item.when({ ...ctx, selection })) return null;
+  const Shown = item.component;
+  return (
+    <SessionScopeContext.Provider value={ctx}>
+      <Part part={part}>
+        <Shown machine={machine} session={session} {...selection} />
       </Part>
     </SessionScopeContext.Provider>
   );

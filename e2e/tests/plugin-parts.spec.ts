@@ -99,7 +99,9 @@ test.describe("部品", () => {
       // The footer of the session's screen (P21): "left" after the memory, the others on the right.
       const footer = page.getByTestId("session-footer");
       const left = (await footer.getByText("フッター左").boundingBox())!;
-      const right = (await footer.getByText("フッター右").boundingBox())!;
+      const rightPart = footer.getByText("フッター右");
+      await expect(rightPart).toBeInViewport({ ratio: 0.99 });
+      const right = (await rightPart.boundingBox())!;
       expect(left.x).toBeLessThan(right.x);
       if (!isMobile) expect((await footer.getByText("mac メモリ").boundingBox())!.x).toBeLessThan(left.x);
       const last = (await main.getByText("はい、どうぞ。").boundingBox())!;
@@ -107,6 +109,21 @@ test.describe("部品", () => {
       const input = (await page.getByPlaceholder("Agent への指示を入力…").boundingBox())!;
       expect(last.y).toBeLessThan(box.y);
       expect(box.y).toBeLessThan(input.y);
+    });
+
+    await test.step("狭い Footer では右側のプラグイン部品を1行のまま省く", async () => {
+      const footer = page.getByTestId("session-footer");
+      const right = footer.getByText("フッター右");
+      const rightBox = (await right.boundingBox())!;
+      const left = (await footer.getByText("フッター左").boundingBox())!;
+      const line = (await footer.boundingBox())!;
+      const narrow = Math.ceil(left.x + left.width - line.x + rightBox.width / 2 + 8);
+      await footer.evaluate(
+        (el, width) => (el as unknown as { style: { width: string } }).style.width = width, `${narrow}px`,
+      );
+      await expect(right).not.toBeInViewport();
+      expect((await right.boundingBox())!.height).toBe(rightBox.height);
+      await footer.evaluate((el) => (el as unknown as { style: { width: string } }).style.width = "");
     });
 
     await test.step("回答の文を選ぶと、選んだ範囲の下に部品を出し、Esc で消す", async () => {

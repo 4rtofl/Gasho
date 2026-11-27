@@ -37,28 +37,32 @@ test("Footer に接続・メモリ・コンテキスト・上限を出し、押�
   });
   daemon.send({ type: "memory", memory: { total: 16 * GB, used: 9.9 * GB } });
   const f = footer(page);
+  const limits = f.getByRole("button", { name: /上限/ });
 
   await test.step("画面を開くと、gasho-daemon に上限を読ませ、Fable の週の上限まで出す", async () => {
     await expect.poll(() => asked(daemon)).toBeGreaterThan(0);
     if (isMobile) {
       await expect(f.getByRole("button", { name: /^接続中。mac のメモリ 62%/ })).toBeVisible();
       await expect(f.getByRole("button", { name: "コンテキスト 36% 使用。詳細を開く" })).toBeVisible();
-      await expect(f.getByRole("button", { name: "5時間の上限 18%。詳細を開く" })).toBeVisible();
-      await expect(f.getByRole("button", { name: "週の上限（すべてのモデル） 41%。詳細を開く" })).toBeVisible();
-      // The phone's footer leaves out what does not fit its width: Fable may be among them on an iPhone 15.
     } else {
       await expect(f.getByText("接続中 · e2e-browser", { exact: true })).toBeVisible();
       await expect(f.getByRole("meter", { name: "mac のメモリ使用率" })).toHaveAttribute("aria-valuenow", "62");
       await expect(f.getByText("9.9 / 16.0 GB")).toBeVisible();
       await expect(f.getByText("72.4k / 200k")).toBeVisible();
-      await expect(f.getByRole("button", { name: "週の上限（Fable） 12%。使用量の詳細を開く" })).toBeVisible();
+      await expect(limits.getByText("Fable 週", { exact: true }).locator("..")).toBeInViewport({ ratio: 0.99 });
       await expect(f.getByText("2:00 後")).toBeVisible();
       await page.screenshot({ path: test.info().outputPath("footer-1440.png") });
       await page.setViewportSize({ width: 1024, height: 768 });
       await expect(f.getByText("2:00 後")).toBeHidden();
-      await expect(f.getByRole("button", { name: "週の上限（Fable） 12%。使用量の詳細を開く" })).toBeVisible();
+      await expect(limits.getByText("Fable 週", { exact: true }).locator("..")).toBeInViewport({ ratio: 0.99 });
       await page.screenshot({ path: test.info().outputPath("footer-1024.png") });
     }
+    await expect(limits).toHaveCount(1);
+    await expect(limits).toHaveAccessibleName(
+      `5時間の上限 18%、週の上限（すべてのモデル） 41%、週の上限（Fable） 12%。${isMobile ? "" : "使用量の"}詳細を開く`,
+    );
+    await expect(limits.getByText(isMobile ? "5h" : "5時間", { exact: true }).locator("..")).toBeInViewport({ ratio: 0.99 });
+    await expect(limits.getByText("週", { exact: true }).locator("..")).toBeInViewport({ ratio: 0.99 });
     // A footer of one line.
     expect((await f.boundingBox())!.height).toBeLessThanOrEqual(isMobile ? 40 : 30);
   });
@@ -75,6 +79,54 @@ test("Footer に接続・メモリ・コンテキスト・上限を出し、押�
     await context.click();
     await expect(panel).toBeHidden();
   });
+
+  await test.step("まとめた上限を押しても、同じ詳細を開く", async () => {
+    await limits.click();
+    await expect(details(page).getByRole("meter", { name: "週の上限（Fable）" })).toHaveAttribute("aria-valuenow", "12");
+    await limits.click();
+    await expect(details(page)).toBeHidden();
+  });
+
+  if (!isMobile) {
+    await test.step("狭い PC の Footer では右端から項目ごとに省く", async () => {
+      const context = f.getByRole("button", { name: /^コンテキスト 36% 使用。/ });
+      const first = limits.getByText("5時間", { exact: true }).locator("..");
+      const weekly = limits.getByText("週", { exact: true }).locator("..");
+      const memory = (await f.getByRole("meter").locator("..").boundingBox())!;
+      const contextItem = (await context.locator("..").boundingBox())!;
+      const footerBox = (await f.boundingBox())!;
+      const throughContext = memory.x + memory.width - footerBox.x + contextItem.width + 8;
+      const firstWidth = (await first.boundingBox())!.width;
+      const setWidth = (width: number) => f.evaluate(
+        (el, value) => (el as unknown as { style: { width: string } }).style.width = value, `${Math.ceil(width)}px`,
+      );
+
+      await setWidth(throughContext + firstWidth + 16);
+      await expect(first).toBeInViewport({ ratio: 0.99 });
+      await expect(weekly).not.toBeInViewport();
+      await expect(context).toBeInViewport({ ratio: 0.99 });
+
+      await setWidth(throughContext + firstWidth / 2);
+      await expect(limits).not.toBeInViewport();
+      await expect(context).toBeInViewport({ ratio: 0.99 });
+
+      await setWidth(throughContext - contextItem.width / 2);
+      await expect(context).not.toBeInViewport();
+      await f.evaluate((el) => (el as unknown as { style: { width: string } }).style.width = "");
+    });
+  }
+
+  if (isMobile) {
+    await test.step("狭い幅では末尾の上限を隠しても、上限ボタンを押せる", async () => {
+      await page.setViewportSize({ width: 240, height: 844 });
+      await expect(limits.getByText("5h", { exact: true }).locator("..")).toBeInViewport({ ratio: 0.99 });
+      await expect(limits.getByText("Fable", { exact: true }).locator("..")).not.toBeInViewport();
+      await limits.click();
+      await expect(details(page).getByRole("meter", { name: "週の上限（Fable）" })).toBeVisible();
+      await limits.click();
+      await expect(details(page)).toBeHidden();
+    });
+  }
 
   await test.step("ホームには Footer を出さない", async () => {
     await page.screenshot({ path: test.info().outputPath("footer.png") });
@@ -111,7 +163,7 @@ test("値の無いものは出さない。読めないときは理由を出し�
 
 test("古い gasho-daemon には読ませず、ステータスラインの上限だけを出す", async ({ page, hub, isMobile }) => {
   const daemon = await openSession(page, hub, { session: replied() });
-  await expect(footer(page).getByRole("button", { name: /^週の上限（すべてのモデル） 41%/ })).toBeVisible();
+  await expect(footer(page).getByRole("button", { name: /^5時間の上限 18%、週の上限（すべてのモデル） 41%/ })).toBeVisible();
   await footer(page).getByRole("button", { name: /^コンテキスト 36% 使用。/ }).click();
   await expect(details(page).getByText("この working server の gasho-daemon は古いため、モデルごとの週の上限を読めません。")).toBeVisible();
   expect(asked(daemon)).toBe(0);

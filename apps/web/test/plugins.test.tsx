@@ -371,14 +371,17 @@ test("a plugin's part shows by text selected in Claude's answers, with the answe
   await new Promise((r) => setTimeout(r, 400));
   expect(document.getSelection()?.toString()).toBe("");
   expect(popup()).toBe(shown);
+  // Another selection while it shows (a long press on a phone does not press outside it): the part is drawn anew.
+  select(rangeOf("中継", answer()));
+  expect(await screen.findByText("「中継」13〜15（本文のとおり、s1、s1）")).toBeTruthy();
+  expect(screen.getByText("意味")).toBeTruthy();
 
   await user.keyboard("{Escape}");
   await waitFor(() => expect(popup()).toBeNull());
 
-  // Drawn anew for another selection, and gone once nothing is selected.
+  // Gone once nothing is selected.
   select(rangeOf("中継", answer()));
-  expect(await screen.findByText("「中継」13〜15（本文のとおり、s1、s1）")).toBeTruthy();
-  expect(screen.getByText("意味")).toBeTruthy();
+  await waitFor(() => expect(popup()).toBeTruthy());
   select();
   await waitFor(() => expect(popup()).toBeNull());
 

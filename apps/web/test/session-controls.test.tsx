@@ -118,7 +118,7 @@ test("the default model is set for every browser from its combobox, and back to 
   expect(back?.type === "defaultModel.set" && !("model" in back)).toBe(true);
 });
 
-test("the shared default can offer Fable unless all working servers are on Pro", async () => {
+test("the shared default explains Fable's fallback when any working server is on Pro", async () => {
   const pro = machine("pro", [], { claudeSubscriptionType: "pro" });
   const hub = await connectHub({
     machines: [pro],
@@ -127,15 +127,21 @@ test("the shared default can offer Fable unless all working servers are on Pro",
   setSettingsSectionOpen("default-model", true);
   render(<DefaultModelSection />);
   const user = userEvent.setup();
-  expect(screen.queryByRole("option", { name: /^Fable/ })).toBeNull();
+  const note = "Pro プランの working server では Fable を使えません。既定のモデルが Fable でも、Claude Code の既定のモデルで起動します。";
+  expect(screen.getByText(note)).toBeTruthy();
+  expect(screen.getByText("Claude Code の既定", { exact: true })).toBeTruthy();
+  expect(screen.getByRole<HTMLOptionElement>("option", { name: "Fable（Pro プランでは使えません）" }).disabled).toBe(true);
   expect(screen.getByRole<HTMLSelectElement>("combobox").value).toBe("");
-  expect(screen.getByRole("option", { name: "Claude Code の既定のモデルで起動します" })).toBeTruthy();
   await user.selectOptions(screen.getByRole("combobox"), "default");
   expect(hub.sent.at(-1)).toMatchObject({ type: "defaultModel.set" });
 
   await hub.say({ type: "machine", machine: machine("unknown") });
-  expect(screen.getByRole("option", { name: /^Fable/ })).toBeTruthy();
+  expect(screen.getByText(note)).toBeTruthy();
+  expect(screen.getByRole<HTMLOptionElement>("option", { name: /^Fable/ }).disabled).toBe(false);
   expect(screen.getByRole<HTMLSelectElement>("combobox").value).toBe("fable");
+
+  await hub.say({ type: "machine", machine: { ...pro, claudeSubscriptionType: "max" } });
+  expect(screen.queryByText(note)).toBeNull();
 });
 
 test("the session picker hides Fable on Pro with or without a catalog and ignores a pending Fable pick", async () => {

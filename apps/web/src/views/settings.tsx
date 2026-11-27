@@ -215,9 +215,9 @@ export function DefaultModelSection() {
   const current: SessionModel = server.defaultModel ?? "default";
   // The setting is shared by all working servers, including ones whose plan is unknown.
   const offersFable = machines.length === 0 || machines.some((m) => m.claudeSubscriptionType !== "pro");
+  const hasPro = machines.some((m) => m.claudeSubscriptionType === "pro");
   const models = MODELS.filter((m) => offersFable || m.id !== "fable");
   const selected = models.find((m) => m.id === current);
-  const fallback = "Claude Code の既定のモデルで起動します";
   const pick = async (model: SessionModel) => {
     setError(undefined);
     const r = await setDefaultModel(model);
@@ -230,12 +230,12 @@ export function DefaultModelSection() {
       description="「＋」で起動する Claude Code のセッションのモデルです。どのブラウザーでも同じです。起動したあとは、入力欄でそのセッションだけ切り替えられます。Codex のセッションと、開き直し・フォークには使いません。"
       open={open}
       onOpenChange={setOpen}
-      actions={<span className="text-sm">{current === "default" ? CLAUDE_DEFAULT : selected?.name ?? fallback}</span>}
+      actions={<span className="text-sm">{current === "default" || !selected ? CLAUDE_DEFAULT : selected.name}</span>}
     >
       <label className="block max-w-sm space-y-1.5">
         <span className="text-xs text-muted-foreground">既定のモデル</span>
         <select value={selected?.id ?? ""} onChange={(e) => void pick(e.target.value as SessionModel)} className={FIELD}>
-          {!selected && <option value="" disabled>{fallback}</option>}
+          {!selected && <option value="" disabled>Fable（Pro プランでは使えません）</option>}
           {models.map((m) => (
             <option key={m.id} value={m.id}>
               {m.id === "default" ? `${CLAUDE_DEFAULT}（working server の Claude Code の設定のまま）` : `${m.name}（${m.description}）`}
@@ -243,6 +243,11 @@ export function DefaultModelSection() {
           ))}
         </select>
       </label>
+      {hasPro && (
+        <p className="text-xs text-muted-foreground">
+          Pro プランの working server では Fable を使えません。既定のモデルが Fable でも、Claude Code の既定のモデルで起動します。
+        </p>
+      )}
       {error && <p className="text-xs text-red-400">{error}</p>}
     </AccordionSection>
   );

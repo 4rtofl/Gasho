@@ -68,7 +68,7 @@ LAN の中では通信が暗号化されない。端末のトークンも平文�
 
 | 文書 | 中身 |
 |---|---|
-| [docs/usage.md](docs/usage.md) | 画面の使い方（セッション、サイドバー、入力欄、パネル、ホーム、プラグイン） |
+| [docs/usage.md](docs/usage.md) | 画面の使い方（セッション、サイドバー、入力欄、パネル、キーボードのショートカット、ホーム、プラグイン） |
 | [docs/cli.md](docs/cli.md) | working server のコマンド（`gasho-daemon session`・`worktree`） |
 | [docs/hub-setup.md](docs/hub-setup.md) | Gasho サーバーの入れ方、更新、設定 |
 | [docs/daemon-setup.md](docs/daemon-setup.md) | gasho-daemon の入れ方、更新、設定 |

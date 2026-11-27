@@ -30,4 +30,14 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # The tests of the terminals run on gasho-daemon's Rust terminal host too, when it is built.
+      - if: matrix.script == 'test'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            apps/daemon/terminal-host/target
+          key: terminal-host-${{ runner.os }}-${{ hashFiles('apps/daemon/terminal-host/Cargo.lock') }}
+      - if: matrix.script == 'test'
+        run: node apps/daemon/scripts/terminal-host.ts
       - run: npm run ${{ matrix.script }}

@@ -24,7 +24,7 @@ gasho-daemon は、Claude Code を動かすマシン（working server）ごと�
 
 Mac では、Homebrew で `brew install node gh` のように入れられる。Ubuntu では、Node.js は公式のバイナリかバージョン管理のツール（nvm など）、gh は公式の apt リポジトリから入れる。どれも、`which claude gh` で見つかる場所に置く。
 
-セッションの端末は、gasho-daemon が npm から一緒に入れる node-pty（ビルド済みのもの。コンパイラは要らない）と xterm.js で作る。gasho-daemon 0.10 までは zellij が要ったが、0.11 からは要らない。0.10 までが zellij で起動したセッションは、終わるまで zellij で扱うので、そのあいだは zellij を消さない。
+セッションの端末は、macOS arm64 と Linux x64 では、gasho-daemon のパッケージに入っている Rust の端末（ビルド済み）で作る。そのほかのマシンでは、gasho-daemon が npm から一緒に入れる node-pty（ビルド済みのもの。コンパイラは要らない）と xterm.js で作る。gasho-daemon 0.10 までは zellij が要ったが、0.11 からは要らない。0.10 までが zellij で起動したセッションは、終わるまで zellij で扱うので、そのあいだは zellij を消さない。
 
 Claude Code は公式の手順で入れ、端末で一度 `claude` を起動してログインしておく。Gasho の「新しいセッション」の一覧には、Claude Code が信頼しているフォルダーと、その親フォルダーが出る。まだ信頼していないフォルダー（clone したリポジトリなど）で起動するときは、Gasho の画面で信頼するかを確かめ、「信頼して起動する」を選べば gasho-daemon が Claude Code の確認に答える（gasho-daemon 0.10.0 以上。それより前の gasho-daemon では、端末で一度 `claude` を起動して信頼しておく）。
 

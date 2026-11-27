@@ -144,3 +144,32 @@ test("iPhone では、Footer が入力欄のすぐ下でホームインジケー
   await chatBox(page).fill("あ".repeat(17_500));
   await expect(page.getByText("17500/20000")).toBeVisible();
 });
+
+test("ホーム画面の Web アプリで html を画面の高さにする規則は、viewport が画面いっぱいのときは何も変えない", async ({ page, hub, isMobile }) => {
+  // iOS 26's Home Screen app, whose viewport is short by the status bar until the page is as tall as the screen
+  // (4rtofl/Gasho#312), is not reproduced here, nor is display-mode: standalone: the rule is taken out of its media query
+  // and applied as it is, with the iPhone's insets, on a viewport that is the whole screen already.
+  if (!isMobile) await page.setViewportSize({ width: 390, height: 844 });
+  await openSession(page, hub, { session: replied() });
+  await page.addStyleTag({ content: ":root { --safe-top: 62px !important; --safe-bottom: 34px !important; }" });
+  const f = footer(page);
+  await expect(f).toBeVisible();
+  // The rule as the built stylesheet has it, without its media query (the page's code is given as text: e2e has no DOM types).
+  const rule = await page.evaluate<string>(`[...document.styleSheets]
+    .flatMap((sheet) => [...sheet.cssRules])
+    .filter((r) => r instanceof CSSMediaRule && r.conditionText.includes("display-mode: standalone"))
+    .flatMap((r) => [...r.cssRules].map((x) => x.cssText))
+    .join("\\n")`);
+  expect(rule).toContain("min-height: min(100lvh, calc(100% + var(--safe-top)))");
+  const bar = page.locator("footer", { has: f });
+  const before = (await bar.boundingBox())!;
+  await page.addStyleTag({ content: rule });
+
+  const viewport = page.viewportSize()!;
+  // The page is no taller than the viewport, and does not scroll; the footer stays at the bottom edge.
+  expect(await page.evaluate<number>("document.documentElement.getBoundingClientRect().height")).toBe(viewport.height);
+  expect(await page.evaluate<number>("document.documentElement.scrollHeight")).toBe(viewport.height);
+  expect(await bar.boundingBox()).toEqual(before);
+  expect(Math.round(before.y + before.height)).toBe(viewport.height);
+  await page.screenshot({ path: test.info().outputPath("standalone-rule.png") });
+});

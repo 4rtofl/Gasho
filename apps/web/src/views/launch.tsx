@@ -138,7 +138,6 @@ function LaunchForm({
     setTrustAsk(undefined);
     const r = await launchSession(machine.id, { cwd: dir, name: name.trim() || undefined, trust, agent });
     setBusy(false);
-    if (r.cancelled) return;
     if (!r.ok || !r.sessionId) {
       if (r.needsTrust) setTrustAsk({ machine: machine.id, cwd: dir, warnings: r.trustWarnings ?? [] });
       else setError(r.error ?? "起動できませんでした。");

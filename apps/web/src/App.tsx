@@ -10,7 +10,6 @@ import { CloneRepoDialog } from "@/components/clone-repo-dialog";
 import { CloneRepoButton, RegisterRepos, RepoFilter } from "@/components/repo-filter";
 import { ReposDialog } from "@/components/repos-dialog";
 import { SessionActionDialog, SessionContextMenu, type SessionActionRequest } from "@/components/session-menu";
-import { UnusedSessionsDialog } from "@/components/unused-sessions-dialog";
 import { RepoActionDialog, RepoContextMenu, type RepoActionRequest } from "@/components/repo-menu";
 import { WorktreeActionDialog, WorktreeContextMenu, type WorktreeActionRequest } from "@/components/worktree-menu";
 import { showNotice, useNotice } from "@/lib/notice";
@@ -390,7 +389,6 @@ export function App() {
     setLaunchingIn(w.key);
     const r = await launchSession(w.machine.id, { cwd: w.path, agent });
     setLaunchingIn(undefined);
-    if (r.cancelled) return;
     if (r.ok && r.sessionId) {
       setMobileOpen(false);
       go({ name: "session", machine: w.machine.id, sessionId: r.sessionId });
@@ -875,7 +873,6 @@ export function App() {
       />
       <WorktreeActionDialog request={worktreeAction} onClose={() => setWorktreeAction(null)} />
       <RepoActionDialog request={repoAction} onClose={() => setRepoAction(null)} />
-      <UnusedSessionsDialog />
       <LaunchDialog
         open={launchOpen}
         initial={launchInitial}

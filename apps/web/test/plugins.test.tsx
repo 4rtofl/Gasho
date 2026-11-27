@@ -2,7 +2,6 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { FileContent, PluginInfo } from "@gasho/protocol";
 import { beforeEach, expect, test, vi } from "vitest";
-import { UnusedSessionsDialog } from "@/components/unused-sessions-dialog";
 import { PluginConversationEnd, PluginHeaderItems, PluginPageView, PluginPanelView, PluginSettingsSections } from "@/plugins/parts";
 import { FilePanel } from "@/views/files";
 import { connectHub, machine, session } from "./hub";
@@ -170,27 +169,6 @@ test("a plugin removes a session with the permission, naming itself, and the scr
   await hub.answer({ ok: true });
   expect(await screen.findByText("削除しました")).toBeTruthy();
   expect(location.hash).not.toBe("#/s/m1/s1");
-});
-
-test("a plugin's launch cannot be cancelled at the question about unused sessions, and goes on once it is answered", async () => {
-  const user = userEvent.setup();
-  const withLaunch = info({ manifest: { ...info().manifest, permissions: ["session.launch"] } });
-  const unused = session("old", { lastActivityAt: Date.now() - 7 * 24 * 60 * 60 * 1000 });
-  const hub = await connectHub({ machines: [machine("m-asked", [s1, unused], { daemonVersion: "0.24.0" })], plugins: [withLaunch] });
-  render(
-    <>
-      <PluginPanelView machine="m-asked" sessionId="s1" panel={{ kind: "plugin", plugin: "notes", id: "notes", params: {} }} docked onClose={() => {}} />
-      <UnusedSessionsDialog />
-    </>,
-  );
-  await user.click(await screen.findByRole("button", { name: "ここで起動" }));
-  await screen.findByRole("alertdialog");
-  expect(screen.queryByRole("button", { name: "キャンセル" })).toBeNull();
-
-  await user.click(screen.getByRole("button", { name: "削除せずに起動" }));
-  await waitFor(() => expect(hub.commands().filter((c) => c.type === "session.launch")).toHaveLength(1));
-  await hub.answer({ ok: true, sessionId: "started" });
-  expect(await screen.findByText("起動しました")).toBeTruthy();
 });
 
 test("a plugin hears why its launch failed", async () => {

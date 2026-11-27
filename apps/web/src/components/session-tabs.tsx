@@ -58,7 +58,6 @@ export function useWorktreeLaunch(worktree: WorktreeSessions, onAskTrust: (initi
     const r = await launchSession(machine.id, { cwd: worktree.path, agent });
     if (!shown.current) return;
     setLaunching(false);
-    if (r.cancelled) return;
     if (!r.ok || !r.sessionId) {
       if (r.needsTrust) onAskTrust({ machine: machine.id, folder: worktree.path, trust: r.trustWarnings ?? [], agent });
       else setError(r.error ?? "起動できませんでした。");

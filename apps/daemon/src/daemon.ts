@@ -29,7 +29,7 @@ import type {
   SwitchField,
   TranscriptEntry,
 } from "@gasho/protocol";
-import { claudeRunner, detectClaude } from "./claude-status.ts";
+import { claudeRunner, detectClaude, type ClaudeInfo } from "./claude-status.ts";
 import { codexRunner, detectCodex, startCodexServer } from "./codex.ts";
 import { CodexSessions } from "./codex-sessions.ts";
 import type { DaemonConfig } from "./config.ts";
@@ -357,7 +357,7 @@ export class Daemon {
   private toolHold = new ToolHold();
   private canLaunch = false;
   /** Claude Code on this working server, as last looked for. */
-  private claude: AgentInfo | undefined;
+  private claude: ClaudeInfo | undefined;
   /** Counts the looks for Claude Code: a look that a later one overtook is not sent. */
   private claudeRead = 0;
   /** Codex on this working server, as last looked for; undefined when it is not installed. */
@@ -1227,8 +1227,9 @@ export class Daemon {
 
   /** The agents found here, and what this gasho-daemon does with each. */
   private agentsFound(): MachineAgents {
+    const claude = this.claude;
     return {
-      ...(this.claude ? { claude: { ...this.claude, canLaunch: true, operations: [...CLAUDE_OPERATIONS] } } : {}),
+      ...(claude ? { claude: { status: claude.status, version: claude.version, canLaunch: true, operations: [...CLAUDE_OPERATIONS] } } : {}),
       ...(this.codex ? { codex: { ...this.codex, canLaunch: true, operations: [] } } : {}),
     };
   }
@@ -1250,7 +1251,8 @@ export class Daemon {
       canLaunch: this.canLaunch,
       folders: this.folders,
       folderRepos: this.folderRepos,
-      models: this.models?.options,
+      models: this.claude?.subscriptionType === "pro" ? this.models?.options.filter((o) => o.id !== "fable") : this.models?.options,
+      claudeSubscriptionType: this.claude?.subscriptionType,
       modelsAt: this.models?.at,
       features: [...INPUT_FEATURES],
       canResume: true,

@@ -551,6 +551,8 @@ export interface MachineInfo {
   models?: ModelOption[];
   /** When gasho-daemon read `models` from the picker (ms since the epoch). */
   modelsAt?: number;
+  /** Claude Code's subscription type, when auth status reports one. */
+  claudeSubscriptionType?: string;
   /**
    * What gasho-daemon can switch or carry with an input to a session started from Gasho. Absent for a gasho-daemon
    * older than 0.6.0, which can switch the model and carry files, but not the effort level or ultracode.
@@ -1078,6 +1080,7 @@ export type DaemonToHub =
       folderRepos?: FolderRepo[];
       models?: ModelOption[];
       modelsAt?: number;
+      claudeSubscriptionType?: string;
       features?: InputFeature[];
       /** Answers session.history and session.resume. */
       canResume?: boolean;

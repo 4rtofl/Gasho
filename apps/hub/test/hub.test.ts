@@ -756,6 +756,27 @@ test("the default model is kept by the Gasho server, and every launch of Claude 
   hub.onClientMessage(c, { type: "defaultModel.set", requestId: "r3", model: "default" });
   assert.deepEqual(c.sent.at(-2), { type: "server", server: { ...info, defaultAgent: "claude" } });
   assert.equal(launched("default"), undefined);
+
+  hub.onClientMessage(c, { type: "defaultModel.set", requestId: "r4", model: "fable" });
+  for (const [reported, kept, launchModel] of [
+    ["pro", "pro", undefined],
+    ["max", "max", "fable"],
+    ["someone@example.com", undefined, "fable"],
+    [{ type: "pro" }, undefined, "fable"],
+    [undefined, undefined, "fable"],
+  ] as const) {
+    hub.onDaemonMessage(d, {
+      type: "capabilities",
+      canLaunch: true,
+      folders: [],
+      claudeSubscriptionType: reported as string | undefined,
+    });
+    const update = c.sent.at(-1);
+    assert.ok(update?.type === "machine");
+    assert.equal(update.machine.claudeSubscriptionType, kept);
+    assert.equal(update.machine.models, undefined);
+    assert.equal(launched("fable default"), launchModel);
+  }
 });
 
 test("a worktree's name is kept by the Gasho server for every browser, from a browser or gasho-daemon, until it is taken away", () => {

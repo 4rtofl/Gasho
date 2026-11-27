@@ -204,7 +204,7 @@ zellij を操作するときは、`--session` で対象を必ず指定する。r
 - `codex app-server daemon restart` のあとも、`stop` のあとも、gasho-daemon はつなぎ直してスレッドを読み込み直した。`stop` のあとは gasho-daemon が app-server を起動し直す
 - CLI からの起動、発言、通知、権限の確認の許可と拒否、gasho-daemon の起動し直し、割り込み、名前の変更、削除を、実際の Codex で確かめた
 
-Claude Code の状態の調べ方：`claude --version` は `2.1.327 (Claude Code)` と出す。`claude auth status --json` は、ログイン済みなら終了コード 0、未ログインなら終了コード 1 で、どちらも stdout の JSON の `loggedIn` で分かる（空の `CLAUDE_CONFIG_DIR` で確かめた）。この JSON にはメールアドレスや組織の名前も入るので、gasho-daemon は `loggedIn` だけを読む。
+Claude Code の状態の調べ方：`claude --version` は `2.1.327 (Claude Code)` と出す。`claude auth status --json` は、ログイン済みなら終了コード 0、未ログインなら終了コード 1 で、どちらも stdout の JSON の `loggedIn` で分かる（空の `CLAUDE_CONFIG_DIR` で確かめた）。この JSON にはメールアドレスや組織の名前も入るので、gasho-daemon は `loggedIn` と `subscriptionType` だけを読む。Claude Code 2.1.332 の Pro アカウントでは、`subscriptionType` は `"pro"` で、`/model` に Fable が表示された（2026-11-27 の実機確認）。Gasho ではプラン種別を使って選択肢から外す。
 
 確かめられなかったこと：
 

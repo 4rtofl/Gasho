@@ -259,6 +259,7 @@ function modelOptions(
   machine: MachineInfo,
   current: SessionModel | typeof KEEP_MODEL | undefined,
   label: string | undefined,
+  canPickFable: boolean,
   picked?: SessionModel,
 ): PromptModel[] {
   const now = Date.now();
@@ -267,7 +268,9 @@ function modelOptions(
   const ownDefault = current === "default" ? label?.replace(/\s*\(default\)\s*$/i, "").trim() : undefined;
   const readAt = machine.modelsAt;
   const fresh = readAt !== undefined && now - readAt < DEFAULT_NAME_MAX_AGE_MS;
-  const options: PromptModel[] = MODELS.filter((m) => !machine.models || named.has(m.id) || m.id === current || m.id === picked).map(
+  const options: PromptModel[] = MODELS.filter(
+    (m) => (canPickFable || m.id !== "fable") && (!machine.models || named.has(m.id) || m.id === current || m.id === picked),
+  ).map(
     (m) => {
       const name = named.get(m.id);
       let shown = name ?? m.name;
@@ -370,8 +373,11 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
     input.current?.focus();
   };
   const [picks, setPicks] = usePicks(key);
-  const { model: picked, effort: pickedEffort, ultracode: pickedUltracode } = picks;
-  const current = currentModel(machine, s.model);
+  const { model: pickedModel, effort: pickedEffort, ultracode: pickedUltracode } = picks;
+  const canPickFable = sessionAgent(s) !== "claude" || machine.claudeSubscriptionType !== "pro";
+  const picked = !canPickFable && pickedModel === "fable" ? undefined : pickedModel;
+  const reportedModel = currentModel(machine, s.model);
+  const current = !canPickFable && reportedModel === "fable" ? KEEP_MODEL : reportedModel;
   const ultracode = Boolean(s.ultracode);
   const features = (machine.features ?? legacyFeatures(machine.daemonVersion)).filter((f) => canDo(machine, s, f));
   const offersSkills = canDo(machine, s, "skills");
@@ -405,7 +411,7 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
         <PromptInput
           onSend={() => undefined}
           disabled
-          models={modelOptions(machine, current, s.model)}
+          models={modelOptions(machine, current, s.model, canPickFable)}
           model={current ?? "default"}
           placeholder="Gasho からは入力できません"
           hint={false}
@@ -507,7 +513,7 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
         streaming={busy}
         onStop={() => void stop()}
         disabled={offline}
-        models={features.includes("model") ? modelOptions(machine, current, s.model, picked) : []}
+        models={features.includes("model") ? modelOptions(machine, current, s.model, canPickFable, picked) : []}
         model={picked ?? current ?? "default"}
         onModelChange={(id) => setPicks((p) => ({ ...p, model: id === KEEP_MODEL ? undefined : (id as SessionModel) }))}
         actions={

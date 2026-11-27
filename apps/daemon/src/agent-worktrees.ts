@@ -3,11 +3,12 @@
 // watch it. A subagent in a worktree (the Agent tool's `isolation: "worktree"`) or EnterWorktree would work there out of
 // Gasho's sight. gasho-daemon starts each Claude Code with
 // - its plugin (claude-plugin, next to src/ and lib/: the skills) with `--plugin-dir`,
-// - a PreToolUse hook in its `--settings` (worktree-guard-hook, next to this file) that stops those two tools and says
+// - a PreToolUse hook in its `--settings` (the Rust terminal host's `worktree-guard-hook` where that runs, else
+//   worktree-guard-hook.ts, next to this file; see sessionCommands in statusline.ts) that stops those two tools and says
 //   what to do instead, and
 // - the same rule in `--append-system-prompt`, so that Claude picks the session from the start.
 // None of these touches the person's settings: they hold for the sessions Gasho starts, and only while they run.
-// This file uses only Node.js's own modules: the hook imports it, and starts at every call of those tools.
+// This file uses only Node.js's own modules: the hook's script imports it, and starts at every call of those tools.
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -21,6 +22,9 @@ export const LAUNCH_SKILL = `${PLUGIN_NAME}:launch-gasho-session`;
 
 /** The hook's script, next to this file (.ts when run from the repository, .js in the npm package). */
 export const GUARD_FILE = path.join(path.dirname(here), `worktree-guard-hook${path.extname(here)}`);
+
+/** The hook's command on Node.js, as words. */
+export const NODE_GUARD: readonly string[] = [process.execPath, GUARD_FILE];
 
 /** The tools the hook looks at: the Agent tool (Task in older Claude Code) and EnterWorktree. */
 export const GUARD_MATCHER = "Agent|Task|EnterWorktree";
@@ -73,17 +77,12 @@ function shellQuote(s: string): string {
 }
 
 /**
- * The PreToolUse hook to put in a session's `--settings`. Claude Code adds it to the hooks of the person's and the
- * folder's settings; it replaces none of them.
+ * The PreToolUse hook to put in a session's `--settings`, running `command` (its words). Claude Code adds it to the
+ * hooks of the person's and the folder's settings; it replaces none of them.
  */
-export function guardHooks(o: { node?: string; script?: string } = {}): Record<string, unknown> {
+export function guardHooks(command: readonly string[] = NODE_GUARD): Record<string, unknown> {
   return {
-    PreToolUse: [
-      {
-        matcher: GUARD_MATCHER,
-        hooks: [{ type: "command", command: `${shellQuote(o.node ?? process.execPath)} ${shellQuote(o.script ?? GUARD_FILE)}`, timeout: 10 }],
-      },
-    ],
+    PreToolUse: [{ matcher: GUARD_MATCHER, hooks: [{ type: "command", command: command.map(shellQuote).join(" "), timeout: 10 }] }],
   };
 }
 

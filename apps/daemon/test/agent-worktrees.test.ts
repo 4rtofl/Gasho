@@ -2,12 +2,14 @@
 // and EnterWorktree (and nothing else), and the plugin gasho-daemon loads into them has the skills that say how.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { GUARD_FILE, guardHooks, guardReply, LAUNCH_SKILL, PLUGIN_DIR, PLUGIN_NAME, SYSTEM_PROMPT } from "../src/agent-worktrees.ts";
+import { guardHooks, guardReply, LAUNCH_SKILL, NODE_GUARD, PLUGIN_DIR, PLUGIN_NAME, SYSTEM_PROMPT } from "../src/agent-worktrees.ts";
 import { listSkills } from "../src/skills.ts";
+import { NATIVE_HOST } from "../src/terminal.ts";
 
 const pre = (tool_name: string, tool_input: Record<string, unknown>) => ({ hook_event_name: "PreToolUse", session_id: "s", tool_name, tool_input });
 
@@ -36,26 +38,44 @@ test("subagents without a worktree, other tools and what cannot be read are let 
   }
 });
 
-function runHook(stdin: string): Promise<string> {
+/** The hooks, each with the reason it is skipped here, if it is. */
+const HOOKS: { name: string; command: readonly string[]; skip: string | false }[] = [
+  { name: "Node.js", command: NODE_GUARD, skip: false },
+  {
+    name: "Rust",
+    command: [NATIVE_HOST, "worktree-guard-hook"],
+    skip: !existsSync(NATIVE_HOST) && "the Rust terminal host is not built here (node apps/daemon/scripts/terminal-host.ts)",
+  },
+];
+
+/** Runs the hook as Claude Code does: its command from the settings, with bash, the call on stdin. */
+function runHook(command: readonly string[], stdin: string): Promise<string> {
+  const line = (guardHooks(command).PreToolUse as { hooks: { command: string }[] }[])[0]?.hooks[0]?.command ?? "";
   return new Promise((resolve, reject) => {
-    const child = execFile(process.execPath, [GUARD_FILE], (e, stdout) => (e ? reject(e) : resolve(stdout)));
+    const child = execFile("bash", ["-c", line], (e, stdout) => (e ? reject(e) : resolve(stdout)));
     child.stdin?.end(stdin);
   });
 }
 
-test("the hook's script prints the denial for Claude Code, and nothing for the rest", async () => {
-  const denied = JSON.parse(await runHook(JSON.stringify(pre("EnterWorktree", {}))));
-  assert.equal(denied.hookSpecificOutput.permissionDecision, "deny");
-  assert.equal(await runHook(JSON.stringify(pre("Agent", { prompt: "look" }))), "");
-  assert.equal(await runHook("not json"), "");
-  // The command the settings give runs it the same way.
-  const command = (guardHooks().PreToolUse as { hooks: { command: string }[] }[])[0]?.hooks[0]?.command ?? "";
-  const out = await new Promise<string>((resolve, reject) => {
-    const child = execFile("bash", ["-c", command], (e, stdout) => (e ? reject(e) : resolve(stdout)));
-    child.stdin?.end(JSON.stringify(pre("Agent", { isolation: "worktree" })));
+for (const { name, command, skip } of HOOKS) {
+  test(`the hook on ${name} prints guardReply's denial for Claude Code, word for word, and nothing for the rest`, { skip }, async () => {
+    const calls = [
+      pre("EnterWorktree", {}),
+      pre("Agent", { prompt: "do it", isolation: "worktree" }),
+      pre("Task", { isolation: "worktree" }),
+      pre("Agent", { prompt: "look" }),
+      pre("Agent", { isolation: "remote" }),
+      pre("Bash", { command: "git worktree add ../x" }),
+      { tool_name: "Agent", tool_input: ["isolation"] },
+      {},
+    ];
+    for (const call of calls) {
+      const reply = guardReply(call);
+      assert.equal(await runHook(command, JSON.stringify(call)), reply ? `${JSON.stringify(reply)}\n` : "", JSON.stringify(call));
+    }
+    assert.equal(await runHook(command, "not json"), "");
   });
-  assert.equal(JSON.parse(out).hookSpecificOutput.permissionDecision, "deny");
-});
+}
 
 test("the plugin has the skills, and the \"/\" menu of a session started with it lists them under its name", async () => {
   const manifest = JSON.parse(await fs.readFile(path.join(PLUGIN_DIR, ".claude-plugin", "plugin.json"), "utf8"));

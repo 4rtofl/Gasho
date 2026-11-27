@@ -728,6 +728,9 @@ export class Hub {
               .filter((o) => MODELS.has(o?.id) && typeof o.name === "string" && o.name.length > 0 && o.name.length <= 60)
               .map((o) => ({ id: o.id, name: o.name }))
           : undefined;
+        m.claudeSubscriptionType = typeof msg.claudeSubscriptionType === "string" && /^[a-z][a-z0-9_-]{0,31}$/.test(msg.claudeSubscriptionType)
+          ? msg.claudeSubscriptionType
+          : undefined;
         m.modelsAt = typeof msg.modelsAt === "number" && Number.isFinite(msg.modelsAt) ? msg.modelsAt : undefined;
         m.features = Array.isArray(msg.features) ? [...new Set(msg.features.filter((f) => FEATURES.has(f)))] : undefined;
         m.canResume = msg.canResume === true || undefined;
@@ -1173,7 +1176,9 @@ export class Hub {
       const effort = this.defaultEffort();
       const model = this.defaultModel();
       if (cmd.effort === undefined && effort) cmd = { ...cmd, effort };
-      if (cmd.model === undefined && model) cmd = { ...cmd, model };
+      if (cmd.model === undefined && model && (model !== "fable" || this.machines.get(machine)?.claudeSubscriptionType !== "pro")) {
+        cmd = { ...cmd, model };
+      }
     }
     const daemon = this.daemons.get(machine);
     if (!daemon) return reply({ ok: false, error: "この working server はオフラインです。" });

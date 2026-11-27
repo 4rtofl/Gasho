@@ -165,7 +165,7 @@ working server は、ホスト名ではなく登録時に発行した ID で区�
 10. 画面から頼まれたら、自分を指定された版に更新する。新しい版を今の版とは別のフォルダーに入れ、起動できることを確かめてから切り替え、常駐させているサービスに起動し直させる（docs/daemon-setup.md の「更新する」）
 11. Claude が会話で利用者に送った画像と動画（S18）を、Gasho サーバーが求めた範囲ずつ読んで送る
 12. セッションの Claude Code が読むスキルとカスタムコマンド（S19）の名前と説明を、ブラウザーが求めたときに読んで送る
-13. working server の Claude Code と Codex の状態を調べて、Gasho サーバーに送る。Claude Code は `claude --version` と `claude auth status --json` のログインの有無だけを使い、ログインしている人の情報は送らない。`codex` は、環境変数 `GASHO_CODEX_BIN` があればそれを、なければ PATH から探す。調べるのは gasho-daemon の起動のときと5分ごとで、`codex --version` と `codex login status` の結果だけを使う（`~/.codex/auth.json` は読まない）。状態は、使える（ログイン済み）、未ログイン（`Not logged in`）、確かめられない（そのほかの失敗）の3つで、`codex` が見つからないときは何も送らない
+13. working server の Claude Code と Codex の状態を調べて、Gasho サーバーに送る。Claude Code は `claude --version` と、`claude auth status --json` のログインの有無とプラン種別（`subscriptionType`）を使い、メールアドレスや組織名は送らない。`codex` は、環境変数 `GASHO_CODEX_BIN` があればそれを、なければ PATH から探す。調べるのは gasho-daemon の起動のときと5分ごとで、`codex --version` と `codex login status` の結果だけを使う（`~/.codex/auth.json` は読まない）。状態は、使える（ログイン済み）、未ログイン（`Not logged in`）、確かめられない（そのほかの失敗）の3つで、`codex` が見つからないときは何も送らない
 
 常駐は、systemd のユーザーサービス（Ubuntu）か launchd のエージェント（Mac）で行う（`service install`、docs/daemon-setup.md）。
 
@@ -285,6 +285,7 @@ gasho-daemon は、Claude Code を起動するたびに（新しいセッショ�
 - Ultracode は、`/effort ultracode on|off` で、そのセッションだけ切り替える。オンになったかは、入力欄の上の罫線の `ultracode` で確かめる
 - 入力欄が画面に見えないときや、選択画面・確認が開いているときは、何も入力しない。確認の画面などに Enter が入ると、何を選ぶか分からないため。前の操作で `/model` の選択画面が開いたままなら、Esc で閉じてから入力する
 - いまの Effort と Ultracode は、トランスクリプト（返答の `effort`、コマンドの出力）と、入力欄のまわりの表示から読む
+- Claude Code が Pro プランの working server では、モデル一覧をまだ読んでいない場合も Fable を選択肢に出さない。Gasho の共通の既定モデルが Fable の場合、その working server での新規セッションは Claude Code 自身の既定モデルで起動する
 - モデルの名前（Opus 5.5 など）は、`/model` の選択画面から読み、working server ごとに覚える。覚えていないか24時間たったときは、待機中の Gasho のセッションのうち、起動から30秒たったいちばん新しいもので選択画面を開き、Esc で閉じて読む。入力欄に文字があるときは、端末で誰かが打っているかもしれないので開かない。読めなかったときは、次に試すのを24時間後にする。`/model` の Enter が受け取られたか分からなかったときは、そのセッションを5分間見て、選択画面が遅れて開いたら Esc で閉じる
 - いまのモデルは、選択画面の名前と完全に一致したときだけ、そのモデルとして扱う。一致しない（Opus 4.6 など、選択画面にない版の）ときは、その名前をそのまま出し、どのモデルを選んでも切り替える
 - gasho-daemon は、発言と一緒に扱えるもの（モデル・Effort・Ultracode・添付）を Gasho サーバーに知らせる。知らせない古い gasho-daemon（0.6.0 より前）は版で判断し、0.5 ならモデルの切り替えと添付だけ、それより前なら文字の入力だけを扱えるものとする。扱えないものの操作は出さず、Gasho サーバーもそれらを含む発言を断る

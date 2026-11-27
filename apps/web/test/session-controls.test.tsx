@@ -1,10 +1,12 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { EffortLevel } from "@gasho/protocol";
 import { expect, test, vi } from "vitest";
 import { BackgroundToggle, EffortPicker } from "@/components/session-controls";
+import { setSettingsSectionOpen } from "@/lib/settings-sections";
+import { SessionView } from "@/views/session";
 import { DefaultEffortSection, DefaultModelSection } from "@/views/settings";
-import { connectHub } from "./hub";
+import { connectHub, machine, session } from "./hub";
 
 test("the effort picked is told, and the button says it is switched when sending until the session uses it", async () => {
   const user = userEvent.setup();
@@ -99,6 +101,7 @@ test("the default effort level is set for every browser from the gauge, by its k
 test("the default model is set for every browser from its combobox, and back to Claude Code's own", async () => {
   const server = (defaultModel?: "opus") => ({ version: "0.15.0", update: { canUpdate: false }, ...(defaultModel ? { defaultModel } : {}) });
   const hub = await connectHub({ server: server() });
+  setSettingsSectionOpen("default-model", false);
   render(<DefaultModelSection />);
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: /^既定のモデル/ }));
@@ -113,4 +116,56 @@ test("the default model is set for every browser from its combobox, and back to 
   await user.selectOptions(box, "default");
   const back = hub.sent.at(-1);
   expect(back?.type === "defaultModel.set" && !("model" in back)).toBe(true);
+});
+
+test("the shared default can offer Fable unless all working servers are on Pro", async () => {
+  const pro = machine("pro", [], { claudeSubscriptionType: "pro" });
+  const hub = await connectHub({
+    machines: [pro],
+    server: { version: "0.15.0", update: { canUpdate: false }, defaultModel: "fable" },
+  });
+  setSettingsSectionOpen("default-model", true);
+  render(<DefaultModelSection />);
+  const user = userEvent.setup();
+  expect(screen.queryByRole("option", { name: /^Fable/ })).toBeNull();
+  expect(screen.getByRole<HTMLSelectElement>("combobox").value).toBe("");
+  expect(screen.getByRole("option", { name: "Claude Code の既定のモデルで起動します" })).toBeTruthy();
+  await user.selectOptions(screen.getByRole("combobox"), "default");
+  expect(hub.sent.at(-1)).toMatchObject({ type: "defaultModel.set" });
+
+  await hub.say({ type: "machine", machine: machine("unknown") });
+  expect(screen.getByRole("option", { name: /^Fable/ })).toBeTruthy();
+  expect(screen.getByRole<HTMLSelectElement>("combobox").value).toBe("fable");
+});
+
+test("the session picker hides Fable on Pro with or without a catalog and ignores a pending Fable pick", async () => {
+  const m = machine("picker", [session("s", { model: "Sonnet 5.5" })], { features: ["model"] });
+  const hub = await connectHub({ machines: [m] });
+  render(<SessionView machine={m.id} sessionId="s" onSessionAction={() => {}} onAskTrust={() => {}} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: /^モデル：Sonnet/ }));
+  await user.click(screen.getByRole("option", { name: /^Fable/ }));
+  expect(screen.getByRole("button", { name: /^モデル：Fable/ })).toBeTruthy();
+
+  const pro = { ...m, claudeSubscriptionType: "pro" };
+  await hub.say({ type: "machine", machine: pro });
+  await user.click(screen.getByRole("button", { name: /^モデル：Sonnet/ }));
+  expect(screen.getByRole("listbox", { name: "モデル" })).toBeTruthy();
+  expect(screen.queryByRole("option", { name: /^Fable/ })).toBeNull();
+
+  await hub.say({ type: "machine", machine: { ...pro, models: [{ id: "sonnet", name: "Sonnet 5.5" }, { id: "fable", name: "Fable 5.2" }] } });
+  expect(screen.queryByRole("option", { name: /^Fable/ })).toBeNull();
+  await user.type(screen.getByRole("textbox", { name: "メッセージ" }), "続けて");
+  await user.click(screen.getByRole("button", { name: "送信" }));
+  await waitFor(() => expect(hub.commands().at(-1)).toMatchObject({ type: "session.input", text: "続けて" }));
+  expect(hub.commands().at(-1)).not.toHaveProperty("model");
+  await hub.answer({ ok: true });
+});
+
+test("a session already using Fable on Pro still shows its current model", async () => {
+  const m = machine("current", [session("s", { model: "Fable 5.2" })], { features: ["model"], claudeSubscriptionType: "pro" });
+  await connectHub({ machines: [m] });
+  render(<SessionView machine={m.id} sessionId="s" onSessionAction={() => {}} onAskTrust={() => {}} />);
+  await userEvent.setup().click(screen.getByRole("button", { name: /^モデル：Fable 5.2/ }));
+  expect(screen.getByRole("option", { name: /^Fable 5.2.*いま/ })).toBeTruthy();
 });

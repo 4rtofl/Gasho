@@ -1,7 +1,6 @@
 // Whether Claude Code can be used on this working server, for the 端末 screen: found by running its own commands
-// (`claude --version`, `claude auth status --json`). Only whether it is logged in is taken from the second: it also
-// says who is logged in, which stays here.
-import type { AgentInfo, AgentStatus } from "@gasho/protocol";
+// (`claude --version`, `claude auth status --json`). From auth status, only login state and subscription type are kept.
+import type { AgentStatus } from "@gasho/protocol";
 import { exec, type ExecResult } from "./exec.ts";
 
 /** How long each command may take. */
@@ -19,28 +18,36 @@ export function claudeVersionOf(output: string): string | undefined {
   return /^(\d+\.\d+\.\d+\S*)\s+\(Claude Code\)\s*$/m.exec(output)?.[1];
 }
 
+type ClaudeAuth = { status: AgentStatus; subscriptionType?: string };
+
+export type ClaudeInfo = ClaudeAuth & { version?: string };
+
 /** What the JSON of `claude auth status --json` says; it exits with 1 when not logged in, and says so all the same. */
-export function claudeStatusOf(stdout: unknown): AgentStatus {
-  if (typeof stdout !== "string") return "unknown";
+export function claudeAuthOf(stdout: unknown): ClaudeAuth {
+  if (typeof stdout !== "string") return { status: "unknown" };
   try {
-    const loggedIn = (JSON.parse(stdout) as { loggedIn?: unknown } | null)?.loggedIn;
-    return loggedIn === true ? "available" : loggedIn === false ? "loginRequired" : "unknown";
+    const auth = JSON.parse(stdout) as { loggedIn?: unknown; subscriptionType?: unknown } | null;
+    if (auth?.loggedIn === true) {
+      const subscriptionType = auth.subscriptionType;
+      return { status: "available", ...(typeof subscriptionType === "string" ? { subscriptionType } : {}) };
+    }
+    return { status: auth?.loggedIn === false ? "loginRequired" : "unknown" };
   } catch {
-    return "unknown";
+    return { status: "unknown" };
   }
 }
 
 /** Claude Code on this working server. Gasho needs it, so one that cannot be run is told as a state not known. */
-export async function detectClaude(run: RunClaude): Promise<AgentInfo> {
+export async function detectClaude(run: RunClaude): Promise<ClaudeInfo> {
   let version: string | undefined;
   try {
     version = claudeVersionOf((await run(["--version"])).stdout);
   } catch {
     return { status: "unknown" };
   }
-  const status = await run(["auth", "status", "--json"]).then(
-    (r) => claudeStatusOf(r.stdout),
-    (e: unknown) => claudeStatusOf((e as { stdout?: unknown } | null)?.stdout),
+  const auth = await run(["auth", "status", "--json"]).then(
+    (r) => claudeAuthOf(r.stdout),
+    (e: unknown) => claudeAuthOf((e as { stdout?: unknown } | null)?.stdout),
   );
-  return { status, ...(version ? { version } : {}) };
+  return { ...auth, ...(version ? { version } : {}) };
 }

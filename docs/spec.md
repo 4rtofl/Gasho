@@ -29,7 +29,7 @@ Gasho は、Mac と Ubuntu Server で動く Claude Code のセッションと、
 | S3 | 通知（ツールの実行、応答の完了、権限の確認待ち、入力待ち） | すべて | hooks |
 | S4 | 権限の確認への許可と拒否 | すべて | PermissionRequest hook |
 | S5 | （廃止）公式アプリでセッションを開くリンク | - | - |
-| S6 | 新しいセッションの起動 | Gasho が起動するもの | gasho-daemon の端末（node-pty と xterm.js） |
+| S6 | 新しいセッションの起動 | Gasho が起動するもの | gasho-daemon の端末（Rust。macOS arm64・Linux x64 のほかは node-pty と xterm.js） |
 | S7 | 発言の送信（モデル・Effort・Ultracode の切り替えと、ファイルの添付を含む） | Gasho が起動するもの | 端末（貼り付けと Enter、/model の選択画面、/effort ultracode） |
 | S8 | 割り込み | Gasho が起動するもの | 端末（Esc） |
 | S9 | 端末画面の表示 | Gasho が起動するもの | 端末（画面の取得） |
@@ -92,7 +92,7 @@ git のリポジトリでないフォルダー（例：hardcore2）では、Git 
          gasho-daemon（working server：Ubuntu）     gasho-daemon（working server：Mac。同じ LAN にいるあいだ）
            ├ Claude Code（hooks、トランスクリプト、claude agents）
            ├ git
-           └ セッションの端末（node-pty、xterm.js）
+           └ セッションの端末（Rust、または node-pty と xterm.js）
 ```
 
 | 構成要素 | 置き場所 | 役割 |
@@ -191,7 +191,10 @@ Codex のセッションは、Codex の常駐の app-server のスレッドで�
 
 ### セッションの端末
 
-Gasho が起動するセッションは、gasho-daemon がセッションごとに起動する小さなプロセス（端末）の中で動く。端末は、node-pty で疑似端末を作って Claude Code を動かし、画面を xterm.js（VS Code の端末と同じもの）で保つ。gasho-daemon は、Unix ソケット（`~/.config/gasho/terminals/<名前>.sock`）で、画面の取得、キーと貼り付けの入力、終了を頼む。
+Gasho が起動するセッションは、gasho-daemon がセッションごとに起動する小さなプロセス（端末）の中で動く。端末は、疑似端末で Claude Code を動かし、画面を保つ。gasho-daemon は、Unix ソケット（`~/.config/gasho/terminals/<名前>.sock`）で、画面の取得、キーと貼り付けの入力、終了を頼む。
+
+- macOS arm64 と Linux x64 では、gasho-daemon のパッケージに入っている Rust の端末（`apps/daemon/terminal-host/`。画面は alacritty_terminal で保つ。Linux 版は musl で静的にリンクし、glibc の版によらず動く）を使う。そのほかのマシンと、Rust の端末が動かないマシンでは、node-pty で疑似端末を作り、画面を xterm.js（VS Code の端末と同じもの）で保つ。gasho-daemon は、最初の端末を起動するときに `gasho-terminal-host --version` を流してどちらにするかを決め、ログに残す
+- 2つの端末は、ソケットでの頼み方（`HOST_PROTOCOL`）と設定のファイルが同じ。gasho-daemon を更新する前から Node.js の端末で動いているセッションも、更新のあとにそのまま使える。Rust の端末は、バイナリのパスにバージョンのフォルダーが入るので、動いているあいだはそのバージョンのフォルダーを消さない
 
 - 端末は gasho-daemon とは別のプロセスなので、gasho-daemon を動かし直してもセッションは続く。gasho-daemon は起動したとき、記録（`managed.json`）にあるセッションのうち、端末が答え、Claude Code の PID が合うものを引き継ぐ
 - systemd のユーザーマネージャーがあるマシンでは、端末を `systemd-run --user --scope` で起動し、セッションごとのスコープ（`gasho-<名前>-xxxx.scope`）に入れる。systemd はサービスを止めるときにサービスの中のプロセスをすべて止める（KillMode の既定）ため、サービスの外に出しておく。systemd 254 以降の `systemd-run` は、`--scope` でもコマンドの引数の `$` を環境変数として展開する（`$$` は `$` になる）ので、`--expand-environment=no` を付けて、パスをそのまま渡す。254 より前の版はこの指定を知らないが、展開もしないので付けない。どちらにするかは、最初に1回、`$$` を表示させて確かめる
@@ -411,7 +414,7 @@ Gasho からは手元のマシンでコマンドを実行させられるので�
 
 ## 未確認の事項
 
-- Mac（launchd）での動き。端末の node-pty は、macOS の x64・arm64 のビルド済みを使う
+- Mac（launchd）での動き。端末は、macOS の arm64 では Rust の端末、x64 では node-pty のビルド済みを使う
 - AskUserQuestion に hook で答える方法
 - トランスクリプトなどの内部の形式が、Claude Code の更新で変わったときの影響
 - easyui.site の部品の、スマホでの重さ

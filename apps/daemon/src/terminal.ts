@@ -1,6 +1,8 @@
-// The terminals of the sessions that gasho-daemon starts. Each session gets a small process of its own
-// (terminal-host.ts) that runs Claude Code in a pseudo-terminal (node-pty) and keeps its screen in a headless xterm.js
-// (the terminal of VS Code). The daemon reads the screen and types keys and text into it over a Unix socket. The
+// The terminals of the sessions that gasho-daemon starts. Each session gets a small process of its own that runs
+// Claude Code in a pseudo-terminal and keeps its screen: the Rust one (terminal-host/, built for macOS arm64 and Linux
+// x64 into the npm package), or elsewhere terminal-host.ts, with node-pty and a headless xterm.js (the terminal of VS
+// Code). Both answer the same protocol (HOST_PROTOCOL), so a daemon uses the terminals of every version before it.
+// The daemon reads the screen and types keys and text into it over a Unix socket. The
 // terminal is a process apart from the daemon, so it outlives restarts of the daemon; where systemd runs for the user,
 // it also gets a systemd scope of its own (scopeArgs), outside the daemon's service, which systemd stops as a whole.
 // This replaces zellij, which gasho-daemon 0.10 and before needed; the sessions they started keep running in zellij
@@ -31,6 +33,13 @@ const REQUEST_MS = 15_000;
 
 /** The terminal host's script, next to this file (.ts when run from the repository, .js in the npm package). */
 const HOST_FILE = fileURLToPath(new URL(`./terminal-host${path.extname(fileURLToPath(import.meta.url))}`, import.meta.url));
+/** The command of the Node.js terminal host; a host's command takes its settings file after it. */
+export const NODE_HOST: readonly string[] = [process.execPath, HOST_FILE];
+/**
+ * The Rust terminal host for this machine, beside lib/ in the npm package (or src/ in the repository, built there by
+ * scripts/terminal-host.ts). The package has it for macOS arm64 and Linux x64 only.
+ */
+export const NATIVE_HOST = fileURLToPath(new URL(`../native/${process.platform}-${process.arch}/gasho-terminal-host`, import.meta.url));
 
 /** What a terminal host runs (written to <dir>/<name>.json; the host reads it when it starts). */
 export interface HostConfig {
@@ -199,6 +208,20 @@ export async function terminalWorks(): Promise<boolean> {
   }
 }
 
+/**
+ * The command that starts the terminals here: the Rust host where it is there and runs, else the Node.js one. Says
+ * why when there is a Rust host that does not run.
+ */
+export async function hostCommand(log: (s: string) => void = () => undefined, native = NATIVE_HOST): Promise<readonly string[]> {
+  try {
+    await execFileP(native, ["--version"], { timeout: 10_000 });
+    return [native];
+  } catch (e) {
+    if ((e as { code?: unknown }).code !== "ENOENT") log(`the terminal host ${native} does not run here (${e instanceof Error ? e.message : String(e)}); terminals run on Node.js`);
+    return NODE_HOST;
+  }
+}
+
 /** The terminals of this machine (see the top of this file), by name. Every call names the terminal. */
 export class Terminals {
   readonly dir: string;
@@ -206,17 +229,27 @@ export class Terminals {
   /** What systemd-run needs to start user scopes here, or undefined when it cannot (checked once; see scopeFlags). */
   private scopes: Promise<readonly string[] | undefined> | undefined;
   private works: Promise<boolean> | undefined;
+  private host: Promise<readonly string[]> | undefined;
   private inService: boolean;
   private log: (s: string) => void;
 
   /**
    * `env` is what the hosts run with; `scopes: false` never puts them in a systemd scope (for tests). `inService`: the
-   * daemon runs in its systemd service, where a terminal without a scope of its own is stopped with the daemon.
+   * daemon runs in its systemd service, where a terminal without a scope of its own is stopped with the daemon. `host`
+   * is the command of the host to start the terminals with, instead of the one hostCommand chooses.
    */
-  constructor(o: { stateDir: string; env: Record<string, string>; scopes?: boolean; inService?: boolean; log?: (s: string) => void }) {
+  constructor(o: {
+    stateDir: string;
+    env: Record<string, string>;
+    scopes?: boolean;
+    inService?: boolean;
+    host?: readonly string[];
+    log?: (s: string) => void;
+  }) {
     this.dir = terminalsDir(o.stateDir);
     this.env = o.env;
     if (o.scopes === false) this.scopes = Promise.resolve(undefined);
+    if (o.host) this.host = Promise.resolve(o.host);
     this.inService = o.inService ?? false;
     this.log = o.log ?? (() => undefined);
   }
@@ -245,7 +278,11 @@ export class Terminals {
     await fs.writeFile(configFile, `${JSON.stringify(config)}\n`, { mode: 0o600 });
     const logFile = path.join(this.dir, `${o.name}.log`);
     const out = await fs.open(logFile, "a", 0o600);
-    const host = [process.execPath, HOST_FILE, configFile];
+    this.host ??= hostCommand(this.log).then((h) => {
+      this.log(`terminals run on ${h === NODE_HOST ? "Node.js" : h[0]}`);
+      return h;
+    });
+    const host = [...(await this.host), configFile];
     const extra = await this.scopeFlags();
     const command = extra ? ["systemd-run", ...scopeArgs(o.name, extra), ...host] : host;
     if (!extra && this.inService) {

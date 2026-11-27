@@ -110,6 +110,20 @@ function resultLabel(r: ToolResult): string {
   return `${r.isError ? "エラー" : "結果"}（${r.content.length.toLocaleString()} 文字）`;
 }
 
+/**
+ * A call's tool and what it worked on, on one line of a fold. A long name (an MCP tool's,
+ * mcp__claude-in-chrome__list_connected_browsers) would push the line past a phone's width, so both are cut with "…":
+ * what it worked on first (its shrink outweighs the name's), then the name, once nothing of the other is left.
+ */
+function ToolLabel({ call }: { call: ToolUse }) {
+  return (
+    <>
+      <span className="min-w-0 truncate font-mono font-medium text-foreground/90">{call.name}</span>
+      <span className="min-w-0 shrink-[1000] truncate font-mono">{call.summary ?? toolSummary(call.input)}</span>
+    </>
+  );
+}
+
 /** A tool call and, once it has come, its result, in one fold. In a group, the group's icon stands for its own. */
 function ToolFold({ block, nested = false }: { block: ToolUse; nested?: boolean }) {
   const result = useContext(ToolResults).of(block.id);
@@ -119,8 +133,7 @@ function ToolFold({ block, nested = false }: { block: ToolUse; nested?: boolean 
       summary={
         <span className="flex min-w-0 flex-1 items-center gap-2">
           {!nested && <Wrench className={cn("size-3.5 shrink-0", result?.isError && "text-red-400")} />}
-          <span className="shrink-0 font-mono font-medium text-foreground/90">{block.name}</span>
-          <span className="truncate font-mono">{block.summary ?? toolSummary(block.input)}</span>
+          <ToolLabel call={block} />
           {result?.isError && <span className="ml-auto shrink-0 text-red-400">エラー</span>}
         </span>
       }
@@ -152,8 +165,7 @@ function ToolsFold({ calls }: { calls: ToolUse[] }) {
           <span className="shrink-0 tabular-nums">ツール {calls.length} 回</span>
           {latest && (
             <span className="flex min-w-0 items-center gap-2 group-open/tools:hidden">
-              <span className="shrink-0 font-mono font-medium text-foreground/90">{latest.name}</span>
-              <span className="truncate font-mono">{latest.summary ?? toolSummary(latest.input)}</span>
+              <ToolLabel call={latest} />
             </span>
           )}
           {errors > 0 && <span className="ml-auto shrink-0 text-red-400">エラー {errors} 回</span>}
@@ -636,7 +648,9 @@ export function Transcript({
       // relative: an absolutely placed element with no placed parent of its own (a plugin's sr-only status line at the
       // end of the conversation) is placed in here. Otherwise it is placed in the screen's main box, where the end of
       // the conversation would be unscrolled, and makes that box scroll below the conversation.
-      className="relative h-full overflow-y-auto"
+      // overflow-x-hidden: a row wider than the box (a long word, a tool's long name) is not to scroll the whole
+      // conversation sideways; what scrolls sideways (a code block, a table) does so in a box of its own.
+      className="relative h-full overflow-x-hidden overflow-y-auto"
       // The rows on screen are kept in place here (keepAnchor); the browser's own anchoring would move them twice.
       style={{ overflowAnchor: "none" }}
       onScroll={(e) => {

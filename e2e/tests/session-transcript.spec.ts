@@ -98,6 +98,73 @@ test("ツールの呼び出しを折り畳み、続いた呼び出しを「ツ�
   await expect(conversation.getByText("ビルドに失敗しました")).toBeVisible();
 });
 
+test("長い名前のツールの行は幅に収め、会話の欄は横にスクロールしない。コードブロックは中で横にスクロールする", async ({ page, hub }) => {
+  const LONG = "mcp__claude-in-chrome__list_connected_browsers_and_their_tabs";
+  const longLine = `const path = "${"/work/gasho/apps/web/src/components".repeat(6)}";`;
+  // A phone's width, in Chromium too (it is 393px in WebKit, as an iPhone 15).
+  await page.setViewportSize({ width: 393, height: 852 });
+  await openSession(page, hub, {
+    transcript: [
+      textEntry("user", "ブラウザーを確かめて"),
+      ...toolCall(LONG, { query: "select:Monitor,mcp__claude-in-chrome__tabs_context" }, "つながっていません", true),
+      textEntry("assistant", `次に、まとめて調べます。\n\n\`\`\`ts\n${longLine}\n\`\`\``),
+      ...toolCall("Bash", { command: "npm test" }, "テストが通りました", true),
+      ...toolCall(LONG, { query: "select:Monitor" }, "つながっていません"),
+    ],
+  });
+  const conversation = page.locator(".chat-text");
+  const scroller = conversation.locator("xpath=ancestor::*[contains(@class, 'overflow-y-auto')][1]");
+  const one = conversation.locator("summary").filter({ hasText: "select:Monitor,mcp__claude-in-chrome__tabs_context" });
+  const group = conversation.locator("summary").filter({ hasText: "ツール 2 回" });
+  const code = conversation.locator("pre").filter({ hasText: "const path" });
+  await expect(one).toContainText(LONG);
+  await expect(group).toContainText(LONG);
+
+  /** Each row of a tool is as wide as its fold at most, with how many failed still in it, and nothing pushes the conversation sideways. */
+  const fits = async () => {
+    for (const row of await conversation.locator("summary").all()) {
+      if (!(await row.isVisible())) continue;
+      const fit = await row.evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        const fold = el.closest("details")!.getBoundingClientRect();
+        const error = [...el.querySelectorAll("span")].find((s) => s.children.length === 0 && s.textContent?.startsWith("エラー"));
+        const e = error?.getBoundingClientRect();
+        return el.scrollWidth <= el.clientWidth && box.right <= fold.right + 0.5 && (!e || (e.width > 0 && e.right <= box.right + 0.5));
+      });
+      expect(fit, await row.innerText()).toBe(true);
+    }
+    expect(await scroller.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+    // A code block scrolls sideways in a box of its own.
+    expect(await code.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+    const scrolled = await code.evaluate((el) => {
+      el.scrollLeft = 40;
+      const left = el.scrollLeft;
+      el.scrollLeft = 0;
+      return left;
+    });
+    expect(scrolled).toBeGreaterThan(0);
+  };
+
+  await test.step("スマホの幅: 名前は「…」で切り、行は幅に収まる", async () => {
+    await fits();
+    const name = one.getByText(LONG, { exact: true });
+    expect(await name.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+    await expect(one.getByText("エラー", { exact: true })).toBeVisible();
+    await expect(group.getByText("エラー 1 回", { exact: true })).toBeVisible();
+    // Opened, the group's rows fit too.
+    await group.click();
+    await expect(conversation.locator("details details summary").filter({ hasText: "select:Monitor" })).toBeVisible();
+    await fits();
+  });
+
+  await test.step("PC の幅: 名前と要約がそのまま出る", async () => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await fits();
+    const name = one.getByText(LONG, { exact: true });
+    expect(await name.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  });
+});
+
 test("シェルのコマンド、会話の要約、割り込み、サブエージェント、Claude が送った画像・動画・ファイルを描く", async ({ page, hub }) => {
   const sendFiles = (id: string, sent: SentFiles) => entry("assistant", [{ type: "tool_use", id, name: "SendUserFile", input: "{}", sent }]);
   await openSession(page, hub, {

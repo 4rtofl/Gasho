@@ -82,6 +82,20 @@ export function SessionFooter({ machine, session }: { machine: MachineInfo; sess
     const percent = shownPercent(row.window, now);
     return percent === undefined ? [] : [{ row, percent }];
   });
+  const limitItems = rows.map(({ row, percent }, index) => (
+    <span key={row.key} className={cn(
+      "flex h-full shrink-0 items-center gap-1.5 whitespace-nowrap",
+      index > 0 && "border-l border-border/70 px-1.5 last:pr-0",
+      index === 0 && rows.length > 1 && "pr-1.5",
+    )}>
+      <span>{shortLabel(row, phone)}</span>
+      {!phone && <Bar percent={percent} />}
+      <Percent value={percent} />
+      {!phone && row.window.resetsAt !== undefined && (
+        <span className="hidden @6xl:inline">{shortReset(row.kind, row.window.resetsAt, now)}</span>
+      )}
+    </span>
+  ));
   const toggle = () => setOpen((o) => !o);
   const opener = { open, onToggle: toggle };
 
@@ -102,31 +116,13 @@ export function SessionFooter({ machine, session }: { machine: MachineInfo; sess
           >
             {phone ? (
               <>
-                <Item>
+                <Item first>
                   <Opener {...opener} label={`${connected ? "接続中" : "再接続中"}。${memoryWords(machine, mem)}。詳細を開く`}>
                     <Dot connected={connected} />
                     <span>MEM</span>
                     {mem ? <MemoryPercent memory={mem} /> : <span>{machine.connected ? "–" : "オフライン"}</span>}
                   </Opener>
                 </Item>
-                <PluginSessionFooter machine={machine} session={session} side="left" />
-                <PluginSessionFooter machine={machine} session={session} side="right" />
-                {context && (
-                  <Item>
-                    <Opener {...opener} label={`コンテキスト ${clampPercent(context.percent)}% 使用。詳細を開く`}>
-                      <Ring percent={clampPercent(context.percent)} />
-                      <Percent value={clampPercent(context.percent)} />
-                    </Opener>
-                  </Item>
-                )}
-                {rows.map(({ row, percent }) => (
-                  <Item key={row.key}>
-                    <Opener {...opener} label={`${row.label} ${percent}%。詳細を開く`}>
-                      <span>{shortLabel(row, true)}</span>
-                      <Percent value={percent} />
-                    </Opener>
-                  </Item>
-                ))}
               </>
             ) : (
               <>
@@ -142,34 +138,46 @@ export function SessionFooter({ machine, session }: { machine: MachineInfo; sess
                 <Item>
                   <MemoryItem machine={machine} memory={mem} />
                 </Item>
-                <PluginSessionFooter machine={machine} session={session} side="left" />
-                <span className="flex-1" />
-                <PluginSessionFooter machine={machine} session={session} side="right" />
-                {context && (
-                  <Item>
-                    <Opener {...opener} label={`コンテキスト ${clampPercent(context.percent)}% 使用。使用量の詳細を開く`}>
-                      <Ring percent={clampPercent(context.percent)} />
-                      <span>コンテキスト</span>
-                      <Percent value={clampPercent(context.percent)} />
+              </>
+            )}
+            <PluginSessionFooter machine={machine} session={session} side="left" />
+            {/* Keep the first flex line full-height even if only a plugin part fits on it. */}
+            <div className={cn("flex h-full min-w-0 flex-1 flex-wrap content-start items-center whitespace-nowrap before:h-full [&>*]:shrink-0", !phone && "justify-end")}>
+              <PluginSessionFooter machine={machine} session={session} side="right" />
+              {context && (
+                <Item>
+                  <Opener {...opener} label={`コンテキスト ${clampPercent(context.percent)}% 使用。${phone ? "" : "使用量の"}詳細を開く`}>
+                    <Ring percent={clampPercent(context.percent)} />
+                    {!phone && <span>コンテキスト</span>}
+                    <Percent value={clampPercent(context.percent)} />
+                    {!phone && (
                       <span className="hidden @4xl:inline">
                         {shortTokens(context.used)} / {shortTokens(context.size)}
                       </span>
-                    </Opener>
-                  </Item>
-                )}
-                {rows.map(({ row, percent }) => (
-                  <Item key={row.key}>
-                    <Opener {...opener} label={`${row.label} ${percent}%。使用量の詳細を開く`}>
-                      <span>{shortLabel(row, false)}</span>
-                      <Bar percent={percent} />
-                      <Percent value={percent} />
-                      {/* Where the line is narrow, the limits keep their shares and leave out when they reset. */}
-                      {row.window.resetsAt !== undefined && <span className="hidden @6xl:inline">{shortReset(row.kind, row.window.resetsAt, now)}</span>}
-                    </Opener>
-                  </Item>
-                ))}
-              </>
-            )}
+                    )}
+                  </Opener>
+                </Item>
+              )}
+              {rows.length > 0 && (
+                <div className="flex h-full min-w-min max-w-max grow basis-0 items-center border-l border-border/70 px-1.5">
+                  <Opener
+                    {...opener}
+                    label={`${rows.map(({ row, percent }) => `${row.label} ${percent}%`).join("、")}。${phone ? "" : "使用量の"}詳細を開く`}
+                  >
+                    {/* Later limits must not set the minimum width of the button. */}
+                    <span className="grid h-full min-w-0 grid-cols-[max-content_minmax(0,max-content)]">
+                      {limitItems[0]}
+                      {limitItems.length > 1 && (
+                        // The empty flex item makes even the first overflowing row wrap out of sight.
+                        <span className="flex h-full min-w-0 flex-wrap content-start overflow-hidden before:h-full">
+                          {limitItems.slice(1)}
+                        </span>
+                      )}
+                    </span>
+                  </Opener>
+                </div>
+              )}
+            </div>
           </div>
         </footer>
       </Popover.Anchor>
@@ -203,7 +211,7 @@ export function SessionFooter({ machine, session }: { machine: MachineInfo; sess
 
 /** An item of the line, after a divider unless it is the first. */
 function Item({ first, children }: { first?: boolean; children: ReactNode }) {
-  return <span className={cn("flex h-full shrink-0 items-center px-1.5", !first && "border-l border-border/70 first:border-l-0")}>{children}</span>;
+  return <span className={cn("flex h-full shrink-0 items-center px-1.5", !first && "border-l border-border/70")}>{children}</span>;
 }
 
 /** An item that opens the details. */
@@ -216,7 +224,7 @@ function Opener({ open, onToggle, label, children }: { open: boolean; onToggle: 
       aria-expanded={open}
       aria-haspopup="dialog"
       className={cn(
-        "-mx-1 inline-flex h-[calc(100%-6px)] cursor-pointer items-center gap-1.5 rounded px-1 outline-none hover:bg-surface-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+        "-mx-1 inline-flex h-[calc(100%-6px)] min-w-0 cursor-pointer items-center gap-1.5 rounded px-1 outline-none hover:bg-surface-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
         open && "text-foreground",
       )}
     >

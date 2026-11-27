@@ -15,7 +15,8 @@
 //   node scripts/release.ts publish   builds each tag still to publish and publishes it to GitHub Packages
 //
 // The steps after plan read the plan from $PLAN, and publish the new tags from $TAGS. In GitHub Actions, plan and commit
-// write their results to $GITHUB_OUTPUT.
+// write their results to $GITHUB_OUTPUT; plan also says whether gasho-daemon's Rust terminal hosts are to be built
+// (native), from the commit it was made on (base), before the other steps run on that commit.
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -90,7 +91,16 @@ export const PACKAGES: Package[] = [
     tagPrefix: "daemon-v",
     major: 0,
     // @gasho/protocol is left out: gasho-daemon uses only its types, which are gone in the JavaScript.
-    sources: ["apps/daemon/src", "apps/daemon/claude-plugin", "apps/daemon/scripts", "apps/daemon/package.json", "apps/daemon/tsconfig.json", "apps/daemon/tsconfig.build.json", "tsconfig.base.json"],
+    sources: [
+      "apps/daemon/src",
+      "apps/daemon/claude-plugin",
+      "apps/daemon/scripts",
+      "apps/daemon/terminal-host",
+      "apps/daemon/package.json",
+      "apps/daemon/tsconfig.json",
+      "apps/daemon/tsconfig.build.json",
+      "tsconfig.base.json",
+    ],
     apiFile: "apps/daemon/src/plugins.ts",
     versionFiles: [DAEMON_TS],
     readVersion: () => DAEMON_VERSION_RE.exec(read(DAEMON_TS))?.[1] ?? fail(`DAEMON_VERSION not found in ${DAEMON_TS}`),
@@ -467,6 +477,8 @@ if (import.meta.main) {
       daemon: String(plan.releases.some((r) => r.id === "daemon")),
       hub: String(plan.releases.some((r) => r.id === "hub")),
       todo: String(plan.releases.length > 0 || plan.pending.length > 0),
+      native: String(plan.releases.some((r) => r.id === "daemon") || plan.pending.some((t) => t.startsWith(pkgOf("daemon").tagPrefix))),
+      base: plan.base,
     });
   } else if (step === "apply") {
     apply(planFromEnv());

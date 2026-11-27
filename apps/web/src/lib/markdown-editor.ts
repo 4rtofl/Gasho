@@ -66,7 +66,9 @@ export function previewLooks(tree: Tree, doc: Text, selection: readonly { from: 
           const [open, close] = marks(node, "LinkMark");
           if (!open || !close || !node.getChild("URL")) return;
           mark(open.to, close.from, "cm-md-link");
-          if (!touches(node.from, node.to)) {
+          // An address on the next line ("](" then a line break) stays as typed: CodeMirror throws on a line break
+          // hidden by a plugin, and the editor then stops showing what is typed.
+          if (!touches(node.from, node.to) && doc.lineAt(close.from).number === doc.lineAt(node.to).number) {
             hide(open.from, open.to);
             hide(close.from, node.to);
           }

@@ -45,3 +45,9 @@ test("what Markdown shows as typed stays as typed: a reference without a link, a
   assert.equal(shown("[参照] と ![図](a.png)"), "[参照] と ![図](a.png)");
   assert.equal(shown("2 * 3 * 4"), "2 * 3 * 4");
 });
+
+test("a link whose address goes on to the next line stays as typed, as the editor cannot hide a line break", () => {
+  assert.equal(shown("[資料](\nhttps://example.com)"), "[資料](\nhttps://example.com)");
+  assert.equal(shown('[資料](https://example.com\n"題")'), '[資料](https://example.com\n"題")');
+  assert.equal(shown("[資\n料](https://example.com)"), "資\n料");
+});

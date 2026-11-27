@@ -5,7 +5,7 @@
 import type { Locator, Page } from "@playwright/test";
 import type { HubToDaemon } from "@gasho/protocol";
 import { checkoutVersion, commandResult, fakeSession, HUB_PACKAGE, hubInstallAnswer, npmLatestAnswer } from "../harness/index.ts";
-import { expect, test } from "./fixtures.ts";
+import { chatBox, expect, test } from "./fixtures.ts";
 
 const DAEMON_PACKAGE = "@4rtofl/gasho-daemon";
 const DAEMON = checkoutVersion("daemon");
@@ -442,7 +442,7 @@ test.describe("Gasho から更新できる Gasho サーバー", () => {
         return undefined;
       });
       await page.goto(`/#/s/${encodeURIComponent(daemon.machineId)}/${sessionId}`);
-      await page.getByPlaceholder("Agent への指示を入力…").fill("README を読んで");
+      await chatBox(page).fill("README を読んで");
       await page.getByRole("button", { name: "送信" }).click();
       await daemon.waitFor("session.input");
       await page.goto("/#/devices");

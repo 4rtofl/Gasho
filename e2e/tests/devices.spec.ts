@@ -3,7 +3,7 @@
 // and what a revoked working server leaves in the sidebar and in the commands sent to it (#98).
 import type { Browser, Page } from "@playwright/test";
 import { fakeSession, type GashoHub } from "../harness/index.ts";
-import { expect, test } from "./fixtures.ts";
+import { chatBox, expect, test } from "./fixtures.ts";
 import { closeSidebar, onPhone, openSidebar } from "./screen.ts";
 
 const rowOf = (page: Page, name: string) => page.getByRole("row").filter({ hasText: name });
@@ -185,7 +185,7 @@ test("取り消した working server が、サイドバーと実行中の指示�
   await expect(sidebar.getByRole("button", { name: /^other/ })).toContainText("オフライン");
   await closeSidebar(page);
 
-  const box = page.getByPlaceholder("Agent への指示を入力…");
+  const box = chatBox(page);
   await box.fill("README を読んで");
   await page.getByRole("button", { name: "送信" }).click();
   await mac.waitFor("session.input");

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import { type FakeDaemon, fakeSession, GASHO_DIR } from "../harness/index.ts";
-import { expect, test } from "./fixtures.ts";
+import { chatBox, expect, test } from "./fixtures.ts";
 import { expectConnection, openSidebar } from "./screen.ts";
 
 const SESSION = "8e1f2a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b";
@@ -62,7 +62,7 @@ const busy: { what: string; make: (page: Page, d: FakeDaemon) => Promise<void>; 
     make: async (page, d) => {
       await page.goto(`/#/s/${encodeURIComponent(d.machineId)}/${SESSION}`);
       await expect(page.getByRole("heading", { name: "e2e-session" })).toBeVisible();
-      const box = page.getByPlaceholder("Agent への指示を入力…");
+      const box = chatBox(page);
       await box.fill("あとで送る指示");
       await box.blur();
     },

@@ -35,8 +35,6 @@ export async function openSession(
   return daemon;
 }
 
-/** The chat box's text field (its name changes to "シェルのコマンド" in shell mode). */
-export const chatBox = (page: Page) => page.getByPlaceholder("Agent への指示を入力…");
 
 let count = 0;
 /** An entry of a conversation, with the blocks given. */
@@ -120,13 +118,6 @@ export function keydown(target: Locator, init: Record<string, unknown>): Promise
   }, init);
 }
 
-/** Puts the text field's caret at its start or its end. */
-export async function caretAt(field: Locator, at: "start" | "end"): Promise<void> {
-  await field.evaluate((el, end) => {
-    const n = end ? el.value.length : 0;
-    el.setSelectionRange(n, n);
-  }, at === "end");
-}
 
 /**
  * An answer to media.get from the bytes of a file (an image or a video Claude sent), as gasho-daemon reads it part by

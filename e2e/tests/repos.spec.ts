@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import type { Locator, Page } from "@playwright/test";
 import type { RegisteredRepo } from "@gasho/protocol";
 import { commandResult, fakeSession } from "../harness/index.ts";
-import { expect, test } from "./fixtures.ts";
+import { chatBox, expect, test } from "./fixtures.ts";
 import { confirmConversion, deferred, openHome, sidebar } from "./launch-helpers.ts";
 import { showHeader } from "./plugin-helpers.ts";
 
@@ -218,7 +218,7 @@ test("フォルダーの中に複数のリポジトリがあるセッション�
   });
   await openHome(page, 1);
   await page.goto(`/#/s/${encodeURIComponent(daemon.machineId)}/${sessionId}`);
-  await expect(page.getByPlaceholder("Agent への指示を入力…")).toBeVisible();
+  await expect(chatBox(page)).toBeVisible();
   // A phone opens a session with its header closed.
   await showHeader(page);
 

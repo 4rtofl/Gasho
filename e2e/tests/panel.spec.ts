@@ -3,7 +3,7 @@
 // window narrower than 988px with the sidebar at its default 248px), and in the conversation's place on a phone. The
 // branch graph is the panel opened.
 import type { FakeDaemon } from "../harness/index.ts";
-import { expect, test } from "./fixtures.ts";
+import { chatBox, expect, test } from "./fixtures.ts";
 import { commit, FakeFolder, hashOf, serveGraph, sessionDaemon, sessionUrl, showSessionHeader } from "./panel-data.ts";
 
 function serveOneCommit(d: FakeDaemon): void {
@@ -24,7 +24,7 @@ test.describe("PC の幅", () => {
     const d = await sessionDaemon(hub);
     serveOneCommit(d);
     await page.goto(sessionUrl(d));
-    const input = page.getByPlaceholder("Agent への指示を入力…");
+    const input = chatBox(page);
     const panel = page.getByRole("region", { name: "ブランチグラフ" });
     const edge = page.getByRole("separator", { name: "パネルの幅" });
     const aside = page.locator("aside").filter({ has: edge });
@@ -96,7 +96,7 @@ test.describe("PC の幅", () => {
     serveOneCommit(d);
     await page.setViewportSize({ width: 768, height: 800 });
     await page.goto(sessionUrl(d, "/graph"));
-    const input = page.getByPlaceholder("Agent への指示を入力…");
+    const input = chatBox(page);
     const panel = page.getByRole("region", { name: "ブランチグラフ" });
     await expect(panel.getByText("最初のコミット")).toBeVisible();
     // Where the conversation's input field starts and ends, from the panel's left edge.
@@ -128,7 +128,7 @@ test.describe("スマホの幅", () => {
     serveOneCommit(d);
     new FakeFolder(d).text("README.md", "# Gasho\n");
     await page.goto(sessionUrl(d));
-    const input = page.getByPlaceholder("Agent への指示を入力…");
+    const input = chatBox(page);
     const back = page.getByRole("button", { name: "セッションに戻る" });
     const fullWidth = async (name: string) => {
       const b = await page.getByRole("region", { name }).boundingBox();

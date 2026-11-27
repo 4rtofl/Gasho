@@ -2,10 +2,8 @@
 // it keeps.
 import { devices, type Locator, type Page } from "@playwright/test";
 import { commandResult, fakeSession, textEntry } from "../harness/index.ts";
-import { expect, test } from "./fixtures.ts";
+import { caretAt, chatBox, editorCaret, expect, test } from "./fixtures.ts";
 import {
-  caretAt,
-  chatBox,
   dataTransfer,
   gate,
   keydown,
@@ -21,9 +19,6 @@ const conversation = (page: Page) => page.locator(".chat-text");
 const sendButton = (page: Page) => page.getByRole("button", { name: "送信", exact: true });
 const attachments = (page: Page) => page.getByRole("list", { name: "添付ファイル" }).getByRole("listitem");
 const MB = 1024 * 1024;
-
-/** Where the caret of a text field is. */
-const caret = (field: Locator): Promise<number> => field.evaluate((el) => el.selectionStart);
 
 /** Picks files with the chat box's attach button. */
 async function attach(page: Page, files: { name: string; size?: number }[]): Promise<void> {
@@ -41,7 +36,7 @@ test("送った発言は「送信中…」から会話の発言に変わる。wo
   });
   await chatBox(page).fill("README を読んで");
   await sendButton(page).click();
-  await expect(chatBox(page)).toHaveValue("");
+  await expect(chatBox(page)).toHaveEditorText("");
   await expect(conversation(page).getByText("README を読んで")).toBeVisible();
   await expect(conversation(page).getByText("送信中…")).toBeVisible();
   answer.open();
@@ -72,15 +67,15 @@ test("PC では Enter で送信・Shift+Enter で改行、タッチでは Enter 
   await page.keyboard.type("1 行目");
   await page.keyboard.press("Shift+Enter");
   await page.keyboard.type("2 行目");
-  await expect(box).toHaveValue("1 行目\n2 行目");
+  await expect(box).toHaveEditorText("1 行目\n2 行目");
   await page.keyboard.press("Enter");
   if (isMobile) {
-    await expect(box).toHaveValue("1 行目\n2 行目\n");
+    await expect(box).toHaveEditorText("1 行目\n2 行目\n");
     await page.keyboard.press("ControlOrMeta+Enter");
   }
   // What is sent is trimmed.
   expect(await daemon.waitFor("session.input")).toMatchObject({ sessionId: SESSION_ID, text: "1 行目\n2 行目" });
-  await expect(box).toHaveValue("");
+  await expect(box).toHaveEditorText("");
 
   await page.keyboard.type("3 行目");
   await page.keyboard.press("ControlOrMeta+Enter");
@@ -96,38 +91,38 @@ test("↑/↓ で送った文を 30 件までさかのぼる。カーソルが�
   for (let i = 1; i <= 31; i++) {
     await box.fill(`メッセージ ${i}`);
     await box.press("ControlOrMeta+Enter");
-    await expect(box).toHaveValue("");
+    await expect(box).toHaveEditorText("");
   }
   await daemon.waitFor("session.input", (m) => m.text === "メッセージ 31");
 
   await box.fill("書きかけ");
   await caretAt(box, "end");
   await box.press("ArrowUp");
-  await expect(box).toHaveValue("書きかけ");
+  await expect(box).toHaveEditorText("書きかけ");
   await caretAt(box, "start");
   await box.press("ArrowUp");
-  await expect(box).toHaveValue("メッセージ 31");
+  await expect(box).toHaveEditorText("メッセージ 31");
   // A text called back has the caret at its start, so that ↑ goes on further back.
-  await expect.poll(() => caret(box)).toBe(0);
+  await expect.poll(() => editorCaret(box)).toBe(0);
   // Back down to what was being written.
   await box.press("ArrowDown");
-  await expect(box).toHaveValue("メッセージ 31");
+  await expect(box).toHaveEditorText("メッセージ 31");
   await caretAt(box, "end");
   await box.press("ArrowDown");
-  await expect(box).toHaveValue("書きかけ");
+  await expect(box).toHaveEditorText("書きかけ");
 
   await caretAt(box, "start");
   for (let i = 31; i >= 2; i--) {
     await box.press("ArrowUp");
-    await expect(box).toHaveValue(`メッセージ ${i}`);
-    await expect.poll(() => caret(box)).toBe(0);
+    await expect(box).toHaveEditorText(`メッセージ ${i}`);
+    await expect.poll(() => editorCaret(box)).toBe(0);
   }
   // The 31st message before is not kept.
   await box.press("ArrowUp");
-  await expect(box).toHaveValue("メッセージ 2");
+  await expect(box).toHaveEditorText("メッセージ 2");
   await caretAt(box, "end");
   await box.press("ArrowDown");
-  await expect(box).toHaveValue("メッセージ 3");
+  await expect(box).toHaveEditorText("メッセージ 3");
 });
 
 test("作業中は、入力欄が空なら送信ボタンが「停止」になり、押すか Esc で止める。文があれば送れる（#289）", async ({ page, hub }) => {
@@ -150,11 +145,11 @@ test("作業中は、入力欄が空なら送信ボタンが「停止」にな�
   await box.press("Escape");
   await expect(page.getByText("止められませんでした")).toBeVisible();
   expect(interrupts).toBe(2);
-  await expect(box).toHaveValue("次はテストも");
+  await expect(box).toHaveEditorText("次はテストも");
   expect(daemon.received.filter((m) => m.type === "session.input")).toHaveLength(0);
   await box.press("ControlOrMeta+Enter");
   expect(await daemon.waitFor("session.input")).toMatchObject({ sessionId: SESSION_ID, text: "次はテストも" });
-  await expect(box).toHaveValue("");
+  await expect(box).toHaveEditorText("");
   await expect(stop).toBeVisible();
 
   daemon.updateSession(SESSION_ID, { status: "idle" });
@@ -195,7 +190,7 @@ test("「!」で始めるとシェルモードになる（札・枠・「実行�
   await box.fill("!pwd");
   await box.press("ControlOrMeta+Enter");
   await expect(page.getByText("シェルのコマンドには、ファイルを添付できません。添付を外してください。")).toBeVisible();
-  await expect(box).toHaveValue("!pwd");
+  await expect(box).toHaveEditorText("!pwd");
   expect(daemon.received.filter((m) => m.type === "session.input")).toHaveLength(1);
 });
 
@@ -280,7 +275,7 @@ test("添付は 5 個・1 個 10MB・合計 10MB まで。超えると文を出�
   await sendButton(page).click();
   await expect(page.getByText("添付できるのは、合わせて 10MB までです。")).toBeVisible();
   await expect(alert).toHaveText("送れませんでした。入力は欄に戻しました。");
-  await expect(box).toHaveValue("大きいファイル");
+  await expect(box).toHaveEditorText("大きいファイル");
   await expect(attachments(page)).toHaveCount(2);
   expect(daemon.received.filter((m) => m.type === "session.input")).toHaveLength(0);
 });
@@ -403,7 +398,7 @@ test("送れなかったときは「送れませんでした。入力は欄に�
   await sendButton(page).click();
   await expect(page.getByRole("alert")).toHaveText("送れませんでした。入力は欄に戻しました。");
   await expect(page.getByText("端末に入力できませんでした")).toBeVisible();
-  await expect(chatBox(page)).toHaveValue("失敗する指示");
+  await expect(chatBox(page)).toHaveEditorText("失敗する指示");
   await expect(attachments(page)).toHaveCount(1);
   await expect(conversation(page).getByText("失敗する指示")).toHaveCount(0);
 });
@@ -420,7 +415,7 @@ test("書きかけ（文・添付・選んだもの）はセッションごと�
 
   await page.goto(sessionPath(daemon, OTHER_SESSION_ID));
   await expect(page.getByRole("heading", { name: "other-session" })).toBeVisible();
-  await expect(chatBox(page)).toHaveValue("");
+  await expect(chatBox(page)).toHaveEditorText("");
   await expect(attachments(page)).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^Effort：/ })).not.toHaveAccessibleName(/Ultracode オン/);
   await chatBox(page).fill("B の書きかけ");
@@ -428,12 +423,12 @@ test("書きかけ（文・添付・選んだもの）はセッションごと�
   await page.goto("/#/");
   await page.goto(sessionPath(daemon));
   await expect(page.getByRole("heading", { name: "e2e-session" })).toBeVisible();
-  await expect(chatBox(page)).toHaveValue("A の書きかけ");
+  await expect(chatBox(page)).toHaveEditorText("A の書きかけ");
   await expect(attachments(page).filter({ hasText: "a.txt" })).toBeVisible();
   await expect(page.getByRole("button", { name: /^Effort：/ })).toHaveAccessibleName(/Ultracode オン/);
 
   await page.goto(sessionPath(daemon, OTHER_SESSION_ID));
-  await expect(chatBox(page)).toHaveValue("B の書きかけ");
+  await expect(chatBox(page)).toHaveEditorText("B の書きかけ");
 });
 
 test("日本語の変換中の Enter では送らない", async ({ page, hub, browserName }) => {
@@ -444,11 +439,11 @@ test("日本語の変換中の Enter では送らない", async ({ page, hub, br
     // A composition as an input method makes one: Chromium marks the keys pressed meanwhile as composing.
     const cdp = await page.context().newCDPSession(page);
     await cdp.send("Input.imeSetComposition", { text: "にほんご", selectionStart: 4, selectionEnd: 4 });
-    await expect(box).toHaveValue("にほんご");
+    await expect(box).toHaveEditorText("にほんご");
     await page.keyboard.press("Enter");
     await page.keyboard.press("ControlOrMeta+Enter");
     await cdp.send("Input.insertText", { text: "日本語" });
-    await expect(box).toHaveValue(/日本語/);
+    await expect(box).toHaveEditorText(/日本語/);
     await box.fill("日本語");
   } else {
     // WebKit cannot be made to compose: the keydowns of a composition, as Chromium sends them and as Safari sends the
@@ -463,6 +458,53 @@ test("日本語の変換中の Enter では送らない", async ({ page, hub, br
   await box.press("ControlOrMeta+Enter");
   expect(await daemon.waitFor("session.input")).toMatchObject({ text: "日本語" });
   expect(daemon.received.filter((m) => m.type === "session.input")).toHaveLength(1);
+});
+
+test("入力欄は Markdown の記号を隠して整形し、カーソルのある所だけ記号を出す。送る文は打ったまま。シェルのコマンドは整形しない（#317）", async ({ page, hub }) => {
+  const daemon = await openSession(page, hub);
+  const box = chatBox(page);
+  const typed = "**太字** と `~/Project`";
+  await box.fill(typed);
+  // The cursor is at the end, next to the code: its marks are shown, the bold's are not.
+  await expect(box).toHaveText("太字 と `~/Project`");
+  await expect(box.locator(".cm-md-strong")).toHaveCSS("font-weight", "700");
+  await expect(box.locator(".cm-md-code")).toHaveCSS("font-family", /mono/i);
+  await caretAt(box, "start");
+  await expect(box).toHaveText("**太字** と ~/Project");
+  await box.blur();
+  await expect(box).toHaveText("太字 と ~/Project");
+  await expect(box).toHaveEditorText(typed);
+
+  await box.press("ControlOrMeta+Enter");
+  expect(await daemon.waitFor("session.input")).toMatchObject({ text: typed });
+  // In the conversation, as it is being sent and once recorded, it is Markdown like Claude's text.
+  await expect(conversation(page).getByText("太字", { exact: true })).toHaveCSS("font-weight", "700");
+  await expect(conversation(page).locator("code", { hasText: "~/Project" })).toBeVisible();
+  daemon.append(SESSION_ID, [textEntry("user", typed)]);
+  await expect(conversation(page).getByText("送信中…")).toHaveCount(0);
+  await expect(conversation(page).getByText("太字", { exact: true })).toHaveCSS("font-weight", "700");
+  await expect(conversation(page).getByText(/\*\*/)).toHaveCount(0);
+
+  await box.fill("!echo **a** `b`");
+  await expect(box).toHaveText("!echo **a** `b`");
+  await expect(box.locator(".cm-md-strong, .cm-md-code")).toHaveCount(0);
+  await box.fill("**a**");
+  await expect(box.locator(".cm-md-strong")).toHaveCount(1);
+});
+
+test("整形した文の隣で日本語を変換しても、文字は打ったとおりに入り、確定すると記号がまた隠れる（#317）", async ({ page, hub, browserName }) => {
+  test.skip(browserName !== "chromium", "変換を作れるのは Chromium だけ");
+  await openSession(page, hub);
+  const box = chatBox(page);
+  // Right after the code's closing mark: its marks are shown while the composition begins there.
+  await box.fill("`コード`");
+  await expect(box).toHaveText("`コード`");
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Input.imeSetComposition", { text: "にほんご", selectionStart: 4, selectionEnd: 4 });
+  await expect(box).toHaveEditorText("`コード`にほんご");
+  await cdp.send("Input.insertText", { text: "日本語" });
+  await expect(box).toHaveEditorText("`コード`日本語");
+  await expect(box).toHaveText("コード日本語");
 });
 
 test("添付のエラーと、添付を外すボタンの名前を日本語で出す（#108）", async ({ page, hub }) => {
@@ -497,7 +539,7 @@ test("添付できないセッションと、文字も載っている貼り付�
     await copyTextAndImage();
     await chatBox(page).click();
     await page.keyboard.press("ControlOrMeta+V");
-    await expect(chatBox(page)).toHaveValue("貼った文字");
+    await expect(chatBox(page)).toHaveEditorText("貼った文字");
     await expect(attachments(page)).toHaveCount(0);
   }
 });
@@ -528,7 +570,7 @@ test.describe("Mac の Chrome", () => {
     await box.press("Control+B");
     // Typed after it: by then the screen has done what Ctrl+B does.
     await box.press("x");
-    await expect(box).toHaveValue(/x/);
+    await expect(box).toHaveEditorText(/x/);
     await expect(page.getByRole("button", { name: "サイドバーを畳む" })).toBeVisible();
     await expect(page.getByRole("button", { name: "サイドバーを開く" })).toHaveCount(0);
   });

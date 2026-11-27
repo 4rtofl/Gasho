@@ -3,7 +3,7 @@
 import type { Page } from "@playwright/test";
 import type { HubToDaemon } from "@gasho/protocol";
 import { commandResult, type FakeDaemon, fakeSession, textEntry } from "../harness/index.ts";
-import { expect, test } from "./fixtures.ts";
+import { chatBox, expect, test } from "./fixtures.ts";
 import { expectConnection, onPhone, routeConnection } from "./screen.ts";
 
 const SESSION = "5d2a7c1e-3b4f-4e8a-9c6d-1f0e2b3a4c5d";
@@ -83,18 +83,18 @@ test("接続が切れているあいだに指示を送ると「Gasho サーバ�
   await hub.stopServer();
   await expectConnection(page, false, BROWSER);
 
-  const box = page.getByPlaceholder("Agent への指示を入力…");
+  const box = chatBox(page);
   await box.fill("README を読んで");
   await page.getByRole("button", { name: "送信" }).click();
   await expect(page.getByText("Gasho サーバーにつながっていません。")).toBeVisible();
-  await expect(box).toHaveValue("README を読んで");
+  await expect(box).toHaveEditorText("README を読んで");
   expect(countOf(d, "session.input")).toBe(0);
 });
 
 /** The session's chat box, its files, and the button that puts back a message whose result never came. */
 function composer(page: Page) {
   return {
-    box: page.getByPlaceholder("Agent への指示を入力…"),
+    box: chatBox(page),
     attached: page.getByRole("list", { name: "添付ファイル" }).getByRole("listitem"),
     putBack: page.getByRole("button", { name: /^入力欄に戻す/ }),
     notice: page.getByText(/送れたか分かりません/),
@@ -124,12 +124,12 @@ test("送った直後に接続が切れると、結果が分からないと出�
   await d.waitFor("session.input");
   await conn.drop();
   await expect(c.notice).toBeVisible();
-  await expect(c.box).toHaveValue("");
+  await expect(c.box).toHaveEditorText("");
   await expect(c.attached).toHaveCount(0);
 
   // A phone has no ↑ key to recall it.
   await c.putBack.click();
-  await expect(c.box).toHaveValue("README を読んで");
+  await expect(c.box).toHaveEditorText("README を読んで");
   await expect(c.attached).toHaveCount(1);
   await expect(c.putBack).toHaveCount(0);
   await expect(c.notice).toHaveCount(0);
@@ -182,7 +182,7 @@ test("結果が分からない指示は、似た指示が会話に出ても残�
 
   await page.getByRole("button", { name: "閉じる" }).click();
   await expect(c.notice).toHaveCount(0);
-  await expect(c.box).toHaveValue("");
+  await expect(c.box).toHaveEditorText("");
 });
 
 test("結果が分からない指示が 2 件あると、「閉じる」は古いものだけを消し、次の指示は「入力欄に戻す」で戻せる（#106）", async ({ page, hub }) => {
@@ -200,9 +200,9 @@ test("結果が分からない指示が 2 件あると、「閉じる」は古�
 
   await page.getByRole("button", { name: "閉じる" }).click();
   await expect(c.putBack).toHaveText("入力欄に戻す");
-  await expect(c.box).toHaveValue("");
+  await expect(c.box).toHaveEditorText("");
   await c.putBack.click();
-  await expect(c.box).toHaveValue("README を読んで");
+  await expect(c.box).toHaveEditorText("README を読んで");
   await expect(c.attached).toHaveCount(1);
   await expect(c.notice).toHaveCount(0);
 });
@@ -230,7 +230,7 @@ test("届いた「はい」の行を画面が受け取る前に送った「は�
   await expect.poll(() => countOf(d, "transcript.get")).toBeGreaterThan(before);
   await page.waitForTimeout(500);
   await c.putBack.click();
-  await expect(c.box).toHaveValue("はい");
+  await expect(c.box).toHaveEditorText("はい");
 });
 
 test("同じ文の指示 2 件の結果が分からず、1 件目だけが会話に出ると、2 件目は「入力欄に戻す」で戻せる（#106）", async ({ page, hub }) => {
@@ -251,7 +251,7 @@ test("同じ文の指示 2 件の結果が分からず、1 件目だけが会話
   await expect(c.putBack).toHaveText("入力欄に戻す");
   await page.waitForTimeout(500);
   await c.putBack.click();
-  await expect(c.box).toHaveValue("続けて");
+  await expect(c.box).toHaveEditorText("続けて");
   await expect(c.notice).toHaveCount(0);
 });
 
@@ -326,7 +326,7 @@ test("結果を待つあいだに別の会話へ移っても、戻ると「入�
   await goTo(OTHER, "e2e-other");
   await goTo(SESSION, "e2e-session");
   await c.putBack.click();
-  await expect(c.box).toHaveValue("README を読んで");
+  await expect(c.box).toHaveEditorText("README を読んで");
   await expect(c.attached).toHaveCount(1);
 });
 
@@ -345,14 +345,14 @@ test("結果が分からない指示が 2 件あると、古いものから 1 �
 
   await c.box.fill("あ");
   await c.putBack.click();
-  await expect(c.box).toHaveValue("あ\n1 件目");
+  await expect(c.box).toHaveEditorText("あ\n1 件目");
   await expect(c.attached).toHaveCount(1);
   await expect(c.putBack).toHaveText("入力欄に戻す");
 
   await c.box.fill("");
   await page.getByRole("button", { name: "notes.txt を外す" }).click();
   await c.putBack.click();
-  await expect(c.box).toHaveValue("2 件目");
+  await expect(c.box).toHaveEditorText("2 件目");
   await expect(c.putBack).toHaveCount(0);
 });
 
@@ -371,7 +371,7 @@ test("working server がオフラインのあいだに「入力欄に戻す」�
   await expect(page.getByText("working server がオフラインです。", { exact: true })).toBeVisible();
 
   await c.putBack.click();
-  await expect(c.box).toHaveValue("README を読んで");
+  await expect(c.box).toHaveEditorText("README を読んで");
   await expect(c.attached).toHaveCount(0);
   await expect(c.putBack).toBeDisabled();
 

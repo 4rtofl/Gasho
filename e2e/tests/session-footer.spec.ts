@@ -4,8 +4,8 @@
 import type { Page } from "@playwright/test";
 import type { HubToDaemon, PlanUsage } from "@gasho/protocol";
 import type { FakeDaemon } from "../harness/index.ts";
-import { expect, test } from "./fixtures.ts";
-import { chatBox, openSession, SESSION_ID } from "./session-helpers.ts";
+import { chatBox, expect, test } from "./fixtures.ts";
+import { openSession, SESSION_ID } from "./session-helpers.ts";
 
 const GB = 1024 ** 3;
 const HOUR = 3_600_000;

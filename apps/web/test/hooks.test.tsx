@@ -1,5 +1,6 @@
 // The hooks of lib/ that keep a choice of this browser (localStorage) or of the page (the chat boxes' drafts): every
 // part that uses one sees a change at once, another tab's change comes in, and blocked storage still works for the page.
+import { EditorView } from "@codemirror/view";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { CHAT_TEXT_DEFAULT, CHAT_TEXT_MAX, useChatTextSize } from "@/lib/chat-text";
@@ -14,6 +15,7 @@ import { connectHub, machine, session } from "./hub";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 /** Another tab of this browser saved `value` under `key`. */
@@ -123,14 +125,22 @@ test("a chat box holds something not sent while it has text or files, and what i
   expect(renderHook(() => usePicks("m1\u0000s2")).result.current[0]).toEqual({});
 });
 
-/** A chat box on the page, with the text of its draft. */
-function chatBox(text: string): { current: HTMLDivElement; text: HTMLTextAreaElement } {
+/**
+ * happy-dom sends selectionchange as a selection is set, where browsers send it later: CodeMirror, which sets the
+ * selection while it updates, would update inside that update. The tests set the editors' selections themselves.
+ */
+function noSelectionChange(): void {
+  const send = Document.prototype.dispatchEvent;
+  vi.spyOn(document, "dispatchEvent").mockImplementation(function (this: Document, e: Event) {
+    return e.type === "selectionchange" || send.call(this, e);
+  });
+}
+
+/** A chat box on the page, with the text of its draft in its editor. */
+function chatBox(text: string): { current: HTMLDivElement; editor: EditorView } {
   const box = document.createElement("div");
-  const area = document.createElement("textarea");
-  area.value = text;
-  box.append(area);
   document.body.append(box);
-  return { current: box, text: area };
+  return { current: box, editor: new EditorView({ doc: text, parent: box }) };
 }
 
 test("after /clear, a session's chat box, the messages sent from it not typed yet and the files being written in it go on under its new id, with the cursor where it was, also while the session is not on screen", async () => {
@@ -152,17 +162,18 @@ test("after /clear, a session's chat box, the messages sent from it not typed ye
   const lost = { id: "u1", text: "届いたか分からない", files: [], sent: { text: "届いたか分からない", files: [], after: 5, at: 0 } };
   act(() => unsent.result.current[1]((list) => [...list, lost]));
   // The page of "a" is open, with its box being typed in.
+  noSelectionChange();
   const before = chatBox("書きかけ");
   const open = renderHook(() => useDraftBox(key("a"), before));
-  before.text.focus();
-  before.text.setSelectionRange(2, 2);
+  before.editor.focus();
+  before.editor.dispatch({ selection: { anchor: 2 } });
 
   await hub.say({ type: "machine", machine: machine("m2", [session("b", { previousSessionIds: ["a"] }), session("other")]) });
   open.unmount();
   const after = chatBox("書きかけ");
   renderHook(() => useDraftBox(key("b"), after));
-  expect(document.activeElement).toBe(after.text);
-  expect([after.text.selectionStart, after.text.selectionEnd]).toEqual([2, 2]);
+  expect(after.editor.hasFocus).toBe(true);
+  expect(after.editor.state.selection.main.toJSON()).toEqual({ anchor: 2, head: 2 });
   expect(promptDraft(key("b")).get()).toEqual({ text: "書きかけ", attachments: [], history: ["前の発言"] });
   expect(renderHook(() => usePicks(key("b"))).result.current[0]).toEqual({ model: "opus" });
   expect(promptDraft(key("other")).get().text).toBe("別のセッション");

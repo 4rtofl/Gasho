@@ -1,7 +1,7 @@
 // Through the whole way: a registered browser opens the home screen, opens a session of a working server, and sends it
 // an instruction, which reaches gasho-daemon; the conversation gasho-daemon then sends is shown.
 import { fakeSession, textEntry } from "../harness/index.ts";
-import { expect, test } from "./fixtures.ts";
+import { chatBox, expect, test } from "./fixtures.ts";
 
 test("ホームから開いたセッションに送った指示が daemon に届き、返した会話が画面に出る", async ({ page, hub }) => {
   const sessionId = "0b6f3a52-9a51-4c7e-8d2b-6c1f0e4a7d10";
@@ -16,7 +16,7 @@ test("ホームから開いたセッションに送った指示が daemon に届
   await expect(page.getByRole("heading", { name: "e2e-session" })).toBeVisible();
   await expect(page.getByText("はい、どうぞ。")).toBeVisible();
 
-  await page.getByPlaceholder("Agent への指示を入力…").fill("README を読んで");
+  await chatBox(page).fill("README を読んで");
   await page.getByRole("button", { name: "送信" }).click();
   const input = await daemon.waitFor("session.input");
   expect(input).toMatchObject({ sessionId, text: "README を読んで" });

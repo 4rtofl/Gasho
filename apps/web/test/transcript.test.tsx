@@ -81,16 +81,17 @@ test("a result whose call is on an older page is shown on its own, and a call wi
   expect(within(fold("TODO")).getByText("（まだありません）")).toBeTruthy();
 });
 
-test("files sent from Gasho are shown as chips by their names, and the text around them as typed", () => {
+test("files sent from Gasho are shown as chips by their names, and the text around them as Markdown, with raw HTML as typed", () => {
   render(
     <Transcript
-      state={loaded([said("user", "これを見て\n@/home/me/.cache/gasho/attachments/abc/20261118T010203-1-report.pdf\n  よろしく")])}
+      state={loaded([said("user", "これを見て\n@/home/me/.cache/gasho/attachments/abc/20261118T010203-1-report.pdf\n**よろしく**\n<Foo> を使う")])}
       onLoadOlder={() => {}}
     />,
   );
   expect(screen.getByText("report.pdf").closest("[title]")?.getAttribute("title")).toBe("/home/me/.cache/gasho/attachments/abc/20261118T010203-1-report.pdf");
   expect(screen.getByText("これを見て")).toBeTruthy();
-  expect(screen.getByText("  よろしく", { normalizer: (s) => s })).toBeTruthy();
+  expect(screen.getByText("よろしく").tagName).toBe("STRONG");
+  expect(screen.getByText("<Foo> を使う")).toBeTruthy();
 });
 
 test("older pages are asked for one at a time while near the top, and when one fails it says why and can be asked again", async () => {

@@ -1,4 +1,4 @@
-// Renders Claude's Markdown: CommonMark + GitHub extensions (tables, task lists, strikethrough, autolinks).
+// Renders Claude's Markdown, and the user's: CommonMark + GitHub extensions (tables, task lists, strikethrough, autolinks).
 // A single newline is a line break, as in chat apps and GitHub comments; Claude often writes one item per line.
 // Raw HTML is never rendered. Links go through easyui.site's safeHref; images are shown as links so that
 // opening a conversation never loads anything from other servers.
@@ -127,6 +127,20 @@ export function MarkdownText({ text }: { text: string }) {
   return (
     <div className={BODY}>
       <Markdown remarkPlugins={[remarkGfm, remarkBreaks]} components={components} skipHtml>
+        {text}
+      </Markdown>
+    </div>
+  );
+}
+
+/**
+ * What the user typed, as Markdown like Claude's text. Raw HTML is shown as typed (`<div>`, `<Foo>`): without skipHtml,
+ * react-markdown turns it into text.
+ */
+export function UserMarkdown({ text }: { text: string }) {
+  return (
+    <div className={BODY}>
+      <Markdown remarkPlugins={[remarkGfm, remarkBreaks]} components={components}>
         {text}
       </Markdown>
     </div>

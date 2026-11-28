@@ -5,7 +5,7 @@ import { AgentMark } from "@/components/agent-mark";
 import { BackgroundTasks, useBackgroundListOpen } from "@/components/background-tasks";
 import { HibernationNotice } from "@/components/hibernation-notice";
 import { RepoPicker } from "@/components/repo-picker";
-import { BackgroundToggle, EffortPicker, MODELS } from "@/components/session-controls";
+import { BackgroundToggle, EffortPicker, EFFORTS, MODELS } from "@/components/session-controls";
 import type { SessionActionRequest } from "@/components/session-menu";
 import { SessionTabs } from "@/components/session-tabs";
 import { StatusBadge } from "@/components/status-badge";
@@ -297,9 +297,8 @@ const MAX_FILES_BYTES = 10 * 1024 * 1024;
  */
 const UNKNOWN_SENT_HEAD =
   "Gasho サーバーとの接続が切れたので、送れたか分かりません。Claude の作業中に届いた指示は、作業が終わってから会話に出ます。";
-const UNKNOWN_SENT = `${UNKNOWN_SENT_HEAD}出なければ、入力欄に戻して、もう一度送ってください。`;
-/** When the page read again less of the conversation than came after the message was sent: it may show in the rest. */
-const UNKNOWN_SENT_UNREAD = `${UNKNOWN_SENT_HEAD}切れているあいだに進んだ会話は、上に遡ると読み込みます。そこにも出ていなければ、入力欄に戻して、もう一度送ってください。`;
+const UNKNOWN_SENT = "出なければ、入力欄に戻して、もう一度送ってください。";
+const UNKNOWN_SENT_UNREAD = "切れているあいだに進んだ会話は、上に遡ると読み込みます。そこにも出ていなければ、入力欄に戻して、もう一度送ってください。";
 
 /**
  * Which of the picker's models the session uses, from Claude Code's name for it: "Sonnet 5.5 (default)" (its name
@@ -340,7 +339,8 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
   const [error, setError] = useState<string>();
   const [warning, setWarning] = useState<string>();
   const [opening, setOpening] = useState(false);
-  const isAntigravity = sessionAgent(s) === "antigravity";
+  const agent = sessionAgent(s);
+  const isAntigravity = agent === "antigravity";
   const input = useRef<PromptInputHandle>(null);
   const phone = !useMediaQuery(DESKTOP);
   const composerParts = useComposerFooterParts();
@@ -382,6 +382,31 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
   const current = !canPickFable && reportedModel === "fable" ? KEEP_MODEL : reportedModel;
   const ultracode = Boolean(s.ultracode);
   const features = (machine.features ?? legacyFeatures(machine.daemonVersion)).filter((f) => canDo(machine, s, f));
+  const agentModel = canDo(machine, s, "model") ? s.agentConfig?.model : undefined;
+  const agentEffort = canDo(machine, s, "effort") ? s.agentConfig?.effort : undefined;
+  const pickedAgent = picks.agentSelection;
+  const pickedModelChoice = agentModel?.options.find((m) => m.id === pickedAgent?.model);
+  const modelToSwitch = pickedModelChoice && pickedModelChoice.id !== agentModel?.current ? pickedModelChoice.id : undefined;
+  const nextModel = modelToSwitch ?? agentModel?.current;
+  const agentModels: PromptModel[] = agentModel?.options.map((m) => ({
+    ...m,
+    badge: m.id === agentModel.current ? "いま" : m.isDefault ? "既定" : undefined,
+  })) ?? [];
+  if (agentModel && !agentModels.some((m) => m.id === agentModel.current)) {
+    agentModels.unshift({ id: agentModel.current ?? "", name: s.model ?? "不明", badge: "いま" });
+  }
+  const nextModelChoice = agentModel?.options.find((m) => m.id === nextModel);
+  const efforts = agentEffort && (agent === "codex" ? nextModelChoice?.efforts : agentEffort.options);
+  const effortBlocked = isAntigravity && modelToSwitch !== undefined;
+  const effortDisabledReason = effortBlocked && efforts?.length ? "モデルを切り替えて送ったあとに、Effort を選べます" : undefined;
+  const effortModel = isAntigravity ? s.agentConfig?.model?.current : undefined;
+  const effortForModel = isAntigravity ? pickedAgent?.effortModel === effortModel : pickedAgent?.model === undefined || pickedModelChoice;
+  const pickedAgentEffort = effortForModel ? pickedAgent?.effort : undefined;
+  const effortToKeep = ((modelToSwitch !== undefined && !effortBlocked) || pickedAgentEffort !== agentEffort?.current)
+    ? efforts?.find((option) => option.id === pickedAgentEffort)?.id
+    : undefined;
+  const effortToSwitch = effortBlocked ? undefined : effortToKeep;
+  const nextEffort = effortBlocked ? agentEffort?.current : effortToSwitch ?? (modelToSwitch !== undefined ? nextModelChoice?.defaultEffort : agentEffort?.current);
   const offersSkills = canDo(machine, s, "skills");
   const skills = useSkills(machine.id, s.sessionId);
   const [backgroundOpen, toggleBackground] = useBackgroundListOpen();
@@ -398,6 +423,15 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
       setPicks((p) => (p.ultracode === ultracode ? { ...p, ultracode: undefined } : p));
     }
   }, [pickedUltracode, ultracode, setPicks]);
+  useEffect(() => {
+    if (!pickedAgent) return;
+    if (pickedAgent.model !== modelToSwitch || pickedAgent.effort !== effortToKeep) {
+      const agentSelection = modelToSwitch !== undefined || effortToKeep !== undefined
+        ? { model: modelToSwitch, effort: effortToKeep, effortModel: effortToKeep === undefined ? undefined : effortModel }
+        : undefined;
+      setPicks((p) => p.agentSelection === pickedAgent ? { ...p, agentSelection } : p);
+    }
+  }, [pickedAgent, modelToSwitch, effortToKeep, effortModel, setPicks]);
   // Messages that waited on the working server have been typed into the session once it has none waiting.
   useEffect(() => {
     if (!s.pendingInputs) noneWaiting(key);
@@ -484,6 +518,9 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
           // Switch only what was picked and differs from what the session uses (any pick, while its model is not known).
           const switchTo = features.includes("model") && picked && picked !== current ? picked : undefined;
           const effort = features.includes("effort") && pickedEffort && pickedEffort !== s.effort ? pickedEffort : undefined;
+          const agentSelection = modelToSwitch !== undefined || effortToSwitch !== undefined
+            ? { model: modelToSwitch, effort: effortToSwitch }
+            : undefined;
           const ultra = features.includes("ultracode") && pickedUltracode !== undefined && pickedUltracode !== ultracode ? pickedUltracode : undefined;
           // Shown at the end of the conversation at once: Claude Code records the message only once it is typed into
           // the session, after switching the model (/model) and the like.
@@ -498,7 +535,8 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
                 type: "session.input",
                 sessionId: s.sessionId,
                 text,
-                ...(isAntigravity ? { screen: true } : {}),
+                ...(isAntigravity || agentSelection ? { screen: true } : {}),
+                ...(agentSelection ? { agentSelection } : {}),
                 ...(switchTo ? { model: switchTo } : {}),
                 ...(effort ? { effort } : {}),
                 ...(ultra !== undefined ? { ultracode: ultra } : {}),
@@ -537,13 +575,23 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
         streaming={busy}
         onStop={() => void stop()}
         disabled={offline}
-        models={features.includes("model") ? modelOptions(machine, current, s.model, canPickFable, picked) : []}
-        model={picked ?? current ?? "default"}
-        onModelChange={(id) => setPicks((p) => ({ ...p, model: id === KEEP_MODEL ? undefined : (id as SessionModel) }))}
+        models={agent === "claude" ? (features.includes("model") ? modelOptions(machine, current, s.model, canPickFable, picked) : []) : agentModels}
+        model={agent === "claude" ? picked ?? current ?? "default" : nextModel ?? ""}
+        onModelChange={(id) => setPicks((p) => {
+          if (agent === "claude") return { ...p, model: id === KEEP_MODEL ? undefined : (id as SessionModel) };
+          if (id === nextModel) return p;
+          const model = agentModel?.options.find((option) => option.id === id);
+          const effort = model?.efforts?.find((option) => option.id === effortToSwitch)?.id;
+          return { ...p, agentSelection: {
+            ...(isAntigravity ? p.agentSelection : { effort }),
+            model: model?.id === agentModel?.current ? undefined : model?.id,
+          } };
+        })}
         actions={
           <>
-            {features.includes("effort") && (
+            {agent === "claude" && features.includes("effort") && (
               <EffortPicker
+                options={EFFORTS}
                 value={pickedEffort ?? s.effort}
                 current={s.effort}
                 onChange={(level) => setPicks((p) => ({ ...p, effort: level }))}
@@ -553,6 +601,16 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
                     : undefined
                 }
                 disabled={offline}
+              />
+            )}
+            {efforts && efforts.length > 0 && (
+              <EffortPicker
+                options={efforts}
+                value={nextEffort}
+                current={modelToSwitch !== undefined && !effortBlocked ? undefined : agentEffort?.current}
+                onChange={(level) => setPicks((p) => ({ ...p, agentSelection: { ...p.agentSelection, effort: level, effortModel } }))}
+                disabled={offline}
+                disabledReason={effortDisabledReason}
               />
             )}
             {showsBackground && <BackgroundToggle count={s.background?.length ?? 0} open={backgroundOpen} onToggle={toggleBackground} />}
@@ -587,6 +645,7 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
         footer={composerParts ? <PluginComposerFooter machine={machine} session={s} /> : undefined}
         ref={input}
       />
+      {effortDisabledReason && <p role="status" className="mt-1.5 px-3 text-xs text-muted-foreground">{effortDisabledReason}</p>}
       {(status || error || warning) && (
         <p className={cn("mt-1.5 px-3 text-xs", error ? "text-red-400" : warning ? "text-amber-400" : "text-muted-foreground")}>
           {error ?? warning ?? status}
@@ -594,6 +653,7 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
       )}
       {unsent.length > 0 && (
         <p className="mt-1.5 px-3 text-xs text-amber-400">
+          {agent === "claude" ? UNKNOWN_SENT_HEAD : "Gasho サーバーとの接続が切れたので、送れたか分かりません。会話に出ているか確認してください。"}
           {transcript && (unsent[0]?.sent.after ?? 0) < transcript.start ? UNKNOWN_SENT_UNREAD : UNKNOWN_SENT}
           <button
             type="button"

@@ -4,7 +4,7 @@
 import { Check, ChevronDown, Gauge, LoaderCircle, Workflow } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
 import { useId, useRef, useState } from "react";
-import type { EffortLevel, SessionModel } from "@gasho/protocol";
+import type { AgentChoice, EffortLevel, SessionModel } from "@gasho/protocol";
 import { cn } from "@/lib/utils";
 
 /**
@@ -45,24 +45,24 @@ export interface UltracodeChoice {
   onChange: (on: boolean) => void;
 }
 
-/**
- * The effort level, picked from a menu of radio items (one of five). With `ultracode`, the menu also turns ultracode
- * on and off (it stays open for that), and the button shows it while it is on.
- */
-export function EffortPicker({
+export function EffortPicker<T extends string>({
+  options,
   value,
   current,
   onChange,
   ultracode,
   disabled,
+  disabledReason,
 }: {
-  value: EffortLevel | undefined;
-  current: EffortLevel | undefined;
-  onChange: (effort: EffortLevel) => void;
+  options: (AgentChoice & { id: T })[];
+  value: T | undefined;
+  current: string | undefined;
+  onChange: (effort: T) => void;
   ultracode?: UltracodeChoice;
   disabled?: boolean;
+  disabledReason?: string;
 }) {
-  const selected = EFFORTS.find((e) => e.id === value);
+  const selected = options.find((e) => e.id === value);
   const effortPending = value !== undefined && value !== current;
   const ultraOn = Boolean(ultracode?.value);
   const ultraPending = ultracode !== undefined && ultracode.value !== ultracode.current;
@@ -71,14 +71,15 @@ export function EffortPicker({
   const [open, setOpen] = useState(false);
   // A touch opens the menu on a tap, not when the finger lands: swiping the toolbar sideways must only scroll it.
   const touch = useRef(false);
-  const label = `Effort：${selected?.name ?? "不明"}${ultraOn ? "・Ultracode オン" : ""}${pending ? "（送るときに切り替えます）" : ""}`;
+  const reason = disabledReason ?? (pending ? "送るときに切り替えます" : undefined);
+  const label = `Effort：${selected?.name ?? value ?? "不明"}${ultraOn ? "・Ultracode オン" : ""}${reason ? `（${reason}）` : ""}`;
   return (
     // Not modal: a modal menu would lock the page's scrolling under the floating chat box.
     <DropdownMenu.Root modal={false} open={open} onOpenChange={setOpen}>
       <DropdownMenu.Trigger asChild>
         <button
           type="button"
-          disabled={disabled}
+          disabled={disabled || Boolean(disabledReason)}
           onPointerDown={(e) => {
             touch.current = e.pointerType !== "mouse";
             // Keeps Radix from opening the menu now.
@@ -89,11 +90,11 @@ export function EffortPicker({
             touch.current = false;
           }}
           aria-label={label}
-          title={pending ? "送るときに切り替えます" : ultracode ? "Effort と Ultracode" : "Effort"}
-          className={cn(BUTTON, "data-[state=open]:bg-white/[0.07] data-[state=open]:text-neutral-100")}
+          title={reason ?? (ultracode ? "Effort と Ultracode" : "Effort")}
+          className={cn(BUTTON, "data-[state=open]:bg-white/[0.07] data-[state=open]:text-neutral-100", disabledReason && "disabled:pointer-events-auto")}
         >
           <Gauge className="size-4 shrink-0" />
-          <span>{selected?.name ?? "Effort"}</span>
+          <span>{selected?.name ?? value ?? "Effort"}</span>
           {ultraOn && <Workflow aria-hidden className="size-3.5 shrink-0 text-violet-300" />}
           {/* On a phone the toolbar is short of room; the button still opens the menu. */}
           <ChevronDown className="hidden size-3.5 shrink-0 sm:block" />
@@ -113,8 +114,11 @@ export function EffortPicker({
           <DropdownMenu.Label id={titleId} className="px-2.5 pt-1 pb-1.5 text-xs text-neutral-500">
             Effort
           </DropdownMenu.Label>
-          <DropdownMenu.RadioGroup value={value ?? ""} onValueChange={(v) => onChange(v as EffortLevel)}>
-            {EFFORTS.map((e) => (
+          <DropdownMenu.RadioGroup value={value ?? ""} onValueChange={(v) => {
+            const option = options.find((e) => e.id === v);
+            if (option) onChange(option.id);
+          }}>
+            {options.map((e) => (
               <DropdownMenu.RadioItem key={e.id} value={e.id} className={ITEM}>
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-2">

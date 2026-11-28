@@ -526,7 +526,7 @@ function send(m: ClientToHub): void {
 }
 
 /** A command's result. `unknown`: the connection closed before it came, so the command may have run. */
-export type SentResult = CommandResult & { unknown?: true };
+export type SentResult = CommandResult;
 
 const pendingCommands = new Map<string, (r: SentResult) => void>();
 

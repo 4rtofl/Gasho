@@ -198,7 +198,6 @@ const MODEL_NAMES: Record<SessionModel, string> = { default: "既定のモデル
 const EFFORT_NAMES: Record<EffortLevel, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "xHigh", max: "Max" };
 /** What this gasho-daemon can switch or carry with an input (MachineInfo.features). */
 const INPUT_FEATURES: readonly InputFeature[] = ["model", "effort", "ultracode", "files"];
-/** What a session of Claude Code can do (AgentInfo.operations); one of Codex only talks, for now. */
 const CLAUDE_OPERATIONS: readonly AgentOperation[] = [...INPUT_FEATURES, "fork", "background", "skills", "shell"];
 /** How long the prompt box may take to let go of a text after Enter (see typeInput). */
 const ENTER_WAIT_MS = 8000;
@@ -1250,7 +1249,7 @@ export class Daemon {
     const claude = this.claude;
     return {
       ...(claude ? { claude: { status: claude.status, version: claude.version, canLaunch: true, operations: [...CLAUDE_OPERATIONS] } } : {}),
-      ...(this.codex ? { codex: { ...this.codex, canLaunch: true, operations: [] } } : {}),
+      ...(this.codex ? { codex: { ...this.codex, canLaunch: true, operations: ["model", "effort"] } } : {}),
       ...(this.antigravity ? { antigravity: this.antigravity } : {}),
     };
   }
@@ -3115,7 +3114,10 @@ export class Daemon {
   }
 
   private async input(m: Extract<HubToDaemon, { type: "session.input" }>): Promise<CommandResult> {
-    const { sessionId, text, model, effort, ultracode, files } = m;
+    const { sessionId, text, model, effort, ultracode, files, agentSelection } = m;
+    if (agentSelection !== undefined && (m.screen !== true || m.via !== undefined)) {
+      return { ok: false, error: "モデルと Effort の切り替えは Gasho の画面から行ってください。" };
+    }
     if (this.antigravitySessions.has(sessionId)) {
       if (m.screen !== true || m.via !== undefined) return { ok: false, error: ANTIGRAVITY_SCREEN_ONLY };
       if (m.files?.length || m.model !== undefined || m.effort !== undefined || m.ultracode !== undefined) {
@@ -3123,9 +3125,10 @@ export class Daemon {
       }
       if (typeof m.text !== "string" || !m.text.trim()) return { ok: false, error: "入力が空です。" };
       if (m.text.length > MAX_INPUT) return { ok: false, error: `入力が長すぎます（${MAX_INPUT} 文字まで）。` };
-      return this.antigravitySessions.input(sessionId, m.text);
+      return this.antigravitySessions.input(sessionId, m.text, agentSelection);
     }
     if (this.codexSessions.has(sessionId)) return this.inputToCodex(m);
+    if (agentSelection !== undefined) return { ok: false, error: "このセッションでは指定した形式で切り替えられません。" };
     // By session.sessionId from here on: `sessionId` can be one the session had before /clear (see ManagedSessions.find),
     // and /clear can give it a new id while the files are written (see followNewIds).
     const session = this.managed.find(sessionId);
@@ -3178,7 +3181,6 @@ export class Daemon {
     return { ok: true, queued, ...(warning ? { warning } : {}), ...(unapplied.length > 0 ? { unapplied } : {}) };
   }
 
-  /** An input to a session of Codex: its text only, for now. What only Claude Code can switch stays as it is. */
   private async inputToCodex(m: Extract<HubToDaemon, { type: "session.input" }>): Promise<CommandResult> {
     if (m.files?.length) return { ok: false, error: "Codex のセッションには、ファイルを添付できません。" };
     const body = m.text.trim();
@@ -3189,7 +3191,7 @@ export class Daemon {
       ...(m.effort !== undefined ? (["effort"] as const) : []),
       ...(m.ultracode !== undefined ? (["ultracode"] as const) : []),
     ];
-    const r = await this.codexSessions.input(m.sessionId, body);
+    const r = await this.codexSessions.input(m.sessionId, body, m.agentSelection);
     return r.ok && unapplied.length > 0 ? { ...r, unapplied } : r;
   }
 

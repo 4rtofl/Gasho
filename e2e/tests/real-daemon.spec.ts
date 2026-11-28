@@ -92,3 +92,46 @@ test("Antigravity の未ログイン時は working server の端末でのログ�
   await page.getByRole("button", { name: "起動する", exact: true }).click();
   await expect(page.getByText("working server の端末で agy を起動してログインしてください。", { exact: true })).toBeVisible();
 });
+
+test("Antigravity は発言の前にモデルと Effort を切り替え、失敗した発言は入力欄に戻す", async ({ page, hub }) => {
+  await hub.startDaemon({ name: "ACP", folders: ["work/gasho"], antigravity: true });
+  await page.goto("/");
+  await page.getByRole("main").getByRole("button", { name: "新しいセッション", exact: true }).click();
+  await page.getByRole("combobox", { name: "エージェント" }).selectOption("antigravity");
+  await page.getByRole("button", { name: "起動する", exact: true }).click();
+
+  const input = page.getByPlaceholder("Agent への指示を入力…");
+  const send = page.getByRole("button", { name: "送信", exact: true });
+  const model = page.getByRole("button", { name: /^モデル：/ });
+  await expect(model).toHaveAccessibleName(/Gemini Test（選び直す）/);
+  await model.click();
+  await page.getByRole("option", { name: /Unavailable Test/ }).click();
+  await input.fill("失敗時に残る発言");
+  await send.click();
+  await expect(page.getByText(/このモデルは現在使えません/)).toBeVisible();
+  await expect(input).toHaveValue("失敗時に残る発言");
+  await expect(page.getByText("偽 ACP の応答：失敗時に残る発言")).toHaveCount(0);
+
+  await model.click();
+  await page.getByRole("option", { name: /Gemini Test Pro/ }).click();
+  const disabledEffort = page.getByRole("button", { name: /^Effort：.*モデルを切り替えて送ったあとに、Effort を選べます/ });
+  await expect(disabledEffort).toBeDisabled();
+  await expect(disabledEffort).toHaveAttribute("title", "モデルを切り替えて送ったあとに、Effort を選べます");
+  const effortHint = page.getByText("モデルを切り替えて送ったあとに、Effort を選べます", { exact: true });
+  await expect(effortHint).toBeVisible();
+  await input.fill("モデルを替えて");
+  await send.click();
+  await expect(page.getByText("偽 ACP の応答：モデルを替えて", { exact: true })).toBeVisible();
+  await expect(effortHint).toBeHidden();
+  await model.click();
+  await expect(page.getByRole("option", { name: /Gemini Test Pro/ }).getByText("いま")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await page.getByRole("button", { name: "Effort：Baseline", exact: true }).click();
+  await expect(page.getByRole("menuitemradio", { name: "Extra Fast" })).toHaveCount(0);
+  await page.getByRole("menuitemradio", { name: "Extra Pro", exact: true }).click();
+  await input.fill("じっくり考えて");
+  await send.click();
+  await expect(page.getByText("偽 ACP の応答：じっくり考えて", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Effort：Extra Pro", exact: true })).toBeVisible();
+});

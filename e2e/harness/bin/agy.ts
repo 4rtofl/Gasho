@@ -15,6 +15,21 @@ assert.deepEqual(args, ["acp"]);
 const mode = process.env.GASHO_TEST_ACP_MODE;
 const sessionId = "fake-acp-session";
 let turn: { id: number; text: string } | undefined;
+let model = "gemini-test";
+let effort = "baseline";
+const configOptions = () => mode === "no-config" ? {} : { configOptions: [
+  { id: "engine", name: "Model", type: "select", category: "model", currentValue: model, options: [
+    { group: "gemini", name: "Gemini", options: [
+      { value: "gemini-test", name: "Gemini Test" },
+      { value: "gemini-test-pro", name: "Gemini Test Pro" },
+      { value: "unavailable-test", name: "Unavailable Test" },
+    ] },
+  ] },
+  { id: "thinking", name: "Thinking level", type: "select", category: "thought_level", currentValue: effort, options: [
+    { value: "baseline", name: "Baseline" },
+    model === "gemini-test-pro" ? { value: "extra-pro", name: "Extra Pro" } : { value: "extra-fast", name: "Extra Fast" },
+  ] },
+] };
 const send = (value: object) => writeSync(1, JSON.stringify({ jsonrpc: "2.0", ...value }) + "\n");
 const result = (id: number, value: object = {}) => send({ id, result: value });
 const chunk = (sessionUpdate: string, text: string) => send({
@@ -54,7 +69,7 @@ for (const line of lines()) {
     case "session/new":
       assert.deepEqual(m.params, { cwd: process.cwd(), mcpServers: [] });
       if (mode === "auth") send({ id: m.id, error: { code: -32000, message: "Authentication required" } });
-      else result(m.id, { sessionId });
+      else result(m.id, { sessionId, ...configOptions() });
       break;
     case "session/load":
     case "session/resume":
@@ -63,8 +78,28 @@ for (const line of lines()) {
         chunk("user_message_chunk", "前の発言");
         chunk("agent_message_chunk", "前の応答");
       }
-      result(m.id);
+      result(m.id, configOptions());
       break;
+    case "session/set_config_option": {
+      assert.equal(m.params.sessionId, sessionId);
+      assert.equal(turn, undefined);
+      const value = m.params.value;
+      if (m.params.configId === "engine") {
+        if (value === "unavailable-test") {
+          send({ id: m.id, error: { code: -32602, message: "このモデルは現在使えません。" } });
+          break;
+        }
+        assert.ok(["gemini-test", "gemini-test-pro"].includes(value));
+        model = value;
+        effort = "baseline";
+      } else {
+        assert.equal(m.params.configId, "thinking");
+        assert.ok(["baseline", model === "gemini-test-pro" ? "extra-pro" : "extra-fast"].includes(value));
+        effort = value;
+      }
+      result(m.id, configOptions());
+      break;
+    }
     case "session/prompt":
       assert.equal(turn, undefined);
       assert.equal(m.params.sessionId, sessionId);
@@ -85,6 +120,10 @@ for (const line of lines()) {
             ],
           },
         });
+      } else if (turn.text === "通知を試す") {
+        finish("通知試験");
+        effort = "extra-fast";
+        send({ method: "session/update", params: { sessionId, update: { sessionUpdate: "config_option_update", ...configOptions() } } });
       } else if (turn.text !== "割り込み試験") finish(`応答：${turn.text.trim()}`);
       break;
     case "session/cancel":

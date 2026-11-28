@@ -97,7 +97,7 @@ test("gasho-plugin.json の permissions に書けば、プラグインから発�
   });
 });
 
-test("権限を宣言したプラグインでも Antigravity の起動と発言は断られる", async ({ page, hub }) => {
+test("権限を宣言したプラグインでも Antigravity の起動とモデル・Effort を指定した発言は断られる", async ({ page, hub }) => {
   const sessionId = "antigravity-0b6f3a52-9a51-4c7e-8d2b-6c1f0e4a7d10";
   const d = await hub.fakeDaemon({
     name: "ACP", sessions: [fakeSession({ sessionId, cwd: "/work/app", name: "作業", agent: "antigravity" })],

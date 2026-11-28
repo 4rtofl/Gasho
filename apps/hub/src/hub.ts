@@ -476,6 +476,16 @@ export function validateCommand(cmd: SessionCommand, agent?: AgentKind): string 
       if (cmd.effort !== undefined && !EFFORTS.has(cmd.effort)) return "Effort の指定が正しくありません。";
       if (cmd.ultracode !== undefined && typeof cmd.ultracode !== "boolean") return "Ultracode の指定が正しくありません。";
       if (cmd.via !== undefined && (typeof cmd.via !== "string" || !/^[a-z][a-z0-9-]{1,31}$/.test(cmd.via))) return "送ったプラグインの指定が正しくありません。";
+      if (cmd.agentSelection !== undefined) {
+        if (cmd.screen !== true || cmd.via !== undefined) return "モデルと Effort の切り替えは Gasho の画面から行ってください。";
+        const { agentSelection: selection } = cmd;
+        if (!selection || typeof selection !== "object" || Array.isArray(selection) ||
+            (selection.model === undefined && selection.effort === undefined) ||
+            [selection.model, selection.effort].some((v) => v !== undefined && (typeof v !== "string" || !v))) {
+          return "モデルまたは Effort の指定が正しくありません。";
+        }
+        if (cmd.model !== undefined || cmd.effort !== undefined || cmd.ultracode !== undefined) return "切り替えの指定が正しくありません。";
+      }
       if (agent === "antigravity") return files.length ? "Antigravity にはファイルを添付できません。" : undefined;
       // These change Claude Code's defaults for every new session; the chat box switches them for this session.
       if (/^\s*\/model(?=\s|$)/i.test(cmd.text)) {
@@ -677,6 +687,7 @@ export class Hub {
       m.update = undefined;
       m.pluginApi = undefined;
       if (m.agents?.antigravity) delete m.agents.antigravity;
+      if (m.agents?.codex) delete m.agents.codex.operations;
       this.store.saveMachine(m);
       this.store.touchDevice(device.id);
       peer.send({ type: "welcome" });
@@ -1255,6 +1266,8 @@ export class Hub {
           cmd.text.slice(0, 300),
           cmd.model && `[model: ${cmd.model}]`,
           cmd.effort && `[effort: ${cmd.effort}]`,
+          cmd.agentSelection?.model && `[model: ${cmd.agentSelection.model.slice(0, 100)}]`,
+          cmd.agentSelection?.effort && `[effort: ${cmd.agentSelection.effort.slice(0, 100)}]`,
           cmd.ultracode !== undefined && `[ultracode: ${cmd.ultracode ? "on" : "off"}]`,
           ...(cmd.files ?? []).map((f) => `[file: ${f.name.slice(0, 100)}, ${Math.ceil(base64Bytes(f.data) / 1024)}KB]`),
           cmd.via && `[via: ${cmd.via}]`,
@@ -1401,6 +1414,13 @@ export class Hub {
         : "この working server の gasho-daemon は古いため、フォルダーの作成と clone を扱えません。gasho-daemon を更新してください。";
     }
     if (cmd.type !== "session.input") return undefined;
+    if (cmd.agentSelection !== undefined) {
+      const operations = agent && agent !== "claude" ? m?.agents?.[agent]?.operations : undefined;
+      if ((cmd.agentSelection.model !== undefined && !operations?.includes("model")) ||
+          (cmd.agentSelection.effort !== undefined && !operations?.includes("effort"))) {
+        return "このセッションではモデルや Effort を切り替えられません。gasho-daemon の版を確認してください。";
+      }
+    }
     const features = m?.features ?? legacyFeatures(m?.daemonVersion);
     const missing = [
       cmd.model !== undefined && !features.includes("model") && "モデル",

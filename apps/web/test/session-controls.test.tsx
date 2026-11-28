@@ -180,16 +180,39 @@ test("Antigravity shows saved names in the heading and readable labels for unava
 
   await hub.say({
     type: "server",
-    server: { ...server, agentDefaults: { antigravity: { model: "removed-model-id", effort: "removed-effort-id" } } },
+    server: { ...server, agentDefaults: { antigravity: { model: "gemini-test", effort: "removed-effort-id" } } },
   });
   await userEvent.setup().click(section.getByRole("button", { name: "Antigravity の既定値" }));
-  const model = section.getByRole("option", { name: "前に選んだモデル（いまは選べません）" });
-  const effort = section.getByRole("option", { name: "前に選んだ Effort（いまは選べません）" });
-  expect(model).toHaveProperty("disabled", true);
-  expect(effort).toHaveProperty("disabled", true);
-  expect(section.queryByText(/removed-(model|effort)-id/)).toBeNull();
+  expect(section.getByRole("option", { name: "前に選んだ Effort（いまは選べません）" })).toHaveProperty("disabled", true);
+  expect(section.getByText("Gemini Test・前に選んだ Effort（いまは選べません）", { exact: true })).toBeTruthy();
+  expect(section.queryByText(/removed-effort-id/)).toBeNull();
+
+  // A model gone from the candidates leaves none for its effort levels.
+  await hub.say({
+    type: "server",
+    server: { ...server, agentDefaults: { antigravity: { model: "removed-model-id", effort: "removed-effort-id" } } },
+  });
+  expect(section.getByRole("option", { name: "前に選んだモデル（いまは選べません）" })).toHaveProperty("disabled", true);
+  expect(section.getByRole("option", { name: "removed-effort-id（候補を受け取る前です）" })).toHaveProperty("disabled", true);
+  expect(section.queryByText(/removed-model-id/)).toBeNull();
   const hint = section.getByText("セッションでこのモデルを一度使うと選べるようになります。");
   expect(section.getByRole("combobox", { name: "既定の Effort" }).getAttribute("aria-describedby")).toBe(hint.id);
+});
+
+test("before any candidate arrives, the saved defaults are shown by their ids", async () => {
+  await connectHub({
+    machines: [machine("codex", [], { agents: { codex: { status: "available", canLaunch: true, canUseLaunchDefaults: true } } })],
+    server: { version: "0.15.0", update: { canUpdate: false }, agentDefaults: { codex: { model: "saved-model-id", effort: "saved-effort-id" } } },
+  });
+  setSettingsSectionOpen("default-codex", false);
+  render(<SettingsView />);
+  const section = within(screen.getByRole("region", { name: "Codex の既定値" }));
+  expect(section.getByText("saved-model-id（候補を受け取る前です）・saved-effort-id（候補を受け取る前です）", { exact: true })).toBeTruthy();
+
+  await userEvent.setup().click(section.getByRole("button", { name: "Codex の既定値" }));
+  expect(section.getByRole<HTMLSelectElement>("combobox", { name: "既定のモデル" }).selectedOptions[0]?.textContent).toBe("saved-model-id（候補を受け取る前です）");
+  expect(section.getByRole<HTMLSelectElement>("combobox", { name: "既定の Effort" }).selectedOptions[0]?.textContent).toBe("saved-effort-id（候補を受け取る前です）");
+  expect(section.queryByText(/いまは選べません/)).toBeNull();
 });
 
 test("the shared default explains Fable's fallback when any working server is on Pro", async () => {

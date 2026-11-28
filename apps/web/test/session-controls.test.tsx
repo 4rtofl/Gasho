@@ -169,6 +169,7 @@ test("Antigravity shows saved names in the heading and readable labels for unava
       status: "unknown", canLaunch: true, canUseLaunchDefaults: true,
       launchCatalog: { model: { options: [
         { id: "gemini-test", name: "Gemini Test", efforts: [{ id: "deep", name: "Deep" }] },
+        { id: "gemini-unused", name: "Gemini Unused" },
       ] } },
     } } })],
     server: { ...server, agentDefaults: { antigravity: { model: "gemini-test", effort: "deep" } } },
@@ -193,8 +194,17 @@ test("Antigravity shows saved names in the heading and readable labels for unava
     server: { ...server, agentDefaults: { antigravity: { model: "removed-model-id", effort: "removed-effort-id" } } },
   });
   expect(section.getByRole("option", { name: "前に選んだモデル（いまは選べません）" })).toHaveProperty("disabled", true);
-  expect(section.getByRole("option", { name: "removed-effort-id（候補を受け取る前です）" })).toHaveProperty("disabled", true);
-  expect(section.queryByText(/removed-model-id/)).toBeNull();
+  expect(section.getByRole("option", { name: "removed-effort-id（モデルを選び直すと選べます）" })).toHaveProperty("disabled", true);
+  expect(section.getByText("前に選んだモデル（いまは選べません）・removed-effort-id（モデルを選び直すと選べます）", { exact: true })).toBeTruthy();
+  expect(section.queryByText(/removed-model-id|候補を受け取る前|このモデルを一度使う/)).toBeNull();
+
+  // A listed model whose effort levels the working server has not learned yet.
+  await hub.say({
+    type: "server",
+    server: { ...server, agentDefaults: { antigravity: { model: "gemini-unused", effort: "saved-effort-id" } } },
+  });
+  expect(section.getByRole("option", { name: "saved-effort-id（候補を受け取る前です）" })).toHaveProperty("disabled", true);
+  expect(section.getByText("Gemini Unused・saved-effort-id（候補を受け取る前です）", { exact: true })).toBeTruthy();
   const hint = section.getByText("セッションでこのモデルを一度使うと選べるようになります。");
   expect(section.getByRole("combobox", { name: "既定の Effort" }).getAttribute("aria-describedby")).toBe(hint.id);
 });
@@ -207,7 +217,7 @@ test("before any candidate arrives, the saved defaults are shown by their ids", 
   setSettingsSectionOpen("default-codex", false);
   render(<SettingsView />);
   const section = within(screen.getByRole("region", { name: "Codex の既定値" }));
-  expect(section.getByText("saved-model-id（候補を受け取る前です）・saved-effort-id（候補を受け取る前です）", { exact: true })).toBeTruthy();
+  expect(section.getByText("saved-model-id・saved-effort-id（候補を受け取る前です）", { exact: true })).toBeTruthy();
 
   await userEvent.setup().click(section.getByRole("button", { name: "Codex の既定値" }));
   expect(section.getByRole<HTMLSelectElement>("combobox", { name: "既定のモデル" }).selectedOptions[0]?.textContent).toBe("saved-model-id（候補を受け取る前です）");

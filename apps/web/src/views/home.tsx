@@ -306,7 +306,7 @@ export function HomeView() {
           trendLabels={tokens.labels}
           {...(tokens.previous ? { previous: tokens.previous, deltaLabel: "前の24時間と比べて" } : {})}
           goodWhen="neither"
-          period={rows.some(({ s }) => s.agent === "codex" && s.tokenHours?.length) ? "過去24時間（Codex のサブエージェントは除く）" : "過去24時間（サブエージェントを含む）"}
+          period={`過去24時間（${subagentNote(machines)}）`}
           format={compact}
           color={CHART_BLUE}
           className="h-full"
@@ -607,6 +607,9 @@ function TokenBreakdown({ tokens }: { tokens: TokenTrend }) {
   );
 }
 
+/** What the token totals hold of subagents. Not by what was used: the days do not say which agent used them. */
+const subagentNote = (machines: readonly MachineInfo[]) => (machines.some((m) => m.agents?.codex) ? "Codex のサブエージェントは除く" : "サブエージェントを含む");
+
 /** A year of the tokens used per day, of all working servers together; asked for when the home screen opens. */
 export function TokenHeatmap({ now }: { now: number }) {
   const { tokenDays, tokenDaysReported, machines } = useAppState();
@@ -628,9 +631,7 @@ export function TokenHeatmap({ now }: { now: number }) {
   return (
     <>
       <ActivityHeatmap data={data} endDate={tokenDayOf(now)} unit="トークン" format={compact} />
-      <p className="mt-2 text-[11px] text-muted-foreground">
-        日本時間で1日を区切っています（{machines.some((m) => m.agents?.codex) ? "Codex のサブエージェントは除く" : "サブエージェントを含む"}）。
-      </p>
+      <p className="mt-2 text-[11px] text-muted-foreground">日本時間で1日を区切っています（{subagentNote(machines)}）。</p>
     </>
   );
 }

@@ -249,3 +249,52 @@ code.claude.com の次のページを、2026年11月11日に読んだ。
 - Hooks、Hooks guide
 - Legal and compliance、Headless
 - Agent SDK（overview、sessions、permissions、streaming input）
+
+## Codex のモデル・Effort（#347）
+
+Codex CLI 0.172.0 の app-server スキーマでは、`model/list` が各モデルの表示名、非表示かどうか、既定かどうか、選べる Effort と既定の Effort を返す。スキーマの `TurnStartParams` には、`model` と `effort` の指定はそのターンと後続ターンに適用するとある。初回と再接続時の現在値は、それぞれ `ThreadStartResponse`・`ThreadResumeResponse` の `model` と `reasoningEffort` で受け取れる。
+
+Codex の RPC をプロセス内で置き換えた確認では、複数ページの候補の読み取り、非表示モデルの除外、Effort の検証、発言時の指定と後続の発言で指定を省く動作を確かめた。
+
+本物の Codex に対し、Gasho の画面から切り替える動作は未確認。Codex の偽 app-server を使うテストとブラウザーの E2E は、元の作業時のサンドボックスでソケットを待ち受けられず未確認だった。
+
+## Codex の確認の「今後も許可」（#355）
+
+2026年11月28日に `codex-cli 0.172.0` の app-server スキーマを読んだ。
+
+- コマンドの確認は `acceptForSession`、`acceptWithExecpolicyAmendment`、`applyNetworkPolicyAmendment` を、ファイルの変更は `acceptForSession` を受け付け、追加の権限は `scope: "session"` を指定できる。これまでの Gasho は実行ポリシーの追加だけを出していた
+- 受け付ける値のすべてがコマンドの確認で提示されるわけではない。公開されているソース（[openai/codex](https://github.com/openai/codex) の `rust-v0.172.0`）では、app-server は確認ごとの選択肢を `availableDecisions` で送る。これは実験的なフィールドで、生成した安定版のスキーマには載らないが、`experimentalApi` を宣言しないクライアントから落とすのは `additionalPermissions` だけである。既定の一覧では、ネットワークの確認は一回・セッション中・（許可の提案があれば）規則の追加、ほかのコマンドは一回・（提案があれば）実行ポリシーの追加である
+
+応答の組み立ては単体テストで確かめた。本物の Codex の app-server が送る `availableDecisions` と、`acceptForSession`、`scope: "session"`、`applyNetworkPolicyAmendment` を返したときの動きは確かめていない。ファイルの変更の `grantRoot` はスキーマに「UNSTABLE」とある。
+
+## Codex のコンテキストとトークン（#349）
+
+`codex-cli 0.172.0` の `app-server generate-json-schema` では、`thread/tokenUsage/updated` が `threadId`、`turnId`、`tokenUsage`（`total`、`last`、`modelContextWindow`）を持つ。数え方はスキーマに書かれていないので、公開されているソース（[openai/codex](https://github.com/openai/codex) の `rust-v0.172.0`）を読んで確かめた。
+
+- `total` は応答ごとの使用量をスレッドで足したもの。`last` は最後の応答で、要約のあとは `totalTokens` が見積もりになり、ほかの項目は0になる
+- `cachedInputTokens` と書き込みのトークンは、Responses API の `input_tokens_details` から来るので、`inputTokens` の内数である
+- コンテキストがあふれると、`total` は `totalTokens` だけを持つ値に置き換わり、内訳はゼロからになる
+- 同じ使用量は、プランの上限の更新などでも再送される
+- `thread/resume` で使用量が再送されるのは、ターンを含めて読み込むときと、ページに分けて読み込むときだけである。Gasho の `excludeTurns: true` では届かない
+- Codex の端末は、固定の 12,000 トークンを引いた残りの割合を出す。Gasho は `last.totalTokens` ÷ `modelContextWindow` を出す
+
+### 確かめていないこと
+
+- 本物の Codex の app-server が実際に送る値と、画面の表示。テストは偽の app-server で行った
+- Codex のサブエージェントの使用量が、親のスレッドの `total` に入らないこと（ソースの作りからの判断で、実機では見ていない）。サブエージェントのスレッドの通知は数えていない
+
+## Codex の worktree のルール（#357）
+
+2026年11月28日に、codex-cli 0.172.0 の公開されているソース（`rust-v0.172.0`）と手元の Codex で確かめた。
+
+- `developerInstructions` は、config の `developer_instructions` の代わりになる（足されない）
+- 読み込み済みのスレッドへの `thread/resume` の `developerInstructions` は無視される。購読者がいなくなったスレッドは、既定で60秒後に読み込みから外れる
+
+手元の Codex では、利用者の `~/.codex` を使わず、一時の `CODEX_HOME` と `HOME`、偽の Responses API を使った。`developerInstructions` を渡すと、config の `developer_instructions` は developer の指示に入らなかった。利用者の `developer_instructions` の後ろに Gasho のルールを足して渡すと、両方が入った。
+
+### 確かめていないこと
+
+- 本物のモデルと ChatGPT のログインでの動作、Gasho の画面からの起動
+- Codex のサンドボックスの中から `gasho-daemon session launch` を動かせるか、Codex が worktree のルールに従うか
+- 0.172.0 以外の版
+

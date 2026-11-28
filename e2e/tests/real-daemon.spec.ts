@@ -1,5 +1,7 @@
 // The same way with this checkout's gasho-daemon in place of the fake one: it starts the fake claude in a terminal of
 // its own, types the instruction into its prompt box, and sends the conversation the fake writes to its transcript.
+import fsp from "node:fs/promises";
+import path from "node:path";
 import { expect, test } from "./fixtures.ts";
 
 test("本物の daemon: 画面から起動したセッションに送った指示が claude に届き、返事が画面に出る", async ({ page, hub }) => {
@@ -131,4 +133,59 @@ test("Antigravity は発言の前にモデルと Effort を切り替え、失敗
   await send.click();
   await expect(page.getByText("偽 ACP の応答：じっくり考えて", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Effort：Extra Pro", exact: true })).toBeVisible();
+});
+
+test("Antigravity の既定値は設定を開くだけでは接続せず、新規起動で適用する", async ({ page, hub }) => {
+  const log = path.join(hub.root, "acp.jsonl");
+  await hub.startDaemon({
+    name: "ACP", folders: ["work/gasho"], antigravity: true,
+    env: { GASHO_TEST_ACP_LOG: log },
+  });
+  const calls = async () => (await fsp.readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+  const settings = async () => {
+    await page.goto("/#/settings");
+    const section = page.getByRole("button", { name: "Antigravity の既定値" });
+    if ((await section.getAttribute("aria-expanded")) !== "true") await section.click();
+  };
+  const launch = async () => {
+    await page.goto("/");
+    await page.getByRole("main").getByRole("button", { name: "新しいセッション", exact: true }).click();
+    await page.getByRole("combobox", { name: "エージェント" }).selectOption("antigravity");
+    await page.getByRole("button", { name: "起動する", exact: true }).click();
+  };
+
+  await settings();
+  await expect(page.getByText("Antigravity のセッションを一度開くと選べます。")).toBeVisible();
+  expect((await calls()).filter((c) => c.args?.includes("acp"))).toHaveLength(0);
+  await launch();
+  const sessionModel = page.getByRole("button", { name: /^モデル：/ });
+  await sessionModel.click();
+  await page.getByRole("option", { name: /Gemini Test Pro/ }).click();
+  await page.getByPlaceholder("Agent への指示を入力…").fill("候補を受け取る");
+  await page.getByRole("button", { name: "送信", exact: true }).click();
+  await expect(page.getByText("偽 ACP の応答：候補を受け取る")).toBeVisible();
+
+  await settings();
+  const model = page.getByRole("combobox", { name: "既定のモデル", exact: true });
+  const effort = page.getByRole("combobox", { name: "既定の Effort", exact: true });
+  await model.selectOption("gemini-test-pro");
+  await effort.selectOption("extra-pro");
+  await expect(model).toHaveValue("gemini-test-pro");
+  await expect(effort).toHaveValue("extra-pro");
+  expect((await calls()).filter((c) => c.args?.includes("acp"))).toHaveLength(1);
+
+  await launch();
+  await expect(sessionModel).toHaveAccessibleName(/Gemini Test Pro/);
+  await expect(page.getByRole("button", { name: "Effort：Extra Pro", exact: true })).toBeVisible();
+  expect((await calls()).filter((c) => c.method === "session/set_config_option").map((c) => c.params.value)).toEqual([
+    "gemini-test-pro", "gemini-test-pro", "extra-pro",
+  ]);
+
+  await settings();
+  await model.selectOption("unavailable-test");
+  await expect(model).toHaveValue("unavailable-test");
+  await launch();
+  await expect(page.getByText(/既定のモデル（unavailable-test）.*このモデルは現在使えません/)).toBeVisible();
+  await page.getByRole("button", { name: "セッションを開く", exact: true }).click();
+  await expect(page.getByPlaceholder("Agent への指示を入力…")).toBeVisible();
 });

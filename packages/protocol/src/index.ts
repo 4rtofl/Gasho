@@ -524,6 +524,8 @@ export interface AgentInfo {
   canLaunch?: boolean;
   /** What its sessions can do. Absent from a gasho-daemon that does not tell: there, only Claude Code runs, and it can do all of it. */
   operations?: AgentOperation[];
+  canUseLaunchDefaults?: true;
+  launchCatalog?: AgentInputConfig;
 }
 
 /** The agents gasho-daemon looked for and found on its working server: one that is not installed is not listed. */
@@ -683,6 +685,7 @@ export interface ServerInfo {
    * Absent: Claude Code's own default model.
    */
   defaultModel?: SessionModel;
+  agentDefaults?: Partial<Record<Exclude<AgentKind, "claude">, AgentInputSelection>>;
 }
 
 /** The latest published versions, as the Gasho server last looked them up on the package registry. */
@@ -1269,6 +1272,7 @@ export type ClientToHub =
   /** Changes the effort level a new session of Claude Code starts with; without `effort`, Claude Code's own default (as defaultAgent.set). */
   | { type: "defaultEffort.set"; requestId: string; effort?: EffortLevel }
   /** Changes the model a new session of Claude Code starts with; without `model` (or "default"), Claude Code's own default. */
+  | { type: "agentDefault.set"; requestId: string; agent: Exclude<AgentKind, "claude">; field: keyof AgentInputSelection; value?: string }
   | { type: "defaultModel.set"; requestId: string; model?: SessionModel }
   /**
    * Names a worktree of a working server, for every browser (MachineInfo.worktreeNames), or takes its name away (no
@@ -1374,7 +1378,7 @@ export type SessionCommand =
    * (ServerInfo.defaultEffort) to a launch of Claude Code without one. A model that does not have it starts with one it
    * has, or none. `model`: likewise (`--model`, ServerInfo.defaultModel); "default" passes nothing.
    */
-  | { type: "session.launch"; cwd: string; name?: string; trust?: boolean; agent?: AgentKind; effort?: EffortLevel; model?: SessionModel; screen?: true }
+  | { type: "session.launch"; cwd: string; name?: string; trust?: boolean; agent?: AgentKind; effort?: EffortLevel; model?: SessionModel; screen?: true; launchDefaults?: AgentInputSelection }
   | { type: "antigravity.open"; sessionId: string; screen: true }
   /** Makes the folder `name` inside the folder `parent` (gasho-daemon 0.10.0 and later). */
   | { type: "folder.create"; parent: string; name: string }

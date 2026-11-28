@@ -56,6 +56,7 @@ export function useWorktreeLaunch(worktree: WorktreeSessions, onAskTrust: (initi
     setLaunching(true);
     setError(undefined);
     const r = await launchSession(machine.id, { cwd: worktree.path, agent });
+    if (r.ok && r.warning) showNotice(r.warning);
     if (!shown.current) return;
     setLaunching(false);
     if (!r.ok || !r.sessionId) {

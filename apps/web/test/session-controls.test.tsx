@@ -1,11 +1,11 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { EffortLevel } from "@gasho/protocol";
 import { expect, test, vi } from "vitest";
 import { BackgroundToggle, EffortPicker, EFFORTS } from "@/components/session-controls";
 import { setSettingsSectionOpen } from "@/lib/settings-sections";
 import { SessionView } from "@/views/session";
-import { DefaultEffortSection, DefaultModelSection } from "@/views/settings";
+import { DefaultEffortSection, DefaultModelSection, SettingsView } from "@/views/settings";
 import { connectHub, machine, session } from "./hub";
 
 test("the effort picked is told, and the button says it is switched when sending until the session uses it", async () => {
@@ -116,6 +116,35 @@ test("the default model is set for every browser from its combobox, and back to 
   await user.selectOptions(box, "default");
   const back = hub.sent.at(-1);
   expect(back?.type === "defaultModel.set" && !("model" in back)).toBe(true);
+});
+
+test("Antigravity settings wait for the working server's catalog without asking it to connect", async () => {
+  const info = { status: "unknown", canLaunch: true, canUseLaunchDefaults: true } as const;
+  const server = { version: "0.15.0", update: { canUpdate: false } };
+  const hub = await connectHub({ machines: [machine("acp", [], { agents: { antigravity: info } })], server });
+  setSettingsSectionOpen("default-antigravity", false);
+  render(<SettingsView />);
+  const user = userEvent.setup();
+  const section = screen.getByRole("region", { name: "Antigravity の既定値" });
+  await user.click(screen.getByRole("button", { name: "Antigravity の既定値" }));
+  expect(screen.getByText("Antigravity のセッションを一度開くと選べます。")).toBeTruthy();
+  expect(hub.commands()).toEqual([]);
+
+  await hub.say({
+    type: "machine", machine: machine("acp", [], { agents: { antigravity: {
+      ...info,
+      launchCatalog: { model: { current: "test", options: [
+        { id: "test", name: "Test", efforts: [{ id: "deep", name: "Deep" }] },
+      ] } },
+    } } }),
+  });
+  const effort = within(section).getByRole("combobox", { name: "既定の Effort" });
+  await user.selectOptions(effort, "deep");
+  expect(hub.sent.at(-1)).toMatchObject({ type: "agentDefault.set", agent: "antigravity", field: "effort", value: "deep" });
+  await hub.answer({ ok: true });
+  await hub.say({ type: "server", server: { ...server, agentDefaults: { antigravity: { effort: "deep" } } } });
+  expect(effort).toHaveProperty("value", "deep");
+  expect(hub.commands()).toEqual([]);
 });
 
 test("the shared default explains Fable's fallback when any working server is on Pro", async () => {

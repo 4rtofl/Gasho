@@ -36,6 +36,7 @@ import { sessionActivity } from "@/lib/activity";
 import { relativeTime } from "@/lib/format";
 import { addPending, removePending, settlePending } from "@/lib/pending";
 import { backTo, go, hrefOf, noteOpenedFrom, useRoute, type Route } from "@/lib/route";
+import { showNotice } from "@/lib/notice";
 import { useSessionLauncher } from "@/lib/session-launch";
 import { getAppState, sendCommand, sendPluginCommand, transcriptKey, useAppState } from "@/lib/store";
 import { useNow } from "@/lib/use-now";
@@ -430,7 +431,10 @@ export const sdk: GashoSdk = {
       }
       if (agent === "antigravity") return { ok: false, error: ANTIGRAVITY_SCREEN_ONLY };
       const r = await launchSession(machine, { cwd, name: name?.trim() || undefined, trust, agent });
-      if (r.ok && r.sessionId) return { ok: true, sessionId: r.sessionId };
+      if (r.ok && r.sessionId) {
+        if (r.warning) showNotice(r.warning);
+        return { ok: true, sessionId: r.sessionId };
+      }
       if (r.needsTrust) {
         return { ok: false, error: "Claude Code がこのフォルダーを信頼するかを聞いています。", needsTrust: true, ...(r.trustWarnings ? { trustWarnings: r.trustWarnings } : {}) };
       }

@@ -2,7 +2,11 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type {
+  AgentChoice,
   AgentInfo,
+  AgentInputSelection,
+  AgentModelChoice,
+  AgentSelector,
   AgentKind,
   AgentOperation,
   AgentStatus,
@@ -145,6 +149,33 @@ const DEFAULT_MODEL_KEY = "default_model";
 /** An agent's version: x.y.z, with a pre-release after it. */
 const AGENT_VERSION_RE = /^\d{1,9}\.\d{1,9}\.\d{1,9}(?:[-+][0-9A-Za-z.+-]{1,40})?$/;
 
+function choiceId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 256;
+}
+
+function choiceOf(value: unknown): AgentChoice | undefined {
+  const c = value as Partial<AgentChoice> | null;
+  if (!choiceId(c?.id) || typeof c.name !== "string" || !c.name) return undefined;
+  return { id: c.id, name: c.name, description: typeof c.description === "string" ? c.description : undefined };
+}
+
+function selectorOf<T extends AgentChoice>(
+  selector: AgentSelector<T> | undefined, parse: (value: T) => T | undefined,
+): AgentSelector<T> | undefined {
+  if (!Array.isArray(selector?.options)) return undefined;
+  return { current: choiceId(selector.current) ? selector.current : undefined, options: selector.options.flatMap((value) => parse(value) ?? []) };
+}
+
+function modelChoiceOf(value: AgentModelChoice): AgentModelChoice | undefined {
+  const choice = choiceOf(value);
+  if (!choice) return undefined;
+  return {
+    ...choice,
+    efforts: Array.isArray(value.efforts) ? value.efforts.flatMap((effort) => choiceOf(effort) ?? []) : undefined,
+    isDefault: value.isDefault === true || undefined,
+  };
+}
+
 /** The agents a gasho-daemon says it found, kept to what is expected (they are shown to browsers). */
 export function agentsOf(u: unknown): MachineAgents | undefined {
   if (!u || typeof u !== "object") return undefined;
@@ -154,11 +185,16 @@ export function agentsOf(u: unknown): MachineAgents | undefined {
     if (!a || !AGENT_STATUSES.has(a.status)) continue;
     const version = typeof a.version === "string" && AGENT_VERSION_RE.test(a.version) ? a.version : undefined;
     const operations = Array.isArray(a.operations) ? [...new Set(a.operations.filter((o) => AGENT_OPERATIONS.has(o)))] : undefined;
+    const launchCatalog = a.canUseLaunchDefaults === true && a.launchCatalog && typeof a.launchCatalog === "object"
+      ? { model: selectorOf(a.launchCatalog.model, modelChoiceOf), effort: selectorOf(a.launchCatalog.effort, choiceOf) }
+      : undefined;
     agents[kind] = {
       status: a.status as AgentStatus,
       ...(version ? { version } : {}),
       ...(a.canLaunch === true ? { canLaunch: true } : {}),
       ...(operations ? { operations } : {}),
+      ...(a.canUseLaunchDefaults === true ? { canUseLaunchDefaults: true } : {}),
+      ...(launchCatalog ? { launchCatalog } : {}),
     };
   }
   return agents;
@@ -452,6 +488,7 @@ export function validateCommand(cmd: SessionCommand, agent?: AgentKind): string 
     case "antigravity.open":
       return cmd.screen === true ? undefined : ANTIGRAVITY_SCREEN_ONLY;
     case "session.launch":
+      if (cmd.launchDefaults !== undefined) return "起動時の既定値は設定画面で指定してください。";
       if (cmd.agent === "antigravity" && cmd.screen !== true) return ANTIGRAVITY_SCREEN_ONLY;
       if (typeof cmd.cwd !== "string" || !cmd.cwd.startsWith("/") || cmd.cwd.length > 1024) return "フォルダーを絶対パスで指定してください。";
       if (cmd.name !== undefined && (typeof cmd.name !== "string" || cmd.name.length > 60)) return "名前は60文字までです。";
@@ -966,8 +1003,11 @@ export class Hub {
   private serverInfo(server: ServerSource): ServerInfo {
     const effort = this.defaultEffort();
     const model = this.defaultModel();
+    const codex = this.agentDefaults("codex");
+    const antigravity = this.agentDefaults("antigravity");
     return {
       ...server.info(),
+      ...(codex || antigravity ? { agentDefaults: { codex, antigravity } } : {}),
       defaultAgent: AGENT_KINDS.find((agent) => agent === this.store.getMeta(DEFAULT_AGENT_KEY)) ?? "claude",
       ...(effort ? { defaultEffort: effort } : {}),
       ...(model ? { defaultModel: model } : {}),
@@ -983,6 +1023,12 @@ export class Hub {
   private defaultEffort(): EffortLevel | undefined {
     const effort = this.store.getMeta(DEFAULT_EFFORT_KEY);
     return effort && EFFORTS.has(effort) ? (effort as EffortLevel) : undefined;
+  }
+
+  private agentDefaults(agent: "codex" | "antigravity"): AgentInputSelection | undefined {
+    const model = this.store.getMeta(`default_model_${agent}`) || undefined;
+    const effort = this.store.getMeta(`default_effort_${agent}`) || undefined;
+    return model || effort ? { model, effort } : undefined;
   }
 
   private broadcastServer(): void {
@@ -1112,6 +1158,19 @@ export class Hub {
         peer.send({ type: "server.result", requestId: msg.requestId, result: { ok: true } });
         break;
       }
+      case "agentDefault.set": {
+        if (typeof msg.requestId !== "string" || !msg.requestId || msg.requestId.length > 100) return;
+        const { agent, field, value } = msg;
+        if ((agent !== "codex" && agent !== "antigravity") || (field !== "model" && field !== "effort") ||
+            (value !== undefined && !choiceId(value))) {
+          peer.send({ type: "server.result", requestId: msg.requestId, result: { ok: false, error: "モデルまたは Effort の指定が正しくありません。" } });
+          break;
+        }
+        this.store.setMeta(`default_${field}_${agent}`, value ?? "");
+        this.broadcastServer();
+        peer.send({ type: "server.result", requestId: msg.requestId, result: { ok: true } });
+        break;
+      }
       case "defaultEffort.set": {
         if (typeof msg.requestId !== "string" || !msg.requestId || msg.requestId.length > 100) return;
         if (msg.effort !== undefined && !EFFORTS.has(msg.effort)) {
@@ -1200,6 +1259,11 @@ export class Hub {
       if (cmd.model === undefined && model && (model !== "fable" || this.machines.get(machine)?.claudeSubscriptionType !== "pro")) {
         cmd = { ...cmd, model };
       }
+    }
+    if (cmd.type === "session.launch" && (cmd.agent === "codex" || cmd.agent === "antigravity") &&
+        this.machines.get(machine)?.agents?.[cmd.agent]?.canUseLaunchDefaults) {
+      const launchDefaults = this.agentDefaults(cmd.agent);
+      if (launchDefaults) cmd = { ...cmd, launchDefaults };
     }
     const daemon = this.daemons.get(machine);
     if (!daemon) return reply({ ok: false, error: "この working server はオフラインです。" });

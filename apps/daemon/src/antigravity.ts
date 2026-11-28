@@ -21,8 +21,10 @@ export async function detectAntigravity(bin: string): Promise<AgentInfo | undefi
 interface Options {
   bin: string;
   file: string;
+  catalogFile?: string;
   describe: (cwd: string) => Promise<Partial<SessionInfo>>;
   changed: () => void;
+  catalogChanged?: () => void;
   event: (event: HookEvent) => void;
   append: (id: string, entries: TranscriptEntry[], reset?: true) => void;
   log: (...args: unknown[]) => void;
@@ -68,6 +70,7 @@ const messageOf = (e: unknown) => e instanceof Error ? e.message : String(e);
 export class AntigravitySessions {
   private sessionsById = new Map<string, State>();
   private saving = Promise.resolve();
+  launchCatalog?: AgentInputConfig;
 
   private o: Options;
 
@@ -76,6 +79,14 @@ export class AntigravitySessions {
   }
 
   async load(): Promise<void> {
+    if (this.o.catalogFile) {
+      try {
+        this.launchCatalog = JSON.parse(await fsp.readFile(this.o.catalogFile, "utf8")) as AgentInputConfig;
+        this.o.catalogChanged?.();
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "ENOENT") this.o.log("cannot read Antigravity catalog", e);
+      }
+    }
     try {
       const saved = JSON.parse(await fsp.readFile(this.o.file, "utf8")) as Saved[];
       for (const s of saved) {
@@ -112,16 +123,16 @@ export class AntigravitySessions {
     if (this.sessionsById.size) this.o.changed();
   }
 
-  async launch(cwd: string, name?: string): Promise<string> {
+  async launch(cwd: string, name?: string, defaults?: AgentInputSelection): Promise<{ sessionId: string; warning?: string }> {
     const startedAt = Date.now();
     const saved = { id: `antigravity-${randomUUID()}`, remoteId: "", cwd, name, startedAt, lastActivityAt: startedAt, entries: [] };
     const s = this.add(saved);
     try {
-      await this.connect(s);
+      const warning = await this.connect(s, defaults);
       await this.describe(s);
       await this.save();
       this.o.changed();
-      return saved.id;
+      return { sessionId: saved.id, ...(warning ? { warning } : {}) };
     } catch (e) {
       this.sessionsById.delete(saved.id);
       throw e;
@@ -155,22 +166,7 @@ export class AntigravitySessions {
       try {
         for (const field of ["model", "effort"] as const) {
           const value = selection[field];
-          if (value === undefined) continue;
-          const configId = s.configIds?.[field];
-          const selector = s.info.agentConfig?.[field];
-          const label = field === "model" ? "モデル" : "Effort";
-          if (configId === undefined || !selector?.options.some((o) => o.id === value)) {
-            throw new Error(`指定した${label}は選べません。`);
-          }
-          if (selector.current === value) continue;
-          const result = object(await rpc.request("session/set_config_option", {
-            sessionId: s.saved.remoteId, configId, value,
-          }, CONNECT_TIMEOUT_MS));
-          if (!rpc.open || s.rpc !== rpc) throw new Error("Antigravity との接続が切れました。");
-          this.applyConfig(s, result?.configOptions);
-          if (s.info.agentConfig?.[field]?.current !== value) {
-            throw new Error(`指定した${label}に切り替わりませんでした。`);
-          }
+          if (value !== undefined) await this.switchOption(s, rpc, field, value);
         }
         s.queue.unshift(text);
       } catch (e) {
@@ -261,11 +257,29 @@ export class AntigravitySessions {
 
   private ensure(s: State): Promise<void> {
     if (s.ready && s.rpc?.open) return Promise.resolve();
-    s.opening ??= this.connect(s).finally(() => { delete s.opening; });
+    s.opening ??= this.connect(s).then(() => undefined).finally(() => { delete s.opening; });
     return s.opening;
   }
 
-  private async connect(s: State): Promise<void> {
+  private async switchOption(s: State, rpc: Acp, field: keyof AgentInputSelection, value: string, timeoutMs = CONNECT_TIMEOUT_MS): Promise<void> {
+    const configId = s.configIds?.[field];
+    const selector = s.info.agentConfig?.[field];
+    const label = field === "model" ? "モデル" : "Effort";
+    if (configId === undefined || !selector?.options.some((o) => o.id === value)) {
+      throw new Error(`指定した${label}は選べません。`);
+    }
+    if (selector.current === value) return;
+    const result = object(await rpc.request("session/set_config_option", {
+      sessionId: s.saved.remoteId, configId, value,
+    }, timeoutMs));
+    if (!rpc.open || s.rpc !== rpc) throw new Error("Antigravity との接続が切れました。");
+    this.applyConfig(s, result?.configOptions);
+    if (s.info.agentConfig?.[field]?.current !== value) {
+      throw new Error(`指定した${label}に切り替わりませんでした。`);
+    }
+  }
+
+  private async connect(s: State, defaults?: AgentInputSelection): Promise<string | undefined> {
     const { cwd, remoteId } = s.saved;
     const rpc = new Acp(this.o.bin, cwd, (method, params, id) => this.receive(s, rpc, method, params, id), () => {
       if (s.rpc !== rpc) return;
@@ -314,9 +328,23 @@ export class AntigravitySessions {
         }
       }
       if (!rpc.open || s.rpc !== rpc) throw new Error("Antigravity との接続が切れました。");
-      if (Array.isArray(result?.configOptions)) this.applyConfig(s, result.configOptions);
-      s.ready = true;
+      if (Array.isArray(result?.configOptions)) this.applyConfig(s, result.configOptions, true);
+      const warnings: string[] = [];
+      if (!remoteId && defaults) {
+        for (const field of ["model", "effort"] as const) {
+          const value = defaults[field];
+          if (value === undefined) continue;
+          try {
+            // Both switches must fit in the hub's remaining launch window after initialize and session/new.
+            await this.switchOption(s, rpc, field, value, 5_000);
+          } catch (e) {
+            warnings.push(`既定の${field === "model" ? "モデル" : " Effort"}（${value}）を適用できませんでした。 ${messageOf(e)}`);
+          }
+        }
+      }
+      s.ready = rpc.open;
       this.updateStatus(s);
+      return warnings.length ? warnings.join(" ") : undefined;
     } catch (e) {
       rpc.close();
       throw e;
@@ -392,7 +420,7 @@ export class AntigravitySessions {
     }
   }
 
-  private applyConfig(s: State, value: unknown): void {
+  private applyConfig(s: State, value: unknown, opened = false): void {
     delete s.info.agentConfig;
     delete s.configIds;
     delete s.info.model;
@@ -424,6 +452,24 @@ export class AntigravitySessions {
     }
     const model = config.model;
     if (model) s.info.model = model.options.find((m) => m.id === model.current)?.name ?? model.current;
+    const before = this.launchCatalog;
+    const catalog: AgentInputConfig = {
+      model: model && {
+        current: opened ? model.current : before?.model?.current,
+        options: model.options.map((choice) => ({
+          ...choice,
+          efforts: choice.id === model.current
+            ? config.effort?.options
+            : before?.model?.options.find((m) => m.id === choice.id)?.efforts,
+        })),
+      },
+      effort: model ? undefined : config.effort,
+    };
+    if (JSON.stringify(catalog) !== JSON.stringify(before)) {
+      this.launchCatalog = catalog;
+      this.o.catalogChanged?.();
+      if (this.o.catalogFile) void this.write(this.o.catalogFile, () => catalog);
+    }
   }
 
   private cancelPermissions(s: State): void {
@@ -500,11 +546,15 @@ export class AntigravitySessions {
   }
 
   private save(): Promise<void> {
+    return this.write(this.o.file, () => [...this.sessionsById.values()].filter((s) => s.saved.remoteId).map((s) => s.saved));
+  }
+
+  private write(file: string, value: () => unknown): Promise<void> {
     this.saving = this.saving.then(async () => {
-      const tmp = this.o.file + ".tmp";
-      await fsp.writeFile(tmp, JSON.stringify([...this.sessionsById.values()].filter((s) => s.saved.remoteId).map((s) => s.saved)), { mode: 0o600 });
-      await fsp.rename(tmp, this.o.file);
-    }).catch((e: unknown) => this.o.log("cannot save Antigravity sessions", e));
+      const tmp = file + ".tmp";
+      await fsp.writeFile(tmp, JSON.stringify(value()), { mode: 0o600 });
+      await fsp.rename(tmp, file);
+    }).catch((e: unknown) => this.o.log(`cannot save ${file}`, e));
     return this.saving;
   }
 }

@@ -2,7 +2,7 @@
 // gasho-daemon: gasho-daemon connects to it, keeps the ids of its threads in a file, and loads them again each time it
 // connects, so a turn goes on while gasho-daemon restarts. Claude Code's sessions do not come through here.
 import fsp from "node:fs/promises";
-import type { AgentInputSelection, AgentModelChoice, CommandResult, HookEvent, PermissionDecision, QuestionAnswer, SessionInfo, TranscriptEntry, TranscriptPage } from "@gasho/protocol";
+import type { AgentInputConfig, AgentInputSelection, AgentModelChoice, CommandResult, HookEvent, PermissionDecision, QuestionAnswer, SessionInfo, TranscriptEntry, TranscriptPage } from "@gasho/protocol";
 import {
   type CodexItem,
   type CodexRequest,
@@ -153,10 +153,48 @@ export class CodexSessions {
     return [...this.threads.values()].reduce((n, t) => n + t.queue.length, 0);
   }
 
-  async launch(cwd: string, name: string | undefined): Promise<string> {
+  async launchCatalog(): Promise<AgentInputConfig> {
     const rpc = await this.ensure();
-    // Only the folder: approvals and the sandbox are as the person set them up for Codex (~/.codex/config.toml).
-    const r = await rpc.request<ThreadResponse>("thread/start", { cwd });
+    const config = await this.readConfig(rpc);
+    const options = await this.listModels(rpc, config?.model_provider ?? undefined);
+    return { model: { current: config?.model ?? undefined, options } };
+  }
+
+  private async readConfig(rpc: CodexRpc, cwd?: string) {
+    return rpc.request<{ config?: { model?: string | null; model_provider?: string | null } }>("config/read", { cwd })
+      .then((r) => r.config)
+      .catch(() => undefined);
+  }
+
+  async launch(cwd: string, name: string | undefined, defaults?: AgentInputSelection): Promise<{ sessionId: string; warning?: string }> {
+    const rpc = await this.ensure();
+    const warnings: string[] = [];
+    let model: string | undefined;
+    let effort: string | undefined;
+    if (defaults) {
+      const config = await this.readConfig(rpc, cwd);
+      const options = await this.listModels(rpc, config?.model_provider ?? undefined);
+      model = options.find((option) => option.id === defaults.model)?.id;
+      if (defaults.model && !model) warnings.push(`既定のモデル（${defaults.model}）はこの working server の候補にありません。`);
+      const selected = options.find((option) => option.id === (model ?? config?.model)) ??
+        (!model && !config?.model ? options.find((option) => option.isDefault) : undefined);
+      effort = selected?.efforts?.find((option) => option.id === defaults.effort)?.id;
+      if (defaults.effort && !effort) warnings.push(`既定の Effort（${defaults.effort}）は起動するモデルの候補にありません。`);
+    }
+    // Approvals and the sandbox come from the person's Codex configuration.
+    const r = await rpc.request<ThreadResponse>("thread/start", {
+      cwd,
+      ...(model ? { model } : {}),
+      ...(effort ? { config: { model_reasoning_effort: effort } } : {}),
+    }).catch((e: unknown) => {
+      // Without an explicit RPC rejection, a fresh request could start a duplicate thread.
+      if (!(e instanceof CodexRpcError) || (!model && !effort)) throw e;
+      warnings.push(`Codex が既定値を受け付けなかったため、Codex の設定で起動しました（${messageOf(e)}）。`);
+      model = effort = undefined;
+      return rpc.request<ThreadResponse>("thread/start", { cwd });
+    });
+    if (model && r.model !== model) warnings.push(`既定のモデル（${model}）に切り替わりませんでした。`);
+    if (effort && r.reasoningEffort !== effort) warnings.push(`既定の Effort（${effort}）に切り替わりませんでした。`);
     const threadId = r.thread.id as string;
     const t = this.add(threadId, cwd, name, Date.now());
     this.applyThread(rpc, t, r);
@@ -164,7 +202,7 @@ export class CodexSessions {
     await this.describe(t);
     await this.save();
     this.o.changed();
-    return threadId;
+    return { sessionId: threadId, ...(warnings.length ? { warning: warnings.join(" ") } : {}) };
   }
 
   async input(sessionId: string, text: string, selection?: AgentInputSelection): Promise<CommandResult> {
@@ -635,6 +673,20 @@ export class CodexSessions {
     t.info.status = sessionStatusOf(thread.status as CodexThreadStatus | undefined);
     if (model) t.info.model = model;
     delete t.info.agentConfig;
+    // A slow catalog must not delay opening the thread or sending its plain inputs.
+    void this.listModels(rpc, modelProvider).then((options) => {
+      if (this.rpc !== rpc || !this.threads.has(t.info.sessionId) || !options.length) return;
+      const modelChoice = options.find((option) => option.id === model);
+      if (modelChoice) t.info.model = modelChoice.name;
+      t.info.agentConfig = {
+        model: { current: model, options },
+        effort: { current: reasoningEffort ?? undefined, options: modelChoice?.efforts ?? [] },
+      };
+      this.o.changed();
+    });
+  }
+
+  private listModels(rpc: CodexRpc, modelProvider?: string): Promise<AgentModelChoice[]> {
     let catalog = this.catalogs.get(modelProvider);
     if (!catalog) {
       catalog = (async () => {
@@ -663,17 +715,7 @@ export class CodexSessions {
       });
       this.catalogs.set(modelProvider, catalog);
     }
-    // A slow catalog must not delay opening the thread or sending its plain inputs.
-    void catalog.then((options) => {
-      if (this.rpc !== rpc || !this.threads.has(t.info.sessionId) || !options.length) return;
-      const modelChoice = options.find((option) => option.id === model);
-      if (modelChoice) t.info.model = modelChoice.name;
-      t.info.agentConfig = {
-        model: { current: model, options },
-        effort: { current: reasoningEffort ?? undefined, options: modelChoice?.efforts ?? [] },
-      };
-      this.o.changed();
-    });
+    return catalog;
   }
 
   private setName(t: ThreadState, name: string | undefined): void {

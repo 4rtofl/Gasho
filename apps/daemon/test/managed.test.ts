@@ -578,6 +578,20 @@ test("the model in Claude Code's welcome banner is read before the transcript ha
   assert.equal(bannerModel(screenWith("❯ ")), undefined);
 });
 
+test("the model is read from the banner that a 50-column terminal splits from the plan", () => {
+  // As Claude Code 2.1.332 draws it: the logo starts on the model's line, and a long line is cut with "…".
+  const banner = (model: string) =>
+    ["", "           Claude Code v2.1.332", ` ▐▛███▛█   ${model}`, "▝▜██████▀  Claude Pro", " ▝▝   ▝▝   ~/…/363-banner-model", ""].join("\n");
+  assert.equal(bannerModel(banner("Sonnet 5.5 with high effort")), "Sonnet 5.5");
+  assert.equal(bannerModel(banner("Sonnet 4.5 (1M context)")), "Sonnet 4.5 (1M context)");
+  assert.equal(bannerModel(banner("Opus 4.6 (1M context) with high ef…")), "Opus 4.6 (1M context)");
+  assert.equal(bannerModel(banner("Sonnet 4.6 (1M context) with max e…")), "Sonnet 4.6 (1M context)");
+  assert.equal(bannerModel(banner("Opus 4.5 (1M context) with medium …")), "Opus 4.5 (1M context)");
+  // A working folder with a number in its path is not a model, nor is one on the line below the one-line banner's logo.
+  assert.equal(bannerModel(banner("")), undefined);
+  assert.equal(bannerModel([" ▐▛███▛█   Claude Code v2.1.332", "▝▜██████▀  ~/repos/app-2", " ▝▝   ▝▝"].join("\n")), undefined);
+});
+
 test("session names are one line of at most 60 characters, and a fork's default name fits", () => {
   assert.deepEqual(sessionName("  Bobert の調査  "), { name: "Bobert の調査" });
   assert.ok("error" in sessionName("   "));

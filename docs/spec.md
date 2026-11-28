@@ -175,7 +175,12 @@ Codex のセッションは、Codex の常駐の app-server のスレッドで�
 
 - つなぐ前に `codex app-server daemon start` を実行し、返ってきた Unix ソケットに WebSocket でつなぐ。このコマンドは systemd のスコープの中で実行し、gasho-daemon のサービスを起動し直しても app-server が止まらないようにする
 - コンテキストとトークンは、`thread/tokenUsage/updated` から取る。コンテキストは `last.totalTokens` と `modelContextWindow`（無ければ出さない）。トークンは `total`（スレッドの累計）を、重ならない4種類に分ける。`inputTokens` から `cachedInputTokens` と `cacheWriteInputTokens` を除いたものを入力、`outputTokens`（推論を含む）を出力にする。前に受け取った `total` から増えた分だけを、受け取った時刻の1時間と日に足す。同じ値の再送は増えない。値が減ったとき（コンテキストがあふれると、Codex は累計をゼロからにする）は、引かずに次の基準にする。基準と時間・日ごとの値は `codex-threads.json` にスレッドと一緒に残し、日の値は `token-days.json` に置き換えで記録するので、起動し直しても二重に数えない。基準のない保存済みのスレッド（この版より前のもの）は、最初に受け取った `total` を基準にするだけで数えない。値を取るためだけの接続や再読み込みはしない。`excludeTurns` を付けた `thread/resume` では使用量が再送されないので、起動し直したあとのコンテキストは次の返答まで出ない
-- 起動は `thread/start` にフォルダーだけを渡す。承認のポリシーとサンドボックスは、利用者の Codex の設定に従う
+- 起動は `thread/start` にフォルダーと、下の「agy の拒否と worktree のルール」を渡す。承認のポリシーとサンドボックスは、利用者の Codex の設定に従う
+- agy の拒否と worktree のルール：Gasho が起動したスレッドには、`thread/start` と `thread/resume` のたびに次の2つを渡す。利用者の `~/.codex` のファイルは書き換えず、Gasho の外で起動した Codex には付かない
+  - `config.hooks.PreToolUse`（マッチャーは `Bash`）。Codex は shell の呼び出しを、`tool_name` が `Bash`、`tool_input.command` がコマンドの形で hook に渡し、拒否の出力も Claude Code と同じなので、同じ `worktree-guard-hook` で `agy` を拒否する。Codex は信頼していない hook を黙って飛ばすので、この hook の信頼の hash を同じ `config` の `hooks.state` で渡す。利用者の代わりに信頼を与えるのは、この hook 1つだけで、そのスレッドの設定に限る。`bypass_hook_trust` は、利用者やリポジトリの未信頼の hook まで動かすので使わない。hash の形と、session の設定の `hooks.state` が読まれることは、Codex の公式の文書に無い（ソースと実機で確かめた。[research.md](research.md#codex-の-agy-の拒否と-worktree-のルール357)）
+  - `developerInstructions`：worktree の作業は Gasho のセッションを立てる、というルール。この指定は利用者の `developer_instructions` を置き換えるので、`config/read` で読んだ利用者の指示の後ろに足して渡す。`config/read` に失敗したときは渡さない。手順のスキル（`launch-gasho-session`）は Codex に読み込ませず、`SKILL.md` の path を指示に書く
+  - 誤実行を防ぐ仕組みで、次の場合は効かない。利用者が hooks を切っている（`features.hooks = false`、`allow_managed_hooks_only`）、Codex の版が変わって hook の hash や読み方が合わなくなった、hook のコマンドが実行できない（どれもエラーにならず、`agy` はそのまま実行される）。実行中の shell への入力（`write_stdin`）や、スクリプトの中からの実行も見ない
+  - Codex の app-server は、読み込み済みのスレッドへの `thread/resume` の `config` を無視する。ほかのクライアント（`codex resume`）が先に読み込んだスレッドと、この版より前に起動して読み込まれたままのスレッドには付かない。読み込まれたままのスレッドは hook のコマンドの path も古いままなので、gasho-daemon の版のフォルダーが更新で消えると、拒否は効かなくなる
 - Gasho が起動したスレッドは、`managed.json` と同じ場所の `codex-threads.json` に残す。接続が切れたら間隔を広げながら（1秒から30秒まで）つなぎ直し、スレッドを `thread/resume` で読み込み直す。切れているあいだに増えた会話は画面に送り、作業中だったターンが終わっていれば `Stop` を送る。読み込み直しに失敗したスレッドは、そのスレッドだけを間隔を広げながら（1秒から30秒まで）読み込み直す。Codex にスレッドが無くなっていたら、一覧から外す
 - 発言は、スレッドが idle なら `turn/start` で送り、作業中は gasho-daemon で待たせて、idle になったら1つずつ送る。Codex が発言を受け付けなかったときは、その発言を捨てて通知し、次の発言を送る。待たせた発言は、gasho-daemon を起動し直すと消える（Claude Code と同じ）
 - モデル一覧は app-server の `model/list` でプロバイダーごとに読む。非表示のモデルは候補から外し、名前と既定の印を出す。Effort は選んだモデルの `supportedReasoningEfforts` を出す。初めの値と再接続後の値は `thread/start`・`thread/resume` の `model` と `reasoningEffort` から読む
@@ -210,7 +215,7 @@ Antigravity は、個人が working server でログインした Antigravity CLI
 - Codex と Antigravity の切り替えを含む発言は、セッションが入力を受け付けられるときに限る。作業中などに送ろうとした場合は、理由を出して入力欄に発言を残す。選択を出すのは、現在の daemon 接続の `operations` に対応する操作があり、候補が分かるときに限る。切り替えはそのセッションにだけ反映する
 - コンテキストは、`session/update` の `usage_update` の `used` と `size` から出す。`cost` は通貨が `USD` のときだけ、セッションの費用にする。ほかの単位（`credits` など）は出さない。`usage_update` が届かなければ何も出さない。`used` はコンテキストにあるトークン数で、使った量ではない（要約で減り、毎回読み直した分も分からない）ので、トークンの集計には数えない
 - control socket の `session.launch`（`--agent antigravity`）と、Antigravity に対する `session.input`、`session.fork` を断る。画面プラグインの `useLaunchSession` と `useSendInput` も断る。モデルや Effort の指定が付いた発言も同じである。daemon プラグインは control socket でも同じ制限を受け、`ctx.exec` での `agy` の直接起動や、対応するシェルの `-c` や `-lc` 内での単純な起動も断る。名前の変更、一覧、削除は使える
-- Gasho が起動した Claude Code では、PreToolUse hook が Bash ツールのコマンド位置にある `agy` を拒否する。絶対・相対パス、`;`、`&&`、`||`、`|` の後ろも対象にする。変数代入、`env` や `timeout`、シェルの `-c` や `-lc`、バッククォートなどの内側にある単純な起動も拒否し、`which agy` や `grep agy file` は通す。Node.js と Rust に同じ動作を実装する。これは誤実行を防ぐ仕組みで、任意のシェル構文や、プラグインが持つ実行権限を隔離する仕組みは持たない。Codex に同等の hook を入れられるかは未確認
+- Gasho が起動した Claude Code では、PreToolUse hook が Bash ツールのコマンド位置にある `agy` を拒否する。絶対・相対パス、`;`、`&&`、`||`、`|` の後ろも対象にする。変数代入、`env` や `timeout`、シェルの `-c` や `-lc`、バッククォートなどの内側にある単純な起動も拒否し、`which agy` や `grep agy file` は通す。Node.js と Rust に同じ動作を実装する。これは誤実行を防ぐ仕組みで、任意のシェル構文や、プラグインが持つ実行権限を隔離する仕組みは持たない。Gasho が起動した Codex のスレッドにも同じ hook を付ける（[Codex のセッション](#codex-のセッション)）
 
 ### セッションの端末
 

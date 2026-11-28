@@ -20,6 +20,7 @@ import {
   transcriptOf,
   usageOfBreakdown,
 } from "./codex-map.ts";
+import { CODEX_INSTRUCTIONS, codexGuardConfig } from "./agent-worktrees.ts";
 import { CodexConnectionClosed, CodexRpc, CodexRpcError } from "./codex-rpc.ts";
 import { tokenDayOf } from "./token-days.ts";
 import { add, emptyUsage, HOUR, sum, TOKEN_HOURS } from "./tokens.ts";
@@ -40,6 +41,8 @@ export interface CodexSessionsOptions {
   version: string;
   /** Starts the app-server if it does not run; gives its socket. */
   startServer: () => Promise<string>;
+  /** The command of the hook that blocks agy, as words (agent-worktrees.ts). */
+  guard: () => Promise<readonly string[]>;
   /** What is known of a folder: its repository, branch and worktree. */
   describe: (cwd: string) => Promise<Partial<SessionInfo>>;
   changed: () => void;
@@ -196,9 +199,22 @@ export class CodexSessions {
   }
 
   private async readConfig(rpc: CodexRpc, cwd?: string) {
-    return rpc.request<{ config?: { model?: string | null; model_provider?: string | null } }>("config/read", { cwd })
+    return rpc.request<{ config?: { model?: string | null; model_provider?: string | null; developer_instructions?: string | null } }>("config/read", { cwd })
       .then((r) => r.config)
       .catch(() => undefined);
+  }
+
+  /**
+   * What a thread Gasho started gets: the hook that blocks agy, and the rule for work in a worktree. Given again each
+   * time it is loaded, as Codex does not keep them with the thread.
+   */
+  private async gashoThreadParams(rpc: CodexRpc, cwd: string) {
+    const own = await this.readConfig(rpc, cwd);
+    return {
+      config: codexGuardConfig(await this.o.guard()),
+      // developerInstructions は利用者の developer_instructions を置き換えるので、それを読めたときだけ後ろに足して渡す。
+      ...(own ? { developerInstructions: [own.developer_instructions, CODEX_INSTRUCTIONS].filter(Boolean).join("\n\n") } : {}),
+    };
   }
 
   async launch(cwd: string, name: string | undefined, defaults?: AgentInputSelection): Promise<{ sessionId: string; warning?: string }> {
@@ -224,16 +240,18 @@ export class CodexSessions {
       }
     }
     // Approvals and the sandbox come from the person's Codex configuration.
+    const gasho = await this.gashoThreadParams(rpc, cwd);
     const r = await rpc.request<ThreadResponse>("thread/start", {
       cwd,
+      ...gasho,
       ...(model ? { model } : {}),
-      ...(effort ? { config: { model_reasoning_effort: effort } } : {}),
+      ...(effort ? { config: { ...gasho.config, model_reasoning_effort: effort } } : {}),
     }).catch((e: unknown) => {
       // Without an explicit RPC rejection, a fresh request could start a duplicate thread.
       if (!(e instanceof CodexRpcError) || (!model && !effort)) throw e;
       warnings.push(`Codex が既定値を受け付けなかったため、Codex の設定で起動しました（${messageOf(e)}）。`);
       model = effort = undefined;
-      return rpc.request<ThreadResponse>("thread/start", { cwd });
+      return rpc.request<ThreadResponse>("thread/start", { cwd, ...gasho });
     });
     if (model && r.model !== model) warnings.push(`既定のモデル（${model}）に切り替わりませんでした。`);
     if (effort && r.reasoningEffort !== effort) warnings.push(`既定の Effort（${effort}）に切り替わりませんでした。`);
@@ -419,7 +437,8 @@ export class CodexSessions {
     const threadId = t.info.sessionId;
     this.stopResumeRetry(t);
     try {
-      const r = await rpc.request<ThreadResponse>("thread/resume", { threadId, excludeTurns: true });
+      const gasho = await this.gashoThreadParams(rpc, t.info.cwd);
+      const r = await rpc.request<ThreadResponse>("thread/resume", { threadId, excludeTurns: true, ...gasho });
       this.applyThread(rpc, t, r);
       if (t.info.status === "busy" || t.info.status === "waiting") t.turnId = await this.activeTurn(rpc, threadId);
       await this.describe(t);

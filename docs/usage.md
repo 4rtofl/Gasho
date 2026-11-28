@@ -117,6 +117,12 @@ Gasho の外（Orca や端末）で起動した Claude Code が、サイドバ�
 
 Gasho から起動したセッションの Agent に「worktree を作って作業して」「並行で進めて」と頼むと、Agent は worktree を作り、その中に Gasho のセッションを起動して指示する（スキル `/gasho:launch-gasho-session`）。起動したセッションはサイドバーに出るので、ほかのセッションと同じように作業を見守り、指示を足せる。Subagent で進めるよう頼んでも、worktree を使う作業はこの形になる（worktree の Subagent や `EnterWorktree` は gasho-daemon が止める）。worktree を使わない Subagent（調べものなど）は、そのまま動く。終わった worktree は、`/gasho:remove-gasho-worktree` でセッションごと片付けさせられる。仕組みは [spec.md の「worktree での作業」](spec.md#worktree-での作業)。Gasho の外（ターミナル）で起動した Claude Code には効かない。
 
+Gasho から起動した Codex のセッションにも、同じ決まりを指示として渡す。自分の `developer_instructions` はそのまま残る。Codex には worktree の Subagent を止める仕組みを入れていないので、従わないことがある。Codex が起動したセッションは、サイドバーで親の下に入れ子にならない。
+
+### Agent に agy を実行させない
+
+Antigravity は、利用者が Gasho の画面から操作する。Gasho から起動した Claude Code と Codex のセッションでは、agent が shell で `agy` を実行しようとすると拒否される（agent から `agy` を呼ぶ使い方は Antigravity の FAQ でサポート外で、アカウント停止の対象になりうるため）。うっかり実行を防ぐ仕組みで、回避はできる。Codex では、hooks を切っている場合や、Codex の版が変わった場合に、知らせなく効かなくなる。ターミナルで起動した Codex や、`codex resume` で先に開いたスレッドには効かない（[spec.md の「Codex のセッション」](spec.md#codex-のセッション)）。
+
 ### worktree をまとめて扱う
 
 worktree の行を 1 つ押したあと、Shift キーを押しながら別の行を押すと、その間の行（画面に並んでいる順。分け方のカテゴリをまたいでもよい）をすべて選ぶ。Esc を押すか、Shift キーなしで行を押すと、選択が外れる。選んだ行を右クリックすると、選んだ worktree をまとめて扱うメニューが開く。

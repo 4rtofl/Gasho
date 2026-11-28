@@ -432,7 +432,7 @@ test("an interrupted turn stops by its id, leaves its mark, and is no Stop", asy
 test("an approval shows until it is answered, and the answer goes back to Codex", async (t) => {
   const { server, sessions, info, named } = await setup(t);
   await sessions.launch("/work", undefined);
-  server.ask(11, "item/commandExecution/requestApproval", { command: "rm a", proposedExecpolicyAmendment: ["rm", "a"] });
+  server.ask(11, "item/commandExecution/requestApproval", { command: "rm a", availableDecisions: ["accept", { acceptWithExecpolicyAmendment: { execpolicy_amendment: ["rm", "a"] } }, "cancel"] });
   await until("the request", () => info().permissionRequests?.length === 1);
   assert.equal(info().permissionRequests?.[0]?.always, "rm a");
   assert.equal(named("Notification")[0]?.notificationType, "permission_prompt");

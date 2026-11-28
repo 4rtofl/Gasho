@@ -178,7 +178,7 @@ Codex のセッションは、Codex の常駐の app-server のスレッドで�
 - Gasho が起動したスレッドは、`managed.json` と同じ場所の `codex-threads.json` に残す。接続が切れたら間隔を広げながら（1秒から30秒まで）つなぎ直し、スレッドを `thread/resume` で読み込み直す。切れているあいだに増えた会話は画面に送り、作業中だったターンが終わっていれば `Stop` を送る。読み込み直しに失敗したスレッドは、そのスレッドだけを間隔を広げながら（1秒から30秒まで）読み込み直す。Codex にスレッドが無くなっていたら、一覧から外す
 - 発言は、スレッドが idle なら `turn/start` で送り、作業中は gasho-daemon で待たせて、idle になったら1つずつ送る。Codex が発言を受け付けなかったときは、その発言を捨てて通知し、次の発言を送る。待たせた発言は、gasho-daemon を起動し直すと消える（Claude Code と同じ）
 - モデル一覧は app-server の `model/list` でプロバイダーごとに読む。非表示のモデルは候補から外し、名前と既定の印を出す。Effort は選んだモデルの `supportedReasoningEfforts` を出す。初めの値と再接続後の値は `thread/start`・`thread/resume` の `model` と `reasoningEffort` から読む
-- Codex の既定値はユーザーの設定とは別に Gasho サーバーの `meta` に保存する。設定画面は `model/list` が返すモデルと、モデルごとの Effort を使う。新規起動時、gasho-daemon は起動先のプロバイダーの候補を確かめ、`thread/start` にモデルと `config.model_reasoning_effort` を渡す。候補にない値は省き、app-server が明示的に断った場合は指定を外して起動し、理由を画面に出す
+- Codex の既定値はユーザーの設定とは別に Gasho サーバーの `meta` に保存する。既存の接続があるときに `model/list` を読み、モデルとモデルごとの Effort を設定画面に出す。候補は接続時と定期確認時に読み、候補を取得するためだけの接続は行わない。新規起動時は取得済みの候補があれば使える値を確かめ、`thread/start` にモデルと `config.model_reasoning_effort` を渡す。候補にない値は省き、app-server が明示的に断った場合は指定を外して起動し、理由を画面に出す
 - 画面で選んで発言を送るときだけ、`turn/start` に `model` や `effort` を付ける。モデルだけを変えるときは、選んだモデルの既定の Effort が候補にあれば使う。指定は後続ターンにも引き継がれるので、次の発言で指定し直す必要はない。候補にない値や app-server が断った発言は送信済みとして扱わず、理由を画面に出す
 - 権限の確認の許可は `accept`、拒否は `decline`、今後も許可は Codex が提案した実行ポリシーの追加である。提案がないときは、今後も許可を出さない。別のクライアントが答えたら（`serverRequest/resolved`）、画面から消す
 - Gasho の画面で答えられない要求（MCP サーバーからの問い合わせなど）は、エラーで返す
@@ -203,7 +203,7 @@ Antigravity は、個人が working server でログインした Antigravity CLI
 - gasho-daemon を起動し直したあとは一覧と保存済みの会話が見える。画面で「Antigravity の会話を開く」を押すか、次の発言を送ったときに限り、接続して `session/load` で会話を再生する。CLI が `session/load` を提供せず `session/resume` を提供する場合は、保存済みの表示を保って再開する。どちらも未対応なら再開できないと表示する
 - Antigravity は設定の既定エージェント、＋ボタンのメニュー、起動フォームで選べる。入力欄には、対応するモデルと Effort の選択を出す。Ultracode、添付、スキル、シェル実行、フォーク、バックグラウンド作業の一覧は出さない。Antigravity を起動できるとその接続で通知した gasho-daemon にだけ起動を中継する。古い gasho-daemon がエージェントの指定を見落として Claude Code を起動するのを防ぐためである
 - モデルと Effort の候補と現在値は、`session/new`・`session/load`・`session/resume` の `configOptions` と `config_option_update` から読む。ACP の種別が `model` または `thought_level` の選択肢を使い、CLI が返さない選択は出さない。一覧を読むためだけには接続しない
-- Antigravity の既定値は Gasho サーバーの `meta` に保存する。設定画面の候補は、画面からセッションを開いたときや、そのセッションでモデルを切り替えたときに返ったものを working server ごとに保存して使う。設定画面、gasho-daemon の起動時、定期確認からは ACP に接続しない。候補がまだ届いていないときは、セッションを一度開くように案内する
+- Antigravity の既定値は Gasho サーバーの `meta` に保存する。設定画面の候補は、画面からセッションを開いたときや、そのセッションでモデルを切り替えたときに返ったものを working server ごとに保存して使う。設定画面、gasho-daemon の起動時、定期確認からは ACP に接続しない。候補がまだ届いていないときは、セッションを一度開くように案内する。既定モデル未指定時の Effort 候補には、新規起動時に返った現在のモデルを使う
 - 画面から新規起動すると、`session/new` のあとに `session/set_config_option` でモデル、Effort の順に設定する。候補にない値や ACP が受け付けなかった値は、適用できなかった理由を表示して、起動したセッションを開けるようにする。開き直しでは既定値を適用しない。Codex と Antigravity の既定値に対応していない gasho-daemon には従来どおりの起動要求を送る
 - 画面で選んで送信したときに限り、`session/set_config_option` を送り、応答の現在値で切り替えを確かめてから `session/prompt` を送る。切り替えが失敗した発言は送らない。モデルを選び直すと、切り替え後の候補が届くまで Effort ボタンを無効にし、入力欄の下に「モデルを切り替えて送ったあとに、Effort を選べます」と表示する。送る前に元のモデルを選び直すと、先に選んだ Effort が戻る
 - Codex と Antigravity の切り替えを含む発言は、セッションが入力を受け付けられるときに限る。作業中などに送ろうとした場合は、理由を出して入力欄に発言を残す。選択を出すのは、現在の daemon 接続の `operations` に対応する操作があり、候補が分かるときに限る。切り替えはそのセッションにだけ反映する

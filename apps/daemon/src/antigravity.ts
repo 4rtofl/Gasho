@@ -328,7 +328,7 @@ export class AntigravitySessions {
         }
       }
       if (!rpc.open || s.rpc !== rpc) throw new Error("Antigravity との接続が切れました。");
-      if (Array.isArray(result?.configOptions)) this.applyConfig(s, result.configOptions, true);
+      if (Array.isArray(result?.configOptions)) this.applyConfig(s, result.configOptions, !remoteId);
       const warnings: string[] = [];
       if (!remoteId && defaults) {
         for (const field of ["model", "effort"] as const) {
@@ -420,7 +420,7 @@ export class AntigravitySessions {
     }
   }
 
-  private applyConfig(s: State, value: unknown, opened = false): void {
+  private applyConfig(s: State, value: unknown, newSession = false): void {
     delete s.info.agentConfig;
     delete s.configIds;
     delete s.info.model;
@@ -454,15 +454,15 @@ export class AntigravitySessions {
     if (model) s.info.model = model.options.find((m) => m.id === model.current)?.name ?? model.current;
     const before = this.launchCatalog;
     const catalog: AgentInputConfig = {
-      model: model && {
-        current: opened ? model.current : before?.model?.current,
+      model: model ? {
+        current: newSession ? model.current : before?.model?.current,
         options: model.options.map((choice) => ({
           ...choice,
           efforts: choice.id === model.current
             ? config.effort?.options
             : before?.model?.options.find((m) => m.id === choice.id)?.efforts,
         })),
-      },
+      } : before?.model,
       effort: model ? undefined : config.effort,
     };
     if (JSON.stringify(catalog) !== JSON.stringify(before)) {

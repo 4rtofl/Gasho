@@ -38,6 +38,7 @@ export interface CodexSessionsOptions {
   /** What is known of a folder: its repository, branch and worktree. */
   describe: (cwd: string) => Promise<Partial<SessionInfo>>;
   changed: () => void;
+  catalogChanged?: () => void;
   event: (event: HookEvent) => void;
   append: (sessionId: string, entries: TranscriptEntry[]) => void;
   log: (...args: unknown[]) => void;
@@ -102,7 +103,8 @@ export class CodexSessions {
   private o: CodexSessionsOptions;
   private threads = new Map<string, ThreadState>();
   private rpc: CodexRpc | undefined;
-  private catalogs = new Map<string | undefined, Promise<AgentModelChoice[]>>();
+  private catalogs = new Map<string | undefined, { options?: AgentModelChoice[]; loading?: Promise<AgentModelChoice[]> }>();
+  launchCatalog?: AgentInputConfig;
   private opening: Promise<CodexRpc> | undefined;
   private retryTimer: NodeJS.Timeout | undefined;
   private retryMs = RETRY_MIN_MS;
@@ -153,11 +155,17 @@ export class CodexSessions {
     return [...this.threads.values()].reduce((n, t) => n + t.queue.length, 0);
   }
 
-  async launchCatalog(): Promise<AgentInputConfig> {
-    const rpc = await this.ensure();
+  async refreshLaunchCatalog(refresh = true): Promise<void> {
+    const rpc = this.rpc;
+    if (!rpc?.open) return;
     const config = await this.readConfig(rpc);
-    const options = await this.listModels(rpc, config?.model_provider ?? undefined);
-    return { model: { current: config?.model ?? undefined, options } };
+    if (this.rpc !== rpc) return;
+    const options = await this.listModels(rpc, config?.model_provider ?? undefined, refresh);
+    if (this.rpc !== rpc) return;
+    const catalog = options.length ? { model: { current: config?.model ?? undefined, options } } : undefined;
+    if (JSON.stringify(catalog) === JSON.stringify(this.launchCatalog)) return;
+    this.launchCatalog = catalog;
+    this.o.catalogChanged?.();
   }
 
   private async readConfig(rpc: CodexRpc, cwd?: string) {
@@ -172,14 +180,21 @@ export class CodexSessions {
     let model: string | undefined;
     let effort: string | undefined;
     if (defaults) {
-      const config = await this.readConfig(rpc, cwd);
-      const options = await this.listModels(rpc, config?.model_provider ?? undefined);
-      model = options.find((option) => option.id === defaults.model)?.id;
-      if (defaults.model && !model) warnings.push(`既定のモデル（${defaults.model}）はこの working server の候補にありません。`);
-      const selected = options.find((option) => option.id === (model ?? config?.model)) ??
-        (!model && !config?.model ? options.find((option) => option.isDefault) : undefined);
-      effort = selected?.efforts?.find((option) => option.id === defaults.effort)?.id;
-      if (defaults.effort && !effort) warnings.push(`既定の Effort（${defaults.effort}）は起動するモデルの候補にありません。`);
+      model = defaults.model;
+      effort = defaults.effort;
+      // Without a loaded catalog, let thread/start check the settings instead of waiting for discovery.
+      if (this.launchCatalog) {
+        const config = await this.readConfig(rpc, cwd);
+        const options = this.catalogs.get(config?.model_provider ?? undefined)?.options;
+        if (options) {
+          model = options.find((option) => option.id === defaults.model)?.id;
+          if (defaults.model && !model) warnings.push(`既定のモデル（${defaults.model}）はこの working server の候補にありません。`);
+          const selected = options.find((option) => option.id === (model ?? config?.model)) ??
+            (!model && !config?.model ? options.find((option) => option.isDefault) : undefined);
+          effort = selected?.efforts?.find((option) => option.id === defaults.effort)?.id;
+          if (defaults.effort && !effort) warnings.push(`既定の Effort（${defaults.effort}）は起動するモデルの候補にありません。`);
+        }
+      }
     }
     // Approvals and the sandbox come from the person's Codex configuration.
     const r = await rpc.request<ThreadResponse>("thread/start", {
@@ -329,6 +344,7 @@ export class CodexSessions {
     // A retry that came while the threads were loading found this connection still opening, and left it at that.
     if (!rpc.open) this.retryLater();
     this.o.changed();
+    void this.refreshLaunchCatalog(false);
     return rpc;
   }
 
@@ -353,6 +369,10 @@ export class CodexSessions {
     if (this.rpc !== rpc) return;
     this.rpc = undefined;
     this.catalogs.clear();
+    if (this.launchCatalog) {
+      this.launchCatalog = undefined;
+      this.o.catalogChanged?.();
+    }
     this.o.log("the connection to Codex's app-server ended");
     for (const t of this.threads.values()) {
       t.wasActive = t.info.status === "busy" || t.info.status === "waiting";
@@ -686,36 +706,35 @@ export class CodexSessions {
     });
   }
 
-  private listModels(rpc: CodexRpc, modelProvider?: string): Promise<AgentModelChoice[]> {
-    let catalog = this.catalogs.get(modelProvider);
-    if (!catalog) {
-      catalog = (async () => {
-        const models: AgentModelChoice[] = [];
-        let cursor: string | null | undefined;
-        do {
-          const page: { data: ListedModel[]; nextCursor?: string | null } = await rpc.request("model/list", {
-            ...(modelProvider ? { modelProvider } : {}),
-            ...(cursor ? { cursor } : {}),
+  private listModels(rpc: CodexRpc, modelProvider?: string, refresh = false): Promise<AgentModelChoice[]> {
+    const catalog = this.catalogs.get(modelProvider) ?? {};
+    this.catalogs.set(modelProvider, catalog);
+    if (!refresh && catalog.options) return Promise.resolve(catalog.options);
+    catalog.loading ??= (async () => {
+      const models: AgentModelChoice[] = [];
+      let cursor: string | null | undefined;
+      do {
+        const page: { data: ListedModel[]; nextCursor?: string | null } = await rpc.request("model/list", {
+          ...(modelProvider ? { modelProvider } : {}),
+          ...(cursor ? { cursor } : {}),
+        });
+        for (const m of page.data) {
+          if (m.hidden) continue;
+          const efforts = m.supportedReasoningEfforts.map(({ reasoningEffort: id, description }) => ({ id, name: id, description }));
+          models.push({
+            id: m.model, name: m.displayName, description: m.description, isDefault: m.isDefault, efforts,
+            defaultEffort: efforts.some((e) => e.id === m.defaultReasoningEffort) ? m.defaultReasoningEffort : undefined,
           });
-          for (const m of page.data) {
-            if (m.hidden) continue;
-            const efforts = m.supportedReasoningEfforts.map(({ reasoningEffort: id, description }) => ({ id, name: id, description }));
-            models.push({
-              id: m.model, name: m.displayName, description: m.description, isDefault: m.isDefault, efforts,
-              defaultEffort: efforts.some((e) => e.id === m.defaultReasoningEffort) ? m.defaultReasoningEffort : undefined,
-            });
-          }
-          cursor = page.nextCursor;
-        } while (cursor);
-        return models;
-      })().catch((e: unknown) => {
-        if (this.rpc === rpc) this.catalogs.delete(modelProvider);
-        this.o.log("could not list Codex models", messageOf(e));
-        return [];
-      });
-      this.catalogs.set(modelProvider, catalog);
-    }
-    return catalog;
+        }
+        cursor = page.nextCursor;
+      } while (cursor);
+      catalog.options = models;
+      return models;
+    })().catch((e: unknown) => {
+      this.o.log("could not list Codex models", messageOf(e));
+      return catalog.options ?? [];
+    }).finally(() => { delete catalog.loading; });
+    return catalog.loading;
   }
 
   private setName(t: ThreadState, name: string | undefined): void {

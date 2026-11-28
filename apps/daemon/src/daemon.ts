@@ -5,7 +5,6 @@ import os from "node:os";
 import path from "node:path";
 import type {
   AgentInfo,
-  AgentInputConfig,
   AgentInputSelection,
   AgentKind,
   AgentOperation,
@@ -366,7 +365,6 @@ export class Daemon {
   private codex: AgentInfo | undefined;
   /** Counts the looks for Codex: a look that a later one overtook is not sent. */
   private codexRead = 0;
-  private codexLaunchCatalog?: AgentInputConfig;
   /** The sessions of Codex that Gasho started: they do not come through `tracked` and `managed`. */
   private codexSessions: CodexSessions;
   private antigravitySessions: AntigravitySessions;
@@ -454,6 +452,7 @@ export class Daemon {
       file: path.join(cfg.stateDir, "codex-threads.json"),
       version: DAEMON_VERSION,
       startServer: () => this.startCodexAppServer(),
+      catalogChanged: () => this.emitCapabilities(),
       describe: (cwd) => this.folderDetails(cwd),
       changed: () => this.emitSessions(),
       event: (event) => this.hub.send({ type: "hook", event }),
@@ -1254,7 +1253,7 @@ export class Daemon {
     const claude = this.claude;
     return {
       ...(claude ? { claude: { status: claude.status, version: claude.version, canLaunch: true, operations: [...CLAUDE_OPERATIONS] } } : {}),
-      ...(this.codex ? { codex: { ...this.codex, canLaunch: true, operations: ["model", "effort"], canUseLaunchDefaults: true, launchCatalog: this.codexLaunchCatalog } } : {}),
+      ...(this.codex ? { codex: { ...this.codex, canLaunch: true, operations: ["model", "effort"], canUseLaunchDefaults: true, launchCatalog: this.codex.status === "available" ? this.codexSessions.launchCatalog : undefined } } : {}),
       ...(this.antigravity ? { antigravity: { ...this.antigravity, canUseLaunchDefaults: true, launchCatalog: this.antigravitySessions.launchCatalog } } : {}),
     };
   }
@@ -1266,18 +1265,10 @@ export class Daemon {
     if (read !== this.codexRead) return;
     if (JSON.stringify(codex) !== JSON.stringify(this.codex)) {
       this.codex = codex;
-      if (codex?.status !== "available") this.codexLaunchCatalog = undefined;
       log(codex ? `Codex ${codex.version ?? "(version unknown)"}: ${codex.status}` : "Codex is not installed");
       this.emitCapabilities();
     }
-    if (codex?.status !== "available" || this.codexLaunchCatalog) return;
-    const catalog = await this.codexSessions.launchCatalog().catch((e: unknown) => {
-      log("could not read the Codex launch catalog", e);
-      return undefined;
-    });
-    if (read !== this.codexRead || !catalog?.model?.options.length) return;
-    this.codexLaunchCatalog = catalog;
-    this.emitCapabilities();
+    if (codex?.status === "available") void this.codexSessions.refreshLaunchCatalog();
   }
 
   private async refreshAntigravity(): Promise<void> {

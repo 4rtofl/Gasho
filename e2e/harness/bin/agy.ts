@@ -63,7 +63,7 @@ for (const line of lines()) {
       assert.deepEqual(m.params, { protocolVersion: 1, clientCapabilities: {} });
       result(m.id, {
         protocolVersion: 1,
-        agentCapabilities: mode === "none" ? {} : mode === "resume" ? { sessionCapabilities: { resume: {} } } : { loadSession: true },
+        agentCapabilities: mode === "none" ? {} : mode?.startsWith("resume") ? { sessionCapabilities: { resume: {} } } : { loadSession: true },
       });
       break;
     case "session/new":
@@ -78,6 +78,7 @@ for (const line of lines()) {
         chunk("user_message_chunk", "前の発言");
         chunk("agent_message_chunk", "前の応答");
       }
+      if (mode?.endsWith("-different-model")) model = "gemini-test-pro";
       result(m.id, configOptions());
       break;
     case "session/set_config_option": {

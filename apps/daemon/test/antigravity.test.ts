@@ -90,6 +90,24 @@ test("Antigravity learns the working server's catalog and only applies defaults 
   assert.equal((await f.calls()).filter((c) => c.method === "session/set_config_option").length, 2);
 });
 
+for (const method of ["load", "resume"]) {
+  test(`Antigravity keeps the new-session model when reopening with session/${method}`, async (t) => {
+    const f = await fixture(t, `${method}-different-model`);
+    const sessions = f.make();
+    const { sessionId } = await sessions.launch(f.dir);
+    assert.equal(sessions.launchCatalog?.model?.current, "gemini-test");
+    await sessions.close();
+
+    const restarted = f.make();
+    await restarted.load();
+    assert.equal((await restarted.open(sessionId)).ok, true);
+    assert.ok((await f.calls()).some((c) => c.method === `session/${method}`));
+    assert.equal(restarted.sessions()[0]?.agentConfig?.model?.current, "gemini-test-pro");
+    assert.equal(restarted.launchCatalog?.model?.current, "gemini-test");
+    assert.ok(restarted.launchCatalog?.model?.options.find((m) => m.id === "gemini-test-pro")?.efforts?.some((e) => e.id === "extra-pro"));
+  });
+}
+
 test("Antigravity launches when a stored model is rejected and an effort is missing", async (t) => {
   const f = await fixture(t);
   const sessions = f.make();

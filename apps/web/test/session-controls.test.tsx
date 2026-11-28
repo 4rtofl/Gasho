@@ -118,6 +118,18 @@ test("the default model is set for every browser from its combobox, and back to 
   expect(back?.type === "defaultModel.set" && !("model" in back)).toBe(true);
 });
 
+test("Codex settings explain how to get the first catalog without starting a session", async () => {
+  const hub = await connectHub({
+    machines: [machine("codex", [], { agents: { codex: { status: "available", canLaunch: true, canUseLaunchDefaults: true } } })],
+    server: { version: "0.15.0", update: { canUpdate: false } },
+  });
+  setSettingsSectionOpen("default-codex", false);
+  render(<SettingsView />);
+  await userEvent.setup().click(screen.getByRole("button", { name: "Codex の既定値" }));
+  expect(screen.getByText("Codex のセッションを一度開くと選べます。")).toBeTruthy();
+  expect(hub.commands()).toEqual([]);
+});
+
 test("Antigravity settings wait for the working server's catalog without asking it to connect", async () => {
   const info = { status: "unknown", canLaunch: true, canUseLaunchDefaults: true } as const;
   const server = { version: "0.15.0", update: { canUpdate: false } };

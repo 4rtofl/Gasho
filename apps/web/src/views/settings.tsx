@@ -362,7 +362,7 @@ function AgentDefaultsSection({ agent }: { agent: "codex" | "antigravity" }) {
       })}
       {!catalogs.length && (
         <p className="text-xs text-muted-foreground">
-          {agent === "antigravity" ? "Antigravity のセッションを一度開くと選べます。" : "working server から Codex の候補が届くと選べます。"}
+          {name} のセッションを一度開くと選べます。
         </p>
       )}
       {error && <p role="alert" className="text-xs text-red-400">{error}</p>}

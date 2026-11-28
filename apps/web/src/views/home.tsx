@@ -306,7 +306,7 @@ export function HomeView() {
           trendLabels={tokens.labels}
           {...(tokens.previous ? { previous: tokens.previous, deltaLabel: "前の24時間と比べて" } : {})}
           goodWhen="neither"
-          period={`過去24時間（${subagentNote(machines)}）`}
+          period={agentsTokenNote(machines) ? "過去24時間" : "過去24時間（サブエージェントを含む）"}
           format={compact}
           color={CHART_BLUE}
           className="h-full"
@@ -607,8 +607,16 @@ function TokenBreakdown({ tokens }: { tokens: TokenTrend }) {
   );
 }
 
-/** What the token totals hold of subagents. Not by what was used: the days do not say which agent used them. */
-const subagentNote = (machines: readonly MachineInfo[]) => (machines.some((m) => m.agents?.codex) ? "Codex のサブエージェントは除く" : "サブエージェントを含む");
+/**
+ * What the token totals hold, agent by agent, where an agent besides Claude Code is installed. Not by what was used:
+ * the days do not say which agent used them.
+ */
+function agentsTokenNote(machines: readonly MachineInfo[]): string | undefined {
+  const codex = machines.some((m) => m.agents?.codex);
+  const antigravity = machines.some((m) => m.agents?.antigravity);
+  if (!codex && !antigravity) return undefined;
+  return `Claude Code はサブエージェントを含みます。${codex ? "Codex はサブエージェントを除きます。" : ""}${antigravity ? "Antigravity は数えません。" : ""}`;
+}
 
 /** A year of the tokens used per day, of all working servers together; asked for when the home screen opens. */
 export function TokenHeatmap({ now }: { now: number }) {
@@ -618,6 +626,7 @@ export function TokenHeatmap({ now }: { now: number }) {
     return onConnected(requestTokenDays);
   }, []);
   const data = useMemo(() => sumTokenDays(tokenDays ?? {}), [tokenDays]);
+  const note = agentsTokenNote(machines);
   if (!tokenDays) return <p className="text-sm text-muted-foreground">読み込んでいます…</p>;
   if (data.length === 0) {
     return (
@@ -631,7 +640,9 @@ export function TokenHeatmap({ now }: { now: number }) {
   return (
     <>
       <ActivityHeatmap data={data} endDate={tokenDayOf(now)} unit="トークン" format={compact} />
-      <p className="mt-2 text-[11px] text-muted-foreground">日本時間で1日を区切っています（{subagentNote(machines)}）。</p>
+      <p className="mt-2 text-[11px] text-muted-foreground">
+        {note ? `日本時間で1日を区切っています。${note}` : "日本時間で1日を区切っています（サブエージェントを含む）。"}
+      </p>
     </>
   );
 }

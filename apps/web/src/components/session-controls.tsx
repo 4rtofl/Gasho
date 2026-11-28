@@ -52,6 +52,7 @@ export function EffortPicker<T extends string>({
   onChange,
   ultracode,
   disabled,
+  disabledReason,
 }: {
   options: (AgentChoice & { id: T })[];
   value: T | undefined;
@@ -59,6 +60,7 @@ export function EffortPicker<T extends string>({
   onChange: (effort: T) => void;
   ultracode?: UltracodeChoice;
   disabled?: boolean;
+  disabledReason?: string;
 }) {
   const selected = options.find((e) => e.id === value);
   const effortPending = value !== undefined && value !== current;
@@ -69,14 +71,15 @@ export function EffortPicker<T extends string>({
   const [open, setOpen] = useState(false);
   // A touch opens the menu on a tap, not when the finger lands: swiping the toolbar sideways must only scroll it.
   const touch = useRef(false);
-  const label = `Effort：${selected?.name ?? value ?? "不明"}${ultraOn ? "・Ultracode オン" : ""}${pending ? "（送るときに切り替えます）" : ""}`;
+  const reason = disabledReason ?? (pending ? "送るときに切り替えます" : undefined);
+  const label = `Effort：${selected?.name ?? value ?? "不明"}${ultraOn ? "・Ultracode オン" : ""}${reason ? `（${reason}）` : ""}`;
   return (
     // Not modal: a modal menu would lock the page's scrolling under the floating chat box.
     <DropdownMenu.Root modal={false} open={open} onOpenChange={setOpen}>
       <DropdownMenu.Trigger asChild>
         <button
           type="button"
-          disabled={disabled}
+          disabled={disabled || Boolean(disabledReason)}
           onPointerDown={(e) => {
             touch.current = e.pointerType !== "mouse";
             // Keeps Radix from opening the menu now.
@@ -87,8 +90,8 @@ export function EffortPicker<T extends string>({
             touch.current = false;
           }}
           aria-label={label}
-          title={pending ? "送るときに切り替えます" : ultracode ? "Effort と Ultracode" : "Effort"}
-          className={cn(BUTTON, "data-[state=open]:bg-white/[0.07] data-[state=open]:text-neutral-100")}
+          title={reason ?? (ultracode ? "Effort と Ultracode" : "Effort")}
+          className={cn(BUTTON, "data-[state=open]:bg-white/[0.07] data-[state=open]:text-neutral-100", disabledReason && "disabled:pointer-events-auto")}
         >
           <Gauge className="size-4 shrink-0" />
           <span>{selected?.name ?? value ?? "Effort"}</span>

@@ -12,7 +12,7 @@ export interface Picks {
   model?: SessionModel;
   effort?: EffortLevel;
   ultracode?: boolean;
-  agentSelection?: AgentInputSelection;
+  agentSelection?: AgentInputSelection & { effortModel?: string };
 }
 
 /**

@@ -396,12 +396,16 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
     agentModels.unshift({ id: agentModel.current ?? "", name: s.model ?? "不明", badge: "いま" });
   }
   const nextModelChoice = agentModel?.options.find((m) => m.id === nextModel);
-  const efforts = agentEffort && (agent === "codex" ? nextModelChoice?.efforts : modelToSwitch !== undefined ? undefined : agentEffort.options);
-  const effortForNextModel = pickedAgent?.model === undefined || pickedModelChoice ? pickedAgent?.effort : undefined;
-  const effortToSwitch = (modelToSwitch !== undefined || effortForNextModel !== agentEffort?.current)
-    ? efforts?.find((option) => option.id === effortForNextModel)?.id
+  const efforts = agentEffort && (agent === "codex" ? nextModelChoice?.efforts : agentEffort.options);
+  const effortBlocked = isAntigravity && modelToSwitch !== undefined;
+  const effortModel = isAntigravity ? s.agentConfig?.model?.current : undefined;
+  const effortForModel = isAntigravity ? pickedAgent?.effortModel === effortModel : pickedAgent?.model === undefined || pickedModelChoice;
+  const pickedAgentEffort = effortForModel ? pickedAgent?.effort : undefined;
+  const effortToKeep = ((modelToSwitch !== undefined && !effortBlocked) || pickedAgentEffort !== agentEffort?.current)
+    ? efforts?.find((option) => option.id === pickedAgentEffort)?.id
     : undefined;
-  const nextEffort = effortToSwitch ?? (modelToSwitch !== undefined ? nextModelChoice?.defaultEffort : agentEffort?.current);
+  const effortToSwitch = effortBlocked ? undefined : effortToKeep;
+  const nextEffort = effortBlocked ? agentEffort?.current : effortToSwitch ?? (modelToSwitch !== undefined ? nextModelChoice?.defaultEffort : agentEffort?.current);
   const offersSkills = canDo(machine, s, "skills");
   const skills = useSkills(machine.id, s.sessionId);
   const [backgroundOpen, toggleBackground] = useBackgroundListOpen();
@@ -420,13 +424,13 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
   }, [pickedUltracode, ultracode, setPicks]);
   useEffect(() => {
     if (!pickedAgent) return;
-    if (pickedAgent.model !== modelToSwitch || pickedAgent.effort !== effortToSwitch) {
-      const agentSelection = modelToSwitch !== undefined || effortToSwitch !== undefined
-        ? { model: modelToSwitch, effort: effortToSwitch }
+    if (pickedAgent.model !== modelToSwitch || pickedAgent.effort !== effortToKeep) {
+      const agentSelection = modelToSwitch !== undefined || effortToKeep !== undefined
+        ? { model: modelToSwitch, effort: effortToKeep, effortModel: effortToKeep === undefined ? undefined : effortModel }
         : undefined;
       setPicks((p) => p.agentSelection === pickedAgent ? { ...p, agentSelection } : p);
     }
-  }, [pickedAgent, modelToSwitch, effortToSwitch, setPicks]);
+  }, [pickedAgent, modelToSwitch, effortToKeep, effortModel, setPicks]);
   // Messages that waited on the working server have been typed into the session once it has none waiting.
   useEffect(() => {
     if (!s.pendingInputs) noneWaiting(key);
@@ -576,7 +580,10 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
           ? { ...p, model: id === KEEP_MODEL ? undefined : (id as SessionModel) }
           : id === nextModel
             ? p
-            : { ...p, agentSelection: { model: agentModel?.options.some((m) => m.id === id) && id !== agentModel.current ? id : undefined } }
+            : { ...p, agentSelection: {
+                ...(isAntigravity ? p.agentSelection : {}),
+                model: agentModel?.options.some((m) => m.id === id) && id !== agentModel.current ? id : undefined,
+              } }
         )}
         actions={
           <>
@@ -598,9 +605,10 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
               <EffortPicker
                 options={efforts}
                 value={nextEffort}
-                current={modelToSwitch !== undefined ? undefined : agentEffort?.current}
-                onChange={(level) => setPicks((p) => ({ ...p, agentSelection: { ...p.agentSelection, effort: level } }))}
+                current={modelToSwitch !== undefined && !effortBlocked ? undefined : agentEffort?.current}
+                onChange={(level) => setPicks((p) => ({ ...p, agentSelection: { ...p.agentSelection, effort: level, effortModel } }))}
                 disabled={offline}
+                disabledReason={effortBlocked ? "モデルを切り替えたあとに選べます" : undefined}
               />
             )}
             {showsBackground && <BackgroundToggle count={s.background?.length ?? 0} open={backgroundOpen} onToggle={toggleBackground} />}
@@ -642,7 +650,7 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
       )}
       {unsent.length > 0 && (
         <p className="mt-1.5 px-3 text-xs text-amber-400">
-          {agent === "claude" ? UNKNOWN_SENT_HEAD : "接続が切れたので、送れたか分かりません。会話を確認してください。"}
+          {agent === "claude" ? UNKNOWN_SENT_HEAD : "Gasho サーバーとの接続が切れたので、送れたか分かりません。会話に出ているか確認してください。"}
           {transcript && (unsent[0]?.sent.after ?? 0) < transcript.start ? UNKNOWN_SENT_UNREAD : UNKNOWN_SENT}
           <button
             type="button"

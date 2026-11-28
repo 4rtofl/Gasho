@@ -135,13 +135,17 @@ export interface SessionInfo {
   effort?: EffortLevel;
   agentConfig?: AgentInputConfig;
   ultracode?: boolean;
-  /** Sessions started from Gasho: the tokens used so far, by the session's replies and its subagents'. */
+  /**
+   * Sessions started from Gasho: the tokens used so far. Claude Code: by the session's replies and its subagents'. Codex:
+   * the thread's total as its app-server says it, without its subagents. Antigravity tells none.
+   */
   tokens?: TokenUsage;
   /** …and per hour over the last 48 hours, oldest first: [start of the hour (ms), use]. Hours without use are left out. */
   tokenHours?: [number, TokenUsage][];
   /**
-   * Sessions started from Gasho by a gasho-daemon of plugin API 1.4 or later: the context window, as Claude Code's
-   * status line last reported it. Absent until the session's first reply.
+   * Sessions started from Gasho by a gasho-daemon of plugin API 1.4 or later: the context window, as the session's agent
+   * last reported it (Claude Code's status line, Codex's thread/tokenUsage/updated, ACP's usage_update). Absent until it
+   * does.
    */
   context?: ContextWindow;
   /**
@@ -255,15 +259,18 @@ export type PlanMode = "auto" | "default";
 /** allow: this once. always: this time and from now on, as Claude Code suggests. deny: Claude stops and waits. */
 export type PermissionDecision = "allow" | "always" | "deny";
 
-/** A session's context window, from Claude Code's status line (its `context_window`). */
+/** A session's context window (see SessionInfo.context). */
 export interface ContextWindow {
-  /** Input tokens in the context now: the latest reply's input, cache writes and cache reads. */
+  /**
+   * Tokens in the context now. Claude Code: the latest reply's input, cache writes and cache reads; Codex: also its
+   * output.
+   */
   used: number;
   /** The size of the model's context window (200000, 1000000). */
   size: number;
-  /** The share used, 0-100, as Claude Code works it out (a whole number). */
+  /** The share used, a whole number from 0 to 100: as Claude Code works it out; for the other agents, used / size. */
   percent: number;
-  /** When Claude Code reported it (ms since the epoch, the working server's clock). */
+  /** When the agent reported it (ms since the epoch, the working server's clock). */
   at: number;
 }
 

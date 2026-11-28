@@ -3,6 +3,7 @@ import fsp from "node:fs/promises";
 import type { AgentInfo, AgentInputConfig, AgentInputSelection, AgentSelector, CommandResult, HookEvent, PermissionDecision, PermissionRequestInfo, SessionInfo, TranscriptEntry, TranscriptPage } from "@gasho/protocol";
 import { Acp, AGY_LOGIN, object } from "./acp.ts";
 import { exec } from "./exec.ts";
+import { contextOf } from "./util.ts";
 
 const CONNECT_TIMEOUT_MS = 15_000;
 // With initialize, reopening must fit in the hub's 45-second antigravity.open window.
@@ -394,6 +395,16 @@ export class AntigravitySessions {
     const update = object(params.update);
     if (update?.sessionUpdate === "config_option_update") {
       this.applyConfig(s, update.configOptions);
+      if (s.ready) this.o.changed();
+      return;
+    }
+    // `used` is what is in the context, not what was used up, so it is not counted in the tokens per day.
+    if (update?.sessionUpdate === "usage_update") {
+      const { used, size } = update;
+      if (typeof used === "number" && typeof size === "number" && size > 0) s.info.context = contextOf(s.info.context, used, size);
+      const cost = object(update.cost);
+      // Other units ("credits") are not shown: SessionInfo holds only US dollars.
+      if (cost?.currency === "USD" && typeof cost.amount === "number") s.info.costUSD = cost.amount;
       if (s.ready) this.o.changed();
       return;
     }

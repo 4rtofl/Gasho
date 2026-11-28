@@ -306,7 +306,7 @@ export function HomeView() {
           trendLabels={tokens.labels}
           {...(tokens.previous ? { previous: tokens.previous, deltaLabel: "前の24時間と比べて" } : {})}
           goodWhen="neither"
-          period="過去24時間（サブエージェントを含む）"
+          period={`過去24時間（${tokenScope(machines)}）`}
           format={compact}
           color={CHART_BLUE}
           className="h-full"
@@ -607,14 +607,32 @@ function TokenBreakdown({ tokens }: { tokens: TokenTrend }) {
   );
 }
 
+/**
+ * What the token totals hold, agent by agent, where an agent besides Claude Code is installed. Not by what was used:
+ * the days do not say which agent used them.
+ */
+function agentsTokenNote(machines: readonly MachineInfo[]): string | undefined {
+  const codex = machines.some((m) => m.agents?.codex);
+  const antigravity = machines.some((m) => m.agents?.antigravity);
+  if (!codex && !antigravity) return undefined;
+  return `Claude Code はサブエージェントを含みます。${codex ? "Codex はサブエージェントを除きます。" : ""}${antigravity ? "Antigravity のトークンは含みません。" : ""}`;
+}
+
+/** The same in the few words the tile has room for: whose tokens it counts; agentsTokenNote says the rest. */
+function tokenScope(machines: readonly MachineInfo[]): string {
+  if (machines.some((m) => m.agents?.codex)) return "Claude Code と Codex";
+  return machines.some((m) => m.agents?.antigravity) ? "Claude Code のみ" : "サブエージェントを含む";
+}
+
 /** A year of the tokens used per day, of all working servers together; asked for when the home screen opens. */
 export function TokenHeatmap({ now }: { now: number }) {
-  const { tokenDays, tokenDaysReported } = useAppState();
+  const { tokenDays, tokenDaysReported, machines } = useAppState();
   useEffect(() => {
     requestTokenDays();
     return onConnected(requestTokenDays);
   }, []);
   const data = useMemo(() => sumTokenDays(tokenDays ?? {}), [tokenDays]);
+  const note = agentsTokenNote(machines);
   if (!tokenDays) return <p className="text-sm text-muted-foreground">読み込んでいます…</p>;
   if (data.length === 0) {
     return (
@@ -628,7 +646,9 @@ export function TokenHeatmap({ now }: { now: number }) {
   return (
     <>
       <ActivityHeatmap data={data} endDate={tokenDayOf(now)} unit="トークン" format={compact} />
-      <p className="mt-2 text-[11px] text-muted-foreground">日本時間で1日を区切っています（サブエージェントを含む）。</p>
+      <p className="mt-2 text-[11px] text-muted-foreground">
+        {note ? `日本時間で1日を区切っています。${note}` : "日本時間で1日を区切っています（サブエージェントを含む）。"}
+      </p>
     </>
   );
 }
@@ -728,7 +748,7 @@ function SessionCard({ row: { machine, s }, now }: { row: Row; now: number }) {
         {s.ultracode && <Chip className="bg-violet-500/15 text-violet-200">Ultracode</Chip>}
         {s.pendingInputs ? <Chip className="bg-amber-500/10 text-amber-300">送信待ち {s.pendingInputs}</Chip> : null}
         {s.tokens && sumUsage(s.tokens) > 0 && (
-          <span className="ml-auto tabular-nums" title="このセッションでこれまでに使ったトークン（サブエージェントを含む）">
+          <span className="ml-auto tabular-nums" title={`このセッションでこれまでに使ったトークン（サブエージェント${s.agent === "codex" ? "は除く" : "を含む"}）`}>
             {compact(sumUsage(s.tokens))} トークン
           </span>
         )}

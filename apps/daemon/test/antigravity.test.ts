@@ -156,6 +156,20 @@ test("ACP sends the exact human text, waits for permission and serializes prompt
   assert.deepEqual(calls.filter((c) => c.id === "ask").map((c) => c.result.outcome.optionId), ["allow", "deny"]);
 });
 
+test("ACP's usage_update gives the context window and a cost in US dollars; without one, neither shows", async (t) => {
+  const f = await fixture(t);
+  const s = f.make();
+  const { sessionId: id } = await s.launch(f.dir);
+  const info = () => s.sessions()[0]!;
+  await s.input(id, "使用量なし");
+  await until(() => info().status === "idle");
+  assert.deepEqual([info().context, info().costUSD, info().tokens], [undefined, undefined, undefined]);
+
+  await s.input(id, "使用量を試す");
+  await until(() => info().context?.used === 72000);
+  assert.deepEqual([info().context?.size, info().context?.percent, info().costUSD, info().tokens], [200000, 36, 0.25, undefined]);
+});
+
 test("ACP uses the advertised selectors and switches model and effort before sending", async (t) => {
   const f = await fixture(t);
   const s = f.make();

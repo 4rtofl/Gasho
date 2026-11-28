@@ -283,3 +283,27 @@ ACP v1 のスキーマでは、モデルは `model`、思考レベルは `though
 Codex の RPC をプロセス内で置き換えた確認では、複数ページの候補の読み取り、非表示モデルの除外、Effort の検証、発言時の指定と後続の発言で指定を省く動作を確かめた。
 
 本物の Codex と Antigravity に対し、今回の Gasho の画面から切り替える動作は未確認。利用者は実機の `agy` でモデルを使えることを確認済み。Codex の偽 app-server を使うテストとブラウザーの E2E は、作業時のサンドボックスでソケットを待ち受けられず未確認。
+
+## Codex と Antigravity のコンテキストとトークン（#349）
+
+### Codex
+
+`codex-cli 0.172.0` の `app-server generate-json-schema` では、`thread/tokenUsage/updated` が `threadId`、`turnId`、`tokenUsage`（`total`、`last`、`modelContextWindow`）を持つ。数え方はスキーマに書かれていないので、公開されているソース（[openai/codex](https://github.com/openai/codex) の `rust-v0.172.0`）を読んで確かめた。
+
+- `total` は応答ごとの使用量をスレッドで足したもの。`last` は最後の応答で、要約のあとは `totalTokens` が見積もりになり、ほかの項目は0になる
+- `cachedInputTokens` と書き込みのトークンは、Responses API の `input_tokens_details` から来るので、`inputTokens` の内数である
+- コンテキストがあふれると、`total` は `totalTokens` だけを持つ値に置き換わり、内訳はゼロからになる
+- 同じ使用量は、プランの上限の更新などでも再送される
+- `thread/resume` で使用量が再送されるのは、ターンを含めて読み込むときと、ページに分けて読み込むときだけである。Gasho の `excludeTurns: true` では届かない
+- Codex の端末は、固定の 12,000 トークンを引いた残りの割合を出す。Gasho は `last.totalTokens` ÷ `modelContextWindow` を出す
+
+### Antigravity
+
+ACP v1 のスキーマでは、`usage_update` が `used`（コンテキストにあるトークン数）、`size`、任意の `cost`（累計の金額と通貨）を持つ。`session/prompt` の応答に使用量の項目はない。[Antigravity の ACP の文書](https://antigravity.google/docs/ide/extensions/acp/)には、使用量の通知の記述がない。
+
+### 確かめていないこと
+
+- 本物の Codex の app-server が実際に送る値と、画面の表示。テストは偽の app-server で行った
+- Codex のサブエージェントの使用量が、親のスレッドの `total` に入らないこと（ソースの作りからの判断で、実機では見ていない）。サブエージェントのスレッドの通知は数えていない
+- 本物の `agy` が `usage_update` を送るかどうかと、送る場合の `cost` の通貨。テストは偽の ACP サーバーで行い、`agy` は実行していない
+

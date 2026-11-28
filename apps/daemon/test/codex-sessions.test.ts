@@ -120,6 +120,7 @@ async function setup(t: TestContext) {
   const events: HookEvent[] = [];
   const appended: TranscriptEntry[] = [];
   const file = path.join(dir, "codex-threads.json");
+  const days = new Map<string, Map<string, number>>();
   const folder = { describe: async (): Promise<Partial<SessionInfo>> => ({ gitBranch: "main" }) };
   const make = () =>
     new CodexSessions({
@@ -130,6 +131,7 @@ async function setup(t: TestContext) {
       changed: () => undefined,
       event: (e) => events.push(e),
       append: (_id, entries) => appended.push(...entries),
+      tokens: (id, counted) => void days.set(id, counted),
       log: () => undefined,
     });
   t.after(async () => {
@@ -143,7 +145,7 @@ async function setup(t: TestContext) {
     assert.ok(found);
     return found;
   };
-  return { dir, server, sessions, events, appended, file, folder, make, info, named: (name: string) => events.filter((e) => e.event === name) };
+  return { dir, server, sessions, events, appended, days, file, folder, make, info, named: (name: string) => events.filter((e) => e.event === name) };
 }
 
 test("losing the reply to a Codex turn with a model switch leaves its outcome unknown", async (t) => {
@@ -168,7 +170,7 @@ test("losing the reply to a Codex turn with a model switch leaves its outcome un
   }));
   const sessions = new CodexSessions({
     file: path.join(dir, "threads.json"), version: "test", startServer: async () => path.join(dir, "unused.sock"),
-    describe: async () => ({}), changed: () => {}, event: () => {}, append: () => {}, log: () => {},
+    describe: async () => ({}), changed: () => {}, event: () => {}, append: () => {}, tokens: () => {}, log: () => {},
   });
   await sessions.launch("/work", undefined);
   await until("model catalog", () => sessions.sessions()[0]?.agentConfig !== undefined);
@@ -236,7 +238,7 @@ test("Codex starts the thread with advertised model and effort, and can fall bac
   }));
   const sessions = new CodexSessions({
     file: path.join(dir, "threads.json"), version: "test", startServer: async () => path.join(dir, "unused.sock"),
-    describe: async () => ({}), changed: () => {}, event: () => {}, append: () => {}, log: () => {},
+    describe: async () => ({}), changed: () => {}, event: () => {}, append: () => {}, tokens: () => {}, log: () => {},
   });
   const config = () => sessions.sessions()[0]?.agentConfig;
 
@@ -658,4 +660,70 @@ test("removing a session stops its turn and leaves the thread; the conversation 
   const again = make();
   await again.load();
   assert.equal(again.sessions().length, 0);
+});
+
+/** `thread/tokenUsage/updated` as the app-server says it: inputTokens holds the cached and the cache-written ones. */
+function tokenUsage(total: [input: number, cached: number, written: number, output: number], context: number) {
+  const [inputTokens, cachedInputTokens, cacheWriteInputTokens, outputTokens] = total;
+  return {
+    turnId: "turn-1",
+    tokenUsage: {
+      total: { totalTokens: inputTokens + outputTokens, inputTokens, cachedInputTokens, cacheWriteInputTokens, outputTokens, reasoningOutputTokens: 0 },
+      last: { totalTokens: context, inputTokens: context, cachedInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0 },
+      modelContextWindow: 200_000,
+    },
+  };
+}
+
+test("Codex's token usage gives the context window, and each report counts only what its total gained", async (t) => {
+  const { server, sessions, days, make, info } = await setup(t);
+  await sessions.launch("/work", undefined);
+  assert.equal(info().context, undefined);
+  assert.equal(info().tokens, undefined);
+  const counted = (of: Map<string, number> | undefined) => [...(of?.values() ?? [])].reduce((a, b) => a + b, 0);
+
+  server.notify("thread/tokenUsage/updated", tokenUsage([1000, 600, 100, 50], 1050));
+  await until("first report", () => info().tokens !== undefined);
+  assert.deepEqual(info().tokens, { input: 300, output: 50, cacheWrite: 100, cacheRead: 600 });
+  assert.deepEqual([info().context?.used, info().context?.size, info().context?.percent], [1050, 200_000, 0]);
+  assert.equal(counted(days.get(THREAD)), 1050);
+
+  // The same total again (an update of the account's rate limits repeats it), then one more reply.
+  server.notify("thread/tokenUsage/updated", tokenUsage([1000, 600, 100, 50], 1050));
+  server.notify("thread/tokenUsage/updated", tokenUsage([3000, 2000, 100, 150], 2100));
+  await until("second reply", () => info().context?.used === 2100);
+  assert.equal(info().context?.percent, 1);
+  assert.equal(counted(days.get(THREAD)), 3150);
+  assert.deepEqual(info().tokenHours?.map(([, u]) => u.input + u.output + u.cacheWrite + u.cacheRead).reduce((a, b) => a + b, 0), 3150);
+
+  // After a restart the kept total is the base: the days are told again, and only the new reply is added.
+  await (sessions as unknown as { saving: Promise<void> }).saving;
+  days.clear();
+  const again = make();
+  await again.load();
+  assert.equal(counted(days.get(THREAD)), 3150);
+  await until("loaded again", () => info(again).status === "idle");
+  server.notify("thread/tokenUsage/updated", tokenUsage([4000, 2500, 100, 200], 3000));
+  await until("reply after the restart", () => counted(days.get(THREAD)) === 4200);
+
+  // A context overflow starts Codex's totals again: nothing is taken back, and what follows is counted.
+  server.notify("thread/tokenUsage/updated", tokenUsage([0, 0, 0, 0], 200_000));
+  server.notify("thread/tokenUsage/updated", tokenUsage([500, 0, 0, 20], 520));
+  await until("reply after the overflow", () => counted(days.get(THREAD)) === 4720);
+});
+
+test("a thread kept without its tokens counts only what it uses from then on", async (t) => {
+  const { server, file, days, make, info } = await setup(t);
+  fs.writeFileSync(file, JSON.stringify([{ threadId: THREAD, cwd: "/work", launchedAt: 1 }]));
+  const sessions = make();
+  await sessions.load();
+  await until("loaded", () => info(sessions).status === "idle");
+
+  server.notify("thread/tokenUsage/updated", tokenUsage([9000, 0, 0, 100], 9100));
+  await until("first report", () => info(sessions).tokens !== undefined);
+  assert.equal(days.size, 0);
+
+  server.notify("thread/tokenUsage/updated", tokenUsage([9200, 0, 0, 130], 9330));
+  await until("next reply", () => days.has(THREAD));
+  assert.deepEqual([...days.get(THREAD)!.values()], [230]);
 });

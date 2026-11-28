@@ -2,11 +2,12 @@
 // gasho-daemon: gasho-daemon connects to it, keeps the ids of its threads in a file, and loads them again each time it
 // connects, so a turn goes on while gasho-daemon restarts. Claude Code's sessions do not come through here.
 import fsp from "node:fs/promises";
-import type { AgentInputConfig, AgentInputSelection, AgentModelChoice, CommandResult, HookEvent, PermissionDecision, QuestionAnswer, SessionInfo, TranscriptEntry, TranscriptPage } from "@gasho/protocol";
+import type { AgentInputConfig, AgentInputSelection, AgentModelChoice, CommandResult, HookEvent, PermissionDecision, QuestionAnswer, SessionInfo, TokenUsage, TranscriptEntry, TranscriptPage } from "@gasho/protocol";
 import {
   type CodexItem,
   type CodexRequest,
   type CodexThreadStatus,
+  type CodexTokenUsage,
   type CodexTurn,
   entriesOfItem,
   entriesOfTurnEnd,
@@ -17,8 +18,12 @@ import {
   sessionStatusOf,
   textInput,
   transcriptOf,
+  usageOfBreakdown,
 } from "./codex-map.ts";
 import { CodexConnectionClosed, CodexRpc, CodexRpcError } from "./codex-rpc.ts";
+import { tokenDayOf } from "./token-days.ts";
+import { add, emptyUsage, HOUR, sum, TOKEN_HOURS } from "./tokens.ts";
+import { contextOf } from "./util.ts";
 
 /** Reconnecting: the first wait, and the longest. */
 const RETRY_MIN_MS = 1000;
@@ -41,6 +46,8 @@ export interface CodexSessionsOptions {
   catalogChanged?: () => void;
   event: (event: HookEvent) => void;
   append: (sessionId: string, entries: TranscriptEntry[]) => void;
+  /** The tokens a session used per day, all of its days each time. */
+  tokens: (sessionId: string, days: Map<string, number>) => void;
   log: (...args: unknown[]) => void;
 }
 
@@ -66,11 +73,23 @@ interface SavedThread {
   cwd: string;
   name?: string;
   launchedAt: number;
+  usage?: ThreadUsage;
+}
+
+/**
+ * The tokens of a thread: its total as Codex last said it, and what each report added to that, per hour and per day.
+ * Kept with the thread, so that what it used while gasho-daemon was away is counted once.
+ */
+interface ThreadUsage {
+  seen: TokenUsage;
+  hours: [number, TokenUsage][];
+  days: [string, number][];
 }
 
 interface ThreadState {
   info: SessionInfo;
   launchedAt: number;
+  usage?: ThreadUsage;
   /** Inputs waiting for the thread to become idle, the next one first. */
   queue: string[];
   sending: boolean;
@@ -125,7 +144,15 @@ export class CodexSessions {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") this.o.log(`cannot read ${this.o.file}; starting without the Codex sessions it kept`, e);
       return;
     }
-    for (const s of saved) if (typeof s?.threadId === "string" && typeof s.cwd === "string") this.add(s.threadId, s.cwd, s.name, s.launchedAt);
+    for (const s of saved) {
+      if (typeof s?.threadId !== "string" || typeof s.cwd !== "string") continue;
+      const t = this.add(s.threadId, s.cwd, s.name, s.launchedAt);
+      if (!s.usage) continue;
+      t.usage = s.usage;
+      t.info.tokens = s.usage.seen;
+      t.info.tokenHours = s.usage.hours;
+      this.o.tokens(s.threadId, new Map(s.usage.days));
+    }
     if (this.threads.size > 0) this.connectInBackground();
   }
 
@@ -212,6 +239,7 @@ export class CodexSessions {
     if (effort && r.reasoningEffort !== effort) warnings.push(`既定の Effort（${effort}）に切り替わりませんでした。`);
     const threadId = r.thread.id as string;
     const t = this.add(threadId, cwd, name, Date.now());
+    t.usage = { seen: emptyUsage(), hours: [], days: [] };
     this.applyThread(rpc, t, r);
     if (name) await rpc.request("thread/name/set", { threadId, name }).catch((e: unknown) => this.o.log(`could not name the thread ${threadId}`, messageOf(e)));
     await this.describe(t);
@@ -450,6 +478,9 @@ export class CodexSessions {
         this.setName(t, typeof params.threadName === "string" ? params.threadName : undefined);
         void this.save();
         break;
+      case "thread/tokenUsage/updated":
+        this.count(t, params.tokenUsage as CodexTokenUsage);
+        break;
       case "thread/closed":
         if (this.rpc) void this.resume(this.rpc, t);
         return;
@@ -487,6 +518,38 @@ export class CodexSessions {
         return;
     }
     this.o.changed();
+  }
+
+  private count(t: ThreadState, { total, last, modelContextWindow }: CodexTokenUsage): void {
+    if (modelContextWindow) t.info.context = contextOf(t.info.context, last.totalTokens, modelContextWindow);
+    const seen = usageOfBreakdown(total);
+    // A thread kept by an earlier gasho-daemon: what it has used by now is not counted, as when it used it is not known.
+    const before = t.usage ?? { seen, hours: [], days: [] };
+    // Codex starts its totals again from zero when a context overflows: nothing is taken back then.
+    const used: TokenUsage = {
+      input: Math.max(0, seen.input - before.seen.input),
+      output: Math.max(0, seen.output - before.seen.output),
+      cacheWrite: Math.max(0, seen.cacheWrite - before.seen.cacheWrite),
+      cacheRead: Math.max(0, seen.cacheRead - before.seen.cacheRead),
+    };
+    let { hours, days } = before;
+    if (sum(used) > 0) {
+      const now = Date.now();
+      const hour = Math.floor(now / HOUR) * HOUR;
+      hours = hours.filter(([h]) => h > hour - TOKEN_HOURS * HOUR);
+      let latest = hours.at(-1);
+      if (latest?.[0] !== hour) hours.push((latest = [hour, emptyUsage()]));
+      add(latest[1], used);
+      const byDay = new Map(days);
+      const day = tokenDayOf(now);
+      byDay.set(day, (byDay.get(day) ?? 0) + sum(used));
+      days = [...byDay];
+      this.o.tokens(t.info.sessionId, byDay);
+    }
+    t.usage = { seen, hours, days };
+    t.info.tokens = seen;
+    t.info.tokenHours = hours;
+    void this.save();
   }
 
   private onTurnEnd(t: ThreadState, turn: CodexTurn): void {
@@ -772,6 +835,7 @@ export class CodexSessions {
         cwd: t.info.cwd,
         ...(t.info.name ? { name: t.info.name } : {}),
         launchedAt: t.launchedAt,
+        ...(t.usage ? { usage: t.usage } : {}),
       }));
       const tmp = `${this.o.file}.tmp`;
       await fsp.writeFile(tmp, `${JSON.stringify(list, null, 2)}\n`, { mode: 0o600 });

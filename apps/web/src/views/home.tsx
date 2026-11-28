@@ -306,7 +306,7 @@ export function HomeView() {
           trendLabels={tokens.labels}
           {...(tokens.previous ? { previous: tokens.previous, deltaLabel: "前の24時間と比べて" } : {})}
           goodWhen="neither"
-          period={agentsTokenNote(machines) ? "過去24時間" : "過去24時間（サブエージェントを含む）"}
+          period={`過去24時間（${tokenScope(machines)}）`}
           format={compact}
           color={CHART_BLUE}
           className="h-full"
@@ -615,7 +615,13 @@ function agentsTokenNote(machines: readonly MachineInfo[]): string | undefined {
   const codex = machines.some((m) => m.agents?.codex);
   const antigravity = machines.some((m) => m.agents?.antigravity);
   if (!codex && !antigravity) return undefined;
-  return `Claude Code はサブエージェントを含みます。${codex ? "Codex はサブエージェントを除きます。" : ""}${antigravity ? "Antigravity は数えません。" : ""}`;
+  return `Claude Code はサブエージェントを含みます。${codex ? "Codex はサブエージェントを除きます。" : ""}${antigravity ? "Antigravity のトークンは含みません。" : ""}`;
+}
+
+/** The same in the few words the tile has room for: whose tokens it counts; agentsTokenNote says the rest. */
+function tokenScope(machines: readonly MachineInfo[]): string {
+  if (machines.some((m) => m.agents?.codex)) return "Claude Code と Codex";
+  return machines.some((m) => m.agents?.antigravity) ? "Claude Code のみ" : "サブエージェントを含む";
 }
 
 /** A year of the tokens used per day, of all working servers together; asked for when the home screen opens. */

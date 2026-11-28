@@ -1,5 +1,13 @@
+import type { ContextWindow } from "@gasho/protocol";
+
 export function clip(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max)}… (+${s.length - max} chars)`;
+}
+
+/** The context window of an agent that tells only how much of it is used; the same numbers again keep their time. */
+export function contextOf(before: ContextWindow | undefined, used: number, size: number): ContextWindow {
+  if (before?.used === used && before.size === size) return before;
+  return { used, size, percent: Math.min(100, Math.floor((used / size) * 100)), at: Date.now() };
 }
 
 export function str(v: unknown): string | undefined {

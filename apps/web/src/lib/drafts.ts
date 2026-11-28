@@ -3,7 +3,7 @@
 // files attached, the texts sent before (↑ recalls them), the model, effort and ultracode picked to switch when
 // sending, and the messages sent whose result never came. Kept in memory only: reloading the page starts afresh.
 import { useCallback, useEffect, useSyncExternalStore, type RefObject } from "react";
-import type { EffortLevel, SessionModel } from "@gasho/protocol";
+import type { AgentInputSelection, EffortLevel, SessionModel } from "@gasho/protocol";
 import { createPromptDraft, type PromptDraftStore } from "@/components/ui/prompt-input";
 import type { SentAs } from "./pending";
 
@@ -12,6 +12,7 @@ export interface Picks {
   model?: SessionModel;
   effort?: EffortLevel;
   ultracode?: boolean;
+  agentSelection?: AgentInputSelection;
 }
 
 /**

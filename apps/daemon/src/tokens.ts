@@ -6,7 +6,7 @@ import path from "node:path";
 import type { TokenUsage } from "@gasho/protocol";
 import { tokenDayOf } from "./token-days.ts";
 
-const HOUR = 3600_000;
+export const HOUR = 3600_000;
 /** Hours of use kept per session: the home screen compares the last 24 hours with the 24 before. */
 export const TOKEN_HOURS = 48;
 /** Bytes read from one file per update; the rest is read the next time. */
@@ -16,14 +16,14 @@ export function emptyUsage(): TokenUsage {
   return { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 };
 }
 
-function add(to: TokenUsage, u: TokenUsage, sign = 1): void {
+export function add(to: TokenUsage, u: TokenUsage, sign = 1): void {
   to.input += sign * u.input;
   to.output += sign * u.output;
   to.cacheWrite += sign * u.cacheWrite;
   to.cacheRead += sign * u.cacheRead;
 }
 
-const sum = (u: TokenUsage) => u.input + u.output + u.cacheWrite + u.cacheRead;
+export const sum = (u: TokenUsage) => u.input + u.output + u.cacheWrite + u.cacheRead;
 
 /**
  * The usage a transcript line records (a reply of Claude), or undefined. `copied`: the line is a copy of a reply made

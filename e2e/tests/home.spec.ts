@@ -364,6 +364,12 @@ test.describe("数のタイルのグラフ", () => {
   });
 });
 
+test("Codex が入っている working server があると、トークンのタイルに数えるエージェントを出す", async ({ page, hub }) => {
+  await hub.fakeDaemon({ capabilities: { agents: { codex: { status: "available" } } } });
+  await page.goto("/");
+  await expect(page.getByRole("main")).toContainText("過去24時間（Claude Code と Codex）");
+});
+
 test.describe("タイルの並べ替え", () => {
   test("つまみのドラッグと、矢印キー・Home・End で並びが変わり、読み込み直しても残り、「並びを元に戻す」で戻る", async ({ page, isMobile }) => {
     await page.goto("/");

@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import type {
   AgentInfo,
+  AgentInputSelection,
   AgentKind,
   AgentOperation,
   BackgroundTask,
@@ -197,7 +198,7 @@ const MODEL_NAMES: Record<SessionModel, string> = { default: "既定のモデル
 const EFFORT_NAMES: Record<EffortLevel, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "xHigh", max: "Max" };
 /** What this gasho-daemon can switch or carry with an input (MachineInfo.features). */
 const INPUT_FEATURES: readonly InputFeature[] = ["model", "effort", "ultracode", "files"];
-/** What a session of Claude Code can do (AgentInfo.operations); one of Codex only talks, for now. */
+/** What a session of Claude Code can do (AgentInfo.operations). */
 const CLAUDE_OPERATIONS: readonly AgentOperation[] = [...INPUT_FEATURES, "fork", "background", "skills", "shell"];
 /** How long the prompt box may take to let go of a text after Enter (see typeInput). */
 const ENTER_WAIT_MS = 8000;
@@ -448,10 +449,12 @@ export class Daemon {
       file: path.join(cfg.stateDir, "codex-threads.json"),
       version: DAEMON_VERSION,
       startServer: () => this.startCodexAppServer(),
+      catalogChanged: () => this.emitCapabilities(),
       describe: (cwd) => this.folderDetails(cwd),
       changed: () => this.emitSessions(),
       event: (event) => this.hub.send({ type: "hook", event }),
       append: (sessionId, entries) => this.hub.send({ type: "transcript.append", sessionId, entries }),
+      tokens: (sessionId, days) => this.tokenDays.record(sessionId, days),
       log: (...args) => log(...args),
     });
     this.registered = new RegisteredRepos(path.join(cfg.stateDir, "repos.json"));
@@ -1230,7 +1233,7 @@ export class Daemon {
     const claude = this.claude;
     return {
       ...(claude ? { claude: { status: claude.status, version: claude.version, canLaunch: true, operations: [...CLAUDE_OPERATIONS] } } : {}),
-      ...(this.codex ? { codex: { ...this.codex, canLaunch: true, operations: [] } } : {}),
+      ...(this.codex ? { codex: { ...this.codex, canLaunch: true, operations: ["model", "effort"], canUseLaunchDefaults: true, launchCatalog: this.codex.status === "available" ? this.codexSessions.launchCatalog : undefined } } : {}),
     };
   }
 
@@ -1238,10 +1241,13 @@ export class Daemon {
   private async refreshCodex(): Promise<void> {
     const read = ++this.codexRead;
     const codex = await detectCodex(codexRunner(this.cfg.codexBin));
-    if (read !== this.codexRead || JSON.stringify(codex) === JSON.stringify(this.codex)) return;
-    this.codex = codex;
-    log(codex ? `Codex ${codex.version ?? "(version unknown)"}: ${codex.status}` : "Codex is not installed");
-    this.emitCapabilities();
+    if (read !== this.codexRead) return;
+    if (JSON.stringify(codex) !== JSON.stringify(this.codex)) {
+      this.codex = codex;
+      log(codex ? `Codex ${codex.version ?? "(version unknown)"}: ${codex.status}` : "Codex is not installed");
+      this.emitCapabilities();
+    }
+    if (codex?.status === "available") void this.codexSessions.refreshLaunchCatalog();
   }
 
   private emitCapabilities(): void {
@@ -1618,6 +1624,10 @@ export class Daemon {
         try {
           switch (m.type) {
             case "session.launch":
+              if (m.agent === "codex") {
+                result = await this.launchCodex(m.cwd, m.name, m.launchDefaults);
+                break;
+              }
               result = await this.launch(
                 m.cwd,
                 m.name,
@@ -2013,7 +2023,7 @@ export class Daemon {
   }
 
   /** Starts a session of Codex in `cwd`: a new thread of its app-server. */
-  private async launchCodex(cwd: string, name: string | undefined): Promise<CommandResult> {
+  private async launchCodex(cwd: string, name: string | undefined, defaults?: AgentInputSelection): Promise<CommandResult> {
     const dir = path.resolve(cwd);
     const stat = await fsp.stat(dir).catch(() => undefined);
     if (!stat?.isDirectory()) return { ok: false, error: `フォルダーがありません：${dir}` };
@@ -2025,10 +2035,10 @@ export class Daemon {
     if (this.codex.status === "loginRequired") return { ok: false, error: "Codex にログインしていません。working server で codex login を実行してください。" };
     if (this.codex.status !== "available") return { ok: false, error: "Codex の状態を確かめられませんでした。working server で codex login status を実行して確かめてください。" };
     try {
-      const sessionId = await this.codexSessions.launch(dir, checked?.name);
-      log(`started Codex's thread ${sessionId} in ${dir}`);
+      const started = await this.codexSessions.launch(dir, checked?.name, defaults);
+      log(`started Codex's thread ${started.sessionId} in ${dir}`);
       void this.refreshFolders();
-      return { ok: true, sessionId };
+      return { ok: true, ...started };
     } catch (e) {
       log("could not start a session of Codex", e);
       void this.refreshCodex();
@@ -3051,8 +3061,9 @@ export class Daemon {
   }
 
   private async input(m: Extract<HubToDaemon, { type: "session.input" }>): Promise<CommandResult> {
-    const { sessionId, text, model, effort, ultracode, files } = m;
+    const { sessionId, text, model, effort, ultracode, files, agentSelection } = m;
     if (this.codexSessions.has(sessionId)) return this.inputToCodex(m);
+    if (agentSelection !== undefined) return { ok: false, error: "このセッションでは指定した形式で切り替えられません。" };
     // By session.sessionId from here on: `sessionId` can be one the session had before /clear (see ManagedSessions.find),
     // and /clear can give it a new id while the files are written (see followNewIds).
     const session = this.managed.find(sessionId);
@@ -3105,7 +3116,7 @@ export class Daemon {
     return { ok: true, queued, ...(warning ? { warning } : {}), ...(unapplied.length > 0 ? { unapplied } : {}) };
   }
 
-  /** An input to a session of Codex: its text only, for now. What only Claude Code can switch stays as it is. */
+  /** An input to a session of Codex: its text, and the model and effort picked for it. What only Claude Code can switch stays as it is. */
   private async inputToCodex(m: Extract<HubToDaemon, { type: "session.input" }>): Promise<CommandResult> {
     if (m.files?.length) return { ok: false, error: "Codex のセッションには、ファイルを添付できません。" };
     const body = m.text.trim();
@@ -3116,7 +3127,7 @@ export class Daemon {
       ...(m.effort !== undefined ? (["effort"] as const) : []),
       ...(m.ultracode !== undefined ? (["ultracode"] as const) : []),
     ];
-    const r = await this.codexSessions.input(m.sessionId, body);
+    const r = await this.codexSessions.input(m.sessionId, body, m.agentSelection);
     return r.ok && unapplied.length > 0 ? { ...r, unapplied } : r;
   }
 

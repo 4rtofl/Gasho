@@ -388,6 +388,7 @@ export function App() {
     if (launchingIn) return;
     setLaunchingIn(w.key);
     const r = await launchSession(w.machine.id, { cwd: w.path, agent });
+    if (r.ok && r.warning) showNotice(r.warning);
     setLaunchingIn(undefined);
     if (r.ok && r.sessionId) {
       setMobileOpen(false);

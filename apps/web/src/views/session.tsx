@@ -577,15 +577,16 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
         disabled={offline}
         models={agent === "claude" ? (features.includes("model") ? modelOptions(machine, current, s.model, canPickFable, picked) : []) : agentModels}
         model={agent === "claude" ? picked ?? current ?? "default" : nextModel ?? ""}
-        onModelChange={(id) => setPicks((p) => agent === "claude"
-          ? { ...p, model: id === KEEP_MODEL ? undefined : (id as SessionModel) }
-          : id === nextModel
-            ? p
-            : { ...p, agentSelection: {
-                ...(isAntigravity ? p.agentSelection : {}),
-                model: agentModel?.options.some((m) => m.id === id) && id !== agentModel.current ? id : undefined,
-              } }
-        )}
+        onModelChange={(id) => setPicks((p) => {
+          if (agent === "claude") return { ...p, model: id === KEEP_MODEL ? undefined : (id as SessionModel) };
+          if (id === nextModel) return p;
+          const model = agentModel?.options.find((option) => option.id === id);
+          const effort = model?.efforts?.find((option) => option.id === effortToSwitch)?.id;
+          return { ...p, agentSelection: {
+            ...(isAntigravity ? p.agentSelection : { effort }),
+            model: model?.id === agentModel?.current ? undefined : model?.id,
+          } };
+        })}
         actions={
           <>
             {agent === "claude" && features.includes("effort") && (
@@ -644,7 +645,7 @@ function Composer({ machine, session: s, transcript }: { machine: MachineInfo; s
         footer={composerParts ? <PluginComposerFooter machine={machine} session={s} /> : undefined}
         ref={input}
       />
-      {effortDisabledReason && <p className="mt-1.5 px-3 text-xs text-muted-foreground">{effortDisabledReason}</p>}
+      {effortDisabledReason && <p role="status" className="mt-1.5 px-3 text-xs text-muted-foreground">{effortDisabledReason}</p>}
       {(status || error || warning) && (
         <p className={cn("mt-1.5 px-3 text-xs", error ? "text-red-400" : warning ? "text-amber-400" : "text-muted-foreground")}>
           {error ?? warning ?? status}

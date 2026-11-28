@@ -176,6 +176,38 @@ test("a session already using Fable on Pro still shows its current model", async
   expect(screen.getByRole("option", { name: /^Fable 5.2.*いま/ })).toBeTruthy();
 });
 
+test("Codex carries a staged Effort across models only when the destination supports it", async () => {
+  const regular = { id: "regular", name: "Regular" };
+  const deep = { id: "deep", name: "Deep" };
+  const model = { current: "base", options: [
+    { id: "base", name: "Base", efforts: [regular, deep] },
+    { id: "pro", name: "Pro Model", efforts: [regular, deep], defaultEffort: regular.id },
+    { id: "lite", name: "Lite Model", efforts: [regular], defaultEffort: regular.id },
+  ] };
+  const s = session("s", { agent: "codex", agentConfig: { model, effort: { current: regular.id, options: [regular, deep] } } });
+  const m = machine("codex-effort", [s], { agents: { codex: { status: "available", operations: ["model", "effort"] } } });
+  const hub = await connectHub({ machines: [m] });
+  render(<SessionView machine={m.id} sessionId={s.sessionId} onSessionAction={() => {}} onAskTrust={() => {}} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Effort：Regular" }));
+  await user.click(screen.getByRole("menuitemradio", { name: "Deep" }));
+  const box = screen.getByRole("textbox", { name: "メッセージ" });
+
+  for (const [from, to, selection, effortName] of [
+    ["Base", "Pro Model", { model: "pro", effort: "deep" }, "Deep"],
+    ["Pro Model", "Lite Model", { model: "lite" }, "Regular"],
+  ] as const) {
+    await user.click(screen.getByRole("button", { name: `モデル：${from}（選び直す）` }));
+    await user.click(screen.getByRole("option", { name: to }));
+    expect(screen.getByRole("button", { name: `Effort：${effortName}（送るときに切り替えます）` })).toBeTruthy();
+    await user.type(box, to);
+    await user.click(screen.getByRole("button", { name: "送信" }));
+    await waitFor(() => expect(hub.commands().at(-1)).toMatchObject({ text: to }));
+    expect(hub.commands().at(-1)).toHaveProperty("agentSelection", selection);
+    await hub.answer({ ok: true }, hub.commands().at(-1));
+  }
+});
+
 test("external models use their own Effort options and a rejected switch restores the draft", async () => {
   const model = {
     current: "standard",
@@ -275,7 +307,7 @@ test("Antigravity keeps the old Effort pick until the model changes and never se
   const disabled = screen.getByRole<HTMLButtonElement>("button", { name: "Effort：Regular（モデルを切り替えて送ったあとに、Effort を選べます）" });
   expect(disabled.disabled).toBe(true);
   expect(disabled.title).toBe("モデルを切り替えて送ったあとに、Effort を選べます");
-  expect(screen.getByText("モデルを切り替えて送ったあとに、Effort を選べます", { exact: true })).toBeTruthy();
+  expect(screen.getByRole("status").textContent).toBe("モデルを切り替えて送ったあとに、Effort を選べます");
 
   await user.click(screen.getByRole("button", { name: /^モデル：Pro Model/ }));
   await user.click(screen.getByRole("option", { name: /^Base/ }));

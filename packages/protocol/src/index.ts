@@ -133,6 +133,7 @@ export interface SessionInfo {
   model?: string;
   /** Sessions started from Gasho: the effort level and ultracode as Claude Code shows them above the prompt. */
   effort?: EffortLevel;
+  agentConfig?: AgentInputConfig;
   ultracode?: boolean;
   /** Sessions started from Gasho: the tokens used so far, by the session's replies and its subagents'. */
   tokens?: TokenUsage;
@@ -1325,6 +1326,33 @@ export interface ModelOption {
   name: string;
 }
 
+export interface AgentChoice {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+export interface AgentModelChoice extends AgentChoice {
+  efforts?: AgentChoice[];
+  defaultEffort?: string;
+  isDefault?: boolean;
+}
+
+export interface AgentSelector<T extends AgentChoice = AgentChoice> {
+  current?: string;
+  options: T[];
+}
+
+export interface AgentInputConfig {
+  model?: AgentSelector<AgentModelChoice>;
+  effort?: AgentSelector;
+}
+
+export interface AgentInputSelection {
+  model?: string;
+  effort?: string;
+}
+
 /** A file sent with an input, base64-encoded. The Gasho server allows 5 files and 10 MB in all per input. */
 export interface InputFile {
   name: string;
@@ -1374,6 +1402,7 @@ export type SessionCommand =
       text: string;
       model?: SessionModel;
       effort?: EffortLevel;
+      agentSelection?: AgentInputSelection;
       ultracode?: boolean;
       files?: InputFile[];
       /** Sent by a plugin (its id), for the operations log. */
@@ -1482,6 +1511,7 @@ export interface WorktreeChanges {
 export interface CommandResult {
   ok: boolean;
   error?: string;
+  unknown?: true;
   /**
    * session.launch, session.fork, session.resume: the new session. session.input: whether the input waits for the session to become
    * idle; session.rename: whether `/rename` does.

@@ -177,6 +177,8 @@ Codex のセッションは、Codex の常駐の app-server のスレッドで�
 - 起動は `thread/start` にフォルダーだけを渡す。承認のポリシーとサンドボックスは、利用者の Codex の設定に従う
 - Gasho が起動したスレッドは、`managed.json` と同じ場所の `codex-threads.json` に残す。接続が切れたら間隔を広げながら（1秒から30秒まで）つなぎ直し、スレッドを `thread/resume` で読み込み直す。切れているあいだに増えた会話は画面に送り、作業中だったターンが終わっていれば `Stop` を送る。読み込み直しに失敗したスレッドは、そのスレッドだけを間隔を広げながら（1秒から30秒まで）読み込み直す。Codex にスレッドが無くなっていたら、一覧から外す
 - 発言は、スレッドが idle なら `turn/start` で送り、作業中は gasho-daemon で待たせて、idle になったら1つずつ送る。Codex が発言を受け付けなかったときは、その発言を捨てて通知し、次の発言を送る。待たせた発言は、gasho-daemon を起動し直すと消える（Claude Code と同じ）
+- モデル一覧は app-server の `model/list` でプロバイダーごとに読む。非表示のモデルは候補から外し、名前と既定の印を出す。Effort は選んだモデルの `supportedReasoningEfforts` を出す。初めの値と再接続後の値は `thread/start`・`thread/resume` の `model` と `reasoningEffort` から読む
+- 画面で選んで発言を送るときだけ、`turn/start` に `model` や `effort` を付ける。モデルだけを変えるときは、選んだモデルの既定の Effort が候補にあれば使う。指定は後続ターンにも引き継がれるので、次の発言で指定し直す必要はない。候補にない値や app-server が断った発言は送信済みとして扱わず、理由を画面に出す
 - 権限の確認の許可は `accept`、拒否は `decline`、今後も許可は Codex が提案した実行ポリシーの追加である。提案がないときは、今後も許可を出さない。別のクライアントが答えたら（`serverRequest/resolved`）、画面から消す
 - Gasho の画面で答えられない要求（MCP サーバーからの問い合わせなど）は、エラーで返す
 - 通知は、Claude Code の hook と同じ名前のイベント（`UserPromptSubmit`、`Stop`、`StopFailure`、`Notification`、`SessionEnd`）を gasho-daemon が作って送る
@@ -198,8 +200,11 @@ Antigravity は、個人が working server でログインした Antigravity CLI
 - 画面からの割り込みは `session/cancel` を送る。ACP から権限の確認が届いたら通知し、画面の「許可」または「拒否」を待つ。一度だけの許可（`allow_once`）と拒否（`reject_once`）を扱い、拒否の選択肢がなければ取り消す。ターンを中断したときも、未回答の確認を取り消す。Gasho は自動で許可せず、`--dangerously-skip-permissions` を付けない。CLI にあらかじめ登録された権限のルールは、CLI 自身が適用する
 - Gasho の名前、セッション ID、会話は working server 上の `antigravity-sessions.json` に保存する。名前の変更は Gasho に反映する。削除すると子プロセスを止めて Gasho の記録を外す。CLI が保存した会話は残る
 - gasho-daemon を起動し直したあとは一覧と保存済みの会話が見える。画面で「Antigravity の会話を開く」を押すか、次の発言を送ったときに限り、接続して `session/load` で会話を再生する。CLI が `session/load` を提供せず `session/resume` を提供する場合は、保存済みの表示を保って再開する。どちらも未対応なら再開できないと表示する
-- Antigravity は設定の既定エージェント、＋ボタンのメニュー、起動フォームで選べる。入力欄のモデル、Effort、Ultracode、添付、スキル、シェル実行、フォーク、バックグラウンド作業の一覧は出さない。Antigravity を起動できるとその接続で通知した gasho-daemon にだけ起動を中継する。古い gasho-daemon がエージェントの指定を見落として Claude Code を起動するのを防ぐためである
-- control socket の `session.launch`（`--agent antigravity`）と、Antigravity に対する `session.input`、`session.fork` を断る。画面プラグインの `useLaunchSession` と `useSendInput` も断る。daemon プラグインは control socket でも同じ制限を受け、`ctx.exec` での `agy` の直接起動や、対応するシェルの `-c` や `-lc` 内での単純な起動も断る。名前の変更、一覧、削除は使える
+- Antigravity は設定の既定エージェント、＋ボタンのメニュー、起動フォームで選べる。入力欄には、対応するモデルと Effort の選択を出す。Ultracode、添付、スキル、シェル実行、フォーク、バックグラウンド作業の一覧は出さない。Antigravity を起動できるとその接続で通知した gasho-daemon にだけ起動を中継する。古い gasho-daemon がエージェントの指定を見落として Claude Code を起動するのを防ぐためである
+- モデルと Effort の候補と現在値は、`session/new`・`session/load`・`session/resume` の `configOptions` と `config_option_update` から読む。ACP の種別が `model` または `thought_level` の選択肢を使い、CLI が返さない選択は出さない。一覧を読むためだけには接続しない
+- 画面で選んで送信したときに限り、`session/set_config_option` を送り、応答の現在値で切り替えを確かめてから `session/prompt` を送る。切り替えが失敗した発言は送らない。モデルを選び直してから送信するまでは、変更先の Effort の候補が分からないため、Effort の選択は隠す
+- Codex と Antigravity の切り替えを含む発言は、セッションが入力を受け付けられるときに限る。作業中などに送ろうとした場合は、理由を出して入力欄に発言を残す。選択を出すのは、現在の daemon 接続の `operations` に対応する操作があり、候補が分かるときに限る。切り替えはそのセッションにだけ反映する
+- control socket の `session.launch`（`--agent antigravity`）と、Antigravity に対する `session.input`、`session.fork` を断る。画面プラグインの `useLaunchSession` と `useSendInput` も断る。モデルや Effort の指定が付いた発言も同じである。daemon プラグインは control socket でも同じ制限を受け、`ctx.exec` での `agy` の直接起動や、対応するシェルの `-c` や `-lc` 内での単純な起動も断る。名前の変更、一覧、削除は使える
 - Gasho が起動した Claude Code では、PreToolUse hook が Bash ツールのコマンド位置にある `agy` を拒否する。絶対・相対パス、`;`、`&&`、`||`、`|` の後ろも対象にする。変数代入、`env` や `timeout`、シェルの `-c` や `-lc`、バッククォートなどの内側にある単純な起動も拒否し、`which agy` や `grep agy file` は通す。Node.js と Rust に同じ動作を実装する。これは誤実行を防ぐ仕組みで、任意のシェル構文や、プラグインが持つ実行権限を隔離する仕組みは持たない。Codex に同等の hook を入れられるかは未確認
 
 ### セッションの端末

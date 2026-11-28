@@ -57,7 +57,7 @@ async function until(check: () => boolean) {
 
 test("Antigravity detection runs only --version and leaves login unchecked", async (t) => {
   const f = await fixture(t);
-  assert.deepEqual(await detectAntigravity(bin), { status: "unknown", version: "1.2.3", canLaunch: true, operations: [] });
+  assert.deepEqual(await detectAntigravity(bin), { status: "unknown", version: "1.2.3", canLaunch: true, operations: ["model", "effort"] });
   assert.deepEqual(await f.calls(), [{ args: ["--version"] }]);
   assert.equal(await detectAntigravity("/dev/null/agy"), undefined);
   assert.equal(loadConfig(creds, { GASHO_AGY_BIN: bin }).agyBin, bin);
@@ -102,6 +102,46 @@ test("ACP sends the exact human text, waits for permission and serializes prompt
   assert.deepEqual(calls.filter((c) => c.id === "ask").map((c) => c.result.outcome.optionId), ["allow", "deny"]);
 });
 
+test("ACP uses the advertised selectors and switches model and effort before sending", async (t) => {
+  const f = await fixture(t);
+  const s = f.make();
+  const id = await s.launch(f.dir);
+  const config = () => s.sessions()[0]?.agentConfig;
+  assert.deepEqual(config()?.model?.options.map((m) => m.name), ["Gemini Test", "Gemini Test Pro", "Unavailable Test"]);
+  assert.equal(config()?.model?.current, "gemini-test");
+  assert.equal(config()?.effort?.current, "baseline");
+  await s.input(id, "通知を試す");
+  await until(() => config()?.effort?.current === "extra-fast" && s.sessions()[0]?.status === "idle");
+
+  const refused = await s.input(id, "届かない発言", { model: "unavailable-test" });
+  assert.equal(refused.ok, false);
+  assert.match(refused.error ?? "", /このモデルは現在使えません/);
+  assert.equal(config()?.model?.current, "gemini-test");
+
+  const switched = await s.input(id, "切り替え後の発言", { model: "gemini-test-pro", effort: "extra-pro" });
+  assert.deepEqual(switched, { ok: true, queued: false });
+  assert.equal(config()?.model?.current, "gemini-test-pro");
+  assert.deepEqual(config()?.effort?.options.map((e) => e.id), ["baseline", "extra-pro"]);
+  assert.equal(config()?.effort?.current, "extra-pro");
+  await until(() => s.sessions()[0]?.status === "idle");
+  const calls = (await f.calls()).filter((c) => /session\/(prompt|set_config_option)/.test(c.method ?? ""));
+  assert.deepEqual(calls.map((c) => c.params.prompt?.[0].text ?? [c.params.configId, c.params.value]), [
+    "通知を試す", ["engine", "unavailable-test"], ["engine", "gemini-test-pro"], ["thinking", "extra-pro"], "切り替え後の発言",
+  ]);
+
+  assert.equal((await s.input(id, "未定義の Effort", { effort: "extra-fast" })).ok, false);
+  assert.equal((await f.calls()).filter((c) => /session\/(prompt|set_config_option)/.test(c.method ?? "")).length, calls.length);
+});
+
+test("ACP without advertised config offers no selectors and rejects a switch", async (t) => {
+  const f = await fixture(t, "no-config");
+  const s = f.make();
+  const id = await s.launch(f.dir);
+  assert.equal(s.sessions()[0]?.agentConfig, undefined);
+  assert.match((await s.input(id, "発言", { model: "gemini-test" })).error ?? "", /指定したモデルは選べません/);
+  assert.deepEqual((await f.calls()).map((c) => c.method).filter(Boolean), ["initialize", "session/new"]);
+});
+
 for (const mode of ["load", "resume", "none"]) {
   test(`saved Antigravity sessions connect only on explicit open (${mode})`, async (t) => {
     const f = await fixture(t, mode);
@@ -115,6 +155,7 @@ for (const mode of ["load", "resume", "none"]) {
     await restarted.load();
     assert.equal(restarted.sessions()[0]?.name, "新しい名前");
     assert.equal(restarted.sessions()[0]?.status, "unknown");
+    assert.equal(restarted.sessions()[0]?.agentConfig, undefined);
     assert.deepEqual(restarted.page(id, undefined, 100).entries, []);
     assert.deepEqual(await f.calls(), calls);
     const opened = await restarted.open(id);
@@ -122,6 +163,7 @@ for (const mode of ["load", "resume", "none"]) {
       assert.match(opened.error ?? "", /保存済みの会話を再開できません/);
     } else {
       assert.equal(opened.ok, true);
+      assert.equal(restarted.sessions()[0]?.agentConfig?.model?.current, "gemini-test");
       if (mode === "load") assert.deepEqual(restarted.page(id, undefined, 100).entries.map((e) => e.role), ["user", "assistant"]);
       else assert.ok((await f.calls()).some((c) => c.method === "session/resume"));
       await restarted.input(id, "再開");
@@ -209,7 +251,15 @@ test("daemon rejects control and plugin routes while listing an Antigravity sess
   assert.match((await d.onControl({ op: "session.fork", sessionId: id })).error ?? "", /分岐できません/);
   await d.onHubMessage({ type: "session.input", requestId: "plugin-input", sessionId: id, text: "plugin", via: "demo-plugin", screen: true });
   assert.match(replies.get("plugin-input")?.error ?? "", /Gasho の画面から/);
+  for (const input of [
+    { requestId: "plugin-switch", via: "demo-plugin", screen: true, agentSelection: { model: "gemini-test-pro", effort: "extra-pro" } },
+    { requestId: "plugin-legacy-switch", via: "demo-plugin", model: "opus", effort: "high" } as const,
+    { requestId: "agent-switch", agentSelection: { model: "gemini-test-pro" } },
+  ] as const) {
+    await d.onHubMessage({ type: "session.input", sessionId: id, text: "plugin", ...input });
+    assert.match(replies.get(input.requestId)?.error ?? "", /Gasho の画面から/);
+  }
   await d.onHubMessage({ type: "permission.answer", requestId: "agent-answer", sessionId: id, permissionId: "ask", decision: "allow" });
   assert.match(replies.get("agent-answer")?.error ?? "", /Gasho の画面から/);
-  assert.equal((await f.calls()).filter((c) => c.method === "session/prompt").length, 0);
+  assert.equal((await f.calls()).filter((c) => c.method === "session/prompt" || c.method === "session/set_config_option").length, 0);
 });

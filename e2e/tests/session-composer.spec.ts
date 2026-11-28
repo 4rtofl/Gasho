@@ -533,3 +533,46 @@ test.describe("Mac の Chrome", () => {
     await expect(page.getByRole("button", { name: "サイドバーを開く" })).toHaveCount(0);
   });
 });
+
+test("Codex では送信時に選んだモデルと、そのモデルの Effort を指定する", async ({ page, hub }) => {
+  const standard = { id: "codex-standard", name: "Codex Standard", efforts: [{ id: "regular", name: "Regular" }] };
+  const pro = {
+    id: "codex-pro", name: "Codex Pro", defaultEffort: "balanced",
+    efforts: [{ id: "balanced", name: "Balanced" }, { id: "deeper", name: "Deeper" }],
+  };
+  const model = { current: standard.id, options: [standard, pro] };
+  const daemon = await openSession(page, hub, {
+    session: { agent: "codex", agentConfig: { model, effort: { current: "regular", options: [] } } },
+    daemon: { capabilities: { agents: { codex: { status: "available", operations: ["model", "effort"] } } } },
+  });
+  await expect(page.getByRole("button", { name: /^Effort：Regular/ })).toBeVisible();
+  await page.getByRole("button", { name: /^モデル：Codex Standard/ }).click();
+  const current = page.getByRole("option", { name: /Codex Standard/ });
+  await expect(current.getByText("いま", { exact: true })).toBeVisible();
+  await page.getByRole("option", { name: /Codex Pro/ }).click();
+  await page.getByRole("button", { name: /^Effort：Balanced/ }).click();
+  await expect(page.getByRole("menuitemradio", { name: /Regular/ })).toHaveCount(0);
+  await page.getByRole("menuitemradio", { name: /Deeper/ }).click();
+  expect(daemon.received.filter((m) => m.type === "session.input")).toHaveLength(0);
+  await chatBox(page).fill("新しいモデルで見て");
+  await sendButton(page).click();
+  expect(await daemon.waitFor("session.input")).toMatchObject({
+    text: "新しいモデルで見て", screen: true, agentSelection: { model: "codex-pro", effort: "deeper" },
+  });
+  daemon.updateSession(SESSION_ID, { agentConfig: { model: { ...model, current: pro.id }, effort: { current: "deeper", options: [] } } });
+  await expect(page.getByRole("button", { name: "Effort：Deeper", exact: true })).toBeVisible();
+  await chatBox(page).fill("続けて");
+  await sendButton(page).click();
+  const next = await daemon.waitFor("session.input", (m) => m.text === "続けて");
+  expect(next.agentSelection).toBeUndefined();
+});
+
+test("古い daemon の Antigravity ではモデルと Effort の選択を出さない", async ({ page, hub }) => {
+  await openSession(page, hub, {
+    session: { agent: "antigravity" },
+    daemon: { version: "0.38.1", capabilities: { agents: { antigravity: { status: "unknown", operations: [] } } } },
+  });
+  await expect(chatBox(page)).toBeVisible();
+  await expect(page.getByRole("button", { name: /^モデル：/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Effort：/ })).toHaveCount(0);
+});

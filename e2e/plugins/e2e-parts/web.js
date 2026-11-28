@@ -41,7 +41,10 @@ function NotesPanel({ session, params }) {
       {
         type: "button",
         onClick: async () => {
-          const r = await send({ machine: ctx.machine.id, sessionId: ctx.session.sessionId, text: "続けて" });
+          const r = await send({
+            machine: ctx.machine.id, sessionId: ctx.session.sessionId, text: "続けて",
+            ...(params.kind === "antigravity" ? { model: "opus", effort: "high" } : {}),
+          });
           setSaid(r.ok ? "送りました" : params.kind === "antigravity" ? `送信：${r.error}` : r.error);
         },
       },

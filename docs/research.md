@@ -270,3 +270,16 @@ ACP 対応は公開されている一方、Gasho のような画面クライア�
 3. 応答中に「停止」を押し、割り込みが表示されることを確かめる。メニューで名前を変更する
 4. gasho-daemon を起動し直し、一覧に名前が残ることを確かめる。「Antigravity の会話を開く」または次の発言で、対応する CLI では会話が続き、未対応なら理由が出ることを確かめる。最後に画面から削除し、一覧から消えることを確かめる
 5. 未ログインの working server で起動し、端末で `agy` を起動してログインするよう表示されることを確かめる
+
+
+## Codex と Antigravity のモデル・Effort（#347）
+
+Codex CLI 0.172.0 の app-server スキーマでは、`model/list` が各モデルの表示名、非表示かどうか、既定かどうか、選べる Effort と既定の Effort を返す。スキーマの `TurnStartParams` には、`model` と `effort` の指定はそのターンと後続ターンに適用するとある。初回と再接続時の現在値は、それぞれ `ThreadStartResponse`・`ThreadResumeResponse` の `model` と `reasoningEffort` で受け取れる。
+
+ACP v1 のスキーマでは、モデルは `model`、思考レベルは `thought_level` に分類される。候補は単独のリストか、グループに分かれたリストで届く。`session/set_config_option` は選択肢の ID と値を受け取り、変更後の設定一覧を返す。Antigravity の ACP 文書にも、モデルと思考レベルの選択肢があると記されている。 [Antigravity ACP の文書](https://antigravity.google/docs/ide/extensions/acp/)
+
+偽の ACP サーバーで、候補と現在値の読み取り、再接続、通知による更新、発言前の切り替え、拒否された発言が届かないことを確かめた。候補を返さない応答と、画面以外からの切り替えの拒否も確認した。
+
+Codex の RPC をプロセス内で置き換えた確認では、複数ページの候補の読み取り、非表示モデルの除外、Effort の検証、発言時の指定と後続の発言で指定を省く動作を確かめた。
+
+本物の Codex と Antigravity に対し、今回の Gasho の画面から切り替える動作は未確認。利用者は実機の `agy` でモデルを使えることを確認済み。Codex の偽 app-server を使うテストとブラウザーの E2E は、作業時のサンドボックスでソケットを待ち受けられず未確認。

@@ -2,7 +2,7 @@
 // gasho-daemon: gasho-daemon connects to it, keeps the ids of its threads in a file, and loads them again each time it
 // connects, so a turn goes on while gasho-daemon restarts. Claude Code's sessions do not come through here.
 import fsp from "node:fs/promises";
-import type { CommandResult, HookEvent, PermissionDecision, QuestionAnswer, SessionInfo, TranscriptEntry, TranscriptPage } from "@gasho/protocol";
+import type { AgentInputSelection, AgentModelChoice, CommandResult, HookEvent, PermissionDecision, QuestionAnswer, SessionInfo, TranscriptEntry, TranscriptPage } from "@gasho/protocol";
 import {
   type CodexItem,
   type CodexRequest,
@@ -41,6 +41,23 @@ export interface CodexSessionsOptions {
   event: (event: HookEvent) => void;
   append: (sessionId: string, entries: TranscriptEntry[]) => void;
   log: (...args: unknown[]) => void;
+}
+
+interface ThreadResponse {
+  thread: Record<string, unknown>;
+  model?: string;
+  modelProvider?: string;
+  reasoningEffort?: string | null;
+}
+
+interface ListedModel {
+  model: string;
+  displayName: string;
+  description: string;
+  hidden: boolean;
+  isDefault: boolean;
+  defaultReasoningEffort: string;
+  supportedReasoningEfforts: { reasoningEffort: string; description: string }[];
 }
 
 interface SavedThread {
@@ -85,6 +102,7 @@ export class CodexSessions {
   private o: CodexSessionsOptions;
   private threads = new Map<string, ThreadState>();
   private rpc: CodexRpc | undefined;
+  private catalogs = new Map<string | undefined, Promise<AgentModelChoice[]>>();
   private opening: Promise<CodexRpc> | undefined;
   private retryTimer: NodeJS.Timeout | undefined;
   private retryMs = RETRY_MIN_MS;
@@ -138,10 +156,10 @@ export class CodexSessions {
   async launch(cwd: string, name: string | undefined): Promise<string> {
     const rpc = await this.ensure();
     // Only the folder: approvals and the sandbox are as the person set them up for Codex (~/.codex/config.toml).
-    const r = await rpc.request<{ thread: Record<string, unknown>; model?: string }>("thread/start", { cwd });
+    const r = await rpc.request<ThreadResponse>("thread/start", { cwd });
     const threadId = r.thread.id as string;
     const t = this.add(threadId, cwd, name, Date.now());
-    this.applyThread(t, r.thread, r.model);
+    this.applyThread(rpc, t, r);
     if (name) await rpc.request("thread/name/set", { threadId, name }).catch((e: unknown) => this.o.log(`could not name the thread ${threadId}`, messageOf(e)));
     await this.describe(t);
     await this.save();
@@ -149,13 +167,19 @@ export class CodexSessions {
     return threadId;
   }
 
-  async input(sessionId: string, text: string): Promise<CommandResult> {
+  async input(sessionId: string, text: string, selection?: AgentInputSelection): Promise<CommandResult> {
     const t = this.threads.get(sessionId);
     if (!t) return { ok: false, error: "このセッションは見つかりません。" };
+    if (selection && (!this.rpc?.open || t.sending || t.turnId || t.info.status !== "idle" || t.queue.length)) {
+      return { ok: false, error: "Codex が入力を受け付けられる状態になってから、モデルや Effort を切り替えてください。" };
+    }
     t.queue.push(text);
     if (t.queue.length === 1) {
-      const error = await this.flush(t);
-      if (error) return { ok: false, error };
+      const result = await this.flush(t, selection);
+      if (result) {
+        this.o.changed();
+        return result;
+      }
     } else {
       this.flushInBackground(t);
     }
@@ -290,10 +314,12 @@ export class CodexSessions {
   private onClosed(rpc: CodexRpc): void {
     if (this.rpc !== rpc) return;
     this.rpc = undefined;
+    this.catalogs.clear();
     this.o.log("the connection to Codex's app-server ended");
     for (const t of this.threads.values()) {
       t.wasActive = t.info.status === "busy" || t.info.status === "waiting";
       t.info.status = "unknown";
+      delete t.info.agentConfig;
       t.pending.clear();
       delete t.turnId;
       this.stopResumeRetry(t);
@@ -307,8 +333,8 @@ export class CodexSessions {
     const threadId = t.info.sessionId;
     this.stopResumeRetry(t);
     try {
-      const r = await rpc.request<{ thread: Record<string, unknown>; model?: string }>("thread/resume", { threadId, excludeTurns: true });
-      this.applyThread(t, r.thread, r.model);
+      const r = await rpc.request<ThreadResponse>("thread/resume", { threadId, excludeTurns: true });
+      this.applyThread(rpc, t, r);
       if (t.info.status === "busy" || t.info.status === "waiting") t.turnId = await this.activeTurn(rpc, threadId);
       await this.describe(t);
       if (t.transcript) await this.catchUp(rpc, t);
@@ -437,16 +463,35 @@ export class CodexSessions {
 
   // ---- sending ----
 
-  /** Starts a turn with the next input, if the thread can take it; returns why it could not be sent. */
-  private async flush(t: ThreadState): Promise<string | undefined> {
+  private async flush(t: ThreadState, selection?: AgentInputSelection): Promise<CommandResult | undefined> {
     const rpc = this.rpc;
     const text = t.queue[0];
     if (t.sending || !rpc || t.info.status !== "idle" || text === undefined) return undefined;
     t.sending = true;
     try {
+      const config = t.info.agentConfig;
+      const model = selection?.model;
+      const selectedModel = selection && config?.model?.options.find((m) => m.id === (model ?? config.model?.current));
+      const effort = selection?.effort ?? (model !== undefined && model !== config?.model?.current ? selectedModel?.defaultEffort : undefined);
+      if (model !== undefined && !selectedModel) throw new Error("指定したモデルは選べません。");
+      if (effort !== undefined && !selectedModel?.efforts?.some((option) => option.id === effort)) {
+        throw new Error("このモデルでは指定した Effort を選べません。");
+      }
       t.sentText = text;
-      const r = await rpc.request<{ turn: CodexTurn }>("turn/start", { threadId: t.info.sessionId, input: textInput(text) });
+      const r = await rpc.request<{ turn: CodexTurn }>("turn/start", {
+        threadId: t.info.sessionId,
+        input: textInput(text),
+        ...(model !== undefined ? { model } : {}),
+        ...(effort !== undefined ? { effort } : {}),
+      });
       t.queue.shift();
+      if (config?.model && (model !== undefined || effort !== undefined)) {
+        t.info.agentConfig = {
+          model: model === undefined ? config.model : { ...config.model, current: model },
+          effort: { current: effort ?? config.effort?.current, options: selectedModel?.efforts ?? [] },
+        };
+        if (selectedModel) t.info.model = selectedModel.name;
+      }
       if (t.lastTurnEnded !== r.turn.id) {
         t.turnId = r.turn.id;
         if (t.info.status === "idle") t.info.status = "busy";
@@ -454,11 +499,15 @@ export class CodexSessions {
       return undefined;
     } catch (e) {
       delete t.sentText;
-      // Sent again once connected: the thread did not take it, or nothing says that it did.
-      if (e instanceof CodexConnectionClosed) return undefined;
+      if (e instanceof CodexConnectionClosed) {
+        if (!selection) return undefined;
+        // Retrying could send the same input again or lose the requested switch.
+        t.queue.shift();
+        return { ok: false, unknown: true };
+      }
       t.queue.shift();
       this.o.log(`Codex did not take the input for ${t.info.sessionId}`, messageOf(e));
-      return `Codex が発言を受け付けませんでした：${messageOf(e)}`;
+      return { ok: false, error: `Codex が発言を受け付けませんでした：${messageOf(e)}` };
     } finally {
       t.sending = false;
       // Nothing else would send the next one: the thread stayed idle (the input failed), or became idle meanwhile.
@@ -467,8 +516,8 @@ export class CodexSessions {
   }
 
   private flushInBackground(t: ThreadState): void {
-    void this.flush(t).then((error) => {
-      if (error) this.event(t, "StopFailure", { summary: eventSummary(error) });
+    void this.flush(t).then((result) => {
+      if (result?.error) this.event(t, "StopFailure", { summary: eventSummary(result.error) });
       this.o.changed();
     });
   }
@@ -578,13 +627,53 @@ export class CodexSessions {
     return t;
   }
 
-  private applyThread(t: ThreadState, thread: Record<string, unknown>, model: string | undefined): void {
+  private applyThread(rpc: CodexRpc, t: ThreadState, { thread, model, modelProvider, reasoningEffort }: ThreadResponse): void {
     if (typeof thread.cwd === "string") t.info.cwd = thread.cwd;
     if (typeof thread.name === "string" && thread.name) this.setName(t, thread.name);
     if (typeof thread.createdAt === "number") t.info.startedAt = thread.createdAt * 1000;
     if (typeof thread.updatedAt === "number") t.info.lastActivityAt = Math.max(t.info.lastActivityAt ?? 0, thread.updatedAt * 1000);
-    if (model) t.info.model = model;
     t.info.status = sessionStatusOf(thread.status as CodexThreadStatus | undefined);
+    if (model) t.info.model = model;
+    delete t.info.agentConfig;
+    let catalog = this.catalogs.get(modelProvider);
+    if (!catalog) {
+      catalog = (async () => {
+        const models: AgentModelChoice[] = [];
+        let cursor: string | null | undefined;
+        do {
+          const page: { data: ListedModel[]; nextCursor?: string | null } = await rpc.request("model/list", {
+            ...(modelProvider ? { modelProvider } : {}),
+            ...(cursor ? { cursor } : {}),
+          });
+          for (const m of page.data) {
+            if (m.hidden) continue;
+            const efforts = m.supportedReasoningEfforts.map(({ reasoningEffort: id, description }) => ({ id, name: id, description }));
+            models.push({
+              id: m.model, name: m.displayName, description: m.description, isDefault: m.isDefault, efforts,
+              defaultEffort: efforts.some((e) => e.id === m.defaultReasoningEffort) ? m.defaultReasoningEffort : undefined,
+            });
+          }
+          cursor = page.nextCursor;
+        } while (cursor);
+        return models;
+      })().catch((e: unknown) => {
+        if (this.rpc === rpc) this.catalogs.delete(modelProvider);
+        this.o.log("could not list Codex models", messageOf(e));
+        return [];
+      });
+      this.catalogs.set(modelProvider, catalog);
+    }
+    // A slow catalog must not delay opening the thread or sending its plain inputs.
+    void catalog.then((options) => {
+      if (this.rpc !== rpc || !this.threads.has(t.info.sessionId) || !options.length) return;
+      const modelChoice = options.find((option) => option.id === model);
+      if (modelChoice) t.info.model = modelChoice.name;
+      t.info.agentConfig = {
+        model: { current: model, options },
+        effort: { current: reasoningEffort ?? undefined, options: modelChoice?.efforts ?? [] },
+      };
+      this.o.changed();
+    });
   }
 
   private setName(t: ThreadState, name: string | undefined): void {

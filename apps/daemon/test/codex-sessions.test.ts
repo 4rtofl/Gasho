@@ -7,6 +7,7 @@ import path from "node:path";
 import { test, type TestContext } from "node:test";
 import type { HookEvent, SessionInfo, TranscriptEntry } from "@gasho/protocol";
 import { WebSocketServer, type WebSocket } from "ws";
+import { CodexConnectionClosed, CodexRpc } from "../src/codex-rpc.ts";
 import { CodexSessions } from "../src/codex-sessions.ts";
 
 const THREAD = "thread-1";
@@ -72,7 +73,9 @@ class FakeAppServer {
     switch (method) {
       case "thread/start":
       case "thread/resume":
-        return { thread, model: "gpt-test" };
+        return { thread, model: "gpt-test", modelProvider: "test-provider", reasoningEffort: "medium" };
+      case "model/list":
+        return { data: [] };
       case "turn/start":
         return { turn: { id: `turn-${this.called("turn/start").length}`, status: "inProgress" } };
       case "thread/turns/list":
@@ -112,7 +115,6 @@ async function until(what: string, ok: () => boolean, ms = 5000): Promise<void> 
 async function setup(t: TestContext) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-codex-"));
   const server = new FakeAppServer(path.join(dir, "s.sock"));
-  await server.listen();
   const events: HookEvent[] = [];
   const appended: TranscriptEntry[] = [];
   const file = path.join(dir, "codex-threads.json");
@@ -132,6 +134,7 @@ async function setup(t: TestContext) {
     await server.close();
     fs.rmSync(dir, { recursive: true, force: true });
   });
+  await server.listen();
   const sessions = make();
   const info = (s: CodexSessions = sessions): SessionInfo => {
     const found = s.sessions()[0];
@@ -140,6 +143,42 @@ async function setup(t: TestContext) {
   };
   return { dir, server, sessions, events, appended, file, folder, make, info, named: (name: string) => events.filter((e) => e.event === name) };
 }
+
+test("losing the reply to a Codex turn with a model switch leaves its outcome unknown", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-codex-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const starts: Record<string, unknown>[] = [];
+  t.mock.method(CodexRpc, "connect", async () => ({
+    open: true,
+    async request(method: string, params: Record<string, unknown>) {
+      switch (method) {
+        case "thread/start":
+          return { thread: { id: THREAD, status: { type: "idle" } }, model: "gpt-test" };
+        case "model/list":
+          return { data: [{ model: "gpt-pro", displayName: "Test Pro", supportedReasoningEfforts: [{ reasoningEffort: "deep" }] }] };
+        case "turn/start":
+          starts.push(params);
+          throw new CodexConnectionClosed("Codex との接続が切れました。");
+        default:
+          assert.fail(method);
+      }
+    },
+  }));
+  const sessions = new CodexSessions({
+    file: path.join(dir, "threads.json"), version: "test", startServer: async () => path.join(dir, "unused.sock"),
+    describe: async () => ({}), changed: () => {}, event: () => {}, append: () => {}, log: () => {},
+  });
+  await sessions.launch("/work", undefined);
+  await until("model catalog", () => sessions.sessions()[0]?.agentConfig !== undefined);
+
+  const result = await sessions.input(THREAD, "送った発言", { model: "gpt-pro", effort: "deep" });
+  assert.deepEqual(result, { ok: false, unknown: true });
+  assert.deepEqual(starts, [{
+    threadId: THREAD, model: "gpt-pro", effort: "deep", input: [{ type: "text", text: "送った発言", text_elements: [] }],
+  }]);
+  assert.equal(sessions.waitingInputs(), 0);
+  assert.equal(sessions.sessions()[0]?.agentConfig?.model?.current, "gpt-test");
+});
 
 test("a session starts with its folder alone, and shows as a session of Codex", async (t) => {
   const { server, sessions, info } = await setup(t);
@@ -157,6 +196,56 @@ test("a session starts with its folder alone, and shows as a session of Codex", 
   assert.equal(s.title, "調査");
   assert.equal(s.gitBranch, "main");
   assert.equal(s.pid, undefined);
+});
+
+test("Codex lists page-by-page, validates Effort per model and sends overrides only when picked", async (t) => {
+  const { server, sessions, info } = await setup(t);
+  const listed = (model: string, displayName: string, defaultReasoningEffort: string, options: string[]) => ({
+    id: `catalog-${model}`, model, displayName, description: "", isDefault: model === "gpt-test", hidden: false,
+    defaultReasoningEffort, supportedReasoningEfforts: options.map((reasoningEffort) => ({ reasoningEffort, description: reasoningEffort })),
+  });
+  server.handlers.set("model/list", ({ cursor }) => cursor
+    ? { data: [listed("gpt-pro", "Test Pro", "balanced", ["balanced", "maximum"])] }
+    : {
+      data: [listed("gpt-test", "Test Standard", "medium", ["medium"]), { ...listed("gpt-hidden", "Hidden", "medium", ["medium"]), hidden: true }],
+      nextCursor: "next",
+    });
+  await sessions.launch("/work", undefined);
+  const config = () => info().agentConfig;
+  await until("model catalog", () => config() !== undefined);
+  assert.deepEqual(server.called("model/list").map((c) => c.params), [{ modelProvider: "test-provider" }, { modelProvider: "test-provider", cursor: "next" }]);
+  assert.deepEqual(config()?.model?.options.map((m) => [m.id, m.name, m.isDefault]), [
+    ["gpt-test", "Test Standard", true], ["gpt-pro", "Test Pro", false],
+  ]);
+  assert.equal(config()?.model?.current, "gpt-test");
+  assert.equal(config()?.effort?.current, "medium");
+  assert.match((await sessions.input(THREAD, "bad model", { model: "gpt-hidden" })).error ?? "", /指定したモデルは選べません/);
+  assert.match((await sessions.input(THREAD, "bad effort", { model: "gpt-pro", effort: "medium" })).error ?? "", /指定した Effort を選べません/);
+  assert.equal(server.called("turn/start").length, 0);
+  server.handlers.set("turn/start", () => { throw new Error("model is unavailable"); });
+  const refused = await sessions.input(THREAD, "rejected", { model: "gpt-pro", effort: "maximum" });
+  assert.equal(refused.ok, false);
+  assert.match(refused.error ?? "", /model is unavailable/);
+  assert.equal(config()?.model?.current, "gpt-test");
+  assert.equal(info().pendingInputs, undefined);
+
+  server.handlers.delete("turn/start");
+  assert.equal((await sessions.input(THREAD, "switched", { model: "gpt-pro" })).ok, true);
+  assert.equal(config()?.model?.current, "gpt-pro");
+  assert.equal(config()?.effort?.current, "balanced");
+  assert.equal((await sessions.input(THREAD, "too early", { effort: "maximum" })).ok, false);
+  server.notify("turn/completed", { turn: { id: "turn-2", status: "completed" } });
+  server.notify("thread/status/changed", { status: { type: "idle" } });
+  await until("idle after model change", () => info().status === "idle");
+  assert.equal((await sessions.input(THREAD, "effort only", { effort: "maximum" })).ok, true);
+  assert.equal(config()?.effort?.current, "maximum");
+  server.notify("turn/completed", { turn: { id: "turn-3", status: "completed" } });
+  server.notify("thread/status/changed", { status: { type: "idle" } });
+  await until("idle after effort change", () => info().status === "idle");
+  assert.equal((await sessions.input(THREAD, "next turn")).ok, true);
+  assert.deepEqual(server.called("turn/start").map((c) => [c.params.model, c.params.effort]), [
+    ["gpt-pro", "maximum"], ["gpt-pro", "balanced"], [undefined, "maximum"], [undefined, undefined],
+  ]);
 });
 
 test("a thread's status follows what Codex says, and the name Codex gives it is taken", async (t) => {

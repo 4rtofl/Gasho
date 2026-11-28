@@ -1669,3 +1669,36 @@ test("Antigravity launch requires capabilities from the current daemon connectio
   hub.onClientMessage(c, { ...launch, screen: true });
   assert.equal(replacement.sent.some((m) => m.type === "session.launch"), false);
 });
+
+
+for (const agent of ["antigravity", "codex"] as const) {
+  test(`${agent} model selections require the screen and agent operations on the current connection`, () => {
+    const { hub, machineId, machineToken, browserId } = setup();
+    const c = fakePeer<HubToClient>(browserId);
+    hub.onClientConnect(c);
+    const d = fakePeer<HubToDaemon>();
+    hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.38.1" });
+    hub.onDaemonMessage(d, { type: "sessions", sessions: [{ ...session, sessionId: "s", agent }] });
+    const input = { type: "session.input", requestId: "switch", machine: machineId, sessionId: "s", text: "読み直して", agentSelection: { model: "test-pro", effort: "extra" } } as const;
+    const capabilities = (operations: ("model" | "effort")[]) => hub.onDaemonMessage(d, {
+      type: "capabilities", canLaunch: true, folders: [], agents: { [agent]: { status: "available", operations } },
+    });
+    capabilities([]);
+    hub.onClientMessage(c, { ...input, screen: true });
+    assert.equal(d.sent.some((m) => m.type === "session.input"), false);
+
+    capabilities(["model", "effort"]);
+    hub.onClientMessage(c, input);
+    hub.onClientMessage(c, { ...input, via: "demo-plugin", screen: true });
+    assert.equal(d.sent.some((m) => m.type === "session.input"), false);
+
+    hub.onClientMessage(c, { ...input, screen: true });
+    const relayed = d.sent.find((m) => m.type === "session.input");
+    assert.deepEqual(relayed?.agentSelection, input.agentSelection);
+
+    const replacement = fakePeer<HubToDaemon>();
+    hub.onDaemonMessage(replacement, { type: "hello", machineId, token: machineToken, daemonVersion: "0.38.1" });
+    hub.onClientMessage(c, { ...input, screen: true });
+    assert.equal(replacement.sent.some((m) => m.type === "session.input"), false);
+  });
+}

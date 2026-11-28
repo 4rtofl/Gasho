@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import fsp from "node:fs/promises";
-import type { AgentInfo, CommandResult, HookEvent, PermissionDecision, PermissionRequestInfo, SessionInfo, TranscriptEntry, TranscriptPage } from "@gasho/protocol";
+import type { AgentInfo, AgentInputConfig, AgentInputSelection, AgentSelector, CommandResult, HookEvent, PermissionDecision, PermissionRequestInfo, SessionInfo, TranscriptEntry, TranscriptPage } from "@gasho/protocol";
 import { Acp, AGY_LOGIN, object } from "./acp.ts";
 import { exec } from "./exec.ts";
 
@@ -12,7 +12,7 @@ export const ANTIGRAVITY_NO_FORK = "Antigravity のセッションは分岐で�
 export async function detectAntigravity(bin: string): Promise<AgentInfo | undefined> {
   try {
     const { stdout } = await exec(bin, ["--version"], { timeoutMs: 3000 });
-    return { status: "unknown", version: stdout.match(/\d+\.\d+\.\d+/)?.[0], canLaunch: true, operations: [] };
+    return { status: "unknown", version: stdout.match(/\d+\.\d+\.\d+/)?.[0], canLaunch: true, operations: ["model", "effort"] };
   } catch {
     return undefined;
   }
@@ -57,6 +57,8 @@ interface State {
   chunk?: { role: "user" | "assistant"; text: string };
   queue: string[];
   turning: boolean;
+  configuring?: true;
+  configIds?: Partial<Record<keyof AgentInputSelection, string>>;
   cancelled: boolean;
   pending: Map<string, Pending>;
 }
@@ -137,16 +139,51 @@ export class AntigravitySessions {
     }
   }
 
-  async input(id: string, text: string): Promise<CommandResult> {
+  async input(id: string, text: string, selection?: AgentInputSelection): Promise<CommandResult> {
     const s = this.sessionsById.get(id);
     if (!s) return { ok: false, error: "このセッションは見つかりません。" };
     const connected = await this.open(id);
     if (!connected.ok) return connected;
     if (!s.ready || !s.rpc?.open) return { ok: false, error: "Antigravity との接続が切れました。" };
-    s.queue.push(text);
+    let error: string | undefined;
+    if (selection) {
+      if (s.turning || s.configuring || s.queue.length) {
+        return { ok: false, error: "Antigravity が入力を受け付けられる状態になってから、モデルや Effort を切り替えてください。" };
+      }
+      const rpc = s.rpc;
+      s.configuring = true;
+      try {
+        for (const field of ["model", "effort"] as const) {
+          const value = selection[field];
+          if (value === undefined) continue;
+          const configId = s.configIds?.[field];
+          const selector = s.info.agentConfig?.[field];
+          const label = field === "model" ? "モデル" : "Effort";
+          if (configId === undefined || !selector?.options.some((o) => o.id === value)) {
+            throw new Error(`指定した${label}は選べません。`);
+          }
+          if (selector.current === value) continue;
+          const result = object(await rpc.request("session/set_config_option", {
+            sessionId: s.saved.remoteId, configId, value,
+          }, CONNECT_TIMEOUT_MS));
+          if (!rpc.open || s.rpc !== rpc) throw new Error("Antigravity との接続が切れました。");
+          this.applyConfig(s, result?.configOptions);
+          if (s.info.agentConfig?.[field]?.current !== value) {
+            throw new Error(`指定した${label}に切り替わりませんでした。`);
+          }
+        }
+        s.queue.unshift(text);
+      } catch (e) {
+        error = `Antigravity の設定を切り替えられませんでした：${messageOf(e)}`;
+      } finally {
+        delete s.configuring;
+      }
+    } else {
+      s.queue.push(text);
+    }
     this.next(s);
     this.o.changed();
-    return { ok: true, queued: s.queue.length > 0 };
+    return error ? { ok: false, error } : { ok: true, queued: s.queue.length > 0 };
   }
 
   interrupt(id: string): CommandResult {
@@ -233,6 +270,7 @@ export class AntigravitySessions {
     const rpc = new Acp(this.o.bin, cwd, (method, params, id) => this.receive(s, rpc, method, params, id), () => {
       if (s.rpc !== rpc) return;
       s.ready = false;
+      this.applyConfig(s, undefined);
       s.pending.clear();
       const discarded = s.queue.splice(0);
       if (discarded.length) {
@@ -252,15 +290,16 @@ export class AntigravitySessions {
       const init = object(await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: {} }, CONNECT_TIMEOUT_MS));
       if (init?.protocolVersion !== 1) throw new Error("Antigravity が ACP v1 に対応していません。");
       const params = { cwd, mcpServers: [] };
+      let result: Record<string, unknown> | undefined;
       if (!remoteId) {
-        const result = object(await rpc.request("session/new", params, CONNECT_TIMEOUT_MS));
+        result = object(await rpc.request("session/new", params, CONNECT_TIMEOUT_MS));
         if (typeof result?.sessionId !== "string" || !result.sessionId) throw new Error("Antigravity からセッション ID が返りませんでした。");
         s.saved.remoteId = result.sessionId;
       } else {
         const capabilities = object(init.agentCapabilities);
         if (capabilities?.loadSession === true) {
           s.replay = [];
-          await rpc.request("session/load", { ...params, sessionId: remoteId }, REOPEN_TIMEOUT_MS);
+          result = object(await rpc.request("session/load", { ...params, sessionId: remoteId }, REOPEN_TIMEOUT_MS));
           this.flushChunk(s);
           if (s.replay.length > 0) {
             // A replay from ACP cannot include text Gasho never sent.
@@ -269,12 +308,13 @@ export class AntigravitySessions {
             await this.save();
           }
         } else if (object(object(capabilities?.sessionCapabilities)?.resume)) {
-          await rpc.request("session/resume", { ...params, sessionId: remoteId }, REOPEN_TIMEOUT_MS);
+          result = object(await rpc.request("session/resume", { ...params, sessionId: remoteId }, REOPEN_TIMEOUT_MS));
         } else {
           throw new Error("この Antigravity は保存済みの会話を再開できません。新しいセッションを起動してください。");
         }
       }
       if (!rpc.open || s.rpc !== rpc) throw new Error("Antigravity との接続が切れました。");
+      if (Array.isArray(result?.configOptions)) this.applyConfig(s, result.configOptions);
       s.ready = true;
       this.updateStatus(s);
     } catch (e) {
@@ -322,8 +362,14 @@ export class AntigravitySessions {
       this.event(s, "Notification", { notificationType: "permission_prompt", toolName, summary: toolName });
       return;
     }
-    if (method !== "session/update" || (!s.replay && !s.turning)) return;
+    if (method !== "session/update") return;
     const update = object(params.update);
+    if (update?.sessionUpdate === "config_option_update") {
+      this.applyConfig(s, update.configOptions);
+      if (s.ready) this.o.changed();
+      return;
+    }
+    if (!s.replay && !s.turning) return;
     const content = object(update?.content);
     const kind = update?.sessionUpdate;
     if ((kind === "agent_message_chunk" || (s.replay && kind === "user_message_chunk")) && content?.type === "text" && typeof content.text === "string") {
@@ -346,6 +392,40 @@ export class AntigravitySessions {
     }
   }
 
+  private applyConfig(s: State, value: unknown): void {
+    delete s.info.agentConfig;
+    delete s.configIds;
+    delete s.info.model;
+    if (!Array.isArray(value)) return;
+    const config: AgentInputConfig = {};
+    const ids: NonNullable<State["configIds"]> = {};
+    for (const entry of value) {
+      const option = object(entry);
+      if (option?.type !== "select" || typeof option.id !== "string" || typeof option.currentValue !== "string" || !Array.isArray(option.options)) continue;
+      const field = option.category === "model" ? "model" : option.category === "thought_level" ? "effort" : undefined;
+      if (!field) continue;
+      const choices: AgentSelector["options"] = [];
+      for (const item of option.options.flatMap((v: unknown) => {
+        const group = object(v);
+        return Array.isArray(group?.options) ? group.options : [v];
+      })) {
+        const choice = object(item);
+        if (typeof choice?.value === "string" && typeof choice.name === "string") {
+          choices.push({ id: choice.value, name: choice.name, description: typeof choice.description === "string" ? choice.description : undefined });
+        }
+      }
+      if (!choices.length) continue;
+      ids[field] = option.id;
+      config[field] = { current: option.currentValue, options: choices };
+    }
+    if (config.model || config.effort) {
+      s.info.agentConfig = config;
+      s.configIds = ids;
+    }
+    const model = config.model;
+    if (model) s.info.model = model.options.find((m) => m.id === model.current)?.name ?? model.current;
+  }
+
   private cancelPermissions(s: State): void {
     for (const p of s.pending.values()) s.rpc?.respond(p.id, { outcome: { outcome: "cancelled" } });
     s.pending.clear();
@@ -353,7 +433,7 @@ export class AntigravitySessions {
 
   private next(s: State): void {
     const rpc = s.rpc;
-    if (s.turning || !s.ready || !rpc?.open || s.queue.length === 0) return;
+    if (s.turning || s.configuring || !s.ready || !rpc?.open || s.queue.length === 0) return;
     const text = s.queue.shift()!;
     s.turning = true;
     s.cancelled = false;

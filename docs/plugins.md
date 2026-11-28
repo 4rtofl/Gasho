@@ -388,11 +388,11 @@ composerFooter: [{ id: "draft", component: DraftTokens }],
 
 部品が受け取るものと、`when` と `order` の決まりは、会話の末尾（P13）と同じである。プラグインが複数あるときは、`order` の小さいものから左に並べる。部品がエラーを投げたときは、行が狭いので「もう一度」を出さず、部品を出さない。エラーは、プラグインの画面に出す。
 
-Gasho から起動したセッションの `SessionInfo` には、Claude Code がステータスラインに渡す値が入る。入れるのは、プラグインの API 1.4 に対応した gasho-daemon である。
+Gasho から起動した Claude Code のセッションの `SessionInfo` には、Claude Code がステータスラインに渡す値が入る。Codex のセッションにも、app-server が知らせれば `context` が入る（`limits` は入らない）。入れるのは、プラグインの API 1.4 に対応した gasho-daemon である。
 
 | フィールド | 中身 |
 |---|---|
-| `context` | Context Window。いま使っているトークン数（`used`）、大きさ（`size`）、使用率（`percent`、0〜100 の整数）と、Claude Code が知らせた時刻（`at`）。最初の返答の前はない |
+| `context` | Context Window。いま使っているトークン数（`used`）、大きさ（`size`）、使用率（`percent`、0〜100 の整数）と、エージェントが知らせた時刻（`at`）。最初の返答の前はない |
 | `limits` | Claude.ai のプランの使用量の上限。5時間の上限（`fiveHour`）と、すべてのモデルを合わせた週の上限（`sevenDay`）で、それぞれ使用率（`percent`）とリセットの時刻（`resetsAt`）を持つ。そのセッションの最後の返答の時点の値で、`at` はその時刻。最初の返答の前と、API キーで使っているセッションではない。5時間の上限は、プランによってない |
 
 値は、Claude Code がステータスラインのコマンドに渡す JSON の `context_window` と `rate_limits` から、gasho-daemon が取る。gasho-daemon は、セッションを起動するとき（フォークを含む）、`--settings` で、ステータスラインのコマンドを gasho-daemon の中継のコマンド（`statusline-relay`）にする。中継のコマンドは、受け取った値を、hooks を受けているのと同じ 127.0.0.1 のポート（`/statusline`）に、hooks と同じ秘密の値を付けて送る。そして、利用者がそのフォルダーに設定していたステータスラインのコマンドを同じ JSON で実行し、その出力を返す。`--settings` は利用者とプロジェクトの設定より優先されるので、こうしないと、利用者のステータスラインが消える。`padding` と `refreshInterval` も引き継ぐ。値の変わらない報告では `at` を変えないので、`at` は、値が変わった返答の時刻になる。

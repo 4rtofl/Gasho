@@ -1,8 +1,8 @@
 // The footer of a session's screen (4rtofl/Gasho#298): one line at the bottom of the session's column with the
 // connection to the Gasho server and this browser's name, the memory of the session's working server, the plugins'
-// parts (P21), the session's context window, and the Claude.ai plan's usage limits. Pressing the context window or a
-// limit opens the details, as the usage plugin's popover did. On a phone the line is short (numbers only), each item
-// opens the details (with the memory), and what does not fit the width is left out. The footer keeps the iPhone's home
+// parts (P21), the session's context window, and, for a session of Claude Code, the Claude.ai plan's usage limits.
+// Pressing the context window or a limit opens the details, as the usage plugin's popover did. On a phone the line is
+// short (numbers only), each item opens the details (with the memory), and what does not fit the width is left out. The footer keeps the iPhone's home
 // indicator clear (its safe area), right under the chat box.
 //
 // The limits come from the status line of the working server's sessions (SessionInfo.limits) and from Claude Code's
@@ -13,6 +13,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Popover } from "radix-ui";
 import type { MachineInfo, MachineMemory, MachineUsage, SessionInfo } from "@gasho/protocol";
 import { MEMORY_LEVELS, memoryAmount, memoryLevel, memoryPercent } from "@/components/memory-meters";
+import { sessionAgent } from "@/lib/agents";
 import { relativeTime } from "@/lib/format";
 import { DESKTOP, useMediaQuery, usePageVisible } from "@/lib/media";
 import {
@@ -57,10 +58,10 @@ const TONE_BAR: Record<Tone, string> = {
  * Asks the Gasho server to have the working server read its plan usage again when what is known is too old: while the
  * page is on screen, and sooner while the details are open.
  */
-function useUsageReads(machine: MachineInfo, open: boolean): void {
+function useUsageReads(machine: MachineInfo, claude: boolean, open: boolean): void {
   const visible = usePageVisible();
   const tick = useNow(ASK_EVERY_MS);
-  const can = machine.connected && machine.canReadUsage === true;
+  const can = claude && machine.connected && machine.canReadUsage === true;
   useEffect(() => {
     if (can && visible) sendToHub({ type: "usage.get", machine: machine.id, maxAgeMs: open ? DETAILS_MAX_AGE_MS : FOOTER_MAX_AGE_MS });
   }, [can, visible, open, tick, machine.id]);
@@ -72,10 +73,12 @@ export function SessionFooter({ machine, session }: { machine: MachineInfo; sess
   const now = useNow(30_000);
   const [open, setOpen] = useState(false);
   const bar = useRef<HTMLDivElement>(null);
-  useUsageReads(machine, open);
+  // The plan's limits are Claude Code's: another agent's session spends none of them.
+  const claude = sessionAgent(session) === "claude";
+  useUsageReads(machine, claude, open);
 
   const known = usage[machine.id];
-  const view = limitsView(known?.usage, latestStatusLineLimits(machine));
+  const view = claude ? limitsView(known?.usage, latestStatusLineLimits(machine)) : undefined;
   const mem = machine.connected ? memory[machine.id] : undefined;
   const context = session.context;
   const rows = footerRows(view).flatMap((row) => {
@@ -395,6 +398,8 @@ export function UsageDetails({
         ? "この working server の Claude Code は Claude.ai のプランで使っていないので、使用量の上限はありません。"
         : modelsNote;
   const context = session.context;
+  const claude = sessionAgent(session) === "claude";
+  const offline = !machine.connected && <p className="text-xs text-muted-foreground">working server がオフラインです。最後に受け取った値を出しています。</p>;
   return (
     <div className="flex flex-col gap-3">
       {phone && (
@@ -420,7 +425,8 @@ export function UsageDetails({
           <p className="text-xs text-muted-foreground">最後の返答の時点（{relativeTime(context.at, now)}）</p>
         </section>
       )}
-      <section className={cn("flex flex-col gap-2", (context || memory) && "border-t border-border pt-3")}>
+      {!claude && offline}
+      {claude && <section className={cn("flex flex-col gap-2", (context || memory) && "border-t border-border pt-3")}>
         {view && view.source !== "none" && (
           <>
             {view.rows
@@ -462,8 +468,8 @@ export function UsageDetails({
             </div>
           )}
         </div>
-        {!machine.connected && <p className="text-xs text-muted-foreground">working server がオフラインです。最後に受け取った値を出しています。</p>}
-      </section>
+        {offline}
+      </section>}
     </div>
   );
 }

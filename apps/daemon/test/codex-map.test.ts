@@ -127,7 +127,7 @@ const commandRequest = (params: Record<string, unknown> = {}) => {
 };
 
 test("a command's approval: allow, deny, and always with what Codex proposes", () => {
-  const r = commandRequest({ proposedExecpolicyAmendment: ["touch", "a.txt"] });
+  const r = commandRequest({ availableDecisions: ["accept", { acceptWithExecpolicyAmendment: { execpolicy_amendment: ["touch", "a.txt"] } }, "cancel"] });
   assert.equal(r.info.id, "codex-7");
   assert.equal(r.info.toolName, "Bash");
   assert.equal(r.info.summary, "touch a.txt");
@@ -137,10 +137,23 @@ test("a command's approval: allow, deny, and always with what Codex proposes", (
   assert.deepEqual(replyOf(r, "always", undefined), { result: { decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: ["touch", "a.txt"] } } } });
 });
 
-test("without a proposal, always is not offered and cannot be answered", () => {
-  const r = commandRequest();
+test("always is offered only when Codex offers a way on, and cannot be answered otherwise", () => {
+  const r = commandRequest({ availableDecisions: ["accept", "cancel"], proposedExecpolicyAmendment: ["touch"] });
   assert.equal(r.info.always, undefined);
   assert.ok("error" in replyOf(r, "always", undefined));
+});
+
+test("always lasts for the session when that is what Codex offers", () => {
+  const r = commandRequest({ availableDecisions: ["accept", "acceptForSession", "cancel"] });
+  assert.equal(r.info.always, "このセッションのみ");
+  assert.deepEqual(replyOf(r, "always", undefined), { result: { decision: "acceptForSession" } });
+});
+
+test("an offered network rule that allows the host is what always applies", () => {
+  const network = { applyNetworkPolicyAmendment: { network_policy_amendment: { host: "example.test", action: "allow" } } };
+  const r = commandRequest({ availableDecisions: ["accept", "acceptForSession", network, "cancel"] });
+  assert.equal(r.info.always, "example.test への接続");
+  assert.deepEqual(replyOf(r, "always", undefined), { result: { decision: network } });
 });
 
 test("a file change's approval says what the change is, from the item as it started", () => {
@@ -150,10 +163,10 @@ test("a file change's approval says what the change is, from the item as it star
   assert.equal(r.info.toolName, "apply_patch");
   assert.equal(r.info.summary, "a.txt");
   assert.match(r.info.input, /"reason": "write"/);
-  assert.equal(r.info.always, undefined);
+  assert.equal(r.info.always, "同じファイル、このセッションのみ");
   assert.deepEqual(replyOf(r, "allow", undefined), { result: { decision: "accept" } });
   assert.deepEqual(replyOf(r, "deny", undefined), { result: { decision: "decline" } });
-  assert.ok("error" in replyOf(r, "always", undefined));
+  assert.deepEqual(replyOf(r, "always", undefined), { result: { decision: "acceptForSession" } });
 });
 
 test("a request for more permissions grants what it asks for this turn, or nothing", () => {
@@ -162,6 +175,18 @@ test("a request for more permissions grants what it asks for this turn, or nothi
   assert.ok(r);
   assert.equal(r.info.summary, "needs network");
   assert.deepEqual(replyOf(r, "allow", undefined), { result: { permissions: { network: { enabled: true } }, scope: "turn" } });
+  assert.deepEqual(replyOf(r, "deny", undefined), { result: { permissions: {}, scope: "turn" } });
+  assert.equal(r.info.always, "このセッションのみ");
+  assert.deepEqual(replyOf(r, "always", undefined), { result: { permissions: { network: { enabled: true } }, scope: "session" } });
+});
+
+test("permissions too long to be shown whole are not offered beyond this once", () => {
+  const permissions = { fileSystem: { write: Array.from({ length: 100 }, (_, i) => `/work/folder-${i}`) } };
+  const r = requestOf(2, "item/permissions/requestApproval", { threadId: "t", cwd: "/w", permissions }, undefined, 100);
+  assert.ok(r);
+  assert.equal(r.info.always, undefined);
+  assert.ok("error" in replyOf(r, "always", undefined));
+  assert.deepEqual(replyOf(r, "allow", undefined), { result: { permissions, scope: "turn" } });
   assert.deepEqual(replyOf(r, "deny", undefined), { result: { permissions: {}, scope: "turn" } });
 });
 

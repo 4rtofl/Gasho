@@ -1,6 +1,6 @@
 // What Codex's app-server says, in Gasho's terms: a thread's status, the items of its conversation, and the approvals it
 // asks for. Only the fields used here are typed; `codex app-server generate-ts` gives the whole protocol.
-import type { AskedQuestion, PermissionDecision, PermissionRequestInfo, QuestionAnswer, SessionStatus, TranscriptEntry } from "@gasho/protocol";
+import type { AskedQuestion, PermissionDecision, PermissionRequestInfo, QuestionAnswer, SessionStatus, TokenUsage, TranscriptEntry } from "@gasho/protocol";
 import { clip } from "./util.ts";
 
 /** As for Claude Code's transcripts (transcript.ts). */
@@ -182,18 +182,21 @@ export function requestOf(id: string | number, method: string, params: Record<st
   switch (method) {
     case "item/commandExecution/requestApproval": {
       const command = typeof params.command === "string" ? params.command : "";
-      const amendment = params.proposedExecpolicyAmendment;
-      const always = Array.isArray(amendment) && amendment.length > 0 ? { always: amendment.join(" ") } : {};
-      return made({ ...base, toolName: "Bash", input: clip(JSON.stringify({ command, cwd: params.cwd, ...reason }, null, 2), MAX_TOOL), summary: clip(command, MAX_SUMMARY), ...always });
+      const always = commandAlways(params)?.label;
+      return made({ ...base, toolName: "Bash", input: clip(JSON.stringify({ command, cwd: params.cwd, ...reason }, null, 2), MAX_TOOL), summary: clip(command, MAX_SUMMARY), ...(always ? { always } : {}) });
     }
     case "item/fileChange/requestApproval": {
       const changes = item ? changesOf(item) : [];
       const summary = changes.map((c) => String(c.path)).join(", ");
-      return made({ ...base, toolName: "apply_patch", input: clip(JSON.stringify({ ...(item ? (fileChangeInput(item) as object) : {}), ...reason }, null, 2), MAX_TOOL), ...(summary ? { summary: clip(summary, MAX_SUMMARY) } : {}) });
+      const always = typeof params.grantRoot === "string" ? `${params.grantRoot} への書き込み、このセッションのみ` : "同じファイル、このセッションのみ";
+      return made({ ...base, toolName: "apply_patch", input: clip(JSON.stringify({ ...(item ? (fileChangeInput(item) as object) : {}), ...reason }, null, 2), MAX_TOOL), ...(summary ? { summary: clip(summary, MAX_SUMMARY) } : {}), always });
     }
     case "item/permissions/requestApproval": {
       const summary = typeof params.reason === "string" ? params.reason : "";
-      return made({ ...base, toolName: "Permissions", input: clip(JSON.stringify({ permissions: params.permissions, cwd: params.cwd, ...reason }, null, 2), MAX_TOOL), ...(summary ? { summary: clip(summary, MAX_SUMMARY) } : {}) });
+      const input = JSON.stringify({ permissions: params.permissions, cwd: params.cwd, ...reason }, null, 2);
+      // What the person cannot read whole is not allowed beyond this once.
+      const always = input.length <= MAX_TOOL ? { always: "このセッションのみ" } : {};
+      return made({ ...base, toolName: "Permissions", input: clip(input, MAX_TOOL), ...(summary ? { summary: clip(summary, MAX_SUMMARY) } : {}), ...always });
     }
     case "item/tool/requestUserInput": {
       const questions: AskedQuestion[] = asked(params).map((q) => ({
@@ -208,24 +211,39 @@ export function requestOf(id: string | number, method: string, params: Record<st
   }
 }
 
+/** A decision of `availableDecisions` that carries a rule (the others are plain strings). */
+interface RuleDecision {
+  acceptWithExecpolicyAmendment?: { execpolicy_amendment: string[] };
+  applyNetworkPolicyAmendment?: { network_policy_amendment: { host: string; action: string } };
+}
+
+/**
+ * What "allow from now on" means for a command: the first of these that Codex offers for it (a rule for the command,
+ * a rule for the host it wants to reach, the rest of the session); undefined when it offers none. Codex 0.172.0 sends
+ * `availableDecisions` although its stable schema leaves it out.
+ */
+function commandAlways(params: Record<string, unknown>): { label: string; decision: unknown } | undefined {
+  const offered = (params.availableDecisions ?? []) as (string | RuleDecision)[];
+  const rules = offered.filter((d) => typeof d === "object");
+  const command = rules.find((d) => d.acceptWithExecpolicyAmendment);
+  if (command) return { label: command.acceptWithExecpolicyAmendment!.execpolicy_amendment.join(" "), decision: command };
+  const network = rules.find((d) => d.applyNetworkPolicyAmendment?.network_policy_amendment.action === "allow");
+  if (network) return { label: `${network.applyNetworkPolicyAmendment!.network_policy_amendment.host} への接続`, decision: network };
+  return offered.includes("acceptForSession") ? { label: "このセッションのみ", decision: "acceptForSession" } : undefined;
+}
+
 /** What to answer a request with, for Gasho's answer; `error` when that answer cannot be given to this request. */
 export function replyOf(r: CodexRequest, decision: PermissionDecision, answers: QuestionAnswer[] | undefined): { result: unknown } | { error: string } {
+  if (decision === "always" && r.info.always === undefined) return { error: "この確認には「今後も許可」を使えません。" };
   switch (r.method) {
-    case "item/commandExecution/requestApproval": {
-      if (decision === "allow") return { result: { decision: "accept" } };
-      if (decision === "deny") return { result: { decision: "decline" } };
-      const amendment = r.params.proposedExecpolicyAmendment;
-      if (!Array.isArray(amendment) || amendment.length === 0) return { error: "この確認には「今後も許可」を使えません。" };
-      return { result: { decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: amendment } } } };
-    }
+    case "item/commandExecution/requestApproval":
+      return { result: { decision: decision === "allow" ? "accept" : decision === "deny" ? "decline" : commandAlways(r.params)!.decision } };
     case "item/fileChange/requestApproval":
-      if (decision === "always") return { error: "この確認には「今後も許可」を使えません。" };
-      return { result: { decision: decision === "allow" ? "accept" : "decline" } };
+      return { result: { decision: decision === "allow" ? "accept" : decision === "deny" ? "decline" : "acceptForSession" } };
     case "item/permissions/requestApproval": {
-      if (decision === "always") return { error: "この確認には「今後も許可」を使えません。" };
       if (decision === "deny") return { result: { permissions: {}, scope: "turn" } };
       const wanted = (r.params.permissions ?? {}) as Record<string, unknown>;
-      return { result: { permissions: Object.fromEntries(Object.entries(wanted).filter(([, v]) => v !== null && v !== undefined)), scope: "turn" } };
+      return { result: { permissions: Object.fromEntries(Object.entries(wanted).filter(([, v]) => v !== null && v !== undefined)), scope: decision === "always" ? "session" : "turn" } };
     }
     case "item/tool/requestUserInput": {
       if (decision === "deny") return { result: { answers: {} } };
@@ -239,4 +257,27 @@ export function replyOf(r: CodexRequest, decision: PermissionDecision, answers: 
     default:
       return { error: "この確認には答えられません。" };
   }
+}
+
+/** The tokens of `thread/tokenUsage/updated`. `inputTokens` holds the cached and the cache-written ones. */
+export interface CodexTokenBreakdown {
+  totalTokens: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteInputTokens?: number;
+  outputTokens: number;
+}
+
+export interface CodexTokenUsage {
+  /** Every reply of the thread added up. */
+  total: CodexTokenBreakdown;
+  /** The latest reply: what its `totalTokens` counts is in the context now. */
+  last: CodexTokenBreakdown;
+  modelContextWindow?: number | null;
+}
+
+/** A breakdown in Gasho's kinds, which do not overlap. */
+export function usageOfBreakdown(b: CodexTokenBreakdown): TokenUsage {
+  const cacheWrite = b.cacheWriteInputTokens ?? 0;
+  return { input: b.inputTokens - b.cachedInputTokens - cacheWrite, output: b.outputTokens, cacheWrite, cacheRead: b.cachedInputTokens };
 }

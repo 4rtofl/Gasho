@@ -7,6 +7,8 @@
 //   worktree-guard-hook.ts, next to this file; see sessionCommands in statusline.ts) that stops those two tools and says
 //   what to do instead, and
 // - the same rule in `--append-system-prompt`, so that Claude picks the session from the start.
+// The threads of Codex that Gasho starts get the rule alone, as developer instructions (CODEX_INSTRUCTIONS; see
+// codex-sessions.ts).
 // None of these touches the person's settings: they hold for the sessions Gasho starts, and only while they run.
 // This file uses only Node.js's own modules: the hook's script imports it, and starts at every call of those tools.
 import path from "node:path";
@@ -41,6 +43,15 @@ export const SYSTEM_PROMPT =
   `${INSTEAD}` +
   "「Subagent でやって」と頼まれても、worktree を使う作業はこの形にする（これらは hook で止められる）。" +
   "worktree を使わない Subagent（Explore などの調べもの）はそのまま使ってよい。";
+
+/** The same rule for Codex, added to the thread's developer instructions. */
+export const CODEX_INSTRUCTIONS =
+  "このセッションは Gasho（gasho-daemon）が起動した。Gasho の利用者は、画面でセッションを見守る。" +
+  "worktree で作業するとき、また作業を worktree に分けて任せるときは、subagent にその worktree で作業させず、" +
+  "worktree を作り、その中に Gasho のセッションを `gasho-daemon session launch` で起動して、そのセッションに指示する。" +
+  `手順は ${path.join(PLUGIN_DIR, "skills", "launch-gasho-session", "SKILL.md")} を読む` +
+  "（Claude Code 向けに書いてある。SendMessage の代わりには `gasho-daemon session send` を使う）。" +
+  "worktree を使わない subagent はそのまま使ってよい。";
 
 /** What the hook answers to a tool call it stops (PreToolUse's `permissionDecision: "deny"`). */
 export interface GuardReply {

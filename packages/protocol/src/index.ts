@@ -133,14 +133,18 @@ export interface SessionInfo {
   model?: string;
   /** Sessions started from Gasho: the effort level and ultracode as Claude Code shows them above the prompt. */
   effort?: EffortLevel;
+  agentConfig?: AgentInputConfig;
   ultracode?: boolean;
-  /** Sessions started from Gasho: the tokens used so far, by the session's replies and its subagents'. */
+  /**
+   * Sessions started from Gasho: the tokens used so far. Claude Code: by the session's replies and its subagents'. Codex:
+   * the thread's total as its app-server says it, without its subagents.
+   */
   tokens?: TokenUsage;
   /** …and per hour over the last 48 hours, oldest first: [start of the hour (ms), use]. Hours without use are left out. */
   tokenHours?: [number, TokenUsage][];
   /**
-   * Sessions started from Gasho by a gasho-daemon of plugin API 1.4 or later: the context window, as Claude Code's
-   * status line last reported it. Absent until the session's first reply.
+   * Sessions started from Gasho by a gasho-daemon of plugin API 1.4 or later: the context window, as the session's agent
+   * last reported it (Claude Code's status line, Codex's thread/tokenUsage/updated). Absent until it does.
    */
   context?: ContextWindow;
   /**
@@ -197,8 +201,8 @@ export interface PermissionRequestInfo {
   summary?: string;
   at: number;
   /**
-   * What "allow from now on" would allow, in Claude Code's notation ("Bash(npm test:*)"), when Claude Code suggests
-   * a permanent rule for this request; absent when it does not, and "always" cannot be answered.
+   * What "allow from now on" would allow (Claude Code's notation, "Bash(npm test:*)"; Codex's rule or how long it
+   * lasts), when the agent offers it for this request; absent when it does not, and "always" cannot be answered.
    */
   always?: string;
   /**
@@ -249,18 +253,21 @@ export interface QuestionAnswer {
 /** The permission mode a session goes on in once its plan is approved: auto mode, or asking before each edit. */
 export type PlanMode = "auto" | "default";
 
-/** allow: this once. always: this time and from now on, as Claude Code suggests. deny: Claude stops and waits. */
+/** allow: this once. always: this time and from now on, as the agent offers. deny: Claude stops and waits. */
 export type PermissionDecision = "allow" | "always" | "deny";
 
-/** A session's context window, from Claude Code's status line (its `context_window`). */
+/** A session's context window (see SessionInfo.context). */
 export interface ContextWindow {
-  /** Input tokens in the context now: the latest reply's input, cache writes and cache reads. */
+  /**
+   * Tokens in the context now. Claude Code: the latest reply's input, cache writes and cache reads; Codex: also its
+   * output.
+   */
   used: number;
   /** The size of the model's context window (200000, 1000000). */
   size: number;
-  /** The share used, 0-100, as Claude Code works it out (a whole number). */
+  /** The share used, a whole number from 0 to 100: as Claude Code works it out; for Codex, used / size. */
   percent: number;
-  /** When Claude Code reported it (ms since the epoch, the working server's clock). */
+  /** When the agent reported it (ms since the epoch, the working server's clock). */
   at: number;
 }
 
@@ -521,6 +528,8 @@ export interface AgentInfo {
   canLaunch?: boolean;
   /** What its sessions can do. Absent from a gasho-daemon that does not tell: there, only Claude Code runs, and it can do all of it. */
   operations?: AgentOperation[];
+  canUseLaunchDefaults?: true;
+  launchCatalog?: AgentInputConfig;
 }
 
 /** The agents gasho-daemon looked for and found on its working server: one that is not installed is not listed. */
@@ -680,6 +689,7 @@ export interface ServerInfo {
    * Absent: Claude Code's own default model.
    */
   defaultModel?: SessionModel;
+  agentDefaults?: Partial<Record<Exclude<AgentKind, "claude">, AgentInputSelection>>;
 }
 
 /** The latest published versions, as the Gasho server last looked them up on the package registry. */
@@ -1265,6 +1275,8 @@ export type ClientToHub =
   | { type: "defaultAgent.set"; requestId: string; agent: AgentKind }
   /** Changes the effort level a new session of Claude Code starts with; without `effort`, Claude Code's own default (as defaultAgent.set). */
   | { type: "defaultEffort.set"; requestId: string; effort?: EffortLevel }
+  /** Changes the model or effort a new session of another agent starts with; without `value`, the agent's own default. */
+  | { type: "agentDefault.set"; requestId: string; agent: Exclude<AgentKind, "claude">; field: keyof AgentInputSelection; value?: string }
   /** Changes the model a new session of Claude Code starts with; without `model` (or "default"), Claude Code's own default. */
   | { type: "defaultModel.set"; requestId: string; model?: SessionModel }
   /**
@@ -1323,6 +1335,33 @@ export interface ModelOption {
   name: string;
 }
 
+export interface AgentChoice {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+export interface AgentModelChoice extends AgentChoice {
+  efforts?: AgentChoice[];
+  defaultEffort?: string;
+  isDefault?: boolean;
+}
+
+export interface AgentSelector<T extends AgentChoice = AgentChoice> {
+  current?: string;
+  options: T[];
+}
+
+export interface AgentInputConfig {
+  model?: AgentSelector<AgentModelChoice>;
+  effort?: AgentSelector;
+}
+
+export interface AgentInputSelection {
+  model?: string;
+  effort?: string;
+}
+
 /** A file sent with an input, base64-encoded. The Gasho server allows 5 files and 10 MB in all per input. */
 export interface InputFile {
   name: string;
@@ -1344,7 +1383,7 @@ export type SessionCommand =
    * (ServerInfo.defaultEffort) to a launch of Claude Code without one. A model that does not have it starts with one it
    * has, or none. `model`: likewise (`--model`, ServerInfo.defaultModel); "default" passes nothing.
    */
-  | { type: "session.launch"; cwd: string; name?: string; trust?: boolean; agent?: AgentKind; effort?: EffortLevel; model?: SessionModel }
+  | { type: "session.launch"; cwd: string; name?: string; trust?: boolean; agent?: AgentKind; effort?: EffortLevel; model?: SessionModel; launchDefaults?: AgentInputSelection }
   /** Makes the folder `name` inside the folder `parent` (gasho-daemon 0.10.0 and later). */
   | { type: "folder.create"; parent: string; name: string }
   /**
@@ -1371,6 +1410,7 @@ export type SessionCommand =
       text: string;
       model?: SessionModel;
       effort?: EffortLevel;
+      agentSelection?: AgentInputSelection;
       ultracode?: boolean;
       files?: InputFile[];
       /** Sent by a plugin (its id), for the operations log. */
@@ -1477,6 +1517,7 @@ export interface WorktreeChanges {
 export interface CommandResult {
   ok: boolean;
   error?: string;
+  unknown?: true;
   /**
    * session.launch, session.fork, session.resume: the new session. session.input: whether the input waits for the session to become
    * idle; session.rename: whether `/rename` does.

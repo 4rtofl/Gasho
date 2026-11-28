@@ -21,8 +21,9 @@ const ICON: Record<Exclude<AgentKind, "antigravity">, { path: string; color: str
 export function AgentMark({ agent, className }: { agent: AgentKind; className?: string }) {
   if (agent === "antigravity") {
     const name = AGENT_NAME[agent];
-    // Scaled up to the size of the other marks: the published file has margins around the icon.
-    return <img src={antigravityIcon} alt={name} title={name} className={cn("size-3.5 shrink-0 scale-125", className)} />;
+    // Scaled up to the size of the other marks: the published file has margins around the icon. Not draggable: the
+    // browser's drag of an image would cancel the drag that reorders the row holding it (lib/sortable.ts).
+    return <img src={antigravityIcon} alt={name} title={name} draggable={false} className={cn("size-3.5 shrink-0 scale-125", className)} />;
   }
   const { path, color } = ICON[agent];
   return (

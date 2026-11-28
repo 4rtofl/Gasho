@@ -3,6 +3,7 @@
 import type { AgentKind, MachineInfo } from "@gasho/protocol";
 import { ContextMenu } from "radix-ui";
 import type { ReactElement } from "react";
+import { AgentMark } from "@/components/agent-mark";
 import { MENU, MENU_ITEM } from "@/components/dialog-styles";
 import { AGENT_NAME, agentUsable, codexProblem, offeredAgents } from "@/lib/agents";
 
@@ -17,10 +18,17 @@ export function LaunchMenu({ machine, onPick, children }: { machine: MachineInfo
         <ContextMenu.Content collisionPadding={8} className={MENU}>
           <ContextMenu.Label className="px-2.5 pt-1 pb-1.5 text-xs text-muted-foreground">エージェントを選んで起動</ContextMenu.Label>
           <ContextMenu.Item disabled={!agentUsable(machine, "claude")} onSelect={() => onPick("claude")} className={MENU_ITEM}>
+            {/* Hidden from the item's accessible name, which already says the agent's. */}
+            <span aria-hidden className="flex">
+              <AgentMark agent="claude" />
+            </span>
             {AGENT_NAME.claude}
           </ContextMenu.Item>
           {agents.map((agent) => (
             <ContextMenu.Item key={agent} disabled={!agentUsable(machine, agent)} onSelect={() => onPick(agent)} className={MENU_ITEM}>
+              <span aria-hidden className="flex">
+                <AgentMark agent={agent} />
+              </span>
               {AGENT_NAME[agent]}
             </ContextMenu.Item>
           ))}

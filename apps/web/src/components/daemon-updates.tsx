@@ -5,9 +5,10 @@ import { CircleArrowUp, Copy, ExternalLink, LoaderCircle, RefreshCw, RotateCcw }
 import { AlertDialog } from "radix-ui";
 import { useEffect, useRef, useState } from "react";
 import type { AgentInfo, AgentKind, MachineInfo, ServerInfo } from "@gasho/protocol";
+import { AgentMark } from "@/components/agent-mark";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG_PANEL } from "@/components/dialog-styles";
 import { ConfirmUpdateAll, UpdateAllButton, useUpdateAll } from "@/components/update-all";
-import { AGENT_LOGIN_COMMAND, AGENT_NAME, AGENT_STATUS_LABEL, CODEX_CHECKED_VERSION, codexOutdated } from "@/lib/agents";
+import { AGENT_LOGIN_COMMAND, AGENT_NAME, AGENT_STATUS_LABEL, CODEX_CHECKED_VERSION, codexOutdated, showsAgents } from "@/lib/agents";
 import {
   changesUrl,
   compareVersions,
@@ -102,9 +103,15 @@ function CommandLine({ command }: { command: string }) {
 /** An agent on a working server: its version, whether it can be used, and what to do when it cannot. */
 function AgentState({ agent, info }: { agent: AgentKind; info: AgentInfo }) {
   const name = AGENT_NAME[agent];
+  const mark = showsAgents(useAppState().machines);
   return (
     <div className="mt-1">
       <p className="text-xs text-muted-foreground">
+        {mark && (
+          <span aria-hidden className="mr-1.5 inline-block align-[-3px]">
+            <AgentMark agent={agent} />
+          </span>
+        )}
         <span className="font-mono">{info.version ? `${name} ${info.version}` : name}</span>：{agent === "antigravity" ? "インストール済み（ログイン状態は未確認）" : AGENT_STATUS_LABEL[info.status]}
       </p>
       {info.status === "loginRequired" && (

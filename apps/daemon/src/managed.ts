@@ -140,17 +140,21 @@ export function switchQuestion(screen: string): { onYes: boolean; aboutCache: bo
 
 /**
  * The model in Claude Code's welcome banner, drawn when it starts and before the first message is recorded:
- * " ▐▛███▛█   Claude Code v2.1.322" / "▝▜██████▀  Sonnet 5.5 · Claude Ultra" / " ▝▝   ▝▝   ~/repos/app". Undefined when the
- * banner is not on the screen.
+ * " ▐▛███▛█   Claude Code v2.1.322" / "▝▜██████▀  Sonnet 5.5 · Claude Ultra" / " ▝▝   ▝▝   ~/repos/app". In a narrow
+ * terminal the plan has a line of its own, and the logo starts below the title: "           Claude Code v2.1.332" /
+ * " ▐▛███▛█   Sonnet 5.5 with high effort" / "▝▜██████▀  Claude Pro". Undefined when the banner is not on the screen.
  */
 export function bannerModel(screen: string): string | undefined {
   const lines = screen.split("\n");
   const at = lines.findIndex((l) => /Claude Code v\d/.test(l));
   if (at < 0) return undefined;
   // The logo is drawn with block elements (U+2580–U+259F).
-  const rest = (lines[at + 1] ?? "").replace(/^[\s\u2580-\u259f]+/, "");
-  // Started with --effort, Claude Code adds the effort level: "Haiku 5.5 with low effort".
-  const name = /^(.+?)\s+·\s/.exec(rest)?.[1]?.replace(/\s+with\s+\S+\s+effort$/i, "").trim();
+  const rest = (lines[at + 1] ?? "").replace(/^[\s\u2580-\u259f]+/, "").trimEnd();
+  // Without the logo on the title's line, the line below it is the model alone; otherwise the model ends at "·".
+  const model = /^\s*Claude Code v/.test(lines[at] ?? "") ? rest : /^(.+?)\s+·\s/.exec(rest)?.[1];
+  // Started with --effort, Claude Code adds the effort level ("Haiku 5.5 with low effort"), which a narrow terminal
+  // can cut: "Opus 4.6 (1M context) with high ef…".
+  const name = model?.replace(/\s+with\s+(?:\S+\s+effort|.*…)$/i, "").trim();
   return name && name.length <= 40 && /\d/.test(name) ? name : undefined;
 }
 

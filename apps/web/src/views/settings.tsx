@@ -317,8 +317,10 @@ function AgentDefaultsSection({ agent }: { agent: "codex" | "antigravity" }) {
   if (!server || (!agents.length && !current)) return null;
 
   const catalogs = agents.flatMap((info) => info.launchCatalog ?? []);
+  const models = catalogs.flatMap((c) => c.model?.options ?? []);
+  const savedModelGone = catalogs.length > 0 && !!current?.model && !models.some((m) => m.id === current.model);
   const optionsByField = [
-    { field: "model", label: "既定のモデル", options: catalogs.flatMap((c) => c.model?.options ?? []) },
+    { field: "model", label: "既定のモデル", options: models },
     {
       field: "effort", label: "既定の Effort",
       options: catalogs.flatMap((c) => {
@@ -333,10 +335,16 @@ function AgentDefaultsSection({ agent }: { agent: "codex" | "antigravity" }) {
     const value = current?.[field] ?? "";
     const selected = choices.get(value);
     const missing = value !== "" && selected === undefined;
-    const unavailable = missing ? `前に選んだ${field === "model" ? "モデル" : " Effort"}（いまは選べません）` : undefined;
-    return { field, label, choices, value, unavailable, summary: selected ?? unavailable };
+    // Without any candidate for this field, nothing says that the saved value cannot be picked.
+    const note = !missing || choices.size ? undefined
+      : field === "effort" && savedModelGone ? "モデルを選び直すと選べます" : "候補を受け取る前です";
+    const unlisted = !missing ? undefined : note
+      ? `${value}（${note}）`
+      : `前に選んだ${field === "model" ? "モデル" : " Effort"}（いまは選べません）`;
+    return { field, label, choices, value, note, unlisted, summary: selected ?? (note ? value : unlisted) };
   });
-  const summary = fields.flatMap((field) => field.summary ?? []).join("・");
+  const summaryNote = fields.find((field) => field.note)?.note;
+  const summary = fields.flatMap((field) => field.summary ?? []).join("・") + (summaryNote ? `（${summaryNote}）` : "");
   const pick = async (field: keyof AgentInputSelection, value: string) => {
     setError(undefined);
     const r = await setAgentDefault(agent, field, value || undefined);
@@ -353,8 +361,8 @@ function AgentDefaultsSection({ agent }: { agent: "codex" | "antigravity" }) {
       actions={<span className="text-sm">{summary || `${name} の既定`}</span>}
       bodyClassName="space-y-3"
     >
-      {fields.map(({ field, label, choices, value, unavailable }) => {
-        const showEffortHint = field === "effort" && agent === "antigravity" && catalogs.length > 0 && !choices.size;
+      {fields.map(({ field, label, choices, value, unlisted }) => {
+        const showEffortHint = field === "effort" && agent === "antigravity" && catalogs.length > 0 && !savedModelGone && !choices.size;
         return (
           <div key={field} className="max-w-sm space-y-1.5">
             <label className="block space-y-1.5">
@@ -367,7 +375,7 @@ function AgentDefaultsSection({ agent }: { agent: "codex" | "antigravity" }) {
                 className={FIELD}
               >
                 <option value="">{name} の既定</option>
-                {unavailable && <option value={value} disabled>{unavailable}</option>}
+                {unlisted && <option value={value} disabled>{unlisted}</option>}
                 {[...choices].map(([id, choice]) => <option key={id} value={id}>{choice}</option>)}
               </select>
             </label>

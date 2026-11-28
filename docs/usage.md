@@ -233,7 +233,7 @@ Claude Code が権限の確認を出しているあいだは、入力欄の上�
 ### モデル・Effort・Ultracode
 
 - 新しいセッションのモデルと Effort は、設定でエージェントごとに選べます。Claude Code は「Claude Code の既定のモデル」と「Claude Code の既定の Effort」、Codex と Antigravity はそれぞれの「既定値」を開きます。折りたたんだ見出しでも、選んでいる値を確認できます。設定はブラウザー間で共通です。Codex と Antigravity で適用できない値があるときは、セッションを起動したうえで理由を表示します。開き直しやフォークに既定値は使いません
-- Codex と Antigravity の候補は、Gasho でセッションを一度開くと届きます。Antigravity では、別のモデルの Effort を選びたいときは、セッションでそのモデルに切り替えると、working server が候補を覚えます
+- Codex と Antigravity の候補は、Gasho でセッションを一度開くと届きます。候補が届く前の欄と見出しには、保存している値を ID のまま出し、「（候補を受け取る前です）」と添えます（見出しでは最後に1回だけ）。保存しているモデルが候補から消えて Effort の候補が無いときは、「（モデルを選び直すと選べます）」と添えます。Antigravity では、別のモデルの Effort を選びたいときは、セッションでそのモデルに切り替えると、working server が候補を覚えます
 - Claude Code では入力欄で、モデル（既定・Opus 5.5 など、Claude Code の選択画面と同じ名前）、Effort（Low〜Max）、Ultracode（Effort のメニューの中のスイッチ）を選んで送ると、送る前にそのセッションだけ切り替える。全体の既定は変えない。会話の途中でモデルを変えると、次の返答では履歴を新しいモデルで読み直すので、時間とトークンが多くかかる
 - モデルの名前は、gasho-daemon が Claude Code の `/model` の選択画面から読んで覚える。覚えていないか24時間たったときは、待機中のいちばん新しい Gasho のセッションで選択画面を開いて閉じるので、その会話に `/model` の記録が残る
 - 入力欄に `/model` や `/effort high` のように書いて送ることはできない。すべての新しいセッションの既定も変えてしまうため。`/effort ultracode on` と `off` は送れる

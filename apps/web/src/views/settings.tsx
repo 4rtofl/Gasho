@@ -3,8 +3,8 @@
 // server's, the same for every browser. Then the versions of Gasho running now. Each is a section that folds
 // (lib/settings-sections).
 import { Check, CircleAlert, Copy, Cpu, Gauge, Info, RotateCcw, Type } from "lucide-react";
-import { useEffect, useState } from "react";
-import type { AgentKind, EffortLevel, SessionModel, TranscriptEntry } from "@gasho/protocol";
+import { useEffect, useId, useState } from "react";
+import type { AgentChoice, AgentInputSelection, AgentKind, EffortLevel, SessionModel, TranscriptEntry } from "@gasho/protocol";
 import { PushSettingsSection } from "@/components/push-settings";
 import { EFFORTS, MODELS } from "@/components/session-controls";
 import { TranscriptSample } from "@/components/transcript";
@@ -16,7 +16,7 @@ import { AGENT_NAME, EXTRA_AGENTS, offeredAgents } from "@/lib/agents";
 import { CHAT_TEXT_DEFAULT, CHAT_TEXT_MAX, CHAT_TEXT_MIN, useChatTextSize } from "@/lib/chat-text";
 import { go } from "@/lib/route";
 import { useSettingsSectionOpen } from "@/lib/settings-sections";
-import { OWN_BUILD, setDefaultAgent, setDefaultEffort, setDefaultModel, useAppState } from "@/lib/store";
+import { OWN_BUILD, setAgentDefault, setDefaultAgent, setDefaultEffort, setDefaultModel, useAppState } from "@/lib/store";
 import { copyToClipboard } from "@/lib/utils";
 import { versionRows, versionsText } from "@/lib/versions";
 import { PluginSettingsSections } from "@/plugins/parts";
@@ -81,7 +81,7 @@ export function SettingsView() {
     <div className="mx-auto flex max-w-3xl flex-col gap-6 p-4 md:p-6">
       <div>
         <h1 className="text-xl font-semibold tracking-tight">設定</h1>
-        <p className="text-sm text-muted-foreground">このブラウザで使う設定です。スマホと PC で別々に決められます。</p>
+        <p className="text-sm text-muted-foreground">セッションの既定値と、このブラウザーの表示・通知を設定できます。</p>
       </div>
 
       <AccordionSection
@@ -145,6 +145,8 @@ export function SettingsView() {
 
       <DefaultEffortSection />
 
+      {EXTRA_AGENTS.map((agent) => <AgentDefaultsSection key={agent} agent={agent} />)}
+
       <PushSettingsSection />
 
       {/* The settings of the enabled plugins (docs/plugins.md, P5). */}
@@ -174,7 +176,7 @@ export function DefaultAgentSection() {
   return (
     <AccordionSection
       title="既定のエージェント"
-      description="「＋」で起動するエージェントです。どのブラウザーでも同じです。Codex を使えない working server では、Claude Code を起動します。"
+      description="「＋」で起動するエージェントです。どのブラウザーでも同じです。選んだエージェントを使えない working server では、Claude Code を起動します。"
       open={open}
       onOpenChange={setOpen}
       actions={<span className="text-sm">{AGENT_NAME[current]}</span>}
@@ -227,8 +229,8 @@ export function DefaultModelSection() {
   return (
     <AccordionSection
       icon={<Cpu className="size-4" />}
-      title="既定のモデル"
-      description="「＋」で起動する Claude Code のセッションのモデルです。どのブラウザーでも同じです。起動したあとは、入力欄でそのセッションだけ切り替えられます。Codex のセッションと、開き直し・フォークには使いません。"
+      title="Claude Code の既定のモデル"
+      description="「＋」で起動する Claude Code のセッションのモデルです。どのブラウザーでも同じです。起動したあとは、入力欄でそのセッションだけ切り替えられます。"
       open={open}
       onOpenChange={setOpen}
       actions={<span className="text-sm">{current === "default" || !selected ? CLAUDE_DEFAULT : selected.name}</span>}
@@ -269,8 +271,8 @@ export function DefaultEffortSection() {
   return (
     <AccordionSection
       icon={<Gauge className="size-4" />}
-      title="既定の Effort"
-      description="「＋」で起動する Claude Code のセッションの Effort です。どのブラウザーでも同じです。モデルにその Effort が無いときは、そのモデルにある近い Effort で起動します。Codex のセッションと、開き直し・フォークには使いません。"
+      title="Claude Code の既定の Effort"
+      description="「＋」で起動する Claude Code のセッションの Effort です。どのブラウザーでも同じです。モデルにその Effort が無いときは、そのモデルにある近い Effort で起動します。"
       open={open}
       onOpenChange={setOpen}
       actions={<span className="text-sm">{EFFORTS.find((e) => e.id === current)?.name ?? CLAUDE_DEFAULT}</span>}
@@ -297,6 +299,90 @@ export function DefaultEffortSection() {
         </button>
       </SemiGauge>
       {error && <p className="text-xs text-red-400">{error}</p>}
+    </AccordionSection>
+  );
+}
+
+function AgentDefaultsSection({ agent }: { agent: "codex" | "antigravity" }) {
+  const { machines, server } = useAppState();
+  const [open, setOpen] = useSettingsSectionOpen(`default-${agent}`);
+  const [error, setError] = useState<string>();
+  const effortHintId = useId();
+  const name = AGENT_NAME[agent];
+  const current = server?.agentDefaults?.[agent];
+  const agents = machines.flatMap((m) => {
+    const info = m.agents?.[agent];
+    return info?.canUseLaunchDefaults ? [info] : [];
+  });
+  if (!server || (!agents.length && !current)) return null;
+
+  const catalogs = agents.flatMap((info) => info.launchCatalog ?? []);
+  const optionsByField = [
+    { field: "model", label: "既定のモデル", options: catalogs.flatMap((c) => c.model?.options ?? []) },
+    {
+      field: "effort", label: "既定の Effort",
+      options: catalogs.flatMap((c) => {
+        const model = c.model?.options.find((m) => m.id === (current?.model ?? c.model?.current)) ??
+          (!current?.model && !c.model?.current ? c.model?.options.find((m) => m.isDefault) : undefined);
+        return model?.efforts ?? c.effort?.options ?? [];
+      }),
+    },
+  ] satisfies { field: keyof AgentInputSelection; label: string; options: AgentChoice[] }[];
+  const fields = optionsByField.map(({ field, label, options }) => {
+    const choices = new Map(options.map((choice) => [choice.id, choice.name]));
+    const value = current?.[field] ?? "";
+    const selected = choices.get(value);
+    const missing = value !== "" && selected === undefined;
+    const unavailable = missing ? `前に選んだ${field === "model" ? "モデル" : " Effort"}（いまは選べません）` : undefined;
+    return { field, label, choices, value, unavailable, summary: selected ?? unavailable };
+  });
+  const summary = fields.flatMap((field) => field.summary ?? []).join("・");
+  const pick = async (field: keyof AgentInputSelection, value: string) => {
+    setError(undefined);
+    const r = await setAgentDefault(agent, field, value || undefined);
+    if (!r.ok) setError(r.error ?? "変えられませんでした。");
+  };
+
+  return (
+    <AccordionSection
+      icon={<Cpu className="size-4" />}
+      title={`${name} の既定値`}
+      description={`「＋」で起動する ${name} のセッションのモデルと Effort です。どのブラウザーでも同じです。`}
+      open={open}
+      onOpenChange={setOpen}
+      actions={<span className="text-sm">{summary || `${name} の既定`}</span>}
+      bodyClassName="space-y-3"
+    >
+      {fields.map(({ field, label, choices, value, unavailable }) => {
+        const showEffortHint = field === "effort" && agent === "antigravity" && catalogs.length > 0 && !choices.size;
+        return (
+          <div key={field} className="max-w-sm space-y-1.5">
+            <label className="block space-y-1.5">
+              <span className="text-xs text-muted-foreground">{label}</span>
+              <select
+                value={value}
+                onChange={(e) => void pick(field, e.target.value)}
+                disabled={!choices.size && !value}
+                aria-describedby={showEffortHint ? effortHintId : undefined}
+                className={FIELD}
+              >
+                <option value="">{name} の既定</option>
+                {unavailable && <option value={value} disabled>{unavailable}</option>}
+                {[...choices].map(([id, choice]) => <option key={id} value={id}>{choice}</option>)}
+              </select>
+            </label>
+            {showEffortHint && (
+              <p id={effortHintId} className="text-xs text-muted-foreground">セッションでこのモデルを一度使うと選べるようになります。</p>
+            )}
+          </div>
+        );
+      })}
+      {!catalogs.length && (
+        <p className="text-xs text-muted-foreground">
+          {name} のセッションを一度開くと選べます。
+        </p>
+      )}
+      {error && <p role="alert" className="text-xs text-red-400">{error}</p>}
     </AccordionSection>
   );
 }

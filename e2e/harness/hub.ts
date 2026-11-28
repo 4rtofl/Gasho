@@ -208,6 +208,7 @@ export class GashoHub {
       GASHO_HOOK_PORT: String(await freePort()),
       GASHO_CLAUDE_BIN: this.claude.bin,
       GASHO_GH_BIN: this.gh.bin,
+      GASHO_CODEX_BIN: "/dev/null/codex",
       GASHO_CLAUDE_DIR: path.join(this.home, ".claude"),
       GASHO_POLL_MS: "1000",
       // Its own: gasho-daemon removes the attachments of sessions that it does not keep.

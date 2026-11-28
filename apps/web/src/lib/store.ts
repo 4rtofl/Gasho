@@ -2,6 +2,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import type {
   AgentKind,
+  AgentInputSelection,
   ClientToHub,
   CommandResult,
   DeviceInfo,
@@ -459,6 +460,10 @@ export function updateServer(version: string, timeoutMs = 20_000): Promise<Comma
 /** Changes the agent a new session starts with, for every browser. */
 export function setDefaultAgent(agent: AgentKind, timeoutMs = 20_000): Promise<CommandResult> {
   return askServer((id) => ({ type: "defaultAgent.set", requestId: id, agent }), timeoutMs);
+}
+
+export function setAgentDefault(agent: "codex" | "antigravity", field: keyof AgentInputSelection, value: string | undefined) {
+  return askServer((requestId) => ({ type: "agentDefault.set", requestId, agent, field, value }), 20_000);
 }
 
 /** Changes the model a new session of Claude Code starts with, for every browser ("default": Claude Code's own default). */

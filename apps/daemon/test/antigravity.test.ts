@@ -19,6 +19,7 @@ async function fixture(t: TestContext, mode?: string) {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "gasho-agt-"));
   const file = path.join(dir, "antigravity-sessions.json");
   const log = path.join(dir, "acp.jsonl");
+  const catalogFile = path.join(dir, "antigravity-catalog.json");
   const oldLog = process.env.GASHO_TEST_ACP_LOG;
   const oldMode = process.env.GASHO_TEST_ACP_MODE;
   process.env.GASHO_TEST_ACP_LOG = log;
@@ -40,7 +41,7 @@ async function fixture(t: TestContext, mode?: string) {
     calls: async () => (await fsp.readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line)),
     make: () => {
       const s = new AntigravitySessions({
-        bin, file, describe: async () => ({}), changed: () => {}, event: (event) => events.push(event),
+        bin, file, catalogFile, describe: async () => ({}), changed: () => {}, event: (event) => events.push(event),
         append: () => {}, log: (...args) => assert.fail(args.join(" ")),
       });
       changes.push(s);
@@ -64,10 +65,63 @@ test("Antigravity detection runs only --version and leaves login unchecked", asy
   assert.equal(loadConfig(creds, {}).agyBin, "agy");
 });
 
+test("Antigravity learns the working server's catalog and only applies defaults to new sessions", async (t) => {
+  const f = await fixture(t);
+  const sessions = f.make();
+  await sessions.load();
+  assert.equal(sessions.launchCatalog, undefined);
+
+  const selection = { model: "gemini-test-pro", effort: "extra-pro" };
+  const { sessionId, warning } = await sessions.launch(f.dir, undefined, selection);
+  assert.equal(warning, undefined);
+  assert.equal(sessions.sessions()[0]?.agentConfig?.model?.current, selection.model);
+  assert.equal(sessions.sessions()[0]?.agentConfig?.effort?.current, selection.effort);
+  assert.deepEqual((await f.calls()).filter((c) => c.method?.startsWith("session/")).map((c) => [c.method, c.params.value]), [
+    ["session/new", undefined], ["session/set_config_option", selection.model], ["session/set_config_option", selection.effort],
+  ]);
+  const catalog = JSON.stringify(sessions.launchCatalog);
+  await sessions.close();
+
+  const restarted = f.make();
+  await restarted.load();
+  assert.equal(JSON.stringify(restarted.launchCatalog), catalog);
+  assert.equal((await f.calls()).filter((c) => c.args?.[0] === "acp").length, 1);
+  assert.equal((await restarted.open(sessionId)).ok, true);
+  assert.equal((await f.calls()).filter((c) => c.method === "session/set_config_option").length, 2);
+});
+
+for (const method of ["load", "resume"]) {
+  test(`Antigravity keeps the new-session model when reopening with session/${method}`, async (t) => {
+    const f = await fixture(t, `${method}-different-model`);
+    const sessions = f.make();
+    const { sessionId } = await sessions.launch(f.dir);
+    assert.equal(sessions.launchCatalog?.model?.current, "gemini-test");
+    await sessions.close();
+
+    const restarted = f.make();
+    await restarted.load();
+    assert.equal((await restarted.open(sessionId)).ok, true);
+    assert.ok((await f.calls()).some((c) => c.method === `session/${method}`));
+    assert.equal(restarted.sessions()[0]?.agentConfig?.model?.current, "gemini-test-pro");
+    assert.equal(restarted.launchCatalog?.model?.current, "gemini-test");
+    assert.ok(restarted.launchCatalog?.model?.options.find((m) => m.id === "gemini-test-pro")?.efforts?.some((e) => e.id === "extra-pro"));
+  });
+}
+
+test("Antigravity launches when a stored model is rejected and an effort is missing", async (t) => {
+  const f = await fixture(t);
+  const sessions = f.make();
+  const result = await sessions.launch(f.dir, undefined, { model: "unavailable-test", effort: "missing" });
+  assert.match(result.warning ?? "", /unavailable-test.*このモデルは現在使えません/);
+  assert.match(result.warning ?? "", /missing.*指定したEffortは選べません/);
+  assert.equal(sessions.sessions()[0]?.sessionId, result.sessionId);
+  assert.equal(sessions.sessions()[0]?.agentConfig?.model?.current, "gemini-test");
+});
+
 test("ACP sends the exact human text, waits for permission and serializes prompts, with notifications and cancel", async (t) => {
   const f = await fixture(t);
   const s = f.make();
-  const id = await s.launch(f.dir, "対話");
+  const { sessionId: id } = await s.launch(f.dir, "対話");
   assert.match(id, /^antigravity-/);
   assert.equal(s.sessions()[0]?.status, "idle");
 
@@ -105,7 +159,7 @@ test("ACP sends the exact human text, waits for permission and serializes prompt
 test("ACP uses the advertised selectors and switches model and effort before sending", async (t) => {
   const f = await fixture(t);
   const s = f.make();
-  const id = await s.launch(f.dir);
+  const { sessionId: id } = await s.launch(f.dir);
   const config = () => s.sessions()[0]?.agentConfig;
   assert.deepEqual(config()?.model?.options.map((m) => m.name), ["Gemini Test", "Gemini Test Pro", "Unavailable Test"]);
   assert.equal(config()?.model?.current, "gemini-test");
@@ -136,7 +190,7 @@ test("ACP uses the advertised selectors and switches model and effort before sen
 test("ACP without advertised config offers no selectors and rejects a switch", async (t) => {
   const f = await fixture(t, "no-config");
   const s = f.make();
-  const id = await s.launch(f.dir);
+  const { sessionId: id } = await s.launch(f.dir);
   assert.equal(s.sessions()[0]?.agentConfig, undefined);
   assert.match((await s.input(id, "発言", { model: "gemini-test" })).error ?? "", /指定したモデルは選べません/);
   assert.deepEqual((await f.calls()).map((c) => c.method).filter(Boolean), ["initialize", "session/new"]);
@@ -146,7 +200,7 @@ for (const mode of ["load", "resume", "none"]) {
   test(`saved Antigravity sessions connect only on explicit open (${mode})`, async (t) => {
     const f = await fixture(t, mode);
     const s = f.make();
-    const id = await s.launch(f.dir);
+    const { sessionId: id } = await s.launch(f.dir);
     assert.equal((await s.rename(id, "新しい名前")).ok, true);
     await s.close();
     const calls = await f.calls();
@@ -187,7 +241,7 @@ test("authentication required gives the terminal instruction without sending aut
 test("disconnection records queued prompts in the conversation without resending them", async (t) => {
   const f = await fixture(t);
   const s = f.make();
-  const id = await s.launch(f.dir);
+  const { sessionId: id } = await s.launch(f.dir);
   await s.input(id, "権限の確認後に切断");
   const waiting = ["  待っていた発言\n次の行", "もう一つの発言"];
   for (const text of waiting) assert.equal((await s.input(id, text)).queued, true);

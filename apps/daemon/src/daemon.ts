@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import type {
   AgentInfo,
+  AgentInputSelection,
   AgentKind,
   AgentOperation,
   BackgroundTask,
@@ -451,6 +452,7 @@ export class Daemon {
       file: path.join(cfg.stateDir, "codex-threads.json"),
       version: DAEMON_VERSION,
       startServer: () => this.startCodexAppServer(),
+      catalogChanged: () => this.emitCapabilities(),
       describe: (cwd) => this.folderDetails(cwd),
       changed: () => this.emitSessions(),
       event: (event) => this.hub.send({ type: "hook", event }),
@@ -460,6 +462,8 @@ export class Daemon {
     this.antigravitySessions = new AntigravitySessions({
       bin: cfg.agyBin,
       file: path.join(cfg.stateDir, "antigravity-sessions.json"),
+      catalogFile: path.join(cfg.stateDir, "antigravity-catalog.json"),
+      catalogChanged: () => this.emitCapabilities(),
       describe: (cwd) => this.folderDetails(cwd),
       changed: () => this.emitSessions(),
       event: (event) => this.hub.send({ type: "hook", event }),
@@ -1249,8 +1253,8 @@ export class Daemon {
     const claude = this.claude;
     return {
       ...(claude ? { claude: { status: claude.status, version: claude.version, canLaunch: true, operations: [...CLAUDE_OPERATIONS] } } : {}),
-      ...(this.codex ? { codex: { ...this.codex, canLaunch: true, operations: ["model", "effort"] } } : {}),
-      ...(this.antigravity ? { antigravity: this.antigravity } : {}),
+      ...(this.codex ? { codex: { ...this.codex, canLaunch: true, operations: ["model", "effort"], canUseLaunchDefaults: true, launchCatalog: this.codex.status === "available" ? this.codexSessions.launchCatalog : undefined } } : {}),
+      ...(this.antigravity ? { antigravity: { ...this.antigravity, canUseLaunchDefaults: true, launchCatalog: this.antigravitySessions.launchCatalog } } : {}),
     };
   }
 
@@ -1258,10 +1262,13 @@ export class Daemon {
   private async refreshCodex(): Promise<void> {
     const read = ++this.codexRead;
     const codex = await detectCodex(codexRunner(this.cfg.codexBin));
-    if (read !== this.codexRead || JSON.stringify(codex) === JSON.stringify(this.codex)) return;
-    this.codex = codex;
-    log(codex ? `Codex ${codex.version ?? "(version unknown)"}: ${codex.status}` : "Codex is not installed");
-    this.emitCapabilities();
+    if (read !== this.codexRead) return;
+    if (JSON.stringify(codex) !== JSON.stringify(this.codex)) {
+      this.codex = codex;
+      log(codex ? `Codex ${codex.version ?? "(version unknown)"}: ${codex.status}` : "Codex is not installed");
+      this.emitCapabilities();
+    }
+    if (codex?.status === "available") void this.codexSessions.refreshLaunchCatalog();
   }
 
   private async refreshAntigravity(): Promise<void> {
@@ -1651,7 +1658,11 @@ export class Daemon {
               break;
             case "session.launch":
               if (m.agent === "antigravity") {
-                result = m.screen === true ? await this.launchAntigravity(m.cwd, m.name) : { ok: false, error: ANTIGRAVITY_SCREEN_ONLY };
+                result = m.screen === true ? await this.launchAntigravity(m.cwd, m.name, m.launchDefaults) : { ok: false, error: ANTIGRAVITY_SCREEN_ONLY };
+                break;
+              }
+              if (m.agent === "codex") {
+                result = await this.launchCodex(m.cwd, m.name, m.launchDefaults);
                 break;
               }
               result = await this.launch(
@@ -2059,7 +2070,7 @@ export class Daemon {
     return parent ? { ...m.launchedBy, sessionId: parent.sessionId } : m.launchedBy;
   }
 
-  private async launchAntigravity(cwd: string, name: string | undefined): Promise<CommandResult> {
+  private async launchAntigravity(cwd: string, name: string | undefined, defaults?: AgentInputSelection): Promise<CommandResult> {
     const dir = path.resolve(cwd);
     const stat = await fsp.stat(dir).catch(() => undefined);
     if (!stat?.isDirectory()) return { ok: false, error: `フォルダーがありません：${dir}` };
@@ -2067,13 +2078,13 @@ export class Daemon {
     if (checked && "error" in checked) return { ok: false, error: checked.error };
     if (!this.antigravity) await this.refreshAntigravity();
     if (!this.antigravity) return { ok: false, error: "この working server に Antigravity CLI が見つかりません。" };
-    const sessionId = await this.antigravitySessions.launch(dir, checked?.name);
+    const started = await this.antigravitySessions.launch(dir, checked?.name, defaults);
     void this.refreshFolders();
-    return { ok: true, sessionId };
+    return { ok: true, ...started };
   }
 
   /** Starts a session of Codex in `cwd`: a new thread of its app-server. */
-  private async launchCodex(cwd: string, name: string | undefined): Promise<CommandResult> {
+  private async launchCodex(cwd: string, name: string | undefined, defaults?: AgentInputSelection): Promise<CommandResult> {
     const dir = path.resolve(cwd);
     const stat = await fsp.stat(dir).catch(() => undefined);
     if (!stat?.isDirectory()) return { ok: false, error: `フォルダーがありません：${dir}` };
@@ -2085,10 +2096,10 @@ export class Daemon {
     if (this.codex.status === "loginRequired") return { ok: false, error: "Codex にログインしていません。working server で codex login を実行してください。" };
     if (this.codex.status !== "available") return { ok: false, error: "Codex の状態を確かめられませんでした。working server で codex login status を実行して確かめてください。" };
     try {
-      const sessionId = await this.codexSessions.launch(dir, checked?.name);
-      log(`started Codex's thread ${sessionId} in ${dir}`);
+      const started = await this.codexSessions.launch(dir, checked?.name, defaults);
+      log(`started Codex's thread ${started.sessionId} in ${dir}`);
       void this.refreshFolders();
-      return { ok: true, sessionId };
+      return { ok: true, ...started };
     } catch (e) {
       log("could not start a session of Codex", e);
       void this.refreshCodex();

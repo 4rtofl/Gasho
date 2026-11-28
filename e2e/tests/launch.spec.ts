@@ -580,12 +580,12 @@ test("設定の「既定のモデル」で選んだモデルと「既定の Effo
   daemon.handle("session.launch", (msg) => started(daemon, msg));
 
   await page.goto("/#/settings");
-  await page.getByRole("button", { name: "既定のモデル" }).click();
+  await page.getByRole("button", { name: "Claude Code の既定のモデル" }).click();
   const model = page.getByRole("combobox", { name: "既定のモデル" });
   await expect(model).toHaveValue("default");
   await model.selectOption("opus");
   await expect(page.getByText("Opus", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "既定の Effort" }).click();
+  await page.getByRole("button", { name: "Claude Code の既定の Effort" }).click();
   await page.getByRole("radio", { name: "xHigh" }).click();
 
   await openHome(page, 1);
@@ -605,4 +605,43 @@ test("設定の「既定のモデル」で選んだモデルと「既定の Effo
   const last = launches(daemon).at(-1)!;
   expect("model" in last).toBe(false);
   expect(last).toMatchObject({ effort: "xhigh" });
+});
+
+test("Codex の既定のモデルと Effort を設定し、新規起動に引き継ぐ", async ({ page, hub }) => {
+  const daemon = await hub.fakeDaemon({
+    capabilities: {
+      folders: ["/work/a"],
+      agents: {
+        codex: {
+          status: "available", canLaunch: true, canUseLaunchDefaults: true,
+          launchCatalog: {
+            model: { options: [
+              { id: "standard", name: "Test Standard", isDefault: true },
+              { id: "pro", name: "Test Pro", efforts: [{ id: "deep", name: "Deep" }] },
+            ] },
+          },
+        },
+      },
+    },
+  });
+  daemon.handle("session.launch", (msg) => started(daemon, msg, {}, { agent: msg.agent }));
+  await page.goto("/#/settings");
+  const defaults = page.getByRole("region", { name: "Codex の既定値" });
+  const toggle = defaults.getByRole("button", { name: "Codex の既定値" });
+  await expect(defaults.getByText("Codex の既定", { exact: true })).toBeVisible();
+  await toggle.click();
+  await page.getByRole("combobox", { name: "既定のモデル", exact: true }).selectOption("pro");
+  const effort = page.getByRole("combobox", { name: "既定の Effort", exact: true });
+  await effort.selectOption("deep");
+  await expect(effort).toHaveValue("deep");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(defaults.getByText("Test Pro・Deep", { exact: true })).toBeVisible();
+
+  await openHome(page, 1);
+  await page.getByRole("main").getByRole("button", { name: "新しいセッション", exact: true }).click();
+  await page.getByRole("combobox", { name: "エージェント" }).selectOption("codex");
+  await page.getByRole("main").getByRole("button", LAUNCH).click();
+  await expectSessionOpen(page, daemon, "/work/a");
+  expect(launches(daemon).at(-1)).toMatchObject({ agent: "codex", launchDefaults: { model: "pro", effort: "deep" } });
 });

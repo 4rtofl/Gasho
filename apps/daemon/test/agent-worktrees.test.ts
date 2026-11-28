@@ -7,7 +7,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { guardHooks, guardReply, LAUNCH_SKILL, NODE_GUARD, PLUGIN_DIR, PLUGIN_NAME, SYSTEM_PROMPT } from "../src/agent-worktrees.ts";
+import { codexGuardConfig, guardHooks, guardReply, LAUNCH_SKILL, NODE_GUARD, PLUGIN_DIR, PLUGIN_NAME, SYSTEM_PROMPT } from "../src/agent-worktrees.ts";
 import { listSkills } from "../src/skills.ts";
 import { NATIVE_HOST } from "../src/terminal.ts";
 
@@ -94,6 +94,16 @@ for (const { name, command, skip } of HOOKS) {
     assert.equal(await runHook(command, "not json"), "");
   });
 }
+
+test("a thread of Codex gets the hook for Bash, trusted for itself alone", () => {
+  assert.deepEqual(codexGuardConfig(["node", "/x/guard.ts"]), {
+    hooks: {
+      PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "'node' '/x/guard.ts'", timeout: 10 }] }],
+      // codex-cli 0.172.0 がこの hook に計算する hash（違う値だと、Codex は hook を黙って飛ばす）。
+      state: { "/<session-flags>/config.toml:pre_tool_use:0:0": { trusted_hash: "sha256:a339891739e6efddd1d466cff5e6a6a1d5d7b0f6aec70dffea70cc0486f53d57" } },
+    },
+  });
+});
 
 test("the plugin has the skills, and the \"/\" menu of a session started with it lists them under its name", async () => {
   const manifest = JSON.parse(await fs.readFile(path.join(PLUGIN_DIR, ".claude-plugin", "plugin.json"), "utf8"));

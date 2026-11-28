@@ -7,10 +7,15 @@ import path from "node:path";
 import { test, type TestContext } from "node:test";
 import type { HookEvent, SessionInfo, TranscriptEntry } from "@gasho/protocol";
 import { WebSocketServer, type WebSocket } from "ws";
+import { CODEX_INSTRUCTIONS, codexGuardConfig } from "../src/agent-worktrees.ts";
 import { CodexConnectionClosed, CodexRpc, CodexRpcError } from "../src/codex-rpc.ts";
 import { CodexSessions } from "../src/codex-sessions.ts";
 
 const THREAD = "thread-1";
+const GUARD = ["node", "/x/guard.ts"];
+const guard = async () => GUARD;
+/** What Gasho adds to the threads it starts, where the person has no developer instructions. */
+const GASHO = { config: codexGuardConfig(GUARD), developerInstructions: CODEX_INSTRUCTIONS };
 
 interface Call {
   method: string;
@@ -127,6 +132,7 @@ async function setup(t: TestContext) {
       file,
       version: "0.0.0",
       startServer: async () => server.socket,
+      guard,
       describe: (_cwd) => folder.describe(),
       changed: () => undefined,
       event: (e) => events.push(e),
@@ -169,7 +175,7 @@ test("losing the reply to a Codex turn with a model switch leaves its outcome un
     },
   }));
   const sessions = new CodexSessions({
-    file: path.join(dir, "threads.json"), version: "test", startServer: async () => path.join(dir, "unused.sock"),
+    file: path.join(dir, "threads.json"), version: "test", startServer: async () => path.join(dir, "unused.sock"), guard,
     describe: async () => ({}), changed: () => {}, event: () => {}, append: () => {}, tokens: () => {}, log: () => {},
   });
   await sessions.launch("/work", undefined);
@@ -184,11 +190,27 @@ test("losing the reply to a Codex turn with a model switch leaves its outcome un
   assert.equal(sessions.sessions()[0]?.agentConfig?.model?.current, "gpt-test");
 });
 
-test("a session starts with its folder alone, and shows as a session of Codex", async (t) => {
+test("the developer instructions the person set stay, before Gasho's", async (t) => {
+  const { server, sessions } = await setup(t);
+  server.handlers.set("config/read", () => ({ config: { developer_instructions: "利用者の指示" } }));
+  await sessions.launch("/work", undefined);
+  assert.equal(server.called("thread/start")[0]?.params.developerInstructions, `利用者の指示\n\n${CODEX_INSTRUCTIONS}`);
+});
+
+test("without the person's configuration, no developer instructions are given: they would replace theirs", async (t) => {
+  const { server, sessions } = await setup(t);
+  server.handlers.set("config/read", () => {
+    throw new Error("cannot read the configuration");
+  });
+  await sessions.launch("/work", undefined);
+  assert.deepEqual(server.called("thread/start")[0]?.params, { cwd: "/work", config: GASHO.config });
+});
+
+test("a session starts with its folder and what Gasho adds, and shows as a session of Codex", async (t) => {
   const { server, sessions, info } = await setup(t);
   const { sessionId: id } = await sessions.launch("/work", "調査");
   assert.equal(id, THREAD);
-  assert.deepEqual(server.called("thread/start")[0]?.params, { cwd: "/work" });
+  assert.deepEqual(server.called("thread/start")[0]?.params, { cwd: "/work", ...GASHO });
   assert.deepEqual(server.called("thread/name/set")[0]?.params, { threadId: THREAD, name: "調査" });
   const s = info();
   assert.equal(s.agent, "codex");
@@ -237,7 +259,7 @@ test("Codex starts the thread with advertised model and effort, and can fall bac
     },
   }));
   const sessions = new CodexSessions({
-    file: path.join(dir, "threads.json"), version: "test", startServer: async () => path.join(dir, "unused.sock"),
+    file: path.join(dir, "threads.json"), version: "test", startServer: async () => path.join(dir, "unused.sock"), guard,
     describe: async () => ({}), changed: () => {}, event: () => {}, append: () => {}, tokens: () => {}, log: () => {},
   });
   const config = () => sessions.sessions()[0]?.agentConfig;
@@ -247,7 +269,7 @@ test("Codex starts the thread with advertised model and effort, and can fall bac
   assert.equal(lists, 1);
   assert.equal(sessions.launchCatalog, undefined);
   finishInitialList();
-  assert.deepEqual(starts[0], { cwd: "/work", model: "gpt-pro", config: { model_reasoning_effort: "deep" } });
+  assert.deepEqual(starts[0], { cwd: "/work", ...GASHO, model: "gpt-pro", config: { ...GASHO.config, model_reasoning_effort: "deep" } });
   await until("configured model and effort", () => config()?.effort?.current === "deep");
   assert.equal(config()?.model?.current, "gpt-pro");
 
@@ -262,12 +284,12 @@ test("Codex starts the thread with advertised model and effort, and can fall bac
   const unavailable = await sessions.launch("/work", undefined, { model: "gpt-pro", effort: "unknown" });
   assert.match(unavailable.warning ?? "", /既定のモデル（gpt-pro）.*候補にありません/);
   assert.match(unavailable.warning ?? "", /既定の Effort（unknown）.*候補にありません/);
-  assert.deepEqual(starts[1], { cwd: "/work" });
+  assert.deepEqual(starts[1], { cwd: "/work", ...GASHO });
 
   const rejected = await sessions.launch("/work", undefined, { model: "gpt-test" });
   assert.match(rejected.warning ?? "", /model rejected/);
   assert.deepEqual(starts.slice(-2), [
-    { cwd: "/work", model: "gpt-test" }, { cwd: "/work" },
+    { cwd: "/work", ...GASHO, model: "gpt-test" }, { cwd: "/work", ...GASHO },
   ]);
 });
 
@@ -519,7 +541,7 @@ test("after the connection ends, it connects again: the thread is loaded, waitin
   assert.deepEqual(await sessions.input(THREAD, "待っている発言"), { ok: true, queued: true });
 
   await until("the thread loaded again", () => server.called("thread/resume").length === 1, 8000);
-  assert.deepEqual(server.called("thread/resume")[0]?.params, { threadId: THREAD, excludeTurns: true });
+  assert.deepEqual(server.called("thread/resume")[0]?.params, { threadId: THREAD, excludeTurns: true, ...GASHO });
   await until("the input sent", () => server.called("turn/start").length === 1);
 
   await until("connected", () => server.clients.size === 1);

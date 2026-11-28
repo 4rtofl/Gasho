@@ -263,7 +263,7 @@ ACP 対応は公開されている一方、Gasho のような画面クライア�
 
 ### 実機の確認手順
 
-本物の Antigravity CLI と Google アカウントでの動作は未確認。Codex のセッションに同等の hook を設定できるかも未確認。
+本物の Antigravity CLI と Google アカウントでの動作は未確認。Codex のセッションの hook は[下の節](#codex-の-agy-の拒否と-worktree-のルール357)。
 
 1. ログイン済みの working server を選び、画面から Antigravity を起動する。短い発言を送り、入力と応答が会話に出ることを確かめる
 2. 確認が出る操作を2回頼み、1回は許可し、1回は拒否する。画面に確認と通知が出て、それぞれの回答に沿って進むことを確かめる
@@ -307,3 +307,35 @@ ACP v1 のスキーマでは、`usage_update` が `used`（コンテキストに
 - Codex のサブエージェントの使用量が、親のスレッドの `total` に入らないこと（ソースの作りからの判断で、実機では見ていない）。サブエージェントのスレッドの通知は数えていない
 - 本物の `agy` が `usage_update` を送るかどうかと、送る場合の `cost` の通貨。テストは偽の ACP サーバーで行い、`agy` は実行していない
 
+## Codex の agy の拒否と worktree のルール（#357）
+
+2026年11月28日に、codex-cli 0.172.0 の公式の文書、同じ版のソース（`rust-v0.172.0`）、手元の Codex で確かめた。
+
+公式の文書：
+
+- hook は `~/.codex`、信頼したプロジェクトの `.codex`、plugin、`requirements.toml` に置く。`thread/start` の `config` や `-c` で渡す方法は書かれていない。管理されていない hook は、信頼するまで飛ばされる。PreToolUse は完全な境界ではなく、ガードレールとして扱うようにとある。 [Hooks](https://learn.chatgpt.com/docs/hooks)
+- 実行ポリシー（rules）は、有効な config の層の `rules/` フォルダーから読む。session だけに渡す方法は無く、`bash -lc` の中は、単純な語の並びでないと分解されない。 [Rules](https://learn.chatgpt.com/docs/agent-configuration/rules)
+
+ソースで分かったこと：
+
+- `thread/start`・`thread/resume` の `config` は session の層になり、その層の hooks も読まれる。信頼の状態（`hooks.state`）は、利用者の層と session の層からだけ読む。session の hook の key は `/<session-flags>/config.toml:pre_tool_use:0:0`、hash は正規化した hook の定義を、キーを辞書順にした JSON の SHA-256
+- session の層には `rules/` フォルダーが無いので、rules は使えない
+- PreToolUse の hook が失敗した（終了コードが 0 と 2 以外、時間切れ、読めない出力）ときは、ツールはそのまま実行される
+- `developerInstructions` は、config の `developer_instructions` の代わりになる（足されない）
+- 読み込み済みのスレッドへの `thread/resume` の `config` と `developerInstructions` は無視される。購読者がいなくなったスレッドは、既定で60秒後に読み込みから外れる
+
+手元の Codex で確かめたこと。利用者の `~/.codex` は使わず、一時の `CODEX_HOME` と `HOME`、モデルの代わりに決まったコマンドを呼ばせる偽の Responses API を使った。`agy` は `--version` だけを実行させた：
+
+- hook を session の `config` で渡しただけでは `agy --version` は実行され（1.5.18 を出力）、`hooks.state` の `trusted_hash` も渡すと拒否され、理由がモデルに返った
+- `thread/resume` に `config` を渡すと拒否され、渡さないと実行された（app-server を起動し直したあと）
+- `developerInstructions` を渡すと、config の `developer_instructions` は developer の指示に入らなかった
+- 実装した `CodexSessions` を app-server につないで、`agy --version`、`bash -lc 'agy --version'`、絶対パスの `agy --version` が拒否され、`which agy` は通ること、利用者の `developer_instructions` の後ろに Gasho のルールが入ること、サブエージェント（`multi_agent_v2` を有効にした）の `agy --version` も拒否されること、app-server を起動し直して resume したあとも拒否されることを確かめた。app-server は stdio で動かし、Unix ソケットの WebSocket に中継した
+
+確かめていないこと：
+
+- 本物のモデルと ChatGPT のログインでの動作、Gasho の画面からの起動
+- Rust の端末の `worktree-guard-hook` を Codex から呼ぶこと（この環境で Rust はビルドしていない。読むのは `tool_name` と `tool_input.command` だけ）
+- 利用者の hooks がそのまま一緒に動くこと（ソースでは層ごとに読むので、置き換えない）
+- 既定の設定のサブエージェントと、code mode のツールの呼び出し
+- Codex のサンドボックスの中から `gasho-daemon session launch` を動かせるか、Codex が worktree のルールに従うか
+- 0.172.0 以外の版

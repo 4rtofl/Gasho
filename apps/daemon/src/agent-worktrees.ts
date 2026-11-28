@@ -7,8 +7,11 @@
 //   worktree-guard-hook.ts, next to this file; see sessionCommands in statusline.ts) that enforces the worktree rule
 //   and blocks accidental agy calls, and
 // - the same rule in `--append-system-prompt`, so that Claude picks the session from the start.
+// The threads of Codex that Gasho starts get the hook for agy and the rule through thread/start and thread/resume
+// (CODEX_INSTRUCTIONS, codexGuardConfig; see codex-sessions.ts).
 // None of these touches the person's settings: they hold for the sessions Gasho starts, and only while they run.
 // This file uses only Node.js's own modules: the hook's script imports it, and starts at every call of those tools.
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -41,6 +44,15 @@ export const SYSTEM_PROMPT =
   `${INSTEAD}` +
   "「Subagent でやって」と頼まれても、worktree を使う作業はこの形にする（これらは hook で止められる）。" +
   "worktree を使わない Subagent（Explore などの調べもの）はそのまま使ってよい。";
+
+/** The same rule for Codex, added to the thread's developer instructions. */
+export const CODEX_INSTRUCTIONS =
+  "このセッションは Gasho（gasho-daemon）が起動した。Gasho の利用者は、画面でセッションを見守る。" +
+  "worktree で作業するとき、また作業を worktree に分けて任せるときは、subagent にその worktree で作業させず、" +
+  "worktree を作り、その中に Gasho のセッションを `gasho-daemon session launch` で起動して、そのセッションに指示する。" +
+  `手順は ${path.join(PLUGIN_DIR, "skills", "launch-gasho-session", "SKILL.md")} を読む` +
+  "（Claude Code 向けに書いてある。SendMessage の代わりには `gasho-daemon session send` を使う）。" +
+  "worktree を使わない subagent はそのまま使ってよい。";
 
 /** What the hook answers to a tool call it stops (PreToolUse's `permissionDecision: "deny"`). */
 export interface GuardReply {
@@ -159,6 +171,26 @@ function shellQuote(s: string): string {
 export function guardHooks(command: readonly string[] = NODE_GUARD): Record<string, unknown> {
   return {
     PreToolUse: [{ matcher: GUARD_MATCHER, hooks: [{ type: "command", command: command.map(shellQuote).join(" "), timeout: 10 }] }],
+  };
+}
+
+/**
+ * The same hook for a thread of Codex, to put in the `config` of thread/start and thread/resume: it blocks agy for the
+ * reason Claude Code's does (Antigravity's FAQ does not support an agent calling agy, and the account may be suspended;
+ * #331). Codex's input and the denial it takes are those of Claude Code, so `command` is the same one.
+ */
+export function codexGuardConfig(command: readonly string[] = NODE_GUARD): Record<string, unknown> {
+  const hook = { type: "command", command: command.map(shellQuote).join(" "), timeout: 10 };
+  // Codex は信頼していない hook を黙って飛ばす。--dangerously-bypass-hook-trust（config の bypass_hook_trust）は、
+  // 利用者やリポジトリの未信頼の hook まで動かすので使わず、この hook の分の信頼だけを同じ session の config で渡す。
+  // hash は、キーを辞書順にした JSON の SHA-256（codex-cli 0.172.0。公式の文書には無い）。
+  const identity = { event_name: "pre_tool_use", hooks: [{ async: false, command: hook.command, timeout: hook.timeout, type: hook.type }], matcher: "Bash" };
+  const trustedHash = `sha256:${createHash("sha256").update(JSON.stringify(identity)).digest("hex")}`;
+  return {
+    hooks: {
+      PreToolUse: [{ matcher: "Bash", hooks: [hook] }],
+      state: { "/<session-flags>/config.toml:pre_tool_use:0:0": { trusted_hash: trustedHash } },
+    },
   };
 }
 

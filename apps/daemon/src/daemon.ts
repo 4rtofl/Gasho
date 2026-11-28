@@ -452,6 +452,7 @@ export class Daemon {
       file: path.join(cfg.stateDir, "codex-threads.json"),
       version: DAEMON_VERSION,
       startServer: () => this.startCodexAppServer(),
+      guard: async () => (await this.commandsOfSessions()).guard,
       catalogChanged: () => this.emitCapabilities(),
       describe: (cwd) => this.folderDetails(cwd),
       changed: () => this.emitSessions(),
@@ -1225,6 +1226,14 @@ export class Daemon {
     await this.registered.unregister(repo);
     await this.refreshRepos();
     return { ok: true };
+  }
+
+  private commandsOfSessions(): Promise<SessionCommands> {
+    this.sessionCommands ??= sessionCommands((s) => log(s)).then((c) => {
+      log(`status lines and hooks run on ${c === NODE_COMMANDS ? "Node.js" : c.statusLine[0]}`);
+      return c;
+    });
+    return this.sessionCommands;
   }
 
   /** Starts Codex's app-server if it does not run, outside gasho-daemon's service: a restart here must not stop its turns. */
@@ -2161,11 +2170,7 @@ export class Daemon {
         return {};
       },
     );
-    this.sessionCommands ??= sessionCommands((s) => log(s)).then((c) => {
-      log(`status lines and hooks run on ${c === NODE_COMMANDS ? "Node.js" : c.statusLine[0]}`);
-      return c;
-    });
-    const commands = await this.sessionCommands;
+    const commands = await this.commandsOfSessions();
     // Its status line reports the context window and the plan's usage limits to gasho-daemon (statusline.ts).
     const statusLine = statusLineLaunch({
       port: this.cfg.hookPort,

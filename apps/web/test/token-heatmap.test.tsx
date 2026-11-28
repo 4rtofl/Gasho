@@ -93,3 +93,14 @@ test("the days of a working server taken off are no longer counted", async () =>
 test("a browser that saved its order before the tile existed gets the tile too", () => {
   expect(arrangeTiles(["tokens", "tokenBreakdown", "tokenHeatmap", "operations"], ["operations", "tokenBreakdown", "tokens"])).toContain("tokenHeatmap");
 });
+
+test.each([
+  ["without Codex", {}, "サブエージェントを含む"],
+  ["with Codex", { agents: { codex: { status: "available" as const } } }, "Codex のサブエージェントは除く"],
+])("the note on subagents, %s", async (_name, extra, note) => {
+  measure(900);
+  const hub = await connectHub({ machines: [machine("m1", [], extra)] });
+  render(<TokenHeatmap now={Date.now()} />);
+  await hub.say({ type: "token.days", days: { m1: [[tokenDayOf(Date.now()), 5]] }, reported: true });
+  expect(screen.getByText(`日本時間で1日を区切っています（${note}）。`)).toBeTruthy();
+});

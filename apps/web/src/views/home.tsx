@@ -609,7 +609,7 @@ function TokenBreakdown({ tokens }: { tokens: TokenTrend }) {
 
 /** A year of the tokens used per day, of all working servers together; asked for when the home screen opens. */
 export function TokenHeatmap({ now }: { now: number }) {
-  const { tokenDays, tokenDaysReported } = useAppState();
+  const { tokenDays, tokenDaysReported, machines } = useAppState();
   useEffect(() => {
     requestTokenDays();
     return onConnected(requestTokenDays);
@@ -628,7 +628,9 @@ export function TokenHeatmap({ now }: { now: number }) {
   return (
     <>
       <ActivityHeatmap data={data} endDate={tokenDayOf(now)} unit="トークン" format={compact} />
-      <p className="mt-2 text-[11px] text-muted-foreground">日本時間で1日を区切っています（サブエージェントを含む）。</p>
+      <p className="mt-2 text-[11px] text-muted-foreground">
+        日本時間で1日を区切っています（{machines.some((m) => m.agents?.codex) ? "Codex のサブエージェントは除く" : "サブエージェントを含む"}）。
+      </p>
     </>
   );
 }

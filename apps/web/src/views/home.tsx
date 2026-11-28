@@ -306,7 +306,7 @@ export function HomeView() {
           trendLabels={tokens.labels}
           {...(tokens.previous ? { previous: tokens.previous, deltaLabel: "前の24時間と比べて" } : {})}
           goodWhen="neither"
-          period="過去24時間（サブエージェントを含む）"
+          period={rows.some(({ s }) => s.agent === "codex" && s.tokenHours?.length) ? "過去24時間（Codex のサブエージェントは除く）" : "過去24時間（サブエージェントを含む）"}
           format={compact}
           color={CHART_BLUE}
           className="h-full"
@@ -728,7 +728,7 @@ function SessionCard({ row: { machine, s }, now }: { row: Row; now: number }) {
         {s.ultracode && <Chip className="bg-violet-500/15 text-violet-200">Ultracode</Chip>}
         {s.pendingInputs ? <Chip className="bg-amber-500/10 text-amber-300">送信待ち {s.pendingInputs}</Chip> : null}
         {s.tokens && sumUsage(s.tokens) > 0 && (
-          <span className="ml-auto tabular-nums" title="このセッションでこれまでに使ったトークン（サブエージェントを含む）">
+          <span className="ml-auto tabular-nums" title={`このセッションでこれまでに使ったトークン（サブエージェント${s.agent === "codex" ? "は除く" : "を含む"}）`}>
             {compact(sumUsage(s.tokens))} トークン
           </span>
         )}

@@ -125,6 +125,15 @@ for (const line of lines()) {
         finish("通知試験");
         effort = "extra-fast";
         send({ method: "session/update", params: { sessionId, update: { sessionUpdate: "config_option_update", ...configOptions() } } });
+      } else if (turn.text === "使用量を試す") {
+        const usage = (used: number, currency: string) => send({
+          method: "session/update",
+          params: { sessionId, update: { sessionUpdate: "usage_update", used, size: 200000, cost: { amount: 0.25, currency } } },
+        });
+        usage(50000, "USD");
+        finish("使用量試験");
+        // Also after the turn has ended.
+        usage(72000, "credits");
       } else if (turn.text !== "割り込み試験") finish(`応答：${turn.text.trim()}`);
       break;
     case "session/cancel":

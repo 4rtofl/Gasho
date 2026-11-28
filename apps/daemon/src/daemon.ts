@@ -457,6 +457,7 @@ export class Daemon {
       changed: () => this.emitSessions(),
       event: (event) => this.hub.send({ type: "hook", event }),
       append: (sessionId, entries) => this.hub.send({ type: "transcript.append", sessionId, entries }),
+      tokens: (sessionId, days) => this.tokenDays.record(sessionId, days),
       log: (...args) => log(...args),
     });
     this.antigravitySessions = new AntigravitySessions({

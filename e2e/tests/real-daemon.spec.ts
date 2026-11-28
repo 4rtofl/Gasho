@@ -48,3 +48,23 @@ test("本物の daemon: 起動したセッションは gasho のプラグイン�
   await expect(menu.getByRole("option", { name: /gasho:verify-in-chrome/ })).toBeVisible();
   await page.screenshot({ path: test.info().outputPath("gasho-skills.png") });
 });
+
+test("本物の daemon: session launch で起動したセッションにも、設定の既定のモデルと Effort が使われる", async ({ page, hub }) => {
+  test.slow();
+  const daemon = await hub.startDaemon({ name: "real", folders: ["work/gasho"] });
+
+  await page.goto("/#/settings");
+  await page.getByRole("button", { name: "既定のモデル" }).click();
+  await page.getByRole("combobox", { name: "既定のモデル" }).selectOption("opus");
+  await expect(page.getByText("Opus", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "既定の Effort" }).click();
+  await page.getByRole("radio", { name: "Max" }).click();
+  await expect(page.getByRole("radio", { name: "Max" })).toBeChecked();
+
+  await daemon.session("launch", "--cwd", `${hub.home}/work/gasho`, "--name", "cli");
+  const launched = (await hub.claude.calls()).filter((c) => c.args[0]?.startsWith("--remote-control="));
+  expect(launched).toHaveLength(1);
+  const args = launched[0]?.args ?? [];
+  expect(args[args.indexOf("--model") + 1]).toBe("opus");
+  expect(args[args.indexOf("--effort") + 1]).toBe("max");
+});

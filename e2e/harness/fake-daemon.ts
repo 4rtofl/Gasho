@@ -61,6 +61,7 @@ export function transcriptPage(d: FakeDaemon, msg: HubMessage<"transcript.get">)
 function defaultAnswer(d: FakeDaemon, msg: HubToDaemon): Answer {
   switch (msg.type) {
     case "welcome":
+    case "launch.defaults":
     case "plugins":
     case "plugin.code":
       return undefined;

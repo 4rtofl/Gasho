@@ -80,9 +80,11 @@ export class RealDaemon {
   /** Its registration's folder, where its terminals' sockets are (<stateDir>/terminals/<name>.sock). */
   readonly stateDir: string;
   readonly proc: Proc;
+  private env: Record<string, string>;
   private forget: () => void;
 
-  constructor(name: string, machineId: string, stateDir: string, proc: Proc) {
+  constructor(name: string, machineId: string, stateDir: string, proc: Proc, env: Record<string, string>) {
+    this.env = env;
     this.name = name;
     this.machineId = machineId;
     this.stateDir = stateDir;
@@ -93,6 +95,11 @@ export class RealDaemon {
 
   log(): string {
     return this.proc.log();
+  }
+
+  /** `gasho-daemon session …` against this daemon's control socket. */
+  session(...args: string[]): Promise<string> {
+    return runScript("gasho-daemon session", DAEMON_CLI, ["session", ...args], this.env);
   }
 
   /** Stops gasho-daemon, and closes the terminals it started, which outlive it (apps/daemon/src/terminal.ts). */
@@ -217,7 +224,7 @@ export class GashoHub {
     await runScript("gasho-daemon register", DAEMON_CLI, ["register", "--server", this.url, "--code", await this.pairingCode(), "--name", name], env);
     const creds = JSON.parse(await fsp.readFile(path.join(stateDir, "daemon.json"), "utf8")) as { machineId: string };
     const proc = new Proc(`gasho-daemon ${name}`, DAEMON_CLI, ["run"], env);
-    const d = new RealDaemon(name, creds.machineId, stateDir, proc);
+    const d = new RealDaemon(name, creds.machineId, stateDir, proc, env);
     this.daemons.push(d);
     await proc.waitForLog(/hub: connected to/, START_MS);
     return d;

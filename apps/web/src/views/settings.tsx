@@ -222,7 +222,7 @@ export function DefaultModelSection() {
     <AccordionSection
       icon={<Cpu className="size-4" />}
       title="既定のモデル"
-      description="「＋」で起動する Claude Code のセッションのモデルです。どのブラウザーでも同じです。起動したあとは、入力欄でそのセッションだけ切り替えられます。Codex のセッションと、開き直し・フォークには使いません。"
+      description="新しく起動する Claude Code のセッション（画面、プラグイン、gasho-daemon session launch）のモデルです。どのブラウザーでも同じです。起動したあとは、入力欄でそのセッションだけ切り替えられます。Codex のセッションと、開き直し・フォークには使いません。"
       open={open}
       onOpenChange={setOpen}
       actions={<span className="text-sm">{current === "default" ? CLAUDE_DEFAULT : (MODELS.find((m) => m.id === current)?.name ?? current)}</span>}
@@ -258,7 +258,7 @@ export function DefaultEffortSection() {
     <AccordionSection
       icon={<Gauge className="size-4" />}
       title="既定の Effort"
-      description="「＋」で起動する Claude Code のセッションの Effort です。どのブラウザーでも同じです。モデルにその Effort が無いときは、そのモデルにある近い Effort で起動します。Codex のセッションと、開き直し・フォークには使いません。"
+      description="新しく起動する Claude Code のセッション（画面、プラグイン、gasho-daemon session launch）の Effort です。どのブラウザーでも同じです。モデルにその Effort が無いときは、そのモデルにある近い Effort で起動します。Codex のセッションと、開き直し・フォークには使いません。"
       open={open}
       onOpenChange={setOpen}
       actions={<span className="text-sm">{EFFORTS.find((e) => e.id === current)?.name ?? CLAUDE_DEFAULT}</span>}

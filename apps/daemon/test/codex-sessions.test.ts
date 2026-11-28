@@ -636,8 +636,8 @@ test("a thread that could not be loaded is loaded again, and the input waiting f
   await until("not usable yet", () => info().status === "unknown");
   assert.deepEqual(await sessions.input(THREAD, "待っている発言"), { ok: true, queued: true });
   await until("loaded again", () => server.called("thread/resume").length === 2, 8000);
-  await until("usable", () => server.called("turn/start").length === 1);
-  assert.equal(info().pendingInputs, undefined);
+  // The input leaves the queue once the reply to turn/start is read, after the server has received the request.
+  await until("the input sent", () => server.called("turn/start").length === 1 && info().pendingInputs === undefined);
 });
 
 test("a session removed while its thread waits to be loaded again is not loaded", async (t) => {

@@ -41,8 +41,11 @@ function NotesPanel({ session, params }) {
       {
         type: "button",
         onClick: async () => {
-          const r = await send({ machine: ctx.machine.id, sessionId: ctx.session.sessionId, text: "続けて" });
-          setSaid(r.ok ? "送りました" : r.error);
+          const r = await send({
+            machine: ctx.machine.id, sessionId: ctx.session.sessionId, text: "続けて",
+            ...(params.kind === "antigravity" ? { model: "opus", effort: "high" } : {}),
+          });
+          setSaid(r.ok ? "送りました" : params.kind === "antigravity" ? `送信：${r.error}` : r.error);
         },
       },
       "続けてと送る",
@@ -52,7 +55,7 @@ function NotesPanel({ session, params }) {
       {
         type: "button",
         onClick: async () => {
-          const r = await launch({ machine: ctx.machine.id, cwd: ctx.session.cwd });
+          const r = await launch({ machine: ctx.machine.id, cwd: ctx.session.cwd, agent: params.kind === "antigravity" ? "antigravity" : undefined });
           setSaid(r.ok ? "起動しました" : r.error);
         },
       },

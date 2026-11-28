@@ -15,6 +15,7 @@ export interface DaemonConfig {
   claudeBin: string;
   /** Codex: GASHO_CODEX_BIN, or `codex` on PATH (codex.ts). */
   codexBin: string;
+  agyBin: string;
   /** The GitHub CLI, used with its own login to clone a repository for a new session (folders.ts). */
   ghBin: string;
   pollIntervalMs: number;
@@ -38,6 +39,7 @@ export interface DaemonConfig {
 
 export function loadConfig(creds: Credentials, env: NodeJS.ProcessEnv = process.env): DaemonConfig {
   const stateDir = path.dirname(credentialsPath(env));
+  const agyBin = env.GASHO_AGY_BIN || "agy";
   return {
     hubUrl: env.GASHO_HUB_URL ?? daemonUrl(creds.server),
     machineId: creds.machineId,
@@ -47,6 +49,7 @@ export function loadConfig(creds: Credentials, env: NodeJS.ProcessEnv = process.
     claudeDir: env.GASHO_CLAUDE_DIR ?? path.join(os.homedir(), ".claude"),
     claudeBin: env.GASHO_CLAUDE_BIN ?? "claude",
     codexBin: env.GASHO_CODEX_BIN || "codex",
+    agyBin: agyBin.includes("/") ? path.resolve(agyBin) : agyBin,
     ghBin: env.GASHO_GH_BIN ?? "gh",
     pollIntervalMs: Number(env.GASHO_POLL_MS ?? 3000),
     stateDir,

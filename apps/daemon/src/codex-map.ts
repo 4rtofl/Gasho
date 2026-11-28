@@ -1,6 +1,6 @@
 // What Codex's app-server says, in Gasho's terms: a thread's status, the items of its conversation, and the approvals it
 // asks for. Only the fields used here are typed; `codex app-server generate-ts` gives the whole protocol.
-import type { AskedQuestion, PermissionDecision, PermissionRequestInfo, QuestionAnswer, SessionStatus, TranscriptEntry } from "@gasho/protocol";
+import type { AskedQuestion, PermissionDecision, PermissionRequestInfo, QuestionAnswer, SessionStatus, TokenUsage, TranscriptEntry } from "@gasho/protocol";
 import { clip } from "./util.ts";
 
 /** As for Claude Code's transcripts (transcript.ts). */
@@ -239,4 +239,27 @@ export function replyOf(r: CodexRequest, decision: PermissionDecision, answers: 
     default:
       return { error: "この確認には答えられません。" };
   }
+}
+
+/** The tokens of `thread/tokenUsage/updated`. `inputTokens` holds the cached and the cache-written ones. */
+export interface CodexTokenBreakdown {
+  totalTokens: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteInputTokens?: number;
+  outputTokens: number;
+}
+
+export interface CodexTokenUsage {
+  /** Every reply of the thread added up. */
+  total: CodexTokenBreakdown;
+  /** The latest reply: what its `totalTokens` counts is in the context now. */
+  last: CodexTokenBreakdown;
+  modelContextWindow?: number | null;
+}
+
+/** A breakdown in Gasho's kinds, which do not overlap. */
+export function usageOfBreakdown(b: CodexTokenBreakdown): TokenUsage {
+  const cacheWrite = b.cacheWriteInputTokens ?? 0;
+  return { input: b.inputTokens - b.cachedInputTokens - cacheWrite, output: b.outputTokens, cacheWrite, cacheRead: b.cachedInputTokens };
 }

@@ -364,6 +364,16 @@ test.describe("数のタイルのグラフ", () => {
   });
 });
 
+test.describe("トークンのタイルの集計の範囲", () => {
+  for (const [agent, scope] of [["codex", "Claude Code と Codex"], ["antigravity", "Claude Code のみ"]] as const) {
+    test(`${agent} が入っている working server があると、数えるエージェントを出す`, async ({ page, hub }) => {
+      await hub.fakeDaemon({ capabilities: { agents: { [agent]: { status: "available" } } } });
+      await page.goto("/");
+      await expect(page.getByRole("main")).toContainText(`過去24時間（${scope}）`);
+    });
+  }
+});
+
 test.describe("タイルの並べ替え", () => {
   test("つまみのドラッグと、矢印キー・Home・End で並びが変わり、読み込み直しても残り、「並びを元に戻す」で戻る", async ({ page, isMobile }) => {
     await page.goto("/");

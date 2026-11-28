@@ -245,7 +245,9 @@ function NameDialog({ request: { action, machine, session }, onClose }: DialogPr
                     </>
                   ) : (
                     <p>
-                      {sessionAgent(session) === "codex"
+                      {sessionAgent(session) === "antigravity"
+                        ? "Gasho での名前を変えます。"
+                        : sessionAgent(session) === "codex"
                         ? "Gasho と Codex での名前を変えます。"
                         : "Gasho と公式アプリでの名前を変えます。Claude Code には /rename で伝えます（作業中なら、作業が終わってから）。"}
                     </p>
@@ -327,11 +329,13 @@ function RemoveDialog({ request: { machine, session }, onClose, rowAfter }: Dial
 
   const lines: ReactNode[] = [
     <>
-      {sessionAgent(session) === "codex" ? `「${sessionLabel(session)}」を Gasho の一覧から外します。` : `「${sessionLabel(session)}」の Claude Code を終了し、Gasho の一覧から外します。`}
+      {sessionAgent(session) !== "claude" ? `「${sessionLabel(session)}」を Gasho の一覧から外します。` : `「${sessionLabel(session)}」の Claude Code を終了し、Gasho の一覧から外します。`}
       {working && "作業の途中で止まります。"}
       {pending ? `送信待ちの ${pending} 件は送りません。` : ""}
     </>,
-    sessionAgent(session) === "codex" ? (
+    sessionAgent(session) === "antigravity" ? (
+      <>Antigravity の CLI が保存した会話は残ります。</>
+    ) : sessionAgent(session) === "codex" ? (
       <>会話は Codex に残り、{machine.name} の codex resume で開けます。</>
     ) : machine.canResume ? (
       <>会話の記録は {machine.name} に残ります。{tabsHidden ? "セッションの画面の上の行の、左の" : "タブの左の"}過去の会話から開き直せます。</>

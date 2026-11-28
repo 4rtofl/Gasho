@@ -147,7 +147,7 @@ test("the default agent is set for every browser, and the choice shows only wher
   expect(hub.sent.at(-1)).toMatchObject({ type: "defaultAgent.set", agent: "codex" });
   unmount();
 
-  await connectHub({ machines: [claudeOnly], server: server("claude") });
+  await connectHub({ machines: [claudeOnly], server: server("codex") });
   render(<DefaultAgentSection />);
   expect(screen.queryByRole("heading", { name: "既定のエージェント" })).toBeNull();
 });

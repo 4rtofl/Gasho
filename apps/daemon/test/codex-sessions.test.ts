@@ -7,6 +7,7 @@ import path from "node:path";
 import { test, type TestContext } from "node:test";
 import type { HookEvent, SessionInfo, TranscriptEntry } from "@gasho/protocol";
 import { WebSocketServer, type WebSocket } from "ws";
+import { CodexConnectionClosed, CodexRpc, CodexRpcError } from "../src/codex-rpc.ts";
 import { CodexSessions } from "../src/codex-sessions.ts";
 
 const THREAD = "thread-1";
@@ -72,7 +73,11 @@ class FakeAppServer {
     switch (method) {
       case "thread/start":
       case "thread/resume":
-        return { thread, model: "gpt-test" };
+        return { thread, model: "gpt-test", modelProvider: "test-provider", reasoningEffort: "medium" };
+      case "config/read":
+        return { config: { model: "gpt-test", model_provider: "test-provider" } };
+      case "model/list":
+        return { data: [] };
       case "turn/start":
         return { turn: { id: `turn-${this.called("turn/start").length}`, status: "inProgress" } };
       case "thread/turns/list":
@@ -112,10 +117,10 @@ async function until(what: string, ok: () => boolean, ms = 5000): Promise<void> 
 async function setup(t: TestContext) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-codex-"));
   const server = new FakeAppServer(path.join(dir, "s.sock"));
-  await server.listen();
   const events: HookEvent[] = [];
   const appended: TranscriptEntry[] = [];
   const file = path.join(dir, "codex-threads.json");
+  const days = new Map<string, Map<string, number>>();
   const folder = { describe: async (): Promise<Partial<SessionInfo>> => ({ gitBranch: "main" }) };
   const make = () =>
     new CodexSessions({
@@ -126,24 +131,62 @@ async function setup(t: TestContext) {
       changed: () => undefined,
       event: (e) => events.push(e),
       append: (_id, entries) => appended.push(...entries),
+      tokens: (id, counted) => void days.set(id, counted),
       log: () => undefined,
     });
   t.after(async () => {
     await server.close();
     fs.rmSync(dir, { recursive: true, force: true });
   });
+  await server.listen();
   const sessions = make();
   const info = (s: CodexSessions = sessions): SessionInfo => {
     const found = s.sessions()[0];
     assert.ok(found);
     return found;
   };
-  return { dir, server, sessions, events, appended, file, folder, make, info, named: (name: string) => events.filter((e) => e.event === name) };
+  return { dir, server, sessions, events, appended, days, file, folder, make, info, named: (name: string) => events.filter((e) => e.event === name) };
 }
+
+test("losing the reply to a Codex turn with a model switch leaves its outcome unknown", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-codex-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const starts: Record<string, unknown>[] = [];
+  t.mock.method(CodexRpc, "connect", async () => ({
+    open: true,
+    async request(method: string, params: Record<string, unknown>) {
+      switch (method) {
+        case "thread/start":
+          return { thread: { id: THREAD, status: { type: "idle" } }, model: "gpt-test" };
+        case "model/list":
+          return { data: [{ model: "gpt-pro", displayName: "Test Pro", supportedReasoningEfforts: [{ reasoningEffort: "deep" }] }] };
+        case "turn/start":
+          starts.push(params);
+          throw new CodexConnectionClosed("Codex との接続が切れました。");
+        default:
+          assert.fail(method);
+      }
+    },
+  }));
+  const sessions = new CodexSessions({
+    file: path.join(dir, "threads.json"), version: "test", startServer: async () => path.join(dir, "unused.sock"),
+    describe: async () => ({}), changed: () => {}, event: () => {}, append: () => {}, tokens: () => {}, log: () => {},
+  });
+  await sessions.launch("/work", undefined);
+  await until("model catalog", () => sessions.sessions()[0]?.agentConfig !== undefined);
+
+  const result = await sessions.input(THREAD, "送った発言", { model: "gpt-pro", effort: "deep" });
+  assert.deepEqual(result, { ok: false, unknown: true });
+  assert.deepEqual(starts, [{
+    threadId: THREAD, model: "gpt-pro", effort: "deep", input: [{ type: "text", text: "送った発言", text_elements: [] }],
+  }]);
+  assert.equal(sessions.waitingInputs(), 0);
+  assert.equal(sessions.sessions()[0]?.agentConfig?.model?.current, "gpt-test");
+});
 
 test("a session starts with its folder alone, and shows as a session of Codex", async (t) => {
   const { server, sessions, info } = await setup(t);
-  const id = await sessions.launch("/work", "調査");
+  const { sessionId: id } = await sessions.launch("/work", "調査");
   assert.equal(id, THREAD);
   assert.deepEqual(server.called("thread/start")[0]?.params, { cwd: "/work" });
   assert.deepEqual(server.called("thread/name/set")[0]?.params, { threadId: THREAD, name: "調査" });
@@ -157,6 +200,125 @@ test("a session starts with its folder alone, and shows as a session of Codex", 
   assert.equal(s.title, "調査");
   assert.equal(s.gitBranch, "main");
   assert.equal(s.pid, undefined);
+});
+
+test("Codex starts the thread with advertised model and effort, and can fall back to its own defaults", { timeout: 5000 }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-codex-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  let finishInitialList!: () => void;
+  const initialList = new Promise<void>((resolve) => { finishInitialList = resolve; });
+  let modelIds = ["gpt-test", "gpt-pro"];
+  let lists = 0;
+  const starts: Record<string, unknown>[] = [];
+  t.mock.method(CodexRpc, "connect", async () => ({
+    open: true,
+    async request(method: string, params: Record<string, unknown>) {
+      switch (method) {
+        case "config/read":
+          return { config: { model: "gpt-test", model_provider: "test-provider" } };
+        case "model/list":
+          lists++;
+          await initialList;
+          return { data: modelIds.map((model) => ({
+            model, displayName: model, isDefault: model === "gpt-test",
+            supportedReasoningEfforts: [{ reasoningEffort: "deep" }],
+          })) };
+        case "thread/start":
+          starts.push(params);
+          if (params.model === "gpt-test") throw new CodexRpcError("model rejected", -32602);
+          return {
+            thread: { id: `thread-${starts.length}`, status: { type: "idle" } },
+            model: params.model ?? "gpt-test", modelProvider: "test-provider",
+            reasoningEffort: (params.config as { model_reasoning_effort?: string } | undefined)?.model_reasoning_effort ?? "medium",
+          };
+        default:
+          assert.fail(method);
+      }
+    },
+  }));
+  const sessions = new CodexSessions({
+    file: path.join(dir, "threads.json"), version: "test", startServer: async () => path.join(dir, "unused.sock"),
+    describe: async () => ({}), changed: () => {}, event: () => {}, append: () => {}, tokens: () => {}, log: () => {},
+  });
+  const config = () => sessions.sessions()[0]?.agentConfig;
+
+  const first = await sessions.launch("/work", undefined, { model: "gpt-pro", effort: "deep" });
+  assert.equal(first.warning, undefined);
+  assert.equal(lists, 1);
+  assert.equal(sessions.launchCatalog, undefined);
+  finishInitialList();
+  assert.deepEqual(starts[0], { cwd: "/work", model: "gpt-pro", config: { model_reasoning_effort: "deep" } });
+  await until("configured model and effort", () => config()?.effort?.current === "deep");
+  assert.equal(config()?.model?.current, "gpt-pro");
+
+  await until("launch catalog", () => sessions.launchCatalog !== undefined);
+  const launchModelIds = () => sessions.launchCatalog?.model?.options.map((m) => m.id);
+  assert.deepEqual(launchModelIds(), ["gpt-test", "gpt-pro"]);
+  modelIds = ["gpt-test", "gpt-new"];
+  await sessions.refreshLaunchCatalog();
+  assert.equal(lists, 2);
+  assert.deepEqual(launchModelIds(), ["gpt-test", "gpt-new"]);
+
+  const unavailable = await sessions.launch("/work", undefined, { model: "gpt-pro", effort: "unknown" });
+  assert.match(unavailable.warning ?? "", /既定のモデル（gpt-pro）.*候補にありません/);
+  assert.match(unavailable.warning ?? "", /既定の Effort（unknown）.*候補にありません/);
+  assert.deepEqual(starts[1], { cwd: "/work" });
+
+  const rejected = await sessions.launch("/work", undefined, { model: "gpt-test" });
+  assert.match(rejected.warning ?? "", /model rejected/);
+  assert.deepEqual(starts.slice(-2), [
+    { cwd: "/work", model: "gpt-test" }, { cwd: "/work" },
+  ]);
+});
+
+test("Codex lists page-by-page, validates Effort per model and sends overrides only when picked", async (t) => {
+  const { server, sessions, info } = await setup(t);
+  const listed = (model: string, displayName: string, defaultReasoningEffort: string, options: string[]) => ({
+    id: `catalog-${model}`, model, displayName, description: "", isDefault: model === "gpt-test", hidden: false,
+    defaultReasoningEffort, supportedReasoningEfforts: options.map((reasoningEffort) => ({ reasoningEffort, description: reasoningEffort })),
+  });
+  server.handlers.set("model/list", ({ cursor }) => cursor
+    ? { data: [listed("gpt-pro", "Test Pro", "balanced", ["balanced", "maximum"])] }
+    : {
+      data: [listed("gpt-test", "Test Standard", "medium", ["medium"]), { ...listed("gpt-hidden", "Hidden", "medium", ["medium"]), hidden: true }],
+      nextCursor: "next",
+    });
+  await sessions.launch("/work", undefined);
+  const config = () => info().agentConfig;
+  await until("model catalog", () => config() !== undefined);
+  assert.deepEqual(server.called("model/list").map((c) => c.params), [{ modelProvider: "test-provider" }, { modelProvider: "test-provider", cursor: "next" }]);
+  assert.deepEqual(config()?.model?.options.map((m) => [m.id, m.name, m.isDefault]), [
+    ["gpt-test", "Test Standard", true], ["gpt-pro", "Test Pro", false],
+  ]);
+  assert.equal(config()?.model?.current, "gpt-test");
+  assert.equal(config()?.effort?.current, "medium");
+  assert.match((await sessions.input(THREAD, "bad model", { model: "gpt-hidden" })).error ?? "", /指定したモデルは選べません/);
+  assert.match((await sessions.input(THREAD, "bad effort", { model: "gpt-pro", effort: "medium" })).error ?? "", /指定した Effort を選べません/);
+  assert.equal(server.called("turn/start").length, 0);
+  server.handlers.set("turn/start", () => { throw new Error("model is unavailable"); });
+  const refused = await sessions.input(THREAD, "rejected", { model: "gpt-pro", effort: "maximum" });
+  assert.equal(refused.ok, false);
+  assert.match(refused.error ?? "", /model is unavailable/);
+  assert.equal(config()?.model?.current, "gpt-test");
+  assert.equal(info().pendingInputs, undefined);
+
+  server.handlers.delete("turn/start");
+  assert.equal((await sessions.input(THREAD, "switched", { model: "gpt-pro" })).ok, true);
+  assert.equal(config()?.model?.current, "gpt-pro");
+  assert.equal(config()?.effort?.current, "balanced");
+  assert.equal((await sessions.input(THREAD, "too early", { effort: "maximum" })).ok, false);
+  server.notify("turn/completed", { turn: { id: "turn-2", status: "completed" } });
+  server.notify("thread/status/changed", { status: { type: "idle" } });
+  await until("idle after model change", () => info().status === "idle");
+  assert.equal((await sessions.input(THREAD, "effort only", { effort: "maximum" })).ok, true);
+  assert.equal(config()?.effort?.current, "maximum");
+  server.notify("turn/completed", { turn: { id: "turn-3", status: "completed" } });
+  server.notify("thread/status/changed", { status: { type: "idle" } });
+  await until("idle after effort change", () => info().status === "idle");
+  assert.equal((await sessions.input(THREAD, "next turn")).ok, true);
+  assert.deepEqual(server.called("turn/start").map((c) => [c.params.model, c.params.effort]), [
+    ["gpt-pro", "maximum"], ["gpt-pro", "balanced"], [undefined, "maximum"], [undefined, undefined],
+  ]);
 });
 
 test("a thread's status follows what Codex says, and the name Codex gives it is taken", async (t) => {
@@ -498,4 +660,70 @@ test("removing a session stops its turn and leaves the thread; the conversation 
   const again = make();
   await again.load();
   assert.equal(again.sessions().length, 0);
+});
+
+/** `thread/tokenUsage/updated` as the app-server says it: inputTokens holds the cached and the cache-written ones. */
+function tokenUsage(total: [input: number, cached: number, written: number, output: number], context: number) {
+  const [inputTokens, cachedInputTokens, cacheWriteInputTokens, outputTokens] = total;
+  return {
+    turnId: "turn-1",
+    tokenUsage: {
+      total: { totalTokens: inputTokens + outputTokens, inputTokens, cachedInputTokens, cacheWriteInputTokens, outputTokens, reasoningOutputTokens: 0 },
+      last: { totalTokens: context, inputTokens: context, cachedInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0 },
+      modelContextWindow: 200_000,
+    },
+  };
+}
+
+test("Codex's token usage gives the context window, and each report counts only what its total gained", async (t) => {
+  const { server, sessions, days, make, info } = await setup(t);
+  await sessions.launch("/work", undefined);
+  assert.equal(info().context, undefined);
+  assert.equal(info().tokens, undefined);
+  const counted = (of: Map<string, number> | undefined) => [...(of?.values() ?? [])].reduce((a, b) => a + b, 0);
+
+  server.notify("thread/tokenUsage/updated", tokenUsage([1000, 600, 100, 50], 1050));
+  await until("first report", () => info().tokens !== undefined);
+  assert.deepEqual(info().tokens, { input: 300, output: 50, cacheWrite: 100, cacheRead: 600 });
+  assert.deepEqual([info().context?.used, info().context?.size, info().context?.percent], [1050, 200_000, 0]);
+  assert.equal(counted(days.get(THREAD)), 1050);
+
+  // The same total again (an update of the account's rate limits repeats it), then one more reply.
+  server.notify("thread/tokenUsage/updated", tokenUsage([1000, 600, 100, 50], 1050));
+  server.notify("thread/tokenUsage/updated", tokenUsage([3000, 2000, 100, 150], 2100));
+  await until("second reply", () => info().context?.used === 2100);
+  assert.equal(info().context?.percent, 1);
+  assert.equal(counted(days.get(THREAD)), 3150);
+  assert.deepEqual(info().tokenHours?.map(([, u]) => u.input + u.output + u.cacheWrite + u.cacheRead).reduce((a, b) => a + b, 0), 3150);
+
+  // After a restart the kept total is the base: the days are told again, and only the new reply is added.
+  await (sessions as unknown as { saving: Promise<void> }).saving;
+  days.clear();
+  const again = make();
+  await again.load();
+  assert.equal(counted(days.get(THREAD)), 3150);
+  await until("loaded again", () => info(again).status === "idle");
+  server.notify("thread/tokenUsage/updated", tokenUsage([4000, 2500, 100, 200], 3000));
+  await until("reply after the restart", () => counted(days.get(THREAD)) === 4200);
+
+  // A context overflow starts Codex's totals again: nothing is taken back, and what follows is counted.
+  server.notify("thread/tokenUsage/updated", tokenUsage([0, 0, 0, 0], 200_000));
+  server.notify("thread/tokenUsage/updated", tokenUsage([500, 0, 0, 20], 520));
+  await until("reply after the overflow", () => counted(days.get(THREAD)) === 4720);
+});
+
+test("a thread kept without its tokens counts only what it uses from then on", async (t) => {
+  const { server, file, days, make, info } = await setup(t);
+  fs.writeFileSync(file, JSON.stringify([{ threadId: THREAD, cwd: "/work", launchedAt: 1 }]));
+  const sessions = make();
+  await sessions.load();
+  await until("loaded", () => info(sessions).status === "idle");
+
+  server.notify("thread/tokenUsage/updated", tokenUsage([9000, 0, 0, 100], 9100));
+  await until("first report", () => info(sessions).tokens !== undefined);
+  assert.equal(days.size, 0);
+
+  server.notify("thread/tokenUsage/updated", tokenUsage([9200, 0, 0, 130], 9330));
+  await until("next reply", () => days.has(THREAD));
+  assert.deepEqual([...days.get(THREAD)!.values()], [230]);
 });

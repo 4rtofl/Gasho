@@ -96,3 +96,19 @@ test("gasho-plugin.json の permissions に書けば、プラグインから発�
     expect(await d.waitFor("session.launch")).toMatchObject({ cwd: "/work/app" });
   });
 });
+
+test("権限を宣言したプラグインでも Antigravity の起動とモデル・Effort を指定した発言は断られる", async ({ page, hub }) => {
+  const sessionId = "antigravity-0b6f3a52-9a51-4c7e-8d2b-6c1f0e4a7d10";
+  const d = await hub.fakeDaemon({
+    name: "ACP", sessions: [fakeSession({ sessionId, cwd: "/work/app", name: "作業", agent: "antigravity" })],
+  });
+  const dir = await copyTestPlugin(hub, "e2e-parts", (m) => ({ ...m, permissions: ["session.input", "session.launch"] }));
+  await addPlugin(hub, dir, { link: true });
+  await page.goto(`/#/s/${encodeURIComponent(d.machineId)}/${sessionId}/p/e2e-parts/notes?kind=antigravity`);
+  const error = page.getByText(/Antigravity の起動、発言、権限への回答は Gasho の画面から/);
+  await page.getByRole("button", { name: "起動する", exact: true }).click();
+  await expect(error).toBeVisible();
+  await page.getByRole("button", { name: "続けてと送る", exact: true }).click();
+  await expect(page.getByText(/^送信：Antigravity の起動、発言、権限への回答は Gasho の画面から/)).toBeVisible();
+  expect(d.received.filter((m) => m.type === "session.launch" || m.type === "session.input")).toHaveLength(0);
+});

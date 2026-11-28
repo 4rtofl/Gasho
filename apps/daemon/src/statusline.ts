@@ -42,7 +42,14 @@ export async function sessionCommands(log: (s: string) => void = () => undefined
     const run = execFileP(native, ["statusline-relay"], { env: {}, timeout: 10_000 });
     run.child.stdin?.end();
     await run;
-    return { statusLine: [native, "statusline-relay"], guard: [native, "worktree-guard-hook"] };
+    // A terminal host from before #331 would let Bash invoke agy.
+    const probe = execFileP(native, ["worktree-guard-hook"], { env: {}, timeout: 10_000 });
+    probe.child.stdin?.end(JSON.stringify({ tool_name: "Bash", tool_input: { command: "agy" } }));
+    const guard = await probe;
+    return {
+      statusLine: [native, "statusline-relay"],
+      guard: guard.stdout.includes('"permissionDecision":"deny"') ? [native, "worktree-guard-hook"] : NODE_COMMANDS.guard,
+    };
   } catch (e) {
     if ((e as { code?: unknown }).code !== "ENOENT") {
       log(`the terminal host ${native} does not run the status line here (${e instanceof Error ? e.message : String(e)}); status lines and hooks run on Node.js`);

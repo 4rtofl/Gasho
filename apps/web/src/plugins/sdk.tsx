@@ -36,12 +36,15 @@ import { sessionActivity } from "@/lib/activity";
 import { relativeTime } from "@/lib/format";
 import { addPending, removePending, settlePending } from "@/lib/pending";
 import { backTo, go, hrefOf, noteOpenedFrom, useRoute, type Route } from "@/lib/route";
+import { showNotice } from "@/lib/notice";
 import { useSessionLauncher } from "@/lib/session-launch";
 import { getAppState, sendCommand, sendPluginCommand, transcriptKey, useAppState } from "@/lib/store";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
 import { useEventFor } from "./events";
 import { callPlugin, useRequestFor } from "./requests";
+
+const ANTIGRAVITY_SCREEN_ONLY = "Antigravity の起動、発言、権限への回答は Gasho の画面から行ってください。";
 
 /** The plugin a part belongs to (set by PluginScope). */
 export const PluginScopeContext = createContext<string | undefined>(undefined);
@@ -390,6 +393,9 @@ export const sdk: GashoSdk = {
       if (!info.manifest.permissions?.includes("session.input")) {
         return { ok: false, error: `${info.manifest.name} には、セッションに発言を送る権限がありません（gasho-plugin.json の permissions）。` };
       }
+      if (getAppState().machines.find((m) => m.id === machine)?.sessions.some((s) => s.sessionId === sessionId && s.agent === "antigravity")) {
+        return { ok: false, error: ANTIGRAVITY_SCREEN_ONLY };
+      }
       const key = transcriptKey(machine, sessionId);
       const pending = addPending(key, { text: text.trim(), files: [], after: getAppState().transcripts[key]?.total ?? 0 });
       const r = await sendCommand(
@@ -423,8 +429,12 @@ export const sdk: GashoSdk = {
       if (!info.manifest.permissions?.includes("session.launch")) {
         return { ok: false, error: `${info.manifest.name} には、セッションを起動する権限がありません（gasho-plugin.json の permissions）。` };
       }
+      if (agent === "antigravity") return { ok: false, error: ANTIGRAVITY_SCREEN_ONLY };
       const r = await launchSession(machine, { cwd, name: name?.trim() || undefined, trust, agent });
-      if (r.ok && r.sessionId) return { ok: true, sessionId: r.sessionId };
+      if (r.ok && r.sessionId) {
+        if (r.warning) showNotice(r.warning);
+        return { ok: true, sessionId: r.sessionId };
+      }
       if (r.needsTrust) {
         return { ok: false, error: "Claude Code がこのフォルダーを信頼するかを聞いています。", needsTrust: true, ...(r.trustWarnings ? { trustWarnings: r.trustWarnings } : {}) };
       }

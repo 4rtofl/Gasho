@@ -2,6 +2,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import type {
   AgentKind,
+  AgentInputSelection,
   ClientToHub,
   CommandResult,
   DeviceInfo,
@@ -461,6 +462,10 @@ export function setDefaultAgent(agent: AgentKind, timeoutMs = 20_000): Promise<C
   return askServer((id) => ({ type: "defaultAgent.set", requestId: id, agent }), timeoutMs);
 }
 
+export function setAgentDefault(agent: "codex" | "antigravity", field: keyof AgentInputSelection, value: string | undefined) {
+  return askServer((requestId) => ({ type: "agentDefault.set", requestId, agent, field, value }), 20_000);
+}
+
 /** Changes the model a new session of Claude Code starts with, for every browser ("default": Claude Code's own default). */
 export function setDefaultModel(model: SessionModel, timeoutMs = 20_000): Promise<CommandResult> {
   return askServer((id) => ({ type: "defaultModel.set", requestId: id, ...(model !== "default" ? { model } : {}) }), timeoutMs);
@@ -526,7 +531,7 @@ function send(m: ClientToHub): void {
 }
 
 /** A command's result. `unknown`: the connection closed before it came, so the command may have run. */
-export type SentResult = CommandResult & { unknown?: true };
+export type SentResult = CommandResult;
 
 const pendingCommands = new Map<string, (r: SentResult) => void>();
 
@@ -703,6 +708,11 @@ function handle(m: HubToClient): void {
       const key = transcriptKey(m.machine, m.sessionId);
       const cur = state.transcripts[key];
       if (!cur) break;
+      if (m.reset) {
+        setTranscript(key, { entries: [], start: 0, total: 0, loading: false });
+        requestPage(m.machine, m.sessionId, undefined);
+        break;
+      }
       const add = m.entries.filter((e) => !cur.entries.some((c) => sameEntry(c, e)));
       if (add.length === 0) break;
       setTranscript(key, { ...cur, entries: [...cur.entries, ...add], total: cur.total + add.length });

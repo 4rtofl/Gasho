@@ -16,7 +16,7 @@ import { SessionHeaderToggle } from "@/components/session-header-toggle";
 import { SessionHistory } from "@/components/session-history";
 import { removeSession, SessionContextMenu, sessionActionsUnavailable, type SessionActionRequest } from "@/components/session-menu";
 import { StatusDot } from "@/components/status-badge";
-import { launchAgentFor, launchTitle, sessionAgent, showsAgents } from "@/lib/agents";
+import { canLaunchOn, launchAgentFor, launchTitle, sessionAgent, showsAgents } from "@/lib/agents";
 import { sessionLabel } from "@/lib/format";
 import { showNotice } from "@/lib/notice";
 import { go, type WorktreeView } from "@/lib/route";
@@ -49,13 +49,14 @@ export function useWorktreeLaunch(worktree: WorktreeSessions, onAskTrust: (initi
       shown.current = false;
     };
   }, []);
-  const canLaunch = machine.connected && machine.canLaunch === true;
+  const canLaunch = canLaunchOn(machine);
   /** `agent`: the one picked from the menu of the "＋"; else the default one. */
   const launch = async (agent: AgentKind = launchAgentFor(machine, defaultAgent)) => {
     if (!canLaunch || launching) return;
     setLaunching(true);
     setError(undefined);
     const r = await launchSession(machine.id, { cwd: worktree.path, agent });
+    if (r.ok && r.warning) showNotice(r.warning);
     if (!shown.current) return;
     setLaunching(false);
     if (!r.ok || !r.sessionId) {

@@ -6,11 +6,11 @@ import { compareVersions } from "./daemon-update.ts";
 /** The version of Codex that Gasho was checked with (docs/research.md). */
 export const CODEX_CHECKED_VERSION = "0.170.0";
 
-export const AGENT_NAME: Record<AgentKind, string> = { claude: "Claude Code", codex: "Codex" };
+export const AGENT_NAME: Record<AgentKind, string> = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity" };
 /** The agent as the one who works and answers in a session ("Claude からの質問"). */
-export const AGENT_SPEAKER: Record<AgentKind, string> = { claude: "Claude", codex: "Codex" };
+export const AGENT_SPEAKER: Record<AgentKind, string> = { claude: "Claude", codex: "Codex", antigravity: "Antigravity" };
 /** What to run on the working server to log in. */
-export const AGENT_LOGIN_COMMAND: Record<AgentKind, string> = { claude: "claude auth login", codex: "codex login" };
+export const AGENT_LOGIN_COMMAND: Record<AgentKind, string> = { claude: "claude auth login", codex: "codex login", antigravity: "agy" };
 
 export const AGENT_STATUS_LABEL: Record<AgentStatus, string> = {
   available: "使えます",
@@ -47,19 +47,31 @@ export function codexProblem(machine: MachineInfo): string | undefined {
 
 export const codexUsable = (machine: MachineInfo): boolean => codexOffered(machine) && codexProblem(machine) === undefined;
 
-/** The agent a new session starts with on a working server: the default one, or Claude Code where that cannot be used. */
+export const EXTRA_AGENTS = ["codex", "antigravity"] as const;
+export const offeredAgents = (machine: MachineInfo) => EXTRA_AGENTS.filter((agent) => machine.agents?.[agent]?.canLaunch === true);
+
+export function agentUsable(machine: MachineInfo, agent: AgentKind): boolean {
+  if (agent === "claude") return machine.canLaunch === true;
+  if (agent === "codex") return codexUsable(machine);
+  return machine.agents?.antigravity?.canLaunch === true;
+}
+
+export const canLaunchOn = (machine: MachineInfo): boolean => machine.connected && (machine.canLaunch === true || agentUsable(machine, "antigravity"));
+
+/** The agent a new session starts with on a working server. */
 export function launchAgentFor(machine: MachineInfo, defaultAgent: AgentKind | undefined): AgentKind {
-  return defaultAgent === "codex" && codexUsable(machine) ? "codex" : "claude";
+  if (defaultAgent && agentUsable(machine, defaultAgent)) return defaultAgent;
+  return !machine.canLaunch && agentUsable(machine, "antigravity") ? "antigravity" : "claude";
 }
 
 /** What session.launch says about the agent: nothing for Claude Code, which every gasho-daemon starts. */
-export const launchAgentField = (agent: AgentKind): { agent?: AgentKind } => (agent === "codex" ? { agent } : {});
+export const launchAgentField = (agent: AgentKind): { agent?: AgentKind } => (agent === "claude" ? {} : { agent });
 
 /** What a "＋" says it does. Where only Claude Code can be started, it says what it always said. */
 export function launchTitle(machine: MachineInfo, defaultAgent: AgentKind | undefined, what: string): string {
-  if (!codexOffered(machine)) return what;
+  if (!offeredAgents(machine).length) return what;
   return `${what}：${AGENT_NAME[launchAgentFor(machine, defaultAgent)]}（右クリックか長押しで、エージェントを選べます）`;
 }
 
 /** Sessions show which agent runs them once Codex can be used somewhere. */
-export const showsAgents = (machines: readonly MachineInfo[]): boolean => machines.some(codexUsable);
+export const showsAgents = (machines: readonly MachineInfo[]): boolean => machines.some((m) => offeredAgents(m).some((agent) => agentUsable(m, agent)) || m.sessions.some((s) => s.agent === "antigravity"));

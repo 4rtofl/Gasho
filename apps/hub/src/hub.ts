@@ -2,7 +2,11 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type {
+  AgentChoice,
   AgentInfo,
+  AgentInputSelection,
+  AgentModelChoice,
+  AgentSelector,
   AgentKind,
   AgentOperation,
   AgentStatus,
@@ -132,17 +136,45 @@ const MAX_ENDS = 100;
 const MODELS = new Set(["default", "opus", "fable", "sonnet", "haiku"]);
 const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 const FEATURES = new Set<InputFeature>(["model", "effort", "ultracode", "files"]);
-const AGENT_KINDS: readonly AgentKind[] = ["claude", "codex"];
+const AGENT_KINDS: readonly AgentKind[] = ["claude", "codex", "antigravity"];
 const AGENT_STATUSES = new Set<unknown>(["available", "loginRequired", "unknown"] satisfies AgentStatus[]);
 const AGENT_OPERATIONS = new Set<unknown>(["model", "effort", "ultracode", "files", "fork", "background", "skills", "shell"] satisfies AgentOperation[]);
 /** Where the agent a new session starts with is kept (meta). */
 const DEFAULT_AGENT_KEY = "default_agent";
+const ANTIGRAVITY_SCREEN_ONLY = "Antigravity の起動、発言、権限への回答は Gasho の画面から行ってください。";
 /** Where the effort level a new session of Claude Code starts with is kept (meta; "" for Claude Code's own default). */
 const DEFAULT_EFFORT_KEY = "default_effort";
 /** Where the model a new session of Claude Code starts with is kept (meta; "" for Claude Code's own default). */
 const DEFAULT_MODEL_KEY = "default_model";
 /** An agent's version: x.y.z, with a pre-release after it. */
 const AGENT_VERSION_RE = /^\d{1,9}\.\d{1,9}\.\d{1,9}(?:[-+][0-9A-Za-z.+-]{1,40})?$/;
+
+function choiceId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 256;
+}
+
+function choiceOf(value: unknown): AgentChoice | undefined {
+  const c = value as Partial<AgentChoice> | null;
+  if (!choiceId(c?.id) || typeof c.name !== "string" || !c.name) return undefined;
+  return { id: c.id, name: c.name, description: typeof c.description === "string" ? c.description : undefined };
+}
+
+function selectorOf<T extends AgentChoice>(
+  selector: AgentSelector<T> | undefined, parse: (value: T) => T | undefined,
+): AgentSelector<T> | undefined {
+  if (!Array.isArray(selector?.options)) return undefined;
+  return { current: choiceId(selector.current) ? selector.current : undefined, options: selector.options.flatMap((value) => parse(value) ?? []) };
+}
+
+function modelChoiceOf(value: AgentModelChoice): AgentModelChoice | undefined {
+  const choice = choiceOf(value);
+  if (!choice) return undefined;
+  return {
+    ...choice,
+    efforts: Array.isArray(value.efforts) ? value.efforts.flatMap((effort) => choiceOf(effort) ?? []) : undefined,
+    isDefault: value.isDefault === true || undefined,
+  };
+}
 
 /** The agents a gasho-daemon says it found, kept to what is expected (they are shown to browsers). */
 export function agentsOf(u: unknown): MachineAgents | undefined {
@@ -153,11 +185,16 @@ export function agentsOf(u: unknown): MachineAgents | undefined {
     if (!a || !AGENT_STATUSES.has(a.status)) continue;
     const version = typeof a.version === "string" && AGENT_VERSION_RE.test(a.version) ? a.version : undefined;
     const operations = Array.isArray(a.operations) ? [...new Set(a.operations.filter((o) => AGENT_OPERATIONS.has(o)))] : undefined;
+    const launchCatalog = a.canUseLaunchDefaults === true && a.launchCatalog && typeof a.launchCatalog === "object"
+      ? { model: selectorOf(a.launchCatalog.model, modelChoiceOf), effort: selectorOf(a.launchCatalog.effort, choiceOf) }
+      : undefined;
     agents[kind] = {
       status: a.status as AgentStatus,
       ...(version ? { version } : {}),
       ...(a.canLaunch === true ? { canLaunch: true } : {}),
       ...(operations ? { operations } : {}),
+      ...(a.canUseLaunchDefaults === true ? { canUseLaunchDefaults: true } : {}),
+      ...(launchCatalog ? { launchCatalog } : {}),
     };
   }
   return agents;
@@ -443,12 +480,16 @@ interface PendingCommand {
 }
 
 /** Checks a command from a browser; returns an error message or undefined. */
-export function validateCommand(cmd: SessionCommand): string | undefined {
+export function validateCommand(cmd: SessionCommand, agent?: AgentKind): string | undefined {
   if ("sessionId" in cmd && (typeof cmd.sessionId !== "string" || !cmd.sessionId || cmd.sessionId.length > MAX_SESSION_ID)) {
     return "セッションの指定が正しくありません。";
   }
   switch (cmd.type) {
+    case "antigravity.open":
+      return cmd.screen === true ? undefined : ANTIGRAVITY_SCREEN_ONLY;
     case "session.launch":
+      if (cmd.launchDefaults !== undefined) return "起動時の既定値は設定画面で指定してください。";
+      if (cmd.agent === "antigravity" && cmd.screen !== true) return ANTIGRAVITY_SCREEN_ONLY;
       if (typeof cmd.cwd !== "string" || !cmd.cwd.startsWith("/") || cmd.cwd.length > 1024) return "フォルダーを絶対パスで指定してください。";
       if (cmd.name !== undefined && (typeof cmd.name !== "string" || cmd.name.length > 60)) return "名前は60文字までです。";
       if (cmd.trust !== undefined && typeof cmd.trust !== "boolean") return "信頼の指定が正しくありません。";
@@ -472,6 +513,17 @@ export function validateCommand(cmd: SessionCommand): string | undefined {
       if (cmd.effort !== undefined && !EFFORTS.has(cmd.effort)) return "Effort の指定が正しくありません。";
       if (cmd.ultracode !== undefined && typeof cmd.ultracode !== "boolean") return "Ultracode の指定が正しくありません。";
       if (cmd.via !== undefined && (typeof cmd.via !== "string" || !/^[a-z][a-z0-9-]{1,31}$/.test(cmd.via))) return "送ったプラグインの指定が正しくありません。";
+      if (cmd.agentSelection !== undefined) {
+        if (cmd.screen !== true || cmd.via !== undefined) return "モデルと Effort の切り替えは Gasho の画面から行ってください。";
+        const { agentSelection: selection } = cmd;
+        if (!selection || typeof selection !== "object" || Array.isArray(selection) ||
+            (selection.model === undefined && selection.effort === undefined) ||
+            [selection.model, selection.effort].some((v) => v !== undefined && (typeof v !== "string" || !v))) {
+          return "モデルまたは Effort の指定が正しくありません。";
+        }
+        if (cmd.model !== undefined || cmd.effort !== undefined || cmd.ultracode !== undefined) return "切り替えの指定が正しくありません。";
+      }
+      if (agent === "antigravity") return files.length ? "Antigravity にはファイルを添付できません。" : undefined;
       // These change Claude Code's defaults for every new session; the chat box switches them for this session.
       if (/^\s*\/model(?=\s|$)/i.test(cmd.text)) {
         return "モデルは、入力欄のモデルの選択で切り替えてください。/model で切り替えると、これから始めるすべてのセッションの既定のモデルも変わります。";
@@ -671,6 +723,8 @@ export class Hub {
       // Said again by its capabilities and plugin.status; an update that ended with the restart is over.
       m.update = undefined;
       m.pluginApi = undefined;
+      if (m.agents?.antigravity) delete m.agents.antigravity;
+      if (m.agents?.codex) delete m.agents.codex.operations;
       this.store.saveMachine(m);
       this.store.touchDevice(device.id);
       peer.send({ type: "welcome" });
@@ -717,9 +771,10 @@ export class Hub {
         break;
       }
       case "transcript.append":
-        this.broadcast({ type: "transcript.append", machine: id, sessionId: msg.sessionId, entries: msg.entries });
+        this.broadcast({ type: "transcript.append", machine: id, sessionId: msg.sessionId, entries: msg.entries, ...(msg.reset === true ? { reset: true } : {}) });
         break;
       case "capabilities":
+        if (this.daemons.get(id) !== peer) break;
         m.canLaunch = msg.canLaunch;
         m.folders = msg.folders;
         m.folderRepos = Array.isArray(msg.folderRepos) ? msg.folderRepos : undefined;
@@ -948,9 +1003,12 @@ export class Hub {
   private serverInfo(server: ServerSource): ServerInfo {
     const effort = this.defaultEffort();
     const model = this.defaultModel();
+    const codex = this.agentDefaults("codex");
+    const antigravity = this.agentDefaults("antigravity");
     return {
       ...server.info(),
-      defaultAgent: this.store.getMeta(DEFAULT_AGENT_KEY) === "codex" ? "codex" : "claude",
+      ...(codex || antigravity ? { agentDefaults: { codex, antigravity } } : {}),
+      defaultAgent: AGENT_KINDS.find((agent) => agent === this.store.getMeta(DEFAULT_AGENT_KEY)) ?? "claude",
       ...(effort ? { defaultEffort: effort } : {}),
       ...(model ? { defaultModel: model } : {}),
     };
@@ -965,6 +1023,12 @@ export class Hub {
   private defaultEffort(): EffortLevel | undefined {
     const effort = this.store.getMeta(DEFAULT_EFFORT_KEY);
     return effort && EFFORTS.has(effort) ? (effort as EffortLevel) : undefined;
+  }
+
+  private agentDefaults(agent: "codex" | "antigravity"): AgentInputSelection | undefined {
+    const model = this.store.getMeta(`default_model_${agent}`) || undefined;
+    const effort = this.store.getMeta(`default_effort_${agent}`) || undefined;
+    return model || effort ? { model, effort } : undefined;
   }
 
   private broadcastServer(): void {
@@ -1094,6 +1158,19 @@ export class Hub {
         peer.send({ type: "server.result", requestId: msg.requestId, result: { ok: true } });
         break;
       }
+      case "agentDefault.set": {
+        if (typeof msg.requestId !== "string" || !msg.requestId || msg.requestId.length > 100) return;
+        const { agent, field, value } = msg;
+        if ((agent !== "codex" && agent !== "antigravity") || (field !== "model" && field !== "effort") ||
+            (value !== undefined && !choiceId(value))) {
+          peer.send({ type: "server.result", requestId: msg.requestId, result: { ok: false, error: "モデルまたは Effort の指定が正しくありません。" } });
+          break;
+        }
+        this.store.setMeta(`default_${field}_${agent}`, value ?? "");
+        this.broadcastServer();
+        peer.send({ type: "server.result", requestId: msg.requestId, result: { ok: true } });
+        break;
+      }
       case "defaultEffort.set": {
         if (typeof msg.requestId !== "string" || !msg.requestId || msg.requestId.length > 100) return;
         if (msg.effort !== undefined && !EFFORTS.has(msg.effort)) {
@@ -1137,6 +1214,7 @@ export class Hub {
         else if (msg.type === "plugin.request") peer.send({ type: "plugin.response", requestId: msg.requestId, error: "この Gasho サーバーではプラグインを使えません。" });
         else peer.send({ type: "plugin.result", requestId: msg.requestId, result: { ok: false, error: "この Gasho サーバーではプラグインを使えません。" } });
         break;
+      case "antigravity.open":
       case "session.launch":
       case "session.input":
       case "session.interrupt":
@@ -1169,16 +1247,23 @@ export class Hub {
     // A listing changes nothing: it goes on while an update waits.
     const listing = cmd.type === "session.history" || cmd.type === "session.skills";
     if (this.holding !== undefined && !listing) return reply({ ok: false, error: this.holding });
-    const invalid = validateCommand(cmd) ?? this.unsupported(machine, cmd);
+    const sessionId = "sessionId" in cmd ? cmd.sessionId : undefined;
+    const agent = sessionId ? this.machines.get(machine)?.sessions.find((s) => s.sessionId === sessionId)?.agent : undefined;
+    const invalid = validateCommand(cmd, agent) ?? this.unsupported(machine, cmd, agent);
     if (invalid) return reply({ ok: false, error: invalid });
     // Every launch of Claude Code from Gasho (the screen's, a plugin's) starts with the default effort level and model.
-    if (cmd.type === "session.launch" && cmd.agent !== "codex") {
+    if (cmd.type === "session.launch" && (cmd.agent === undefined || cmd.agent === "claude")) {
       const effort = this.defaultEffort();
       const model = this.defaultModel();
       if (cmd.effort === undefined && effort) cmd = { ...cmd, effort };
       if (cmd.model === undefined && model && (model !== "fable" || this.machines.get(machine)?.claudeSubscriptionType !== "pro")) {
         cmd = { ...cmd, model };
       }
+    }
+    if (cmd.type === "session.launch" && (cmd.agent === "codex" || cmd.agent === "antigravity") &&
+        this.machines.get(machine)?.agents?.[cmd.agent]?.canUseLaunchDefaults) {
+      const launchDefaults = this.agentDefaults(cmd.agent);
+      if (launchDefaults) cmd = { ...cmd, launchDefaults };
     }
     const daemon = this.daemons.get(machine);
     if (!daemon) return reply({ ok: false, error: "この working server はオフラインです。" });
@@ -1206,6 +1291,7 @@ export class Hub {
       "session.history": REQUEST_TIMEOUT_MS,
       "session.skills": REQUEST_TIMEOUT_MS,
       "session.resume": LAUNCH_TIMEOUT_MS,
+      "antigravity.open": LAUNCH_TIMEOUT_MS,
       // Answered at once; the session's state tells how it goes.
       "session.wake": REQUEST_TIMEOUT_MS,
       "session.end": REMOVE_TIMEOUT_MS,
@@ -1244,6 +1330,8 @@ export class Hub {
           cmd.text.slice(0, 300),
           cmd.model && `[model: ${cmd.model}]`,
           cmd.effort && `[effort: ${cmd.effort}]`,
+          cmd.agentSelection?.model && `[model: ${cmd.agentSelection.model.slice(0, 100)}]`,
+          cmd.agentSelection?.effort && `[effort: ${cmd.agentSelection.effort.slice(0, 100)}]`,
           cmd.ultracode !== undefined && `[ultracode: ${cmd.ultracode ? "on" : "off"}]`,
           ...(cmd.files ?? []).map((f) => `[file: ${f.name.slice(0, 100)}, ${Math.ceil(base64Bytes(f.data) / 1024)}KB]`),
           cmd.via && `[via: ${cmd.via}]`,
@@ -1254,7 +1342,7 @@ export class Hub {
         return [
           cmd.cwd,
           cmd.trust && "[trust]",
-          cmd.agent === "codex" && "[codex]",
+          cmd.agent && cmd.agent !== "claude" && `[${cmd.agent}]`,
           cmd.model && cmd.model !== "default" && `[model: ${cmd.model}]`,
           cmd.effort && `[effort: ${cmd.effort}]`,
         ]
@@ -1316,6 +1404,7 @@ export class Hub {
       case "daemon.update":
         // From which version to which.
         return `${this.machines.get(machine)?.daemonVersion ?? "?"} → ${cmd.version}`;
+      case "antigravity.open":
       case "session.interrupt":
       case "session.history":
       case "session.skills":
@@ -1332,8 +1421,14 @@ export class Hub {
   }
 
   /** A command that asks for more than the working server's gasho-daemon can do: the error to show, or undefined. */
-  private unsupported(machine: string, cmd: SessionCommand): string | undefined {
+  private unsupported(machine: string, cmd: SessionCommand, agent?: AgentKind): string | undefined {
     const m = this.machines.get(machine);
+    if (cmd.type === "session.launch" && cmd.agent === "antigravity" && !m?.agents?.antigravity?.canLaunch) {
+      return "この working server で Antigravity を起動できません。Antigravity CLI のインストールと gasho-daemon の更新を確認してください。";
+    }
+    if ((cmd.type === "session.input" || cmd.type === "permission.answer") && agent === "antigravity") {
+      if (cmd.screen !== true || (cmd.type === "session.input" && cmd.via !== undefined)) return ANTIGRAVITY_SCREEN_ONLY;
+    }
     if (cmd.type === "daemon.update") return m?.update?.canUpdate ? undefined : (m?.update?.reason ?? UPDATE_TOO_OLD);
     // A gasho-daemon that does not read `agent` (0.30.0 reports Codex, but cannot start it) would start Claude Code instead.
     if (cmd.type === "session.launch" && cmd.agent === "codex" && m && !m.agents?.codex?.canLaunch) {
@@ -1383,6 +1478,13 @@ export class Hub {
         : "この working server の gasho-daemon は古いため、フォルダーの作成と clone を扱えません。gasho-daemon を更新してください。";
     }
     if (cmd.type !== "session.input") return undefined;
+    if (cmd.agentSelection !== undefined) {
+      const operations = agent && agent !== "claude" ? m?.agents?.[agent]?.operations : undefined;
+      if ((cmd.agentSelection.model !== undefined && !operations?.includes("model")) ||
+          (cmd.agentSelection.effort !== undefined && !operations?.includes("effort"))) {
+        return "このセッションではモデルや Effort を切り替えられません。gasho-daemon の版を確認してください。";
+      }
+    }
     const features = m?.features ?? legacyFeatures(m?.daemonVersion);
     const missing = [
       cmd.model !== undefined && !features.includes("model") && "モデル",

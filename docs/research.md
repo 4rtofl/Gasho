@@ -249,3 +249,61 @@ code.claude.com の次のページを、2026年11月11日に読んだ。
 - Hooks、Hooks guide
 - Legal and compliance、Headless
 - Agent SDK（overview、sessions、permissions、streaming input）
+
+## Antigravity CLI と ACP（#331）
+
+2026年11月27日に原文を確認した。個人の Google ログインで、利用者が Gasho の画面から手で操作する ACP 接続を検討した。
+
+- 追加規約6項は、第三者のソフトウェア、ツール、サービスからのアクセスを規約違反とし、OpenClaw と Antigravity OAuth の組み合わせを例に挙げる。停止やアカウント終了の対象になりうるとも記載している。 [Google Antigravity 追加規約](https://antigravity.google/terms)
+- FAQ は、第三者のコーディングエージェントやアプリで `agy` を包む使い方や、アカウントの切り替えの自動化を個人向けプランでサポートしないとしている。 [Antigravity FAQ](https://antigravity.google/docs/faq)
+- ACP の文書は、任意の ACP クライアントが Antigravity CLI を起動できると説明している。作業フォルダーで `agy acp` を起動し、標準入出力で ACP v1 を使う。 [Antigravity ACP の文書](https://antigravity.google/docs/ide/extensions/acp/)
+- 2026年10月8日の Google スタッフ表示のあるフォーラム回答は、Codex や Claude Code から `agy` を包む使い方は個人向けではサポートせず、ACP 対応エディタをサポートする例に挙げている。 [Google AI Developers Forum の回答](https://discuss.ai.google.dev/t/is-google-ai-pro-antigravity-cli-automation-with-codex-permitted/187241/2)
+
+ACP 対応は公開されている一方、Gasho のような画面クライアントが個人向けプランで許されるかは規約上グレーである。利用者は、認証情報を扱わず、画面から利用者が送った発言だけを渡し、権限の確認も利用者が答える条件で、個人向けの連携を実装することを決めた。Claude Code の hook とプラグインの制限もこの条件に従う。
+
+### 実機の確認手順
+
+本物の Antigravity CLI と Google アカウントでの動作は未確認。Codex のセッションに同等の hook を設定できるかも未確認。
+
+1. ログイン済みの working server を選び、画面から Antigravity を起動する。短い発言を送り、入力と応答が会話に出ることを確かめる
+2. 確認が出る操作を2回頼み、1回は許可し、1回は拒否する。画面に確認と通知が出て、それぞれの回答に沿って進むことを確かめる
+3. 応答中に「停止」を押し、割り込みが表示されることを確かめる。メニューで名前を変更する
+4. gasho-daemon を起動し直し、一覧に名前が残ることを確かめる。「Antigravity の会話を開く」または次の発言で、対応する CLI では会話が続き、未対応なら理由が出ることを確かめる。最後に画面から削除し、一覧から消えることを確かめる
+5. 未ログインの working server で起動し、端末で `agy` を起動してログインするよう表示されることを確かめる
+
+
+## Codex と Antigravity のモデル・Effort（#347）
+
+Codex CLI 0.172.0 の app-server スキーマでは、`model/list` が各モデルの表示名、非表示かどうか、既定かどうか、選べる Effort と既定の Effort を返す。スキーマの `TurnStartParams` には、`model` と `effort` の指定はそのターンと後続ターンに適用するとある。初回と再接続時の現在値は、それぞれ `ThreadStartResponse`・`ThreadResumeResponse` の `model` と `reasoningEffort` で受け取れる。
+
+ACP v1 のスキーマでは、モデルは `model`、思考レベルは `thought_level` に分類される。候補は単独のリストか、グループに分かれたリストで届く。`session/set_config_option` は選択肢の ID と値を受け取り、変更後の設定一覧を返す。Antigravity の ACP 文書にも、モデルと思考レベルの選択肢があると記されている。 [Antigravity ACP の文書](https://antigravity.google/docs/ide/extensions/acp/)
+
+偽の ACP サーバーで、候補と現在値の読み取り、再接続、通知による更新、発言前の切り替え、拒否された発言が届かないことを確かめた。候補を返さない応答と、画面以外からの切り替えの拒否も確認した。
+
+Codex の RPC をプロセス内で置き換えた確認では、複数ページの候補の読み取り、非表示モデルの除外、Effort の検証、発言時の指定と後続の発言で指定を省く動作を確かめた。
+
+本物の Codex と Antigravity に対し、今回の Gasho の画面から切り替える動作は未確認。利用者は実機の `agy` でモデルを使えることを確認済み。Codex の偽 app-server を使うテストとブラウザーの E2E は、作業時のサンドボックスでソケットを待ち受けられず未確認。
+
+## Codex と Antigravity のコンテキストとトークン（#349）
+
+### Codex
+
+`codex-cli 0.172.0` の `app-server generate-json-schema` では、`thread/tokenUsage/updated` が `threadId`、`turnId`、`tokenUsage`（`total`、`last`、`modelContextWindow`）を持つ。数え方はスキーマに書かれていないので、公開されているソース（[openai/codex](https://github.com/openai/codex) の `rust-v0.172.0`）を読んで確かめた。
+
+- `total` は応答ごとの使用量をスレッドで足したもの。`last` は最後の応答で、要約のあとは `totalTokens` が見積もりになり、ほかの項目は0になる
+- `cachedInputTokens` と書き込みのトークンは、Responses API の `input_tokens_details` から来るので、`inputTokens` の内数である
+- コンテキストがあふれると、`total` は `totalTokens` だけを持つ値に置き換わり、内訳はゼロからになる
+- 同じ使用量は、プランの上限の更新などでも再送される
+- `thread/resume` で使用量が再送されるのは、ターンを含めて読み込むときと、ページに分けて読み込むときだけである。Gasho の `excludeTurns: true` では届かない
+- Codex の端末は、固定の 12,000 トークンを引いた残りの割合を出す。Gasho は `last.totalTokens` ÷ `modelContextWindow` を出す
+
+### Antigravity
+
+ACP v1 のスキーマでは、`usage_update` が `used`（コンテキストにあるトークン数）、`size`、任意の `cost`（累計の金額と通貨）を持つ。`session/prompt` の応答に使用量の項目はない。[Antigravity の ACP の文書](https://antigravity.google/docs/ide/extensions/acp/)には、使用量の通知の記述がない。
+
+### 確かめていないこと
+
+- 本物の Codex の app-server が実際に送る値と、画面の表示。テストは偽の app-server で行った
+- Codex のサブエージェントの使用量が、親のスレッドの `total` に入らないこと（ソースの作りからの判断で、実機では見ていない）。サブエージェントのスレッドの通知は数えていない
+- 本物の `agy` が `usage_update` を送るかどうかと、送る場合の `cost` の通貨。テストは偽の ACP サーバーで行い、`agy` は実行していない
+

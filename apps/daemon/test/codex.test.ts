@@ -5,6 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { codexLoginStatusOf, codexRunner, codexVersionOf, detectCodex, type RunCodex } from "../src/codex.ts";
 import { loadConfig } from "../src/config.ts";
+import { Daemon } from "../src/daemon.ts";
 
 const failure = (stderr: string, code: number | string = 1) => Object.assign(new Error("failed"), { code, stderr, stdout: "" });
 
@@ -71,4 +72,26 @@ test("GASHO_CODEX_BIN says where codex is; without it, or empty, it is looked fo
   assert.equal(loadConfig(creds, { GASHO_CODEX_BIN: "/opt/codex/bin/codex" }).codexBin, "/opt/codex/bin/codex");
   assert.equal(loadConfig(creds, { GASHO_CODEX_BIN: "" }).codexBin, "codex");
   assert.equal(loadConfig(creds, {}).codexBin, "codex");
+});
+
+test("Codex status checks never start an app-server to discover models", async (t) => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "gasho-codex-"));
+  t.after(() => fsp.rm(dir, { recursive: true, force: true }));
+  const bin = path.join(dir, "codex");
+  await fsp.writeFile(bin, '#!/bin/sh\ncase "$*" in --version) echo "codex-cli 0.170.0";; "login status") exit 0;; *) exit 1;; esac\n', { mode: 0o755 });
+  const creds = { server: "http://127.0.0.1:1", machineId: "m", token: "t", name: "ubuntu" };
+  const daemon = new Daemon(loadConfig(creds, {
+    GASHO_CODEX_BIN: bin, GASHO_AGY_BIN: "/dev/null/agy", GASHO_DAEMON_CONFIG: path.join(dir, "daemon.json"),
+    XDG_DATA_HOME: dir, XDG_CACHE_HOME: dir,
+  })) as unknown as {
+    refreshCodex(): Promise<void>;
+    startCodexAppServer(): Promise<string>;
+    agentsFound(): { codex?: { status: string; launchCatalog?: unknown } };
+  };
+  const start = t.mock.method(daemon, "startCodexAppServer", async () => assert.fail("app-server must stay stopped"));
+  await daemon.refreshCodex();
+  await daemon.refreshCodex();
+  assert.equal(daemon.agentsFound().codex?.status, "available");
+  assert.equal(daemon.agentsFound().codex?.launchCatalog, undefined);
+  assert.equal(start.mock.callCount(), 0);
 });

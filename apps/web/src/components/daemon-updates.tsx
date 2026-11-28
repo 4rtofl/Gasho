@@ -105,7 +105,7 @@ function AgentState({ agent, info }: { agent: AgentKind; info: AgentInfo }) {
   return (
     <div className="mt-1">
       <p className="text-xs text-muted-foreground">
-        <span className="font-mono">{info.version ? `${name} ${info.version}` : name}</span>：{AGENT_STATUS_LABEL[info.status]}
+        <span className="font-mono">{info.version ? `${name} ${info.version}` : name}</span>：{agent === "antigravity" ? "インストール済み（ログイン状態は未確認）" : AGENT_STATUS_LABEL[info.status]}
       </p>
       {info.status === "loginRequired" && (
         <>
@@ -335,6 +335,7 @@ function MachineRow({
         <div className="mt-0.5">{status}</div>
         {m.connected && m.agents?.claude && <AgentState agent="claude" info={m.agents.claude} />}
         {m.connected && m.agents?.codex && <AgentState agent="codex" info={m.agents.codex} />}
+        {m.connected && m.agents?.antigravity && <AgentState agent="antigravity" info={m.agents.antigravity} />}
         {m.connected && u?.rolledBack && (
           <p className="mt-1 text-xs text-amber-500">
             {u.rolledBack.from} がうまく起動しなかったので、{u.rolledBack.to} に自動で戻しました（{relativeTime(u.rolledBack.at, now)}）。{u.rolledBack.error}

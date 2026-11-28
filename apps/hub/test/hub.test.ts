@@ -656,6 +656,46 @@ test("the default agent is kept by the Gasho server, and every browser hears of 
   assert.equal(kept.server?.defaultAgent, "codex");
 });
 
+test("extra agents keep independent defaults and relay them only for capable launches", () => {
+  const store = new Store(":memory:");
+  const machine = store.createDevice("machine", "ubuntu");
+  const browser = store.createDevice("browser", "iPhone");
+  const server: ServerSource = { info: () => ({ version: "0.15.0", update: { canUpdate: false } }), update: () => ({ ok: true }), subscribe: () => () => undefined };
+  const hub = new Hub(store, { server });
+  const d = fakePeer<HubToDaemon>();
+  const c = fakePeer<HubToClient>(browser.device.id);
+  const machineId = machine.device.id;
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machine.token, daemonVersion: "0.38.1" });
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: true, folders: [], agents: {
+    codex: { status: "available", canLaunch: true, canUseLaunchDefaults: true },
+    antigravity: { status: "unknown", canLaunch: true },
+  } });
+  hub.onClientConnect(c);
+  hub.onClientMessage(c, { type: "agentDefault.set", requestId: "r1", agent: "codex", field: "model", value: "codex-model" });
+  hub.onClientMessage(c, { type: "agentDefault.set", requestId: "r2", agent: "codex", field: "effort", value: "deep" });
+  hub.onClientMessage(c, { type: "agentDefault.set", requestId: "r3", agent: "antigravity", field: "model", value: "agy-model" });
+
+  const again = new Hub(store, { server });
+  again.onClientConnect(c);
+  const snapshot = c.sent.findLast((m) => m.type === "snapshot");
+  assert.deepEqual(snapshot?.server?.agentDefaults?.codex, { model: "codex-model", effort: "deep" });
+  assert.equal(snapshot?.server?.agentDefaults?.antigravity?.model, "agy-model");
+
+  const launch = { type: "session.launch", requestId: "r", machine: machineId, cwd: "/work" } as const;
+  hub.onClientMessage(c, { ...launch, agent: "codex" });
+  const codex = d.sent.at(-1);
+  assert.ok(codex?.type === "session.launch");
+  assert.deepEqual(codex.launchDefaults, { model: "codex-model", effort: "deep" });
+  hub.onClientMessage(c, { ...launch, agent: "antigravity", screen: true });
+  const oldDaemon = d.sent.at(-1);
+  assert.ok(oldDaemon?.type === "session.launch");
+  assert.equal(oldDaemon.launchDefaults, undefined);
+
+  hub.onClientMessage(c, { ...launch, agent: "codex", launchDefaults: { model: "other" } });
+  const refused = c.sent.at(-1);
+  assert.ok(refused?.type === "command.result" && !refused.result.ok);
+});
+
 test("the default effort level is kept by the Gasho server, and every launch of Claude Code starts with it", () => {
   const store = new Store(":memory:");
   const machine = store.createDevice("machine", "ubuntu");
@@ -1645,3 +1685,60 @@ test("days older than the heatmap shows are forgotten, and so are a working serv
   store.revokeDevice(machineId);
   assert.deepEqual(store.tokenDays(now), {});
 });
+
+test("Antigravity launch requires capabilities from the current daemon connection and the screen route", () => {
+  const { hub, machineId, machineToken, browserId } = setup();
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const launch = { type: "session.launch", requestId: "r", machine: machineId, cwd: "/work", agent: "antigravity" } as const;
+  const d = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.30.0" });
+  hub.onClientMessage(c, { ...launch, screen: true });
+  assert.equal(d.sent.some((m) => m.type === "session.launch"), false);
+  assert.match((c.sent.at(-1) as { result?: { error?: string } })?.result?.error ?? "", /起動できません/);
+
+  hub.onDaemonMessage(d, { type: "capabilities", canLaunch: false, folders: [], agents: { antigravity: { status: "unknown", canLaunch: true, operations: [] } } });
+  hub.onClientMessage(c, launch);
+  assert.equal(d.sent.some((m) => m.type === "session.launch"), false);
+  assert.match((c.sent.at(-1) as { result?: { error?: string } })?.result?.error ?? "", /Gasho の画面から/);
+  hub.onClientMessage(c, { ...launch, screen: true });
+  assert.deepEqual(d.sent.at(-1), { type: "session.launch", requestId: (d.sent.at(-1) as { requestId: string }).requestId, cwd: "/work", agent: "antigravity", screen: true });
+
+  const replacement = fakePeer<HubToDaemon>();
+  hub.onDaemonMessage(replacement, { type: "hello", machineId, token: machineToken, daemonVersion: "0.30.0" });
+  hub.onClientMessage(c, { ...launch, screen: true });
+  assert.equal(replacement.sent.some((m) => m.type === "session.launch"), false);
+});
+
+
+for (const agent of ["antigravity", "codex"] as const) {
+  test(`${agent} model selections require the screen and agent operations on the current connection`, () => {
+    const { hub, machineId, machineToken, browserId } = setup();
+    const c = fakePeer<HubToClient>(browserId);
+    hub.onClientConnect(c);
+    const d = fakePeer<HubToDaemon>();
+    hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.38.1" });
+    hub.onDaemonMessage(d, { type: "sessions", sessions: [{ ...session, sessionId: "s", agent }] });
+    const input = { type: "session.input", requestId: "switch", machine: machineId, sessionId: "s", text: "読み直して", agentSelection: { model: "test-pro", effort: "extra" } } as const;
+    const capabilities = (operations: ("model" | "effort")[]) => hub.onDaemonMessage(d, {
+      type: "capabilities", canLaunch: true, folders: [], agents: { [agent]: { status: "available", operations } },
+    });
+    capabilities([]);
+    hub.onClientMessage(c, { ...input, screen: true });
+    assert.equal(d.sent.some((m) => m.type === "session.input"), false);
+
+    capabilities(["model", "effort"]);
+    hub.onClientMessage(c, input);
+    hub.onClientMessage(c, { ...input, via: "demo-plugin", screen: true });
+    assert.equal(d.sent.some((m) => m.type === "session.input"), false);
+
+    hub.onClientMessage(c, { ...input, screen: true });
+    const relayed = d.sent.find((m) => m.type === "session.input");
+    assert.deepEqual(relayed?.agentSelection, input.agentSelection);
+
+    const replacement = fakePeer<HubToDaemon>();
+    hub.onDaemonMessage(replacement, { type: "hello", machineId, token: machineToken, daemonVersion: "0.38.1" });
+    hub.onClientMessage(c, { ...input, screen: true });
+    assert.equal(replacement.sent.some((m) => m.type === "session.input"), false);
+  });
+}

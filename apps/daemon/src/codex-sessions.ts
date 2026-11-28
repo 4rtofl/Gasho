@@ -2,11 +2,12 @@
 // gasho-daemon: gasho-daemon connects to it, keeps the ids of its threads in a file, and loads them again each time it
 // connects, so a turn goes on while gasho-daemon restarts. Claude Code's sessions do not come through here.
 import fsp from "node:fs/promises";
-import type { CommandResult, HookEvent, PermissionDecision, QuestionAnswer, SessionInfo, TranscriptEntry, TranscriptPage } from "@gasho/protocol";
+import type { AgentInputConfig, AgentInputSelection, AgentModelChoice, CommandResult, HookEvent, PermissionDecision, QuestionAnswer, SessionInfo, TokenUsage, TranscriptEntry, TranscriptPage } from "@gasho/protocol";
 import {
   type CodexItem,
   type CodexRequest,
   type CodexThreadStatus,
+  type CodexTokenUsage,
   type CodexTurn,
   entriesOfItem,
   entriesOfTurnEnd,
@@ -17,8 +18,12 @@ import {
   sessionStatusOf,
   textInput,
   transcriptOf,
+  usageOfBreakdown,
 } from "./codex-map.ts";
 import { CodexConnectionClosed, CodexRpc, CodexRpcError } from "./codex-rpc.ts";
+import { tokenDayOf } from "./token-days.ts";
+import { add, emptyUsage, HOUR, sum, TOKEN_HOURS } from "./tokens.ts";
+import { contextOf } from "./util.ts";
 
 /** Reconnecting: the first wait, and the longest. */
 const RETRY_MIN_MS = 1000;
@@ -38,9 +43,29 @@ export interface CodexSessionsOptions {
   /** What is known of a folder: its repository, branch and worktree. */
   describe: (cwd: string) => Promise<Partial<SessionInfo>>;
   changed: () => void;
+  catalogChanged?: () => void;
   event: (event: HookEvent) => void;
   append: (sessionId: string, entries: TranscriptEntry[]) => void;
+  /** The tokens a session used per day, all of its days each time. */
+  tokens: (sessionId: string, days: Map<string, number>) => void;
   log: (...args: unknown[]) => void;
+}
+
+interface ThreadResponse {
+  thread: Record<string, unknown>;
+  model?: string;
+  modelProvider?: string;
+  reasoningEffort?: string | null;
+}
+
+interface ListedModel {
+  model: string;
+  displayName: string;
+  description: string;
+  hidden: boolean;
+  isDefault: boolean;
+  defaultReasoningEffort: string;
+  supportedReasoningEfforts: { reasoningEffort: string; description: string }[];
 }
 
 interface SavedThread {
@@ -48,11 +73,23 @@ interface SavedThread {
   cwd: string;
   name?: string;
   launchedAt: number;
+  usage?: ThreadUsage;
+}
+
+/**
+ * The tokens of a thread: its total as Codex last said it, and what each report added to that, per hour and per day.
+ * Kept with the thread, so that what it used while gasho-daemon was away is counted once.
+ */
+interface ThreadUsage {
+  seen: TokenUsage;
+  hours: [number, TokenUsage][];
+  days: [string, number][];
 }
 
 interface ThreadState {
   info: SessionInfo;
   launchedAt: number;
+  usage?: ThreadUsage;
   /** Inputs waiting for the thread to become idle, the next one first. */
   queue: string[];
   sending: boolean;
@@ -85,6 +122,8 @@ export class CodexSessions {
   private o: CodexSessionsOptions;
   private threads = new Map<string, ThreadState>();
   private rpc: CodexRpc | undefined;
+  private catalogs = new Map<string | undefined, { options?: AgentModelChoice[]; loading?: Promise<AgentModelChoice[]> }>();
+  launchCatalog?: AgentInputConfig;
   private opening: Promise<CodexRpc> | undefined;
   private retryTimer: NodeJS.Timeout | undefined;
   private retryMs = RETRY_MIN_MS;
@@ -105,7 +144,15 @@ export class CodexSessions {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") this.o.log(`cannot read ${this.o.file}; starting without the Codex sessions it kept`, e);
       return;
     }
-    for (const s of saved) if (typeof s?.threadId === "string" && typeof s.cwd === "string") this.add(s.threadId, s.cwd, s.name, s.launchedAt);
+    for (const s of saved) {
+      if (typeof s?.threadId !== "string" || typeof s.cwd !== "string") continue;
+      const t = this.add(s.threadId, s.cwd, s.name, s.launchedAt);
+      if (!s.usage) continue;
+      t.usage = s.usage;
+      t.info.tokens = s.usage.seen;
+      t.info.tokenHours = s.usage.hours;
+      this.o.tokens(s.threadId, new Map(s.usage.days));
+    }
     if (this.threads.size > 0) this.connectInBackground();
   }
 
@@ -135,27 +182,85 @@ export class CodexSessions {
     return [...this.threads.values()].reduce((n, t) => n + t.queue.length, 0);
   }
 
-  async launch(cwd: string, name: string | undefined): Promise<string> {
+  async refreshLaunchCatalog(refresh = true): Promise<void> {
+    const rpc = this.rpc;
+    if (!rpc?.open) return;
+    const config = await this.readConfig(rpc);
+    if (this.rpc !== rpc) return;
+    const options = await this.listModels(rpc, config?.model_provider ?? undefined, refresh);
+    if (this.rpc !== rpc) return;
+    const catalog = options.length ? { model: { current: config?.model ?? undefined, options } } : undefined;
+    if (JSON.stringify(catalog) === JSON.stringify(this.launchCatalog)) return;
+    this.launchCatalog = catalog;
+    this.o.catalogChanged?.();
+  }
+
+  private async readConfig(rpc: CodexRpc, cwd?: string) {
+    return rpc.request<{ config?: { model?: string | null; model_provider?: string | null } }>("config/read", { cwd })
+      .then((r) => r.config)
+      .catch(() => undefined);
+  }
+
+  async launch(cwd: string, name: string | undefined, defaults?: AgentInputSelection): Promise<{ sessionId: string; warning?: string }> {
     const rpc = await this.ensure();
-    // Only the folder: approvals and the sandbox are as the person set them up for Codex (~/.codex/config.toml).
-    const r = await rpc.request<{ thread: Record<string, unknown>; model?: string }>("thread/start", { cwd });
+    const warnings: string[] = [];
+    let model: string | undefined;
+    let effort: string | undefined;
+    if (defaults) {
+      model = defaults.model;
+      effort = defaults.effort;
+      // Without a loaded catalog, let thread/start check the settings instead of waiting for discovery.
+      if (this.launchCatalog) {
+        const config = await this.readConfig(rpc, cwd);
+        const options = this.catalogs.get(config?.model_provider ?? undefined)?.options;
+        if (options) {
+          model = options.find((option) => option.id === defaults.model)?.id;
+          if (defaults.model && !model) warnings.push(`既定のモデル（${defaults.model}）はこの working server の候補にありません。`);
+          const selected = options.find((option) => option.id === (model ?? config?.model)) ??
+            (!model && !config?.model ? options.find((option) => option.isDefault) : undefined);
+          effort = selected?.efforts?.find((option) => option.id === defaults.effort)?.id;
+          if (defaults.effort && !effort) warnings.push(`既定の Effort（${defaults.effort}）は起動するモデルの候補にありません。`);
+        }
+      }
+    }
+    // Approvals and the sandbox come from the person's Codex configuration.
+    const r = await rpc.request<ThreadResponse>("thread/start", {
+      cwd,
+      ...(model ? { model } : {}),
+      ...(effort ? { config: { model_reasoning_effort: effort } } : {}),
+    }).catch((e: unknown) => {
+      // Without an explicit RPC rejection, a fresh request could start a duplicate thread.
+      if (!(e instanceof CodexRpcError) || (!model && !effort)) throw e;
+      warnings.push(`Codex が既定値を受け付けなかったため、Codex の設定で起動しました（${messageOf(e)}）。`);
+      model = effort = undefined;
+      return rpc.request<ThreadResponse>("thread/start", { cwd });
+    });
+    if (model && r.model !== model) warnings.push(`既定のモデル（${model}）に切り替わりませんでした。`);
+    if (effort && r.reasoningEffort !== effort) warnings.push(`既定の Effort（${effort}）に切り替わりませんでした。`);
     const threadId = r.thread.id as string;
     const t = this.add(threadId, cwd, name, Date.now());
-    this.applyThread(t, r.thread, r.model);
+    t.usage = { seen: emptyUsage(), hours: [], days: [] };
+    this.applyThread(rpc, t, r);
     if (name) await rpc.request("thread/name/set", { threadId, name }).catch((e: unknown) => this.o.log(`could not name the thread ${threadId}`, messageOf(e)));
     await this.describe(t);
     await this.save();
     this.o.changed();
-    return threadId;
+    return { sessionId: threadId, ...(warnings.length ? { warning: warnings.join(" ") } : {}) };
   }
 
-  async input(sessionId: string, text: string): Promise<CommandResult> {
+  async input(sessionId: string, text: string, selection?: AgentInputSelection): Promise<CommandResult> {
     const t = this.threads.get(sessionId);
     if (!t) return { ok: false, error: "このセッションは見つかりません。" };
+    if (selection && (!this.rpc?.open || t.sending || t.turnId || t.info.status !== "idle" || t.queue.length)) {
+      return { ok: false, error: "Codex が入力を受け付けられる状態になってから、モデルや Effort を切り替えてください。" };
+    }
     t.queue.push(text);
     if (t.queue.length === 1) {
-      const error = await this.flush(t);
-      if (error) return { ok: false, error };
+      const result = await this.flush(t, selection);
+      if (result) {
+        this.o.changed();
+        return result;
+      }
     } else {
       this.flushInBackground(t);
     }
@@ -267,6 +372,7 @@ export class CodexSessions {
     // A retry that came while the threads were loading found this connection still opening, and left it at that.
     if (!rpc.open) this.retryLater();
     this.o.changed();
+    void this.refreshLaunchCatalog(false);
     return rpc;
   }
 
@@ -290,10 +396,16 @@ export class CodexSessions {
   private onClosed(rpc: CodexRpc): void {
     if (this.rpc !== rpc) return;
     this.rpc = undefined;
+    this.catalogs.clear();
+    if (this.launchCatalog) {
+      this.launchCatalog = undefined;
+      this.o.catalogChanged?.();
+    }
     this.o.log("the connection to Codex's app-server ended");
     for (const t of this.threads.values()) {
       t.wasActive = t.info.status === "busy" || t.info.status === "waiting";
       t.info.status = "unknown";
+      delete t.info.agentConfig;
       t.pending.clear();
       delete t.turnId;
       this.stopResumeRetry(t);
@@ -307,8 +419,8 @@ export class CodexSessions {
     const threadId = t.info.sessionId;
     this.stopResumeRetry(t);
     try {
-      const r = await rpc.request<{ thread: Record<string, unknown>; model?: string }>("thread/resume", { threadId, excludeTurns: true });
-      this.applyThread(t, r.thread, r.model);
+      const r = await rpc.request<ThreadResponse>("thread/resume", { threadId, excludeTurns: true });
+      this.applyThread(rpc, t, r);
       if (t.info.status === "busy" || t.info.status === "waiting") t.turnId = await this.activeTurn(rpc, threadId);
       await this.describe(t);
       if (t.transcript) await this.catchUp(rpc, t);
@@ -366,6 +478,9 @@ export class CodexSessions {
         this.setName(t, typeof params.threadName === "string" ? params.threadName : undefined);
         void this.save();
         break;
+      case "thread/tokenUsage/updated":
+        this.count(t, params.tokenUsage as CodexTokenUsage);
+        break;
       case "thread/closed":
         if (this.rpc) void this.resume(this.rpc, t);
         return;
@@ -405,6 +520,38 @@ export class CodexSessions {
     this.o.changed();
   }
 
+  private count(t: ThreadState, { total, last, modelContextWindow }: CodexTokenUsage): void {
+    if (modelContextWindow) t.info.context = contextOf(t.info.context, last.totalTokens, modelContextWindow);
+    const seen = usageOfBreakdown(total);
+    // A thread kept by an earlier gasho-daemon: what it has used by now is not counted, as when it used it is not known.
+    const before = t.usage ?? { seen, hours: [], days: [] };
+    // Codex starts its totals again from zero when a context overflows: nothing is taken back then.
+    const used: TokenUsage = {
+      input: Math.max(0, seen.input - before.seen.input),
+      output: Math.max(0, seen.output - before.seen.output),
+      cacheWrite: Math.max(0, seen.cacheWrite - before.seen.cacheWrite),
+      cacheRead: Math.max(0, seen.cacheRead - before.seen.cacheRead),
+    };
+    let { hours, days } = before;
+    if (sum(used) > 0) {
+      const now = Date.now();
+      const hour = Math.floor(now / HOUR) * HOUR;
+      hours = hours.filter(([h]) => h > hour - TOKEN_HOURS * HOUR);
+      let latest = hours.at(-1);
+      if (latest?.[0] !== hour) hours.push((latest = [hour, emptyUsage()]));
+      add(latest[1], used);
+      const byDay = new Map(days);
+      const day = tokenDayOf(now);
+      byDay.set(day, (byDay.get(day) ?? 0) + sum(used));
+      days = [...byDay];
+      this.o.tokens(t.info.sessionId, byDay);
+    }
+    t.usage = { seen, hours, days };
+    t.info.tokens = seen;
+    t.info.tokenHours = hours;
+    void this.save();
+  }
+
   private onTurnEnd(t: ThreadState, turn: CodexTurn): void {
     t.lastTurnEnded = turn.id;
     if (t.turnId === turn.id) delete t.turnId;
@@ -437,16 +584,35 @@ export class CodexSessions {
 
   // ---- sending ----
 
-  /** Starts a turn with the next input, if the thread can take it; returns why it could not be sent. */
-  private async flush(t: ThreadState): Promise<string | undefined> {
+  private async flush(t: ThreadState, selection?: AgentInputSelection): Promise<CommandResult | undefined> {
     const rpc = this.rpc;
     const text = t.queue[0];
     if (t.sending || !rpc || t.info.status !== "idle" || text === undefined) return undefined;
     t.sending = true;
     try {
+      const config = t.info.agentConfig;
+      const model = selection?.model;
+      const selectedModel = selection && config?.model?.options.find((m) => m.id === (model ?? config.model?.current));
+      const effort = selection?.effort ?? (model !== undefined && model !== config?.model?.current ? selectedModel?.defaultEffort : undefined);
+      if (model !== undefined && !selectedModel) throw new Error("指定したモデルは選べません。");
+      if (effort !== undefined && !selectedModel?.efforts?.some((option) => option.id === effort)) {
+        throw new Error("このモデルでは指定した Effort を選べません。");
+      }
       t.sentText = text;
-      const r = await rpc.request<{ turn: CodexTurn }>("turn/start", { threadId: t.info.sessionId, input: textInput(text) });
+      const r = await rpc.request<{ turn: CodexTurn }>("turn/start", {
+        threadId: t.info.sessionId,
+        input: textInput(text),
+        ...(model !== undefined ? { model } : {}),
+        ...(effort !== undefined ? { effort } : {}),
+      });
       t.queue.shift();
+      if (config?.model && (model !== undefined || effort !== undefined)) {
+        t.info.agentConfig = {
+          model: model === undefined ? config.model : { ...config.model, current: model },
+          effort: { current: effort ?? config.effort?.current, options: selectedModel?.efforts ?? [] },
+        };
+        if (selectedModel) t.info.model = selectedModel.name;
+      }
       if (t.lastTurnEnded !== r.turn.id) {
         t.turnId = r.turn.id;
         if (t.info.status === "idle") t.info.status = "busy";
@@ -454,11 +620,15 @@ export class CodexSessions {
       return undefined;
     } catch (e) {
       delete t.sentText;
-      // Sent again once connected: the thread did not take it, or nothing says that it did.
-      if (e instanceof CodexConnectionClosed) return undefined;
+      if (e instanceof CodexConnectionClosed) {
+        if (!selection) return undefined;
+        // Retrying could send the same input again or lose the requested switch.
+        t.queue.shift();
+        return { ok: false, unknown: true };
+      }
       t.queue.shift();
       this.o.log(`Codex did not take the input for ${t.info.sessionId}`, messageOf(e));
-      return `Codex が発言を受け付けませんでした：${messageOf(e)}`;
+      return { ok: false, error: `Codex が発言を受け付けませんでした：${messageOf(e)}` };
     } finally {
       t.sending = false;
       // Nothing else would send the next one: the thread stayed idle (the input failed), or became idle meanwhile.
@@ -467,8 +637,8 @@ export class CodexSessions {
   }
 
   private flushInBackground(t: ThreadState): void {
-    void this.flush(t).then((error) => {
-      if (error) this.event(t, "StopFailure", { summary: eventSummary(error) });
+    void this.flush(t).then((result) => {
+      if (result?.error) this.event(t, "StopFailure", { summary: eventSummary(result.error) });
       this.o.changed();
     });
   }
@@ -578,13 +748,56 @@ export class CodexSessions {
     return t;
   }
 
-  private applyThread(t: ThreadState, thread: Record<string, unknown>, model: string | undefined): void {
+  private applyThread(rpc: CodexRpc, t: ThreadState, { thread, model, modelProvider, reasoningEffort }: ThreadResponse): void {
     if (typeof thread.cwd === "string") t.info.cwd = thread.cwd;
     if (typeof thread.name === "string" && thread.name) this.setName(t, thread.name);
     if (typeof thread.createdAt === "number") t.info.startedAt = thread.createdAt * 1000;
     if (typeof thread.updatedAt === "number") t.info.lastActivityAt = Math.max(t.info.lastActivityAt ?? 0, thread.updatedAt * 1000);
-    if (model) t.info.model = model;
     t.info.status = sessionStatusOf(thread.status as CodexThreadStatus | undefined);
+    if (model) t.info.model = model;
+    delete t.info.agentConfig;
+    // A slow catalog must not delay opening the thread or sending its plain inputs.
+    void this.listModels(rpc, modelProvider).then((options) => {
+      if (this.rpc !== rpc || !this.threads.has(t.info.sessionId) || !options.length) return;
+      const modelChoice = options.find((option) => option.id === model);
+      if (modelChoice) t.info.model = modelChoice.name;
+      t.info.agentConfig = {
+        model: { current: model, options },
+        effort: { current: reasoningEffort ?? undefined, options: modelChoice?.efforts ?? [] },
+      };
+      this.o.changed();
+    });
+  }
+
+  private listModels(rpc: CodexRpc, modelProvider?: string, refresh = false): Promise<AgentModelChoice[]> {
+    const catalog = this.catalogs.get(modelProvider) ?? {};
+    this.catalogs.set(modelProvider, catalog);
+    if (!refresh && catalog.options) return Promise.resolve(catalog.options);
+    catalog.loading ??= (async () => {
+      const models: AgentModelChoice[] = [];
+      let cursor: string | null | undefined;
+      do {
+        const page: { data: ListedModel[]; nextCursor?: string | null } = await rpc.request("model/list", {
+          ...(modelProvider ? { modelProvider } : {}),
+          ...(cursor ? { cursor } : {}),
+        });
+        for (const m of page.data) {
+          if (m.hidden) continue;
+          const efforts = m.supportedReasoningEfforts.map(({ reasoningEffort: id, description }) => ({ id, name: id, description }));
+          models.push({
+            id: m.model, name: m.displayName, description: m.description, isDefault: m.isDefault, efforts,
+            defaultEffort: efforts.some((e) => e.id === m.defaultReasoningEffort) ? m.defaultReasoningEffort : undefined,
+          });
+        }
+        cursor = page.nextCursor;
+      } while (cursor);
+      catalog.options = models;
+      return models;
+    })().catch((e: unknown) => {
+      this.o.log("could not list Codex models", messageOf(e));
+      return catalog.options ?? [];
+    }).finally(() => { delete catalog.loading; });
+    return catalog.loading;
   }
 
   private setName(t: ThreadState, name: string | undefined): void {
@@ -622,6 +835,7 @@ export class CodexSessions {
         cwd: t.info.cwd,
         ...(t.info.name ? { name: t.info.name } : {}),
         launchedAt: t.launchedAt,
+        ...(t.usage ? { usage: t.usage } : {}),
       }));
       const tmp = `${this.o.file}.tmp`;
       await fsp.writeFile(tmp, `${JSON.stringify(list, null, 2)}\n`, { mode: 0o600 });

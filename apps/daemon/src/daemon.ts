@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import type {
   AgentInfo,
+  AgentInputSelection,
   AgentKind,
   AgentOperation,
   BackgroundTask,
@@ -30,10 +31,11 @@ import type {
   TranscriptEntry,
 } from "@gasho/protocol";
 import { claudeRunner, detectClaude, type ClaudeInfo } from "./claude-status.ts";
+import { ANTIGRAVITY_NO_FORK, AntigravitySessions, detectAntigravity } from "./antigravity.ts";
 import { codexRunner, detectCodex, startCodexServer } from "./codex.ts";
 import { CodexSessions } from "./codex-sessions.ts";
 import type { DaemonConfig } from "./config.ts";
-import { type ControlReply, type ControlRequest, type ControlSession, controlSocketOf, startControlServer } from "./control.ts";
+import { ANTIGRAVITY_SCREEN_ONLY, type ControlReply, type ControlRequest, type ControlSession, controlSocketOf, startControlServer } from "./control.ts";
 import { listDir, readFileAt, writeFileAt } from "./files.ts";
 import { cloneRepo, createFolder } from "./folders.ts";
 import { githubRepoOf, nestedRepos, readGitGraph, worktreeOf } from "./git.ts";
@@ -197,7 +199,6 @@ const MODEL_NAMES: Record<SessionModel, string> = { default: "既定のモデル
 const EFFORT_NAMES: Record<EffortLevel, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "xHigh", max: "Max" };
 /** What this gasho-daemon can switch or carry with an input (MachineInfo.features). */
 const INPUT_FEATURES: readonly InputFeature[] = ["model", "effort", "ultracode", "files"];
-/** What a session of Claude Code can do (AgentInfo.operations); one of Codex only talks, for now. */
 const CLAUDE_OPERATIONS: readonly AgentOperation[] = [...INPUT_FEATURES, "fork", "background", "skills", "shell"];
 /** How long the prompt box may take to let go of a text after Enter (see typeInput). */
 const ENTER_WAIT_MS = 8000;
@@ -366,6 +367,9 @@ export class Daemon {
   private codexRead = 0;
   /** The sessions of Codex that Gasho started: they do not come through `tracked` and `managed`. */
   private codexSessions: CodexSessions;
+  private antigravitySessions: AntigravitySessions;
+  private antigravity?: AgentInfo;
+  private antigravityRead = 0;
   /** The conversations being opened again, and until when that may take (see openingClaudeTmp). */
   private readonly claudeTmpOpening = new Map<string, number>();
   private sweepingClaudeTmp = false;
@@ -448,11 +452,24 @@ export class Daemon {
       file: path.join(cfg.stateDir, "codex-threads.json"),
       version: DAEMON_VERSION,
       startServer: () => this.startCodexAppServer(),
+      catalogChanged: () => this.emitCapabilities(),
       describe: (cwd) => this.folderDetails(cwd),
       changed: () => this.emitSessions(),
       event: (event) => this.hub.send({ type: "hook", event }),
       append: (sessionId, entries) => this.hub.send({ type: "transcript.append", sessionId, entries }),
+      tokens: (sessionId, days) => this.tokenDays.record(sessionId, days),
       log: (...args) => log(...args),
+    });
+    this.antigravitySessions = new AntigravitySessions({
+      bin: cfg.agyBin,
+      file: path.join(cfg.stateDir, "antigravity-sessions.json"),
+      catalogFile: path.join(cfg.stateDir, "antigravity-catalog.json"),
+      catalogChanged: () => this.emitCapabilities(),
+      describe: (cwd) => this.folderDetails(cwd),
+      changed: () => this.emitSessions(),
+      event: (event) => this.hub.send({ type: "hook", event }),
+      append: (sessionId, entries, reset) => this.hub.send({ type: "transcript.append", sessionId, entries, reset }),
+      log,
     });
     this.registered = new RegisteredRepos(path.join(cfg.stateDir, "repos.json"));
     this.tokenDays = new TokenDays(path.join(cfg.stateDir, "token-days.json"));
@@ -508,6 +525,7 @@ export class Daemon {
     if (this.exiting) return;
     this.exiting = true;
     this.planUsage?.stop();
+    await this.antigravitySessions.close();
     await this.plugins.stopAll().catch((e: unknown) => log("could not stop the plugins", e));
     await this.tokenDays.save();
     process.exit(code);
@@ -606,12 +624,18 @@ export class Daemon {
     // Not waited for: the capabilities are sent again once it is known.
     void this.refreshClaude();
     void this.refreshCodex();
+    void this.refreshAntigravity();
     setInterval(() => {
       void this.refreshClaude();
       void this.refreshCodex();
+      void this.refreshAntigravity();
     }, CODEX_REFRESH_MS).unref();
     await this.codexSessions.load();
-    setInterval(() => void this.codexSessions.refreshDetails(), CODEX_DETAILS_MS).unref();
+    await this.antigravitySessions.load();
+    setInterval(() => {
+      void this.codexSessions.refreshDetails();
+      void this.antigravitySessions.refreshDetails();
+    }, CODEX_DETAILS_MS).unref();
 
     this.hub.connect();
     setInterval(() => void this.emitMemory(), MEMORY_REFRESH_MS).unref();
@@ -1076,17 +1100,17 @@ export class Daemon {
    * plugin never gets a folder the browser named, only these (see PluginRunner).
    */
   private async pluginSession(sessionId: string): Promise<SessionWire | undefined> {
-    const codex = this.codexSessions.sessions().find((s) => s.sessionId === sessionId);
-    if (codex) {
-      const repos = (await this.reposOf(codex.cwd)) ?? [];
+    const session = [...this.codexSessions.sessions(), ...this.antigravitySessions.sessions()].find((s) => s.sessionId === sessionId);
+    if (session) {
+      const repos = (await this.reposOf(session.cwd)) ?? [];
       return {
         sessionId,
-        agent: "codex",
-        cwd: codex.cwd,
-        ...(codex.name ? { name: codex.name } : {}),
+        agent: session.agent,
+        cwd: session.cwd,
+        ...(session.name ? { name: session.name } : {}),
         managed: true,
-        ...(codex.github ? { github: codex.github } : {}),
-        ...(codex.gitBranch ? { gitBranch: codex.gitBranch } : {}),
+        ...(session.github ? { github: session.github } : {}),
+        ...(session.gitBranch ? { gitBranch: session.gitBranch } : {}),
         repos: repos.map((r) => ({ path: r.path, ...(r.github ? { github: r.github } : {}), ...(r.branch ? { branch: r.branch } : {}) })),
       };
     }
@@ -1148,7 +1172,7 @@ export class Daemon {
           ...(m?.hibernated ? this.hibernatedInfo(m, m.hibernated, t.info) : {}),
         };
       });
-    const sessions = [...claude, ...this.codexSessions.sessions()].sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0));
+    const sessions = [...claude, ...this.codexSessions.sessions(), ...this.antigravitySessions.sessions()].sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0));
     const json = JSON.stringify(sessions);
     if (json === this.lastSent || !this.hub.connected) return;
     this.lastSent = json;
@@ -1156,7 +1180,7 @@ export class Daemon {
   }
 
   private async refreshFolders(): Promise<void> {
-    const cwds = [...[...this.tracked.values()].map((t) => t.info.cwd), ...this.codexSessions.sessions().map((s) => s.cwd)];
+    const cwds = [...[...this.tracked.values()].map((t) => t.info.cwd), ...this.codexSessions.sessions().map((s) => s.cwd), ...this.antigravitySessions.sessions().map((s) => s.cwd)];
     const folders = await launchableFolders(os.homedir(), cwds);
     // Not waited for (git runs in every folder), and read again also when the folders are the same: their repositories
     // gain and lose worktrees.
@@ -1230,7 +1254,8 @@ export class Daemon {
     const claude = this.claude;
     return {
       ...(claude ? { claude: { status: claude.status, version: claude.version, canLaunch: true, operations: [...CLAUDE_OPERATIONS] } } : {}),
-      ...(this.codex ? { codex: { ...this.codex, canLaunch: true, operations: [] } } : {}),
+      ...(this.codex ? { codex: { ...this.codex, canLaunch: true, operations: ["model", "effort"], canUseLaunchDefaults: true, launchCatalog: this.codex.status === "available" ? this.codexSessions.launchCatalog : undefined } } : {}),
+      ...(this.antigravity ? { antigravity: { ...this.antigravity, canUseLaunchDefaults: true, launchCatalog: this.antigravitySessions.launchCatalog } } : {}),
     };
   }
 
@@ -1238,9 +1263,20 @@ export class Daemon {
   private async refreshCodex(): Promise<void> {
     const read = ++this.codexRead;
     const codex = await detectCodex(codexRunner(this.cfg.codexBin));
-    if (read !== this.codexRead || JSON.stringify(codex) === JSON.stringify(this.codex)) return;
-    this.codex = codex;
-    log(codex ? `Codex ${codex.version ?? "(version unknown)"}: ${codex.status}` : "Codex is not installed");
+    if (read !== this.codexRead) return;
+    if (JSON.stringify(codex) !== JSON.stringify(this.codex)) {
+      this.codex = codex;
+      log(codex ? `Codex ${codex.version ?? "(version unknown)"}: ${codex.status}` : "Codex is not installed");
+      this.emitCapabilities();
+    }
+    if (codex?.status === "available") void this.codexSessions.refreshLaunchCatalog();
+  }
+
+  private async refreshAntigravity(): Promise<void> {
+    const read = ++this.antigravityRead;
+    const found = await detectAntigravity(this.cfg.agyBin);
+    if (read !== this.antigravityRead || JSON.stringify(found) === JSON.stringify(this.antigravity)) return;
+    this.antigravity = found;
     this.emitCapabilities();
   }
 
@@ -1273,7 +1309,7 @@ export class Daemon {
       if (m.hibernated && !this.waking.has(m.sessionId)) continue;
       n += this.managed.waiting(m.sessionId).filter((input) => !input.auto).length;
     }
-    return n + this.codexSessions.waitingInputs();
+    return n + this.codexSessions.waitingInputs() + this.antigravitySessions.waitingInputs();
   }
 
   private modelsFile(): string {
@@ -1594,6 +1630,7 @@ export class Daemon {
         return this.sendFile(m);
       case "media.get":
         return this.sendMedia(m);
+      case "antigravity.open":
       case "session.launch":
       case "session.input":
       case "session.interrupt":
@@ -1617,7 +1654,18 @@ export class Daemon {
         let result: CommandResult;
         try {
           switch (m.type) {
+            case "antigravity.open":
+              result = m.screen === true ? await this.antigravitySessions.open(m.sessionId) : { ok: false, error: ANTIGRAVITY_SCREEN_ONLY };
+              break;
             case "session.launch":
+              if (m.agent === "antigravity") {
+                result = m.screen === true ? await this.launchAntigravity(m.cwd, m.name, m.launchDefaults) : { ok: false, error: ANTIGRAVITY_SCREEN_ONLY };
+                break;
+              }
+              if (m.agent === "codex") {
+                result = await this.launchCodex(m.cwd, m.name, m.launchDefaults);
+                break;
+              }
               result = await this.launch(
                 m.cwd,
                 m.name,
@@ -1662,6 +1710,10 @@ export class Daemon {
               result = await this.end(m.sessionIds);
               break;
             case "permission.answer": {
+              if (this.antigravitySessions.has(m.sessionId)) {
+                result = m.screen === true ? this.antigravitySessions.answer(m.sessionId, m.permissionId, m.decision) : { ok: false, error: ANTIGRAVITY_SCREEN_ONLY };
+                break;
+              }
               if (this.codexSessions.has(m.sessionId)) {
                 const error = this.codexSessions.answer(m.sessionId, m.permissionId, m.decision, m.answers);
                 result = error ? { ok: false, error } : { ok: true };
@@ -1720,12 +1772,14 @@ export class Daemon {
     try {
       switch (req.op) {
         case "session.launch":
+          if (req.agent === "antigravity") return { ok: false, error: ANTIGRAVITY_SCREEN_ONLY };
           log(`session.launch in ${req.cwd} from the control socket`);
           return await this.launch(req.cwd, req.name, req.trust === true, req.agent, req.chrome === true, undefined, undefined, req.launchedBy);
         case "session.fork":
           log(`session.fork of ${req.sessionId}${req.chrome ? " with Claude in Chrome" : ""} from the control socket`);
           return await this.fork(req.sessionId, req.name, req.chrome ? { chrome: true } : {});
         case "session.input":
+          if (this.antigravitySessions.has(req.sessionId)) return { ok: false, error: ANTIGRAVITY_SCREEN_ONLY };
           return await this.input({ type: "session.input", requestId, sessionId: req.sessionId, text: req.text });
         case "session.rename":
           return await this.rename(req.sessionId, req.name, requestId);
@@ -1758,7 +1812,7 @@ export class Daemon {
     const names = new Map<string, string>();
     for (const m of this.managed.all()) names.set(m.sessionId, m.name);
     for (const t of this.tracked.values()) if (t.info.name) names.set(t.info.sessionId, t.info.name);
-    for (const s of this.codexSessions.sessions()) if (s.name) names.set(s.sessionId, s.name);
+    for (const s of [...this.codexSessions.sessions(), ...this.antigravitySessions.sessions()]) if (s.name) names.set(s.sessionId, s.name);
     const r = await this.removeWorktree({ type: "worktree.remove", requestId, path: w.path, ...(force ? { force: true } : {}) });
     const endedSessions = (r.ended ?? []).map((sessionId) => ({ sessionId, ...(names.has(sessionId) ? { name: names.get(sessionId)! } : {}) }));
     return { ...r, path: w.path, ...(w.branch ? { branch: w.branch } : {}), ...(endedSessions.length > 0 ? { endedSessions } : {}) };
@@ -1801,12 +1855,12 @@ export class Daemon {
 
   /** The sessions Gasho started, under the names `claude agents` (and so ListAgents) shows. */
   private controlSessions(): ControlSession[] {
-    const codex = this.codexSessions.sessions().map(
+    const external = [...this.codexSessions.sessions(), ...this.antigravitySessions.sessions()].map(
       (s): ControlSession => ({
         sessionId: s.sessionId,
         name: s.name ?? path.basename(s.cwd),
         cwd: s.cwd,
-        agent: "codex",
+        agent: this.antigravitySessions.has(s.sessionId) ? "antigravity" : "codex",
         status: s.status,
         ...(s.pendingInputs ? { pendingInputs: s.pendingInputs } : {}),
         ...(fs.existsSync(s.cwd) ? {} : { cwdMissing: true }),
@@ -1831,12 +1885,16 @@ export class Daemon {
         ...(m.launchedBy ? { launchedBy: this.parentNow(m)!.sessionId } : {}),
       };
     });
-    return [...claude, ...codex];
+    return [...claude, ...external];
   }
 
   private async sendTranscriptPage(m: Extract<HubToDaemon, { type: "transcript.get" }>): Promise<void> {
     const t = this.tracked.get(m.sessionId);
     const reply = { type: "transcript.page" as const, requestId: m.requestId, sessionId: m.sessionId };
+    if (this.antigravitySessions.has(m.sessionId)) {
+      this.hub.send({ ...reply, ...this.antigravitySessions.page(m.sessionId, m.before, m.limit) });
+      return;
+    }
     if (this.codexSessions.has(m.sessionId)) {
       this.hub.send({ ...reply, ...(await this.codexSessions.page(m.sessionId, m.before, m.limit)) });
       return;
@@ -1860,7 +1918,7 @@ export class Daemon {
 
   /** The folder of a session this daemon knows, of either agent. */
   private folderOf(sessionId: string): string | undefined {
-    return this.tracked.get(sessionId)?.info.cwd ?? this.codexSessions.cwdOf(sessionId);
+    return this.tracked.get(sessionId)?.info.cwd ?? this.codexSessions.cwdOf(sessionId) ?? this.antigravitySessions.cwdOf(sessionId);
   }
 
   /**
@@ -1959,6 +2017,7 @@ export class Daemon {
     launchedBy?: string,
   ): Promise<CommandResult> {
     if (agent === "codex") return chrome ? { ok: false, error: CODEX_NO_CHROME } : this.launchCodex(cwd, name);
+    if (agent !== "claude") return { ok: false, error: "この経路では指定のエージェントを起動できません。" };
     if (!this.canLaunch) return { ok: false, error: NO_TERMINAL };
     const dir = path.resolve(cwd);
     const stat = await fsp.stat(dir).catch(() => undefined);
@@ -2012,8 +2071,21 @@ export class Daemon {
     return parent ? { ...m.launchedBy, sessionId: parent.sessionId } : m.launchedBy;
   }
 
+  private async launchAntigravity(cwd: string, name: string | undefined, defaults?: AgentInputSelection): Promise<CommandResult> {
+    const dir = path.resolve(cwd);
+    const stat = await fsp.stat(dir).catch(() => undefined);
+    if (!stat?.isDirectory()) return { ok: false, error: `フォルダーがありません：${dir}` };
+    const checked = name?.trim() ? sessionName(name) : undefined;
+    if (checked && "error" in checked) return { ok: false, error: checked.error };
+    if (!this.antigravity) await this.refreshAntigravity();
+    if (!this.antigravity) return { ok: false, error: "この working server に Antigravity CLI が見つかりません。" };
+    const started = await this.antigravitySessions.launch(dir, checked?.name, defaults);
+    void this.refreshFolders();
+    return { ok: true, ...started };
+  }
+
   /** Starts a session of Codex in `cwd`: a new thread of its app-server. */
-  private async launchCodex(cwd: string, name: string | undefined): Promise<CommandResult> {
+  private async launchCodex(cwd: string, name: string | undefined, defaults?: AgentInputSelection): Promise<CommandResult> {
     const dir = path.resolve(cwd);
     const stat = await fsp.stat(dir).catch(() => undefined);
     if (!stat?.isDirectory()) return { ok: false, error: `フォルダーがありません：${dir}` };
@@ -2025,10 +2097,10 @@ export class Daemon {
     if (this.codex.status === "loginRequired") return { ok: false, error: "Codex にログインしていません。working server で codex login を実行してください。" };
     if (this.codex.status !== "available") return { ok: false, error: "Codex の状態を確かめられませんでした。working server で codex login status を実行して確かめてください。" };
     try {
-      const sessionId = await this.codexSessions.launch(dir, checked?.name);
-      log(`started Codex's thread ${sessionId} in ${dir}`);
+      const started = await this.codexSessions.launch(dir, checked?.name, defaults);
+      log(`started Codex's thread ${started.sessionId} in ${dir}`);
       void this.refreshFolders();
-      return { ok: true, sessionId };
+      return { ok: true, ...started };
     } catch (e) {
       log("could not start a session of Codex", e);
       void this.refreshCodex();
@@ -2258,6 +2330,7 @@ export class Daemon {
    * its work checked in the browser: gasho-daemon session fork --chrome).
    */
   private async fork(sessionId: string, name: string | undefined, { chrome }: { chrome?: boolean } = {}): Promise<CommandResult> {
+    if (this.antigravitySessions.has(sessionId)) return { ok: false, error: ANTIGRAVITY_NO_FORK };
     if (this.codexSessions.has(sessionId)) return { ok: false, error: CODEX_NO_FORK };
     const source = this.managed.get(sessionId);
     if (!source) return { ok: false, error: "このセッションはフォークできません。フォークできるのは、Gasho が起動したセッションだけです。" };
@@ -2350,7 +2423,7 @@ export class Daemon {
 
   /** What can be typed after "/" in a session's Claude Code (see listSkills). Only sessions this daemon tracks. */
   private async skills(sessionId: string): Promise<CommandResult> {
-    if (this.codexSessions.has(sessionId)) return { ok: true, skills: [] };
+    if (this.codexSessions.has(sessionId) || this.antigravitySessions.has(sessionId)) return { ok: true, skills: [] };
     const t = this.tracked.get(sessionId);
     if (!t) return { ok: false, error: "このセッションは見つかりません。" };
     const skills = await listSkills({
@@ -2465,9 +2538,10 @@ export class Daemon {
    * is idle: it waits while the session works. A /rename still waiting is replaced, not sent too.
    */
   private async rename(sessionId: string, name: string, requestId: string): Promise<CommandResult> {
-    if (this.codexSessions.has(sessionId)) {
+    const external = this.antigravitySessions.has(sessionId) ? this.antigravitySessions : this.codexSessions.has(sessionId) ? this.codexSessions : undefined;
+    if (external) {
       const named = sessionName(name);
-      return "error" in named ? { ok: false, error: named.error } : this.codexSessions.rename(sessionId, named.name);
+      return "error" in named ? { ok: false, error: named.error } : external.rename(sessionId, named.name);
     }
     // By session.sessionId from here on: `sessionId` can be one the session had before /clear (see ManagedSessions.find),
     // and /clear can give it a new id while the name is saved (see followNewIds).
@@ -2517,6 +2591,7 @@ export class Daemon {
    * signalled, so a PID used again by another process is never hit.
    */
   private async remove(sessionId: string): Promise<CommandResult> {
+    if (this.antigravitySessions.has(sessionId)) return this.antigravitySessions.remove(sessionId);
     if (this.codexSessions.has(sessionId)) {
       log(`removing Codex's session ${sessionId}; its conversation stays with Codex`);
       return this.codexSessions.remove(sessionId);
@@ -3011,7 +3086,7 @@ export class Daemon {
       .all()
       .filter((s) => isInside(s.cwd, w.path))
       .map((s) => s.sessionId)
-      .concat(this.codexSessions.sessions().filter((s) => isInside(s.cwd, w.path)).map((s) => s.sessionId));
+      .concat([...this.codexSessions.sessions(), ...this.antigravitySessions.sessions()].filter((s) => isInside(s.cwd, w.path)).map((s) => s.sessionId));
     const outside = [...this.tracked.values()]
       .filter((t) => isInside(t.info.cwd, w.path) && !this.managed.has(t.info.sessionId))
       .map((t) => t.info.sessionId);
@@ -3051,8 +3126,21 @@ export class Daemon {
   }
 
   private async input(m: Extract<HubToDaemon, { type: "session.input" }>): Promise<CommandResult> {
-    const { sessionId, text, model, effort, ultracode, files } = m;
+    const { sessionId, text, model, effort, ultracode, files, agentSelection } = m;
+    if (agentSelection !== undefined && (m.screen !== true || m.via !== undefined)) {
+      return { ok: false, error: "モデルと Effort の切り替えは Gasho の画面から行ってください。" };
+    }
+    if (this.antigravitySessions.has(sessionId)) {
+      if (m.screen !== true || m.via !== undefined) return { ok: false, error: ANTIGRAVITY_SCREEN_ONLY };
+      if (m.files?.length || m.model !== undefined || m.effort !== undefined || m.ultracode !== undefined) {
+        return { ok: false, error: "Antigravity にはテキストだけを送れます。" };
+      }
+      if (typeof m.text !== "string" || !m.text.trim()) return { ok: false, error: "入力が空です。" };
+      if (m.text.length > MAX_INPUT) return { ok: false, error: `入力が長すぎます（${MAX_INPUT} 文字まで）。` };
+      return this.antigravitySessions.input(sessionId, m.text, agentSelection);
+    }
     if (this.codexSessions.has(sessionId)) return this.inputToCodex(m);
+    if (agentSelection !== undefined) return { ok: false, error: "このセッションでは指定した形式で切り替えられません。" };
     // By session.sessionId from here on: `sessionId` can be one the session had before /clear (see ManagedSessions.find),
     // and /clear can give it a new id while the files are written (see followNewIds).
     const session = this.managed.find(sessionId);
@@ -3105,7 +3193,6 @@ export class Daemon {
     return { ok: true, queued, ...(warning ? { warning } : {}), ...(unapplied.length > 0 ? { unapplied } : {}) };
   }
 
-  /** An input to a session of Codex: its text only, for now. What only Claude Code can switch stays as it is. */
   private async inputToCodex(m: Extract<HubToDaemon, { type: "session.input" }>): Promise<CommandResult> {
     if (m.files?.length) return { ok: false, error: "Codex のセッションには、ファイルを添付できません。" };
     const body = m.text.trim();
@@ -3116,7 +3203,7 @@ export class Daemon {
       ...(m.effort !== undefined ? (["effort"] as const) : []),
       ...(m.ultracode !== undefined ? (["ultracode"] as const) : []),
     ];
-    const r = await this.codexSessions.input(m.sessionId, body);
+    const r = await this.codexSessions.input(m.sessionId, body, m.agentSelection);
     return r.ok && unapplied.length > 0 ? { ...r, unapplied } : r;
   }
 
@@ -3606,6 +3693,7 @@ export class Daemon {
    * work. One stop at a time (see INTERRUPT_REPEAT_MS).
    */
   private async interrupt(sessionId: string): Promise<CommandResult> {
+    if (this.antigravitySessions.has(sessionId)) return this.antigravitySessions.interrupt(sessionId);
     if (this.codexSessions.has(sessionId)) return this.codexSessions.interrupt(sessionId);
     const m = this.managed.get(sessionId);
     if (!m) return { ok: false, error: "このセッションは Gasho から止められません。公式アプリで止めてください。" };

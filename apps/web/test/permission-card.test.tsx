@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { PermissionRequestInfo } from "@gasho/protocol";
+import type { AgentKind, PermissionRequestInfo } from "@gasho/protocol";
 import { afterEach, expect, test, vi } from "vitest";
 import { PermissionRequests } from "@/components/permission-card";
 import { connectHub, machine, session } from "./hub";
@@ -18,8 +18,8 @@ const request = (extra: Partial<PermissionRequestInfo> = {}): PermissionRequestI
   ...extra,
 });
 
-function show(r: PermissionRequestInfo, connected = true) {
-  const s = session("s1", { status: "waiting", permissionRequests: [r] });
+function show(r: PermissionRequestInfo, connected = true, agent?: AgentKind) {
+  const s = session("s1", { agent, status: "waiting", permissionRequests: [r] });
   return render(<PermissionRequests machine={machine("m1", [s], { connected })} session={s} />);
 }
 
@@ -40,6 +40,11 @@ test("a permission is answered for the session's request, and the card waits for
   expect(screen.getByText("この確認は、もう終わっています。")).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "拒否" }));
   expect(hub.commands().at(-1)).toMatchObject({ permissionId: "perm-1", decision: "deny" });
+});
+
+test("Codex's deny button explains that Codex responds to the denial", () => {
+  show(request(), true, "codex");
+  expect(screen.getByRole("button", { name: "拒否" }).getAttribute("title")).toBe("Codex に拒否を伝えます。Codex は、拒否されたことを受けて応答します");
 });
 
 test("allow from now on is offered only when Claude Code suggests a rule for it", async () => {

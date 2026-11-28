@@ -23,9 +23,9 @@ import type { FromHost, GitHubAnswer, LocalWire, MachineWire, SessionWire, ToHos
  * gasho-daemon names them so that a plugin of 1.14 with a daemon part runs. 1.15: the daemon part's onSessionStop is
  * asked from this gasho-daemon on. 1.17 (`unknown` of the screen's CallResult) is the screen's alone too, as are 1.18
  * (fileViewers), 1.19 (WorktreeCategory.repo), 1.20 (sessionFooter) and 1.21 (answerSelection): this gasho-daemon
- * names 1.21, so that a plugin of 1.18 to 1.21 with a daemon part runs.
+ * names 1.21, so that a plugin of 1.18 to 1.21 with a daemon part runs. 1.22 adds Antigravity to session details.
  */
-export const PLUGIN_API = "1.21";
+export const PLUGIN_API = "1.22";
 /** The process of a daemon part: next to this file (.ts when run from the repository, .js in the npm package). */
 const HOST_FILE = fileURLToPath(new URL(`./plugin-host${path.extname(fileURLToPath(import.meta.url))}`, import.meta.url));
 /** How long a new process may take to import the plugin and run its `start`. */

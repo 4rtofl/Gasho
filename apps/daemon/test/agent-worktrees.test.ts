@@ -38,6 +38,23 @@ test("subagents without a worktree, other tools and what cannot be read are let 
   }
 });
 
+const agyDenied = [
+  "agy acp", "/opt/tools/agy --help", "pwd; agy", "pwd && /bin/agy", "pwd || agy", "echo x | agy", "pwd\n'./agy'",
+  "timeout 60 agy acp", "FOO=1 agy", "env agy", "env FOO=1 agy", "sudo agy", "nohup agy &", "exec agy", "xargs agy",
+  'bash -c "agy acp"', "sh -lc 'agy'", "if true; then agy; fi", "{ agy; }", "echo `agy`", 'echo "`/bin/agy`"',
+];
+const agyAllowed = [
+  "which agy", "command -v agy", "grep agy file", "timeout 60 grep agy file", 'echo "bash -c agy"', "FOO=agy ls",
+  "printf '%s' 'look; agy'", "echo /bin/agy", "agy-helper", "echo '`agy`'", "bash script -c agy", "sh -lc '' agy",
+];
+
+test("Bash blocks agy in command position without blocking mentions of agy", () => {
+  for (const command of agyDenied) {
+    assert.match(guardReply(pre("Bash", { command }))?.hookSpecificOutput.permissionDecisionReason ?? "", /agent から agy は実行できません/, command);
+  }
+  for (const command of agyAllowed) assert.equal(guardReply(pre("Bash", { command })), undefined, command);
+});
+
 /** The hooks, each with the reason it is skipped here, if it is. */
 const HOOKS: { name: string; command: readonly string[]; skip: string | false }[] = [
   { name: "Node.js", command: NODE_GUARD, skip: false },
@@ -66,6 +83,7 @@ for (const { name, command, skip } of HOOKS) {
       pre("Agent", { prompt: "look" }),
       pre("Agent", { isolation: "remote" }),
       pre("Bash", { command: "git worktree add ../x" }),
+      ...[...agyDenied, ...agyAllowed].map((command) => pre("Bash", { command })),
       { tool_name: "Agent", tool_input: ["isolation"] },
       {},
     ];

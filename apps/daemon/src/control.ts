@@ -134,9 +134,11 @@ function serve(c: net.Socket, handle: (req: ControlRequest) => Promise<ControlRe
 }
 
 /** The agent an option names. */
+export const ANTIGRAVITY_SCREEN_ONLY = "Antigravity の起動、発言、権限への回答は Gasho の画面から行ってください。";
+
 function agentOf(value: string | undefined): AgentKind | undefined {
-  if (value === undefined || value === "claude" || value === "codex") return value;
-  throw new Error(`unknown agent: ${value} (claude or codex)`);
+  if (value === undefined || value === "claude" || value === "codex" || value === "antigravity") return value;
+  throw new Error(`unknown agent: ${value} (claude, codex, or antigravity)`);
 }
 
 /** Checks a request's fields (it comes from another process). */
@@ -240,7 +242,7 @@ export function controlRequest(file: string, req: ControlRequest, timeoutMs = 12
 
 // ---- `gasho-daemon session …` ----
 
-export const SESSION_USAGE = `  session launch --cwd DIR [--name NAME] [--agent claude|codex] [--trust] [--chrome] [--prompt TEXT | --prompt-file FILE | --prompt -]
+export const SESSION_USAGE = `  session launch --cwd DIR [--name NAME] [--agent claude|codex|antigravity] [--trust] [--chrome] [--prompt TEXT | --prompt-file FILE | --prompt -]
                                                    start a session in DIR (as Gasho does) and wait for it; with a
                                                    prompt, type it in. Prints {sessionId, name, cwd, terminal} as JSON:
                                                    "name" is the name Claude Code lists it under (ListAgents). With
@@ -248,6 +250,7 @@ export const SESSION_USAGE = `  session launch --cwd DIR [--name NAME] [--agent 
                                                    it after its first message later, so its name changes then.
                                                    --trust answers Claude Code's "trust this folder?" with yes.
                                                    --agent codex starts Codex instead of Claude Code (it has no terminal).
+                                                   Antigravity sessions can only be started from the Gasho screen.
                                                    --chrome starts it with Claude in Chrome (claude --chrome): it can
                                                    drive the person's Chrome (on this machine, or on another computer
                                                    whose Claude extension is signed in to the same account)
@@ -323,6 +326,7 @@ export async function sessionCommand(args: string[], io: SessionCliIO): Promise<
       if (!cwd) throw new Error("session launch needs --cwd DIR");
       const name = opt("--name")?.trim() || undefined;
       const agent = agentOf(opt("--agent"));
+      if (agent === "antigravity") throw new Error(ANTIGRAVITY_SCREEN_ONLY);
       const prompt = await textOf(opt("--prompt"), opt("--prompt-file"), io, "--prompt");
       const launched = await call({
         op: "session.launch",

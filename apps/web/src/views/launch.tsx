@@ -8,7 +8,7 @@ import { Dialog } from "radix-ui";
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { AgentKind } from "@gasho/protocol";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, DIALOG_OVERLAY, DIALOG_PANEL } from "@/components/dialog-styles";
-import { AGENT_NAME, codexOffered, codexProblem, codexUsable, launchAgentFor } from "@/lib/agents";
+import { AGENT_NAME, agentUsable, canLaunchOn, codexOffered, codexProblem, launchAgentFor, offeredAgents } from "@/lib/agents";
 import { childPath, CLONE_WAIT_MS, folderChoices, folderNameProblem, repoFolderName, repoProblem } from "@/lib/folders";
 import { go } from "@/lib/route";
 import { useSessionLauncher } from "@/lib/session-launch";
@@ -42,7 +42,7 @@ export interface LaunchInitial {
 
 function Description() {
   const { machines } = useAppState();
-  if (machines.some(codexOffered)) return <>working server でセッションを起動します。Gasho から入力できます。</>;
+  if (machines.some((m) => offeredAgents(m).length > 0)) return <>working server でセッションを起動します。Gasho から入力できます。</>;
   return (
     <>
       working server で <code className="font-mono">claude --remote-control</code> を起動します。Gasho から入力でき、公式アプリからも操作できます。
@@ -77,7 +77,7 @@ function LaunchForm({
 }) {
   const { machines, server } = useAppState();
   const launchSession = useSessionLauncher();
-  const candidates = useMemo(() => machines.filter((m) => m.connected && m.canLaunch), [machines]);
+  const candidates = useMemo(() => machines.filter(canLaunchOn), [machines]);
   const [machineId, setMachineId] = useState(
     initial && candidates.some((m) => m.id === initial.machine) ? initial.machine : (candidates[0]?.id ?? ""),
   );
@@ -85,7 +85,8 @@ function LaunchForm({
   // The agent picked here, while it can be used on the working server; else the default one. Only Claude Code asks
   // whether to trust a folder: the form that opens for that question goes on with it, whatever the default is.
   const [pickedAgent, setPickedAgent] = useState<AgentKind | undefined>(initial?.agent ?? (initial?.trust ? "claude" : undefined));
-  const agent: AgentKind = !machine ? "claude" : pickedAgent === "codex" && !codexUsable(machine) ? "claude" : (pickedAgent ?? launchAgentFor(machine, server?.defaultAgent));
+  const agents = machine ? offeredAgents(machine) : [];
+  const agent: AgentKind = !machine ? "claude" : pickedAgent && agentUsable(machine, pickedAgent) ? pickedAgent : launchAgentFor(machine, server?.defaultAgent);
   // gasho-daemon 0.10.0 makes folders, clones, and answers Claude Code's question whether to trust a folder.
   const canMake = machine !== undefined && daemonAtLeast(machine, 0, 10);
   // Folders made here, per working server: offered until the working server lists them itself (once they are trusted).
@@ -274,19 +275,19 @@ function LaunchForm({
               </select>
             </label>
             <label className="space-y-1.5">
-              <span className="text-xs text-muted-foreground">{agent === "codex" ? "名前（任意）" : "名前（任意。公式アプリにこの名前で出ます）"}</span>
+              <span className="text-xs text-muted-foreground">{agent === "claude" ? "名前（任意。公式アプリにこの名前で出ます）" : "名前（任意）"}</span>
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 maxLength={60}
                 // gasho-daemon 0.10.0 and later name a session started without one after its first message.
-                placeholder={agent === "codex" ? "空なら、Codex が付けます" : machine && daemonAtLeast(machine, 0, 10) ? "空なら、最初のメッセージから付けます" : "例：Bobert の調査"}
+                placeholder={agent === "antigravity" ? "空なら、フォルダー名を使います" : agent === "codex" ? "空なら、Codex が付けます" : machine && daemonAtLeast(machine, 0, 10) ? "空なら、最初のメッセージから付けます" : "例：Bobert の調査"}
                 className={field}
               />
             </label>
           </div>
 
-          {machine && codexOffered(machine) && (
+          {machine && agents.length > 0 && (
             <label className="block space-y-1.5">
               <span className="text-xs text-muted-foreground">エージェント</span>
               <select
@@ -299,12 +300,14 @@ function LaunchForm({
                 }}
                 className={field}
               >
-                <option value="claude">{AGENT_NAME.claude}</option>
-                <option value="codex" disabled={!codexUsable(machine)}>
-                  {AGENT_NAME.codex}
-                </option>
+                <option value="claude" disabled={!agentUsable(machine, "claude")}>{AGENT_NAME.claude}</option>
+                {agents.map((kind) => (
+                  <option key={kind} value={kind} disabled={!agentUsable(machine, kind)}>
+                    {AGENT_NAME[kind]}
+                  </option>
+                ))}
               </select>
-              {codexProblem(machine) && <span className="block text-xs text-muted-foreground">{codexProblem(machine)}</span>}
+              {codexOffered(machine) && codexProblem(machine) && <span className="block text-xs text-muted-foreground">{codexProblem(machine)}</span>}
             </label>
           )}
 

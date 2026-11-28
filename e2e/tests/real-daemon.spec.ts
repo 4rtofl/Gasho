@@ -175,6 +175,11 @@ test("Antigravity の既定値は設定を開くだけでは接続せず、新�
   await effort.selectOption("extra-pro");
   await expect(model).toHaveValue("gemini-test-pro");
   await expect(effort).toHaveValue("extra-pro");
+  const defaults = page.getByRole("region", { name: "Antigravity の既定値" });
+  const toggle = defaults.getByRole("button", { name: "Antigravity の既定値" });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(defaults.getByText("Gemini Test Pro・Extra Pro", { exact: true })).toBeVisible();
   expect((await calls()).filter((c) => c.args?.includes("acp"))).toHaveLength(1);
 
   await launch();

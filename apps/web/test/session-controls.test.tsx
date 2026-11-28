@@ -82,7 +82,7 @@ test("the default effort level is set for every browser from the gauge, by its k
   const hub = await connectHub({ server: server() });
   render(<DefaultEffortSection />);
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: /^既定の Effort/ }));
+  await user.click(screen.getByRole("button", { name: "Claude Code の既定の Effort" }));
   expect(screen.getByRole("radio", { name: "Claude Code の既定" }).getAttribute("aria-checked")).toBe("true");
 
   await user.click(screen.getByRole("radio", { name: "High" }));
@@ -104,7 +104,7 @@ test("the default model is set for every browser from its combobox, and back to 
   setSettingsSectionOpen("default-model", false);
   render(<DefaultModelSection />);
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: /^既定のモデル/ }));
+  await user.click(screen.getByRole("button", { name: "Claude Code の既定のモデル" }));
   const box = screen.getByRole<HTMLSelectElement>("combobox", { name: "既定のモデル" });
   expect(box.value).toBe("default");
 
@@ -125,7 +125,10 @@ test("Codex settings explain how to get the first catalog without starting a ses
   });
   setSettingsSectionOpen("default-codex", false);
   render(<SettingsView />);
-  await userEvent.setup().click(screen.getByRole("button", { name: "Codex の既定値" }));
+  const button = screen.getByRole("button", { name: "Codex の既定値" });
+  expect(button.getAttribute("aria-expanded")).toBe("false");
+  expect(within(screen.getByRole("region", { name: "Codex の既定値" })).getByText("Codex の既定", { exact: true })).toBeTruthy();
+  await userEvent.setup().click(button);
   expect(screen.getByText("Codex のセッションを一度開くと選べます。")).toBeTruthy();
   expect(hub.commands()).toEqual([]);
 });
@@ -157,6 +160,36 @@ test("Antigravity settings wait for the working server's catalog without asking 
   await hub.say({ type: "server", server: { ...server, agentDefaults: { antigravity: { effort: "deep" } } } });
   expect(effort).toHaveProperty("value", "deep");
   expect(hub.commands()).toEqual([]);
+});
+
+test("Antigravity shows saved names in the heading and readable labels for unavailable defaults", async () => {
+  const server = { version: "0.15.0", update: { canUpdate: false } };
+  const hub = await connectHub({
+    machines: [machine("acp", [], { agents: { antigravity: {
+      status: "unknown", canLaunch: true, canUseLaunchDefaults: true,
+      launchCatalog: { model: { options: [
+        { id: "gemini-test", name: "Gemini Test", efforts: [{ id: "deep", name: "Deep" }] },
+      ] } },
+    } } })],
+    server: { ...server, agentDefaults: { antigravity: { model: "gemini-test", effort: "deep" } } },
+  });
+  setSettingsSectionOpen("default-antigravity", false);
+  render(<SettingsView />);
+  const section = within(screen.getByRole("region", { name: "Antigravity の既定値" }));
+  expect(section.getByText("Gemini Test・Deep", { exact: true })).toBeTruthy();
+
+  await hub.say({
+    type: "server",
+    server: { ...server, agentDefaults: { antigravity: { model: "removed-model-id", effort: "removed-effort-id" } } },
+  });
+  await userEvent.setup().click(section.getByRole("button", { name: "Antigravity の既定値" }));
+  const model = section.getByRole("option", { name: "前に選んだモデル（いまは選べません）" });
+  const effort = section.getByRole("option", { name: "前に選んだ Effort（いまは選べません）" });
+  expect(model).toHaveProperty("disabled", true);
+  expect(effort).toHaveProperty("disabled", true);
+  expect(section.queryByText(/removed-(model|effort)-id/)).toBeNull();
+  const hint = section.getByText("セッションでこのモデルを一度使うと選べるようになります。");
+  expect(section.getByRole("combobox", { name: "既定の Effort" }).getAttribute("aria-describedby")).toBe(hint.id);
 });
 
 test("the shared default explains Fable's fallback when any working server is on Pro", async () => {

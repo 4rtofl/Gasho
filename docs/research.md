@@ -266,11 +266,30 @@ ACP 対応は公開されている一方、Gasho のような画面クライア�
 本物の Antigravity CLI と Google アカウントでの動作は未確認。Codex のセッションに同等の hook を設定できるかも未確認。
 
 1. ログイン済みの working server を選び、画面から Antigravity を起動する。短い発言を送り、入力と応答が会話に出ることを確かめる
-2. 確認が出る操作を2回頼み、1回は許可し、1回は拒否する。画面に確認と通知が出て、それぞれの回答に沿って進むことを確かめる
+2. 確認が出る操作を3回頼み、1回は許可し、1回は拒否し、「今後も許可」があれば1回はそれを押す。画面に確認と通知が出て、それぞれの回答に沿って進むことを確かめる。「今後も許可」のあと、同じ操作で確認が出ないことも確かめる。あわせて、選択肢を尋ねるよう頼み、質問のカードが出て答えに沿って進むか、断ったという表示が出るかを確かめる
 3. 応答中に「停止」を押し、割り込みが表示されることを確かめる。メニューで名前を変更する
 4. gasho-daemon を起動し直し、一覧に名前が残ることを確かめる。「Antigravity の会話を開く」または次の発言で、対応する CLI では会話が続き、未対応なら理由が出ることを確かめる。最後に画面から削除し、一覧から消えることを確かめる
 5. 未ログインの working server で起動し、端末で `agy` を起動してログインするよう表示されることを確かめる
 
+
+## 確認の「今後も許可」と質問（#355）
+
+2026年11月28日に、ACP v1 のスキーマ、[Antigravity の ACP の文書](https://antigravity.google/docs/ide/extensions/acp/)、`codex-cli 0.172.0` の app-server スキーマを読んだ。
+
+- ACP の `session/request_permission` の選択肢には `allow_once`、`allow_always`、`reject_once`、`reject_always` がある。`allow_always` が何をいつまで覚えるかは、スキーマに定めがない
+- ACP の elicitation は、クライアントが `clientCapabilities.elicitation` で方式（`form`、`url`）を宣言する。`form` の項目は、文字列（単一選択を含む）、数値、整数、真偽値、複数選択の配列である。応答は `accept`（`content`）、`decline`、`cancel`。`elicitation/complete` は `url` の方式の完了の通知である
+- Antigravity の文書は、elicitation の `form` に対応するクライアントには質問がフォームで出て、ほかのクライアントには会話に出ると説明している。どの型の項目を使うかは書かれていない
+- Codex のスキーマでは、コマンドの確認は `acceptForSession`、`acceptWithExecpolicyAmendment`、`applyNetworkPolicyAmendment` を、ファイルの変更は `acceptForSession` を受け付け、追加の権限は `scope: "session"` を指定できる。これまでの Gasho は実行ポリシーの追加だけを出していた
+- 受け付ける値のすべてがコマンドの確認で提示されるわけではない。公開されているソース（[openai/codex](https://github.com/openai/codex) の `rust-v0.172.0`）では、app-server は確認ごとの選択肢を `availableDecisions` で送る。これは実験的なフィールドで、生成した安定版のスキーマには載らないが、`experimentalApi` を宣言しないクライアントから落とすのは `additionalPermissions` だけである。既定の一覧では、ネットワークの確認は一回・セッション中・（許可の提案があれば）規則の追加、ほかのコマンドは一回・（提案があれば）実行ポリシーの追加である
+
+偽の ACP サーバーで、`allow_always` の応答、フォームの回答・拒否・中断、カードで表せない形の拒否を確かめた。Codex は、応答の組み立てを単体テストで確かめた。
+
+### 確かめていないこと
+
+- 本物の `agy` が `allow_always` の選択肢を出すか、その名前と数（複数あるときは最初のものを出す）、許可が続く範囲。`agy` は実行していない
+- 本物の `agy` が送る elicitation の形。数値や制約のある項目を使っていれば、Gasho は断る
+- `agy` がエラーで断られたあと、質問を会話に出し直すか
+- 本物の Codex の app-server が送る `availableDecisions` と、`acceptForSession`、`scope: "session"`、`applyNetworkPolicyAmendment` を返したときの動き。ファイルの変更の `grantRoot` はスキーマに「UNSTABLE」とある
 
 ## Codex と Antigravity のモデル・Effort（#347）
 

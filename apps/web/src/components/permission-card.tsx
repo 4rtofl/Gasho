@@ -173,9 +173,9 @@ function answerOf(c: Choice): QuestionAnswer | undefined {
 
 /** Claude's questions, each with its options and room to answer in one's own words, as in the terminal. */
 function QuestionCard({ machine, sessionId, request: r, questions, agent = "claude" }: CardProps & { questions: AskedQuestion[] }) {
-  const { sending, sent, error, send, disabled } = useAnswer(machine, sessionId, r.id);
+  const { sending, sent, error, send, disabled } = useAnswer(machine, sessionId, r.id, agent);
   const [choices, setChoices] = useState<Choice[]>(() => questions.map(() => ({ picked: [], other: false, text: "" })));
-  const answers = questions.map((_, i) => answerOf(choices[i] ?? { picked: [], other: false, text: "" }));
+  const answers = questions.map((q, i) => answerOf(choices[i] ?? { picked: [], other: false, text: "" }) ?? (q.optional ? { picked: [] } : undefined));
   const complete = answers.every((a) => a !== undefined);
   const update = (i: number, change: (c: Choice) => Choice) => setChoices((cs) => cs.map((c, j) => (j === i ? change(c) : c)));
   const answer = () => {
@@ -219,7 +219,7 @@ function QuestionCard({ machine, sessionId, request: r, questions, agent = "clau
           type="button"
           disabled={disabled}
           onClick={() => void send("stop", { decision: "deny" })}
-          title={agent === "codex" ? "質問に答えずに、Codex に返します" : "質問に答えずに、Claude の作業を止めます。Claude は次の指示を待ちます"}
+          title={agent === "claude" ? "質問に答えずに、Claude の作業を止めます。Claude は次の指示を待ちます" : `質問に答えずに、${AGENT_SPEAKER[agent]} に返します`}
           className={QUIET}
         >
           {sending === "stop" ? "送信中…" : "答えずに止める"}
@@ -258,6 +258,7 @@ function QuestionField({
   const chooseOther = (on: boolean) => onChange((c) => ({ ...c, other: on, picked: on && !multi ? [] : c.picked }));
   const single = !multi && choice.picked.length === 1 ? choice.picked[0] : undefined;
   const preview = single === undefined ? undefined : q.options[single]?.preview;
+  const own = q.options.length ? "その他（自分の言葉で答える）" : "答えを書く";
 
   return (
     <fieldset disabled={disabled} className="min-w-0">
@@ -265,6 +266,7 @@ function QuestionField({
         {q.header && <span className="mb-1 inline-block rounded-md bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">{q.header}</span>}
         <span className="block whitespace-pre-wrap break-words font-medium text-foreground">{q.question}</span>
         {multi && <span className="mt-0.5 block text-[11px] text-muted-foreground">いくつでも選べます</span>}
+        {q.optional && <span className="mt-0.5 block text-[11px] text-muted-foreground">答えなくてもかまいません</span>}
       </legend>
       <div className="mt-2 space-y-1.5">
         {q.options.map((o, k) => {
@@ -285,29 +287,31 @@ function QuestionField({
             </label>
           );
         })}
-        <div className={cn("flex items-start gap-2.5 rounded-lg border px-2.5 py-1.5", choice.other ? "border-sky-400/60 bg-sky-500/10" : "border-border")}>
-          <input
-            type={type}
-            name={name}
-            checked={choice.other}
-            aria-label="その他（自分の言葉で答える）"
-            onChange={(e) => chooseOther(multi ? e.currentTarget.checked : true)}
-            className="mt-2 size-4 shrink-0 accent-sky-400"
-          />
-          {/* One line, growing with what is written (where the browser can); writing in it chooses it. */}
-          <textarea
-            rows={1}
-            value={choice.text}
-            aria-label={`${q.header ?? q.question}：自分の言葉で答える`}
-            placeholder="その他（自分の言葉で答える）"
-            onChange={(e) => {
-              const text = e.currentTarget.value;
-              onChange((c) => ({ ...c, text, ...(text.trim() ? { other: true, picked: multi ? c.picked : [] } : {}) }));
-            }}
-            onKeyDown={sendOnModEnter(onSubmit)}
-            className={cn(FIELD, "max-h-40 min-h-8 resize-none [field-sizing:content]")}
-          />
-        </div>
+        {!q.noOther && (
+          <div className={cn("flex items-start gap-2.5 rounded-lg border px-2.5 py-1.5", choice.other ? "border-sky-400/60 bg-sky-500/10" : "border-border")}>
+            <input
+              type={type}
+              name={name}
+              checked={choice.other}
+              aria-label={own}
+              onChange={(e) => chooseOther(multi ? e.currentTarget.checked : true)}
+              className="mt-2 size-4 shrink-0 accent-sky-400"
+            />
+            {/* One line, growing with what is written (where the browser can); writing in it chooses it. */}
+            <textarea
+              rows={1}
+              value={choice.text}
+              aria-label={`${q.header ?? q.question}：自分の言葉で答える`}
+              placeholder={own}
+              onChange={(e) => {
+                const text = e.currentTarget.value;
+                onChange((c) => ({ ...c, text, ...(text.trim() ? { other: true, picked: multi ? c.picked : [] } : {}) }));
+              }}
+              onKeyDown={sendOnModEnter(onSubmit)}
+              className={cn(FIELD, "max-h-40 min-h-8 resize-none [field-sizing:content]")}
+            />
+          </div>
+        )}
       </div>
       {preview && (
         <pre className="mt-2 max-h-60 overflow-auto rounded-md bg-black/30 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-foreground/80">{preview}</pre>

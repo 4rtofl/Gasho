@@ -202,8 +202,9 @@ export interface PermissionRequestInfo {
   summary?: string;
   at: number;
   /**
-   * What "allow from now on" would allow, in Claude Code's notation ("Bash(npm test:*)"), when Claude Code suggests
-   * a permanent rule for this request; absent when it does not, and "always" cannot be answered.
+   * What "allow from now on" would allow (Claude Code's notation, "Bash(npm test:*)"; Codex's rule or how long it
+   * lasts; the name of ACP's allow_always option), when the agent offers it for this request; absent when it does not,
+   * and "always" cannot be answered.
    */
   always?: string;
   /** ACP did not offer permission for this call alone. */
@@ -235,6 +236,10 @@ export interface AskedQuestion {
   options: AskedOption[];
   /** More than one option can be chosen. */
   multiSelect?: boolean;
+  /** Only the options can be chosen: nothing can be written instead. */
+  noOther?: true;
+  /** May be left unanswered (sent as an answer with nothing picked or written). */
+  optional?: true;
 }
 
 export interface AskedOption {
@@ -256,7 +261,7 @@ export interface QuestionAnswer {
 /** The permission mode a session goes on in once its plan is approved: auto mode, or asking before each edit. */
 export type PlanMode = "auto" | "default";
 
-/** allow: this once. always: this time and from now on, as Claude Code suggests. deny: Claude stops and waits. */
+/** allow: this once. always: this time and from now on, as the agent offers. deny: Claude stops and waits. */
 export type PermissionDecision = "allow" | "always" | "deny";
 
 /** A session's context window (see SessionInfo.context). */

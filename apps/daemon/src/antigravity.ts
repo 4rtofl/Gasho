@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import fsp from "node:fs/promises";
-import type { AgentInfo, AgentInputConfig, AgentInputSelection, AgentSelector, CommandResult, HookEvent, PermissionDecision, PermissionRequestInfo, SessionInfo, TranscriptEntry, TranscriptPage } from "@gasho/protocol";
+import type { AgentInfo, AgentInputConfig, AgentInputSelection, AgentSelector, AskedOption, AskedQuestion, CommandResult, HookEvent, PermissionDecision, PermissionRequestInfo, QuestionAnswer, SessionInfo, TranscriptEntry, TranscriptPage } from "@gasho/protocol";
 import { Acp, AGY_LOGIN, object } from "./acp.ts";
 import { exec } from "./exec.ts";
-import { contextOf } from "./util.ts";
+import { clip, contextOf, str } from "./util.ts";
 
 const CONNECT_TIMEOUT_MS = 15_000;
 // With initialize, reopening must fit in the hub's 45-second antigravity.open window.
@@ -43,11 +43,22 @@ interface Saved {
   entries: SavedEntry[];
 }
 
+/** A permission request (the ids of the options for each decision) or a question (what its answers go back as). */
 interface Pending {
   id: string | number;
   info: PermissionRequestInfo;
   allow?: string;
+  always?: string;
   deny?: string;
+  fields?: Field[];
+}
+
+interface Field {
+  name: string;
+  /** What each option of the card stands for; absent for text written by the person. */
+  values?: (string | boolean)[];
+  multi?: true;
+  optional: boolean;
 }
 
 interface State {
@@ -67,6 +78,88 @@ interface State {
 }
 
 const messageOf = (e: unknown) => e instanceof Error ? e.message : String(e);
+
+// The Gasho server takes no more questions and options than these in an answer.
+const MAX_QUESTIONS = 10;
+const MAX_OPTIONS = 20;
+
+/**
+ * An elicitation's form as questions of Gasho's card; undefined when the card cannot take it whole: another mode,
+ * numbers (it has no field that holds a person to one), text with a constraint, or a number of picks to keep to.
+ */
+function formOf(params: Record<string, unknown>): { questions: AskedQuestion[]; fields: Field[] } | undefined {
+  const message = str(params.message);
+  const schema = object(params.requestedSchema);
+  const properties = Object.entries(object(schema?.properties) ?? {});
+  if (params.mode !== "form" || !message || !properties.length || properties.length > MAX_QUESTIONS) return undefined;
+  const required = Array.isArray(schema?.required) ? schema.required : [];
+  const questions: AskedQuestion[] = [];
+  const fields: Field[] = [];
+  for (const [i, [name, value]] of properties.entries()) {
+    const property = object(value);
+    if (!property) return undefined;
+    const items = object(property.items);
+    const multi = property.type === "array";
+    // Titled choices ({ const, title }), or plain values.
+    const titled = multi ? items?.anyOf : property.oneOf;
+    const plain = multi ? (items?.type === "string" ? items.enum : undefined) : property.enum;
+    let choices: { value: string | boolean; option: AskedOption }[] | undefined;
+    if (property.type === "boolean") {
+      choices = [{ value: true, option: { label: "はい" } }, { value: false, option: { label: "いいえ" } }];
+    } else if (property.type === "string" || multi) {
+      const list: unknown = titled ?? plain;
+      if (Array.isArray(list)) {
+        choices = [];
+        for (const item of list) {
+          const choice: Record<string, unknown> | undefined = titled ? object(item) : { const: item, title: item };
+          if (typeof choice?.const !== "string" || typeof choice.title !== "string") return undefined;
+          const description = str(choice.description);
+          choices.push({ value: choice.const, option: { label: clip(choice.title, 300), ...(description ? { description: clip(description, 2000) } : {}) } });
+        }
+        if (!choices.length || choices.length > MAX_OPTIONS) return undefined;
+        if (multi && (Number(property.minItems ?? 0) > 1 || Number(property.maxItems ?? choices.length) < choices.length)) return undefined;
+      } else if (multi || ["minLength", "maxLength", "pattern", "format"].some((k) => property[k] != null)) {
+        return undefined;
+      }
+    } else {
+      return undefined;
+    }
+    const title = str(property.title);
+    // Several fields are told apart by their names when they say nothing else about themselves.
+    const about = str(property.description) ?? (properties.length > 1 && !title ? name : undefined);
+    const optional = !required.includes(name);
+    const said = [i === 0 ? message : undefined, about].filter(Boolean).join("\n");
+    questions.push({
+      question: clip(said || title || name, 4000),
+      ...(said && title ? { header: clip(title, 60) } : {}),
+      options: choices?.map((c) => c.option) ?? [],
+      ...(multi ? { multiSelect: true } : {}),
+      ...(choices ? { noOther: true } : {}),
+      ...(optional ? { optional: true } : {}),
+    });
+    fields.push({ name, values: choices?.map((c) => c.value), ...(multi ? { multi: true } : {}), optional });
+  }
+  return { questions, fields };
+}
+
+/** The content that answers a form; a string is why the answers do not fit it. */
+function contentOf(fields: Field[], answers: QuestionAnswer[] | undefined): Record<string, unknown> | string {
+  if (answers?.length !== fields.length) return "すべての質問に答えてください。";
+  const content: [string, unknown][] = [];
+  for (const [i, { name, values, multi, optional }] of fields.entries()) {
+    const { picked, text } = answers[i]!;
+    const fits = values
+      ? !text && (multi || picked.length <= 1) && new Set(picked).size === picked.length && picked.every((k) => k < values.length)
+      : picked.length === 0;
+    if (!fits) return "答えが質問に合っていません。画面を読み込み直してから、もう一度答えてください。";
+    if (values ? picked.length === 0 : !text) {
+      if (!optional) return "すべての質問に答えてください。";
+      continue;
+    }
+    content.push([name, !values ? text : multi ? picked.map((k) => values[k]) : values[picked[0]!]]);
+  }
+  return Object.fromEntries(content);
+}
 
 export class AntigravitySessions {
   private sessionsById = new Map<string, State>();
@@ -193,15 +286,21 @@ export class AntigravitySessions {
     return { ok: true };
   }
 
-  answer(id: string, permissionId: string, decision: PermissionDecision): CommandResult {
+  answer(id: string, permissionId: string, decision: PermissionDecision, answers?: QuestionAnswer[]): CommandResult {
     const s = this.sessionsById.get(id);
     const p = s?.pending.get(permissionId);
     if (!s?.rpc?.open || !p) return { ok: false, error: "この確認は、すでに終了しています。" };
-    if (decision === "always" || (decision === "allow" && p.allow === undefined)) {
-      return { ok: false, error: "この確認では、その選択肢を使えません。" };
+    const unusable = { ok: false, error: "この確認では、その選択肢を使えません。" };
+    if (p.fields) {
+      if (decision === "always") return unusable;
+      const content = decision === "allow" ? contentOf(p.fields, answers) : undefined;
+      if (typeof content === "string") return { ok: false, error: content };
+      s.rpc.respond(p.id, content ? { action: "accept", content } : { action: "decline" });
+    } else {
+      const optionId = p[decision];
+      if (decision !== "deny" && optionId === undefined) return unusable;
+      s.rpc.respond(p.id, { outcome: optionId !== undefined ? { outcome: "selected", optionId } : { outcome: "cancelled" } });
     }
-    const optionId = decision === "allow" ? p.allow : p.deny;
-    s.rpc.respond(p.id, { outcome: optionId !== undefined ? { outcome: "selected", optionId } : { outcome: "cancelled" } });
     s.pending.delete(permissionId);
     this.updateStatus(s);
     return { ok: true };
@@ -302,7 +401,7 @@ export class AntigravitySessions {
     });
     s.rpc = rpc;
     try {
-      const init = object(await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: {} }, CONNECT_TIMEOUT_MS));
+      const init = object(await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: { elicitation: { form: {} } } }, CONNECT_TIMEOUT_MS));
       if (init?.protocolVersion !== 1) throw new Error("Antigravity が ACP v1 に対応していません。");
       const params = { cwd, mcpServers: [] };
       let result: Record<string, unknown> | undefined;
@@ -370,25 +469,26 @@ export class AntigravitySessions {
       return;
     }
     if (id !== undefined) {
+      if (method === "elicitation/create") return this.ask(s, rpc, params, id);
       if (method !== "session/request_permission") return rpc.unsupported(id);
       const tool = object(params.toolCall);
       if (!tool || !Array.isArray(params.options)) return rpc.unsupported(id);
       if (!s.turning || s.cancelled) return rpc.respond(id, { outcome: { outcome: "cancelled" } });
       const options = params.options.map(object);
-      const allow = options.find((o) => o?.kind === "allow_once" && typeof o.optionId === "string")?.optionId as string | undefined;
-      const deny = options.find((o) => o?.kind === "reject_once" && typeof o.optionId === "string")?.optionId as string | undefined;
+      const optionOf = (kind: string) => options.find((o) => o?.kind === kind && typeof o.optionId === "string");
+      const allow = optionOf("allow_once")?.optionId as string | undefined;
+      const always = optionOf("allow_always");
+      const deny = optionOf("reject_once")?.optionId as string | undefined;
       const toolName = typeof tool.title === "string" ? tool.title.slice(0, 200) : "Antigravity";
       const info = {
         id: randomUUID(),
         toolName,
         input: (JSON.stringify(tool.rawInput, null, 2) ?? "").slice(0, 2000),
         at: Date.now(),
+        ...(always ? { always: clip(str(always.name) ?? String(always.optionId), 200) } : {}),
         ...(allow === undefined ? { denyOnly: true } : {}),
       };
-      this.flushChunk(s);
-      s.pending.set(info.id, { id, info, allow, deny });
-      this.updateStatus(s);
-      this.event(s, "Notification", { notificationType: "permission_prompt", toolName, summary: toolName });
+      this.wait(s, { id, info, allow, always: always?.optionId as string | undefined, deny }, toolName);
       return;
     }
     if (method !== "session/update") return;
@@ -429,6 +529,36 @@ export class AntigravitySessions {
         content: (JSON.stringify(update.rawOutput, null, 2) ?? "").slice(0, 4000),
       }]);
     }
+  }
+
+  private ask(s: State, rpc: Acp, params: Record<string, unknown>, id: string | number): void {
+    if (!s.turning || s.cancelled) return rpc.respond(id, { action: "cancel" });
+    const form = formOf(params);
+    if (!form) {
+      // Not "decline": that would say the person turned the question down.
+      rpc.invalidParams(id);
+      this.flushChunk(s);
+      this.record(s, "system", [{ type: "text", text: `Antigravity の質問は、Gasho の画面で答えられない形のため断りました。\n${clip(str(params.message) ?? "", 4000)}` }]);
+      void this.save();
+      return;
+    }
+    const summary = clip(str(params.message)!, 200);
+    const info = {
+      id: randomUUID(),
+      toolName: "AskUserQuestion",
+      input: clip(JSON.stringify(params.requestedSchema, null, 2), 4000),
+      summary,
+      at: Date.now(),
+      questions: form.questions,
+    };
+    this.wait(s, { id, info, fields: form.fields }, summary);
+  }
+
+  private wait(s: State, pending: Pending, summary: string): void {
+    this.flushChunk(s);
+    s.pending.set(pending.info.id, pending);
+    this.updateStatus(s);
+    this.event(s, "Notification", { notificationType: "permission_prompt", toolName: pending.info.toolName, summary });
   }
 
   private applyConfig(s: State, value: unknown, newSession = false): void {
@@ -484,7 +614,7 @@ export class AntigravitySessions {
   }
 
   private cancelPermissions(s: State): void {
-    for (const p of s.pending.values()) s.rpc?.respond(p.id, { outcome: { outcome: "cancelled" } });
+    for (const p of s.pending.values()) s.rpc?.respond(p.id, p.fields ? { action: "cancel" } : { outcome: { outcome: "cancelled" } });
     s.pending.clear();
   }
 

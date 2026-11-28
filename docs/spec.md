@@ -181,7 +181,11 @@ Codex のセッションは、Codex の常駐の app-server のスレッドで�
 - モデル一覧は app-server の `model/list` でプロバイダーごとに読む。非表示のモデルは候補から外し、名前と既定の印を出す。Effort は選んだモデルの `supportedReasoningEfforts` を出す。初めの値と再接続後の値は `thread/start`・`thread/resume` の `model` と `reasoningEffort` から読む
 - Codex の既定値はユーザーの設定とは別に Gasho サーバーの `meta` に保存する。既存の接続があるときに `model/list` を読み、モデルとモデルごとの Effort を設定画面に出す。候補は接続時と定期確認時に読み、候補を取得するためだけの接続は行わない。新規起動時は取得済みの候補があれば使える値を確かめ、`thread/start` にモデルと `config.model_reasoning_effort` を渡す。候補にない値は省き、app-server が明示的に断った場合は指定を外して起動し、理由を画面に出す
 - 画面で選んで発言を送るときだけ、`turn/start` に `model` や `effort` を付ける。モデルだけを変えるときは、選んだモデルの既定の Effort が候補にあれば使う。指定は後続ターンにも引き継がれるので、次の発言で指定し直す必要はない。候補にない値や app-server が断った発言は送信済みとして扱わず、理由を画面に出す
-- 権限の確認の許可は `accept`、拒否は `decline`、今後も許可は Codex が提案した実行ポリシーの追加である。提案がないときは、今後も許可を出さない。別のクライアントが答えたら（`serverRequest/resolved`）、画面から消す
+- 権限の確認の許可は `accept`、拒否は `decline` である。今後も許可は、確認の種類ごとに次の内容で出し、ボタンに添える
+  - コマンド：要求の `availableDecisions` にあるものだけを、次の順で1つ出す。実行ポリシーの追加（`acceptWithExecpolicyAmendment`）、ホストを許可するネットワークの規則（`applyNetworkPolicyAmendment`）、このセッションのあいだの許可（`acceptForSession`）。どれもなければ出さない
+  - ファイルの変更：`acceptForSession`（同じファイルを、このセッションのあいだ）。要求に `grantRoot` があるときは、そのフォルダーへの書き込みとしてボタンに出す
+  - 追加の権限：求められた権限を `scope: "session"` で与える（許可は `turn`）。画面に出す JSON が長くて切り詰めるときは、出さない
+- 別のクライアントが答えたら（`serverRequest/resolved`）、画面から消す
 - Gasho の画面で答えられない要求（MCP サーバーからの問い合わせなど）は、エラーで返す
 - 通知は、Claude Code の hook と同じ名前のイベント（`UserPromptSubmit`、`Stop`、`StopFailure`、`Notification`、`SessionEnd`）を gasho-daemon が作って送る
 - セッションの削除は、進行中のターンを止めてスレッドから離れ、記録から外す。会話は Codex に残り、`codex resume` で開ける
@@ -199,7 +203,11 @@ Antigravity は、個人が working server でログインした Antigravity CLI
 
 - 起動は Gasho の画面から行う。セッションごとに改変していない `agy acp` を子プロセスとして起動し、標準入出力で ACP v1 の JSON-RPC をやり取りする。Gasho は CLI を同梱せず、認証情報や設定ファイルも読まない。`authenticate` は呼ばず、エラー `-32000` では working server の端末でログインするよう案内する
 - `initialize` でファイルシステムと端末の機能を提供せず、`session/new`、`session/load`、`session/resume` に渡す `mcpServers` は空にする。`session/prompt` には、利用者が画面から送ったテキストをそのまま渡す。発言の生成、システムプロンプトやルールの追加、自動再送やタイトル生成は行わない。ターン中の発言は完了まで待たせ、順番に送る。接続が途切れたときは、待機中の発言を破棄し、破棄したことと発言の本文を会話に残す。gasho-daemon を起動し直すと、待機中の発言は消える
-- 画面からの割り込みは `session/cancel` を送る。ACP から権限の確認が届いたら通知し、画面の「許可」または「拒否」を待つ。一度だけの許可（`allow_once`）と拒否（`reject_once`）を扱い、拒否の選択肢がなければ取り消す。ターンを中断したときも、未回答の確認を取り消す。Gasho は自動で許可せず、`--dangerously-skip-permissions` を付けない。CLI にあらかじめ登録された権限のルールは、CLI 自身が適用する
+- 画面からの割り込みは `session/cancel` を送る。ACP から権限の確認が届いたら通知し、画面の「許可」または「拒否」を待つ。一度だけの許可（`allow_once`）と拒否（`reject_once`）を扱い、拒否の選択肢がなければ取り消す。`allow_always` の選択肢があるときだけ「今後も許可」にその名前を添えて出し、押されたらその選択肢で答える。どこまで・いつまで許可されるかは CLI が決める。`reject_always` は出さない。ターンを中断したときも、未回答の確認を取り消す。Gasho は自動で許可せず、`--dangerously-skip-permissions` を付けない。CLI にあらかじめ登録された権限のルールは、CLI 自身が適用する
+- Antigravity からの質問は、ACP の elicitation で受ける。`initialize` で `elicitation.form` だけを宣言し、`elicitation/create` を Claude の質問と同じカードに出す。答えるのは画面を操作した人だけで、「回答する」は `accept` と選んだ値や書いた文、「答えずに止める」は `decline` を返す。ターンを中断・終了したときは `cancel` を返す
+  - カードに出せる項目は、選択肢のある文字列（`enum`・`oneOf`）、複数選択の配列（`items.enum`・`items.anyOf`）、真偽値（「はい」「いいえ」）、制約のない文字列である。選択肢のある項目には「その他」の欄を出さない。必須でない項目は、答えずに送れる（`content` に入れない）
+  - 次の形は、答えの一部だけを受けたり値を変えたりせず、全体を JSON-RPC のエラー（`-32602`）で断り、質問の文を会話に出す：`url` の方式、数値・整数と知らない型、項目のない形、`minLength`・`maxLength`・`pattern`・`format` のある自由入力、2つ以上を必ず選ばせるか選べる数を絞る複数選択、11個以上の項目、21個以上の選択肢。人が断ったことにならないよう、`decline` は返さない
+  - `url` の方式を宣言しないので、`elicitation/complete` が届いても何もしない。セッションに結び付かない質問（`requestId` を持つもの）は `-32601` で断る
 - Gasho の名前、セッション ID、会話は working server 上の `antigravity-sessions.json` に保存する。名前の変更は Gasho に反映する。削除すると子プロセスを止めて Gasho の記録を外す。CLI が保存した会話は残る
 - gasho-daemon を起動し直したあとは一覧と保存済みの会話が見える。画面で「Antigravity の会話を開く」を押すか、次の発言を送ったときに限り、接続して `session/load` で会話を再生する。CLI が `session/load` を提供せず `session/resume` を提供する場合は、保存済みの表示を保って再開する。どちらも未対応なら再開できないと表示する
 - Antigravity は設定の既定エージェント、＋ボタンのメニュー、起動フォームで選べる。入力欄には、対応するモデルと Effort の選択を出す。Ultracode、添付、スキル、シェル実行、フォーク、バックグラウンド作業の一覧は出さない。Antigravity を起動できるとその接続で通知した gasho-daemon にだけ起動を中継する。古い gasho-daemon がエージェントの指定を見落として Claude Code を起動するのを防ぐためである

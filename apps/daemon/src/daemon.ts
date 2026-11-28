@@ -356,6 +356,11 @@ export class Daemon {
   /** Keeps a session's next tool call waiting while a message is typed into it as Claude works. */
   private toolHold = new ToolHold();
   private canLaunch = false;
+  /**
+   * The Gasho server's default effort level and model, for the launches that do not pass through it (the control
+   * socket). Empty from each connection on until it tells them, which an older one never does.
+   */
+  private launchDefaults: { effort?: EffortLevel; model?: SessionModel } = {};
   /** Claude Code on this working server, as last looked for. */
   private claude: AgentInfo | undefined;
   /** Counts the looks for Claude Code: a look that a later one overtook is not sent. */
@@ -477,6 +482,7 @@ export class Daemon {
       url: cfg.hubUrl,
       hello: () => ({ type: "hello", machineId: cfg.machineId, token: cfg.token, daemonVersion: DAEMON_VERSION }),
       onReady: () => {
+        this.launchDefaults = {};
         this.lastSent = "";
         this.reposSent = "";
         this.emitSessions();
@@ -1569,6 +1575,12 @@ export class Daemon {
 
   private async onHubMessage(m: HubToDaemon): Promise<void> {
     switch (m.type) {
+      case "launch.defaults":
+        this.launchDefaults = {
+          effort: m.effort && EFFORT_LEVELS.includes(m.effort) ? m.effort : undefined,
+          model: m.model && m.model !== "default" && Object.hasOwn(MODEL_NAMES, m.model) ? m.model : undefined,
+        };
+        return;
       case "plugins":
         this.plugins.update(m.plugins);
         return;
@@ -1717,9 +1729,11 @@ export class Daemon {
     const requestId = `control-${randomUUID()}`;
     try {
       switch (req.op) {
-        case "session.launch":
+        case "session.launch": {
           log(`session.launch in ${req.cwd} from the control socket`);
-          return await this.launch(req.cwd, req.name, req.trust === true, req.agent, req.chrome === true, undefined, undefined, req.launchedBy);
+          const { effort, model } = this.launchDefaults;
+          return await this.launch(req.cwd, req.name, req.trust === true, req.agent, req.chrome === true, effort, model, req.launchedBy);
+        }
         case "session.fork":
           log(`session.fork of ${req.sessionId}${req.chrome ? " with Claude in Chrome" : ""} from the control socket`);
           return await this.fork(req.sessionId, req.name, req.chrome ? { chrome: true } : {});

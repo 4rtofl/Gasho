@@ -1133,6 +1133,13 @@ export type DaemonToHub =
 // gasho-hub -> gasho-daemon
 export type HubToDaemon =
   | { type: "welcome" }
+  /**
+   * What the working server's own launches of Claude Code (`gasho-daemon session launch`, which do not pass through the
+   * Gasho server) start with: its default effort level and model (ServerInfo.defaultEffort, defaultModel). Sent after
+   * welcome when one is set, and whenever one changes. gasho-daemon forgets them at each welcome; an older one ignores
+   * this, and an older Gasho server does not send it.
+   */
+  | { type: "launch.defaults"; effort?: EffortLevel; model?: SessionModel }
   | { type: "transcript.get"; requestId: string; sessionId: string; before?: number; limit: number }
   | { type: "git.graph.get"; requestId: string; sessionId: string; repo?: string }
   | { type: "dir.get"; requestId: string; sessionId: string; path: string }
@@ -1339,7 +1346,8 @@ export type SessionCommand =
    * `agent`: the agent to start; Claude Code when absent. `trust` is about Claude Code's question only. `effort`: Claude
    * Code starts with it (`--effort`, for this session only); the Gasho server gives its default effort level
    * (ServerInfo.defaultEffort) to a launch of Claude Code without one. A model that does not have it starts with one it
-   * has, or none. `model`: likewise (`--model`, ServerInfo.defaultModel); "default" passes nothing.
+   * has, or none. `model`: likewise (`--model`, ServerInfo.defaultModel); "default" passes nothing. A launch from the
+   * control socket gets them from launch.defaults.
    */
   | { type: "session.launch"; cwd: string; name?: string; trust?: boolean; agent?: AgentKind; effort?: EffortLevel; model?: SessionModel }
   /** Makes the folder `name` inside the folder `parent` (gasho-daemon 0.10.0 and later). */

@@ -1058,3 +1058,33 @@ test("a session gasho-daemon does not know of is no parent", async () => {
     await done();
   }
 });
+
+test("a launch from the control socket starts with the Gasho server's default model and effort level", async () => {
+  const { d, folder, started, done } = await setup();
+  const launch = async () => {
+    const r = await d.onControl({ op: "session.launch", cwd: folder, name: "defaults", trust: true });
+    assert.equal(r.ok, true, r.error);
+    return started.at(-1)!.args;
+  };
+  try {
+    // The Gasho server has told nothing (an older one never does): the arguments are those of before.
+    const plain = await launch();
+    assert.ok(!plain.includes("--model") && !plain.includes("--effort"));
+
+    await d.onHubMessage({ type: "launch.defaults", model: "opus", effort: "high" });
+    const args = await launch();
+    assert.equal(args[args.indexOf("--model") + 1], "opus");
+    assert.equal(args[args.indexOf("--effort") + 1], "high");
+
+    // Set back to Claude Code's own defaults.
+    await d.onHubMessage({ type: "launch.defaults" });
+    assert.deepEqual(await launch(), plain);
+
+    // Forgotten at the next welcome, after which a Gasho server that has them says them again.
+    await d.onHubMessage({ type: "launch.defaults", model: "opus", effort: "high" });
+    d.hub.opts.onReady();
+    assert.deepEqual(await launch(), plain);
+  } finally {
+    await done();
+  }
+});

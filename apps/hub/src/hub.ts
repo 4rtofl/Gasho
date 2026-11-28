@@ -674,6 +674,8 @@ export class Hub {
       this.store.saveMachine(m);
       this.store.touchDevice(device.id);
       peer.send({ type: "welcome" });
+      // Nothing to tell when neither is set: gasho-daemon starts each connection without them.
+      if (this.defaultEffort() || this.defaultModel()) peer.send(this.launchDefaults());
       this.broadcast({ type: "machine", machine: m });
       // What the connection it replaces told: this gasho-daemon may be one that does not tell it.
       this.forgetMemory(device.id);
@@ -964,6 +966,16 @@ export class Hub {
     return effort && EFFORTS.has(effort) ? (effort as EffortLevel) : undefined;
   }
 
+  private launchDefaults(): HubToDaemon {
+    const effort = this.defaultEffort();
+    const model = this.defaultModel();
+    return { type: "launch.defaults", ...(effort ? { effort } : {}), ...(model ? { model } : {}) };
+  }
+
+  private sendLaunchDefaults(): void {
+    for (const daemon of this.daemons.values()) daemon.send(this.launchDefaults());
+  }
+
   private broadcastServer(): void {
     if (this.server) this.broadcast({ type: "server", server: this.serverInfo(this.server) });
   }
@@ -1099,6 +1111,7 @@ export class Hub {
         }
         this.store.setMeta(DEFAULT_EFFORT_KEY, msg.effort ?? "");
         this.broadcastServer();
+        this.sendLaunchDefaults();
         peer.send({ type: "server.result", requestId: msg.requestId, result: { ok: true } });
         break;
       }
@@ -1110,6 +1123,7 @@ export class Hub {
         }
         this.store.setMeta(DEFAULT_MODEL_KEY, msg.model && msg.model !== "default" ? msg.model : "");
         this.broadcastServer();
+        this.sendLaunchDefaults();
         peer.send({ type: "server.result", requestId: msg.requestId, result: { ok: true } });
         break;
       }

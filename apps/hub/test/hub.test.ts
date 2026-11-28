@@ -1624,3 +1624,29 @@ test("days older than the heatmap shows are forgotten, and so are a working serv
   store.revokeDevice(machineId);
   assert.deepEqual(store.tokenDays(now), {});
 });
+
+test("a working server is told the default model and effort level, for its own launches", () => {
+  const { hub, machineId, machineToken, browserId } = setup();
+  const c = fakePeer<HubToClient>(browserId);
+  hub.onClientConnect(c);
+  const connect = () => {
+    const d = fakePeer<HubToDaemon>();
+    hub.onDaemonMessage(d, { type: "hello", machineId, token: machineToken, daemonVersion: "0.38.1" });
+    return d;
+  };
+  const d = connect();
+  assert.deepEqual(d.sent, [{ type: "welcome" }]);
+
+  hub.onClientMessage(c, { type: "defaultModel.set", requestId: "r1", model: "opus" });
+  assert.deepEqual(d.sent.at(-1), { type: "launch.defaults", model: "opus" });
+  hub.onClientMessage(c, { type: "defaultEffort.set", requestId: "r2", effort: "high" });
+  assert.deepEqual(d.sent.at(-1), { type: "launch.defaults", model: "opus", effort: "high" });
+  // Told again on each connection, which gasho-daemon starts without them.
+  const again = connect();
+  assert.deepEqual(again.sent, [{ type: "welcome" }, { type: "launch.defaults", model: "opus", effort: "high" }]);
+
+  // Back to Claude Code's own defaults.
+  hub.onClientMessage(c, { type: "defaultModel.set", requestId: "r3", model: "default" });
+  hub.onClientMessage(c, { type: "defaultEffort.set", requestId: "r4" });
+  assert.deepEqual(again.sent.at(-1), { type: "launch.defaults" });
+});

@@ -280,6 +280,7 @@ ACP 対応は公開されている一方、Gasho のような画面クライア�
 - ACP の elicitation は、クライアントが `clientCapabilities.elicitation` で方式（`form`、`url`）を宣言する。`form` の項目は、文字列（単一選択を含む）、数値、整数、真偽値、複数選択の配列である。応答は `accept`（`content`）、`decline`、`cancel`。`elicitation/complete` は `url` の方式の完了の通知である
 - Antigravity の文書は、elicitation の `form` に対応するクライアントには質問がフォームで出て、ほかのクライアントには会話に出ると説明している。どの型の項目を使うかは書かれていない
 - Codex のスキーマでは、コマンドの確認は `acceptForSession`、`acceptWithExecpolicyAmendment`、`applyNetworkPolicyAmendment` を、ファイルの変更は `acceptForSession` を受け付け、追加の権限は `scope: "session"` を指定できる。これまでの Gasho は実行ポリシーの追加だけを出していた
+- 受け付ける値のすべてがコマンドの確認で提示されるわけではない。公開されているソース（[openai/codex](https://github.com/openai/codex) の `rust-v0.172.0`）では、app-server は確認ごとの選択肢を `availableDecisions` で送る。これは実験的なフィールドで、生成した安定版のスキーマには載らないが、`experimentalApi` を宣言しないクライアントから落とすのは `additionalPermissions` だけである。既定の一覧では、ネットワークの確認は一回・セッション中・（許可の提案があれば）規則の追加、ほかのコマンドは一回・（提案があれば）実行ポリシーの追加である
 
 偽の ACP サーバーで、`allow_always` の応答、フォームの回答・拒否・中断、カードで表せない形の拒否を確かめた。Codex は、応答の組み立てを単体テストで確かめた。
 
@@ -288,7 +289,7 @@ ACP 対応は公開されている一方、Gasho のような画面クライア�
 - 本物の `agy` が `allow_always` の選択肢を出すか、その名前と数（複数あるときは最初のものを出す）、許可が続く範囲。`agy` は実行していない
 - 本物の `agy` が送る elicitation の形。数値や制約のある項目を使っていれば、Gasho は断る
 - `agy` がエラーで断られたあと、質問を会話に出し直すか
-- 本物の Codex の app-server に `acceptForSession`、`scope: "session"`、`applyNetworkPolicyAmendment` を返したときの動き。ファイルの変更の `grantRoot` はスキーマに「UNSTABLE」とある
+- 本物の Codex の app-server が送る `availableDecisions` と、`acceptForSession`、`scope: "session"`、`applyNetworkPolicyAmendment` を返したときの動き。ファイルの変更の `grantRoot` はスキーマに「UNSTABLE」とある
 
 ## Codex と Antigravity のモデル・Effort（#347）
 

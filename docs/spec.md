@@ -182,9 +182,9 @@ Codex のセッションは、Codex の常駐の app-server のスレッドで�
 - Codex の既定値はユーザーの設定とは別に Gasho サーバーの `meta` に保存する。既存の接続があるときに `model/list` を読み、モデルとモデルごとの Effort を設定画面に出す。候補は接続時と定期確認時に読み、候補を取得するためだけの接続は行わない。新規起動時は取得済みの候補があれば使える値を確かめ、`thread/start` にモデルと `config.model_reasoning_effort` を渡す。候補にない値は省き、app-server が明示的に断った場合は指定を外して起動し、理由を画面に出す
 - 画面で選んで発言を送るときだけ、`turn/start` に `model` や `effort` を付ける。モデルだけを変えるときは、選んだモデルの既定の Effort が候補にあれば使う。指定は後続ターンにも引き継がれるので、次の発言で指定し直す必要はない。候補にない値や app-server が断った発言は送信済みとして扱わず、理由を画面に出す
 - 権限の確認の許可は `accept`、拒否は `decline` である。今後も許可は、確認の種類ごとに次の内容で出し、ボタンに添える
-  - コマンド：Codex が実行ポリシーの追加を提案していれば、それを適用する（`acceptWithExecpolicyAmendment`）。なくて、ホストを許可するネットワークの規則を提案していれば、それを適用する（`applyNetworkPolicyAmendment`）。どちらもなければ、このセッションのあいだ許可する（`acceptForSession`）
+  - コマンド：要求の `availableDecisions` にあるものだけを、次の順で1つ出す。実行ポリシーの追加（`acceptWithExecpolicyAmendment`）、ホストを許可するネットワークの規則（`applyNetworkPolicyAmendment`）、このセッションのあいだの許可（`acceptForSession`）。どれもなければ出さない
   - ファイルの変更：`acceptForSession`（同じファイルを、このセッションのあいだ）。要求に `grantRoot` があるときは、そのフォルダーへの書き込みとしてボタンに出す
-  - 追加の権限：求められた権限を `scope: "session"` で与える（許可は `turn`）
+  - 追加の権限：求められた権限を `scope: "session"` で与える（許可は `turn`）。画面に出す JSON が長くて切り詰めるときは、出さない
 - 別のクライアントが答えたら（`serverRequest/resolved`）、画面から消す
 - Gasho の画面で答えられない要求（MCP サーバーからの問い合わせなど）は、エラーで返す
 - 通知は、Claude Code の hook と同じ名前のイベント（`UserPromptSubmit`、`Stop`、`StopFailure`、`Notification`、`SessionEnd`）を gasho-daemon が作って送る

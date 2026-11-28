@@ -182,7 +182,8 @@ export function requestOf(id: string | number, method: string, params: Record<st
   switch (method) {
     case "item/commandExecution/requestApproval": {
       const command = typeof params.command === "string" ? params.command : "";
-      return made({ ...base, toolName: "Bash", input: clip(JSON.stringify({ command, cwd: params.cwd, ...reason }, null, 2), MAX_TOOL), summary: clip(command, MAX_SUMMARY), always: commandAlways(params).label });
+      const always = commandAlways(params)?.label;
+      return made({ ...base, toolName: "Bash", input: clip(JSON.stringify({ command, cwd: params.cwd, ...reason }, null, 2), MAX_TOOL), summary: clip(command, MAX_SUMMARY), ...(always ? { always } : {}) });
     }
     case "item/fileChange/requestApproval": {
       const changes = item ? changesOf(item) : [];
@@ -192,7 +193,10 @@ export function requestOf(id: string | number, method: string, params: Record<st
     }
     case "item/permissions/requestApproval": {
       const summary = typeof params.reason === "string" ? params.reason : "";
-      return made({ ...base, toolName: "Permissions", input: clip(JSON.stringify({ permissions: params.permissions, cwd: params.cwd, ...reason }, null, 2), MAX_TOOL), ...(summary ? { summary: clip(summary, MAX_SUMMARY) } : {}), always: "このセッションのみ" });
+      const input = JSON.stringify({ permissions: params.permissions, cwd: params.cwd, ...reason }, null, 2);
+      // What the person cannot read whole is not allowed beyond this once.
+      const always = input.length <= MAX_TOOL ? { always: "このセッションのみ" } : {};
+      return made({ ...base, toolName: "Permissions", input: clip(input, MAX_TOOL), ...(summary ? { summary: clip(summary, MAX_SUMMARY) } : {}), ...always });
     }
     case "item/tool/requestUserInput": {
       const questions: AskedQuestion[] = asked(params).map((q) => ({
@@ -207,25 +211,33 @@ export function requestOf(id: string | number, method: string, params: Record<st
   }
 }
 
+/** A decision of `availableDecisions` that carries a rule (the others are plain strings). */
+interface RuleDecision {
+  acceptWithExecpolicyAmendment?: { execpolicy_amendment: string[] };
+  applyNetworkPolicyAmendment?: { network_policy_amendment: { host: string; action: string } };
+}
+
 /**
- * What "allow from now on" means for a command: the rule Codex proposes (for the command, else for the host it wants
- * to reach), or the same command without a prompt for the rest of the session.
+ * What "allow from now on" means for a command: the first of these that Codex offers for it (a rule for the command,
+ * a rule for the host it wants to reach, the rest of the session); undefined when it offers none. Codex 0.172.0 sends
+ * `availableDecisions` although its stable schema leaves it out.
  */
-function commandAlways(params: Record<string, unknown>): { label: string; decision: unknown } {
-  const amendment = params.proposedExecpolicyAmendment;
-  if (Array.isArray(amendment) && amendment.length > 0) {
-    return { label: amendment.join(" "), decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: amendment } } };
-  }
-  const network = (params.proposedNetworkPolicyAmendments as { host: string; action: string }[] | null | undefined)?.find((a) => a.action === "allow");
-  if (network) return { label: `${network.host} への接続`, decision: { applyNetworkPolicyAmendment: { network_policy_amendment: network } } };
-  return { label: "このセッションのみ", decision: "acceptForSession" };
+function commandAlways(params: Record<string, unknown>): { label: string; decision: unknown } | undefined {
+  const offered = (params.availableDecisions ?? []) as (string | RuleDecision)[];
+  const rules = offered.filter((d) => typeof d === "object");
+  const command = rules.find((d) => d.acceptWithExecpolicyAmendment);
+  if (command) return { label: command.acceptWithExecpolicyAmendment!.execpolicy_amendment.join(" "), decision: command };
+  const network = rules.find((d) => d.applyNetworkPolicyAmendment?.network_policy_amendment.action === "allow");
+  if (network) return { label: `${network.applyNetworkPolicyAmendment!.network_policy_amendment.host} への接続`, decision: network };
+  return offered.includes("acceptForSession") ? { label: "このセッションのみ", decision: "acceptForSession" } : undefined;
 }
 
 /** What to answer a request with, for Gasho's answer; `error` when that answer cannot be given to this request. */
 export function replyOf(r: CodexRequest, decision: PermissionDecision, answers: QuestionAnswer[] | undefined): { result: unknown } | { error: string } {
+  if (decision === "always" && r.info.always === undefined) return { error: "この確認には「今後も許可」を使えません。" };
   switch (r.method) {
     case "item/commandExecution/requestApproval":
-      return { result: { decision: decision === "allow" ? "accept" : decision === "deny" ? "decline" : commandAlways(r.params).decision } };
+      return { result: { decision: decision === "allow" ? "accept" : decision === "deny" ? "decline" : commandAlways(r.params)!.decision } };
     case "item/fileChange/requestApproval":
       return { result: { decision: decision === "allow" ? "accept" : decision === "deny" ? "decline" : "acceptForSession" } };
     case "item/permissions/requestApproval": {

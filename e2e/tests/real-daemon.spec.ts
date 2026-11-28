@@ -116,12 +116,15 @@ test("Antigravity は発言の前にモデルと Effort を切り替え、失敗
 
   await model.click();
   await page.getByRole("option", { name: /Gemini Test Pro/ }).click();
-  const disabledEffort = page.getByRole("button", { name: /^Effort：.*モデルを切り替えたあとに選べます/ });
+  const disabledEffort = page.getByRole("button", { name: /^Effort：.*モデルを切り替えて送ったあとに、Effort を選べます/ });
   await expect(disabledEffort).toBeDisabled();
-  await expect(disabledEffort).toHaveAttribute("title", "モデルを切り替えたあとに選べます");
+  await expect(disabledEffort).toHaveAttribute("title", "モデルを切り替えて送ったあとに、Effort を選べます");
+  const effortHint = page.getByText("モデルを切り替えて送ったあとに、Effort を選べます", { exact: true });
+  await expect(effortHint).toBeVisible();
   await input.fill("モデルを替えて");
   await send.click();
   await expect(page.getByText("偽 ACP の応答：モデルを替えて", { exact: true })).toBeVisible();
+  await expect(effortHint).toBeHidden();
   await model.click();
   await expect(page.getByRole("option", { name: /Gemini Test Pro/ }).getByText("いま")).toBeVisible();
   await page.keyboard.press("Escape");

@@ -81,6 +81,21 @@ test("Antigravity を画面から起動し、発言・送信待ち・権限へ�
   await page.getByRole("button", { name: "拒否", exact: true }).click();
   await expect(page.getByText("偽 ACP の拒否を受けました", { exact: true })).toBeVisible();
 
+  await send("権限を今後も");
+  await page.getByRole("button", { name: "今後も許可（Always allow）", exact: true }).click();
+  await expect(page.getByText("偽 ACP の今後の許可を受けました", { exact: true })).toBeVisible();
+
+  await send("質問を試す");
+  await expect(page.getByText("Antigravity からの質問", { exact: true })).toBeVisible();
+  const answer = page.getByRole("button", { name: "回答する", exact: true });
+  await expect(answer).toBeDisabled();
+  await page.getByRole("radio", { name: /作り直す/ }).check();
+  await page.getByRole("checkbox", { name: "tests" }).check();
+  await page.getByRole("radio", { name: "いいえ" }).check();
+  await page.getByRole("textbox", { name: "補足：自分の言葉で答える" }).fill("急ぎません");
+  await answer.click();
+  await expect(page.getByText('偽 ACP の回答 {"action":"accept","content":{"plan":"large","targets":["tests"],"ok":false,"note":"急ぎません"}}', { exact: true })).toBeVisible();
+
   await send("割り込み試験");
   await page.getByRole("button", { name: "停止", exact: true }).click();
   await expect(page.getByText("割り込まれました", { exact: false })).toBeVisible();

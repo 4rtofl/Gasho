@@ -132,9 +132,9 @@ test("ACP sends the exact human text, waits for permission and serializes prompt
   await until(() => s.sessions()[0]?.status === "waiting");
   assert.equal(s.sessions()[0]?.pendingInputs, 1);
   assert.equal((await f.calls()).filter((c) => c.method === "session/prompt").length, 1);
-  const permission = s.sessions()[0]!.permissionRequests![0]!.id;
-  assert.equal(s.answer(id, permission, "always").ok, false);
-  assert.equal(s.answer(id, permission, "allow").ok, true);
+  const permission = s.sessions()[0]!.permissionRequests![0]!;
+  assert.equal(permission.always, "Always allow");
+  assert.equal(s.answer(id, permission.id, "allow").ok, true);
   await until(() => s.sessions()[0]?.status === "idle" && !s.sessions()[0]?.pendingInputs);
   const texts = s.page(id, undefined, 100).entries.flatMap((e) => e.blocks).map((b) => b.type === "text" && b.text);
   assert.deepEqual(texts, [first, "偽 ACP の許可を受けました", next, "偽 ACP の応答：二つ目"]);
@@ -155,6 +155,77 @@ test("ACP sends the exact human text, waits for permission and serializes prompt
   assert.equal(calls.filter((c) => c.method === "session/cancel").length, 1);
   assert.deepEqual(calls.filter((c) => c.id === "ask").map((c) => c.result.outcome.optionId), ["allow", "deny"]);
 });
+
+test("allow_always is answered only when ACP offers it and the person chooses it", async (t) => {
+  const f = await fixture(t);
+  const s = f.make();
+  const { sessionId: id } = await s.launch(f.dir);
+  await s.input(id, "権限を今後も");
+  await until(() => s.sessions()[0]?.status === "waiting");
+  assert.equal(s.answer(id, s.sessions()[0]!.permissionRequests![0]!.id, "always").ok, true);
+  await until(() => s.sessions()[0]?.status === "idle");
+  assert.equal((await f.calls()).find((c) => c.id === "ask")?.result.outcome.optionId, "always");
+});
+
+test("an elicitation form is a question card, answered with what the person chose and wrote", async (t) => {
+  const f = await fixture(t);
+  const s = f.make();
+  const { sessionId: id } = await s.launch(f.dir);
+  const asked = () => s.sessions()[0]!.permissionRequests![0]!;
+  await s.input(id, "質問を試す");
+  await until(() => s.sessions()[0]?.status === "waiting");
+  assert.equal(asked().toolName, "AskUserQuestion");
+  assert.equal(asked().always, undefined);
+  assert.deepEqual(asked().questions, [
+    { question: "進め方を教えてください。", header: "方針", options: [{ label: "小さく直す" }, { label: "作り直す", description: "時間がかかります" }], noOther: true },
+    { question: "対象", options: [{ label: "docs" }, { label: "tests" }], multiSelect: true, noOther: true },
+    { question: "テストを流しますか？", header: "テスト", options: [{ label: "はい" }, { label: "いいえ" }], noOther: true },
+    { question: "補足", options: [], optional: true },
+  ]);
+  const answers = [{ picked: [1] }, { picked: [0, 1] }, { picked: [1] }, { picked: [] }];
+  for (const wrong of [
+    undefined,
+    [{ picked: [] }, ...answers.slice(1)],
+    [{ picked: [0, 1] }, ...answers.slice(1)],
+    [{ picked: [2] }, ...answers.slice(1)],
+    [{ picked: [], text: "自由に" }, ...answers.slice(1)],
+  ]) {
+    assert.equal(s.answer(id, asked().id, "allow", wrong).ok, false);
+  }
+  assert.equal(s.answer(id, asked().id, "always").ok, false);
+  assert.equal((await f.calls()).filter((c) => c.id === "ask").length, 0);
+  assert.equal(s.answer(id, asked().id, "allow", answers).ok, true);
+  await until(() => s.sessions()[0]?.status === "idle");
+
+  await s.input(id, "質問を試す");
+  await until(() => s.sessions()[0]?.status === "waiting");
+  assert.equal(s.answer(id, asked().id, "deny").ok, true);
+  await until(() => s.sessions()[0]?.status === "idle");
+
+  await s.input(id, "質問を試す");
+  await until(() => s.sessions()[0]?.status === "waiting");
+  assert.equal(s.interrupt(id).ok, true);
+  await until(() => s.sessions()[0]?.status === "idle");
+
+  assert.deepEqual((await f.calls()).filter((c) => c.id === "ask").map((c) => c.result), [
+    { action: "accept", content: { plan: "large", targets: ["docs", "tests"], ok: false } },
+    { action: "decline" },
+    { action: "cancel" },
+  ]);
+});
+
+for (const [text, message] of [["数の質問", "何回試しますか？"], ["URL の質問", "ブラウザーで認可してください。"]] as const) {
+  test(`an elicitation the card cannot take is refused with an error and shown in the conversation (${text})`, async (t) => {
+    const f = await fixture(t);
+    const s = f.make();
+    const { sessionId: id } = await s.launch(f.dir);
+    await s.input(id, text);
+    await until(() => s.page(id, undefined, 10).entries.length > 2 && s.sessions()[0]?.status === "idle");
+    assert.equal(s.sessions()[0]?.permissionRequests, undefined);
+    assert.equal((await f.calls()).find((c) => c.id === "ask")?.error.code, -32602);
+    assert.ok(s.page(id, undefined, 10).entries.some((e) => e.role === "system" && e.blocks[0]?.type === "text" && e.blocks[0].text.includes(message)));
+  });
+}
 
 test("ACP's usage_update gives the context window and a cost in US dollars; without one, neither shows", async (t) => {
   const f = await fixture(t);

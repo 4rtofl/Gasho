@@ -15,6 +15,16 @@ assert.deepEqual(args, ["acp"]);
 const mode = process.env.GASHO_TEST_ACP_MODE;
 const sessionId = "fake-acp-session";
 let turn: { id: number; text: string } | undefined;
+const forms: Record<string, object> = {
+  "質問を試す": { mode: "form", message: "進め方を教えてください。", requestedSchema: { type: "object", required: ["plan", "targets", "ok"], properties: {
+    plan: { type: "string", title: "方針", oneOf: [{ const: "small", title: "小さく直す" }, { const: "large", title: "作り直す", description: "時間がかかります" }] },
+    targets: { type: "array", title: "対象", items: { type: "string", enum: ["docs", "tests"] } },
+    ok: { type: "boolean", title: "テスト", description: "テストを流しますか？" },
+    note: { type: "string", title: "補足" },
+  } } },
+  "数の質問": { mode: "form", message: "何回試しますか？", requestedSchema: { type: "object", properties: { count: { type: "integer" } } } },
+  "URL の質問": { mode: "url", message: "ブラウザーで認可してください。", elicitationId: "e1", url: "https://example.test/" },
+};
 let model = "gemini-test";
 let effort = "baseline";
 const configOptions = () => mode === "no-config" ? {} : { configOptions: [
@@ -60,7 +70,7 @@ for (const line of lines()) {
   if (log) appendFileSync(log, line + "\n");
   switch (m.method) {
     case "initialize":
-      assert.deepEqual(m.params, { protocolVersion: 1, clientCapabilities: {} });
+      assert.deepEqual(m.params, { protocolVersion: 1, clientCapabilities: { elicitation: { form: {} } } });
       result(m.id, {
         protocolVersion: 1,
         agentCapabilities: mode === "none" ? {} : mode?.startsWith("resume") ? { sessionCapabilities: { resume: {} } } : { loadSession: true },
@@ -121,6 +131,8 @@ for (const line of lines()) {
             ],
           },
         });
+      } else if (forms[turn.text]) {
+        send({ id: "ask", method: "elicitation/create", params: { sessionId, ...forms[turn.text] } });
       } else if (turn.text === "通知を試す") {
         finish("通知試験");
         effort = "extra-fast";
@@ -144,9 +156,10 @@ for (const line of lines()) {
       break;
     case undefined:
       assert.equal(m.id, "ask");
-      assert.notEqual(m.result.outcome.optionId, "always");
       if (turn?.text === "権限の確認後に切断") process.exit(1);
-      if (turn) finish(m.result.outcome.optionId === "allow" ? "許可を受けました" : "拒否を受けました");
+      if (!turn) break;
+      if (forms[turn.text]) finish(m.error ? `エラー ${m.error.code} を受けました` : `回答 ${JSON.stringify(m.result)}`);
+      else finish({ always: "今後の許可を受けました", allow: "許可を受けました" }[m.result.outcome.optionId as string] ?? "拒否を受けました");
       break;
     default:
       assert.fail(`unexpected ACP method: ${m.method}`);

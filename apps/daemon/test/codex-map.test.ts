@@ -137,10 +137,17 @@ test("a command's approval: allow, deny, and always with what Codex proposes", (
   assert.deepEqual(replyOf(r, "always", undefined), { result: { decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: ["touch", "a.txt"] } } } });
 });
 
-test("without a proposal, always is not offered and cannot be answered", () => {
+test("without a proposal, always lasts for the session", () => {
   const r = commandRequest();
-  assert.equal(r.info.always, undefined);
-  assert.ok("error" in replyOf(r, "always", undefined));
+  assert.equal(r.info.always, "このセッションのみ");
+  assert.deepEqual(replyOf(r, "always", undefined), { result: { decision: "acceptForSession" } });
+});
+
+test("a proposed network rule that allows the host is what always applies", () => {
+  const allow = { host: "example.test", action: "allow" };
+  const r = commandRequest({ proposedNetworkPolicyAmendments: [{ host: "example.test", action: "deny" }, allow] });
+  assert.equal(r.info.always, "example.test への接続");
+  assert.deepEqual(replyOf(r, "always", undefined), { result: { decision: { applyNetworkPolicyAmendment: { network_policy_amendment: allow } } } });
 });
 
 test("a file change's approval says what the change is, from the item as it started", () => {
@@ -150,10 +157,10 @@ test("a file change's approval says what the change is, from the item as it star
   assert.equal(r.info.toolName, "apply_patch");
   assert.equal(r.info.summary, "a.txt");
   assert.match(r.info.input, /"reason": "write"/);
-  assert.equal(r.info.always, undefined);
+  assert.equal(r.info.always, "同じファイル、このセッションのみ");
   assert.deepEqual(replyOf(r, "allow", undefined), { result: { decision: "accept" } });
   assert.deepEqual(replyOf(r, "deny", undefined), { result: { decision: "decline" } });
-  assert.ok("error" in replyOf(r, "always", undefined));
+  assert.deepEqual(replyOf(r, "always", undefined), { result: { decision: "acceptForSession" } });
 });
 
 test("a request for more permissions grants what it asks for this turn, or nothing", () => {
@@ -163,6 +170,8 @@ test("a request for more permissions grants what it asks for this turn, or nothi
   assert.equal(r.info.summary, "needs network");
   assert.deepEqual(replyOf(r, "allow", undefined), { result: { permissions: { network: { enabled: true } }, scope: "turn" } });
   assert.deepEqual(replyOf(r, "deny", undefined), { result: { permissions: {}, scope: "turn" } });
+  assert.equal(r.info.always, "このセッションのみ");
+  assert.deepEqual(replyOf(r, "always", undefined), { result: { permissions: { network: { enabled: true } }, scope: "session" } });
 });
 
 test("a question of Codex is a question card, and its answers go back by the question's id", () => {

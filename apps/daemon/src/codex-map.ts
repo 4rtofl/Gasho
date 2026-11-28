@@ -182,18 +182,17 @@ export function requestOf(id: string | number, method: string, params: Record<st
   switch (method) {
     case "item/commandExecution/requestApproval": {
       const command = typeof params.command === "string" ? params.command : "";
-      const amendment = params.proposedExecpolicyAmendment;
-      const always = Array.isArray(amendment) && amendment.length > 0 ? { always: amendment.join(" ") } : {};
-      return made({ ...base, toolName: "Bash", input: clip(JSON.stringify({ command, cwd: params.cwd, ...reason }, null, 2), MAX_TOOL), summary: clip(command, MAX_SUMMARY), ...always });
+      return made({ ...base, toolName: "Bash", input: clip(JSON.stringify({ command, cwd: params.cwd, ...reason }, null, 2), MAX_TOOL), summary: clip(command, MAX_SUMMARY), always: commandAlways(params).label });
     }
     case "item/fileChange/requestApproval": {
       const changes = item ? changesOf(item) : [];
       const summary = changes.map((c) => String(c.path)).join(", ");
-      return made({ ...base, toolName: "apply_patch", input: clip(JSON.stringify({ ...(item ? (fileChangeInput(item) as object) : {}), ...reason }, null, 2), MAX_TOOL), ...(summary ? { summary: clip(summary, MAX_SUMMARY) } : {}) });
+      const always = typeof params.grantRoot === "string" ? `${params.grantRoot} への書き込み、このセッションのみ` : "同じファイル、このセッションのみ";
+      return made({ ...base, toolName: "apply_patch", input: clip(JSON.stringify({ ...(item ? (fileChangeInput(item) as object) : {}), ...reason }, null, 2), MAX_TOOL), ...(summary ? { summary: clip(summary, MAX_SUMMARY) } : {}), always });
     }
     case "item/permissions/requestApproval": {
       const summary = typeof params.reason === "string" ? params.reason : "";
-      return made({ ...base, toolName: "Permissions", input: clip(JSON.stringify({ permissions: params.permissions, cwd: params.cwd, ...reason }, null, 2), MAX_TOOL), ...(summary ? { summary: clip(summary, MAX_SUMMARY) } : {}) });
+      return made({ ...base, toolName: "Permissions", input: clip(JSON.stringify({ permissions: params.permissions, cwd: params.cwd, ...reason }, null, 2), MAX_TOOL), ...(summary ? { summary: clip(summary, MAX_SUMMARY) } : {}), always: "このセッションのみ" });
     }
     case "item/tool/requestUserInput": {
       const questions: AskedQuestion[] = asked(params).map((q) => ({
@@ -208,24 +207,31 @@ export function requestOf(id: string | number, method: string, params: Record<st
   }
 }
 
+/**
+ * What "allow from now on" means for a command: the rule Codex proposes (for the command, else for the host it wants
+ * to reach), or the same command without a prompt for the rest of the session.
+ */
+function commandAlways(params: Record<string, unknown>): { label: string; decision: unknown } {
+  const amendment = params.proposedExecpolicyAmendment;
+  if (Array.isArray(amendment) && amendment.length > 0) {
+    return { label: amendment.join(" "), decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: amendment } } };
+  }
+  const network = (params.proposedNetworkPolicyAmendments as { host: string; action: string }[] | null | undefined)?.find((a) => a.action === "allow");
+  if (network) return { label: `${network.host} への接続`, decision: { applyNetworkPolicyAmendment: { network_policy_amendment: network } } };
+  return { label: "このセッションのみ", decision: "acceptForSession" };
+}
+
 /** What to answer a request with, for Gasho's answer; `error` when that answer cannot be given to this request. */
 export function replyOf(r: CodexRequest, decision: PermissionDecision, answers: QuestionAnswer[] | undefined): { result: unknown } | { error: string } {
   switch (r.method) {
-    case "item/commandExecution/requestApproval": {
-      if (decision === "allow") return { result: { decision: "accept" } };
-      if (decision === "deny") return { result: { decision: "decline" } };
-      const amendment = r.params.proposedExecpolicyAmendment;
-      if (!Array.isArray(amendment) || amendment.length === 0) return { error: "この確認には「今後も許可」を使えません。" };
-      return { result: { decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: amendment } } } };
-    }
+    case "item/commandExecution/requestApproval":
+      return { result: { decision: decision === "allow" ? "accept" : decision === "deny" ? "decline" : commandAlways(r.params).decision } };
     case "item/fileChange/requestApproval":
-      if (decision === "always") return { error: "この確認には「今後も許可」を使えません。" };
-      return { result: { decision: decision === "allow" ? "accept" : "decline" } };
+      return { result: { decision: decision === "allow" ? "accept" : decision === "deny" ? "decline" : "acceptForSession" } };
     case "item/permissions/requestApproval": {
-      if (decision === "always") return { error: "この確認には「今後も許可」を使えません。" };
       if (decision === "deny") return { result: { permissions: {}, scope: "turn" } };
       const wanted = (r.params.permissions ?? {}) as Record<string, unknown>;
-      return { result: { permissions: Object.fromEntries(Object.entries(wanted).filter(([, v]) => v !== null && v !== undefined)), scope: "turn" } };
+      return { result: { permissions: Object.fromEntries(Object.entries(wanted).filter(([, v]) => v !== null && v !== undefined)), scope: decision === "always" ? "session" : "turn" } };
     }
     case "item/tool/requestUserInput": {
       if (decision === "deny") return { result: { answers: {} } };

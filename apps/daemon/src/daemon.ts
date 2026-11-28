@@ -1711,7 +1711,7 @@ export class Daemon {
               break;
             case "permission.answer": {
               if (this.antigravitySessions.has(m.sessionId)) {
-                result = m.screen === true ? this.antigravitySessions.answer(m.sessionId, m.permissionId, m.decision) : { ok: false, error: ANTIGRAVITY_SCREEN_ONLY };
+                result = m.screen === true ? this.antigravitySessions.answer(m.sessionId, m.permissionId, m.decision, m.answers) : { ok: false, error: ANTIGRAVITY_SCREEN_ONLY };
                 break;
               }
               if (this.codexSessions.has(m.sessionId)) {

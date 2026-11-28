@@ -159,6 +159,27 @@ test("a question answered waits to leave, and can be answered again if it is sti
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "回答する" }).disabled).toBe(false);
 });
 
+test("a form's choices take no words of one's own, an optional question may be left out, and the answer says it is from the screen", async () => {
+  const user = userEvent.setup();
+  const hub = await connectHub();
+  show(
+    request({
+      toolName: "AskUserQuestion",
+      questions: [
+        { question: "どの方式にしますか？", header: "方式", options: [{ label: "A 案" }], noOther: true },
+        { question: "補足", options: [], optional: true },
+      ],
+    }),
+    true,
+    "antigravity",
+  );
+  expect(screen.queryByRole("textbox", { name: "方式：自分の言葉で答える" })).toBeNull();
+  expect(screen.getByPlaceholderText("答えを書く")).toBeTruthy();
+  await user.click(screen.getByRole("radio", { name: "A 案" }));
+  await user.click(screen.getByRole("button", { name: "回答する" }));
+  expect(hub.commands().at(-1)).toMatchObject({ screen: true, decision: "allow", answers: [{ picked: [0] }, { picked: [] }] });
+});
+
 test("a plan is approved in the mode chosen, or sent back with what to change", async () => {
   const user = userEvent.setup();
   const hub = await connectHub();

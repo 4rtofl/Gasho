@@ -81,6 +81,10 @@ export class Acp {
     this.write({ id, error: { code: -32601, message: "Method not supported" } });
   }
 
+  invalidParams(id: Id): void {
+    this.write({ id, error: { code: -32602, message: "Unsupported params" } });
+  }
+
   close(): void {
     this.end(new Error(DISCONNECTED));
   }

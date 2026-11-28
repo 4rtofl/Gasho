@@ -272,13 +272,15 @@ test("Antigravity keeps the old Effort pick until the model changes and never se
   await user.click(screen.getByRole("menuitemradio", { name: "Deep" }));
   await user.click(screen.getByRole("button", { name: /^モデル：Base/ }));
   await user.click(screen.getByRole("option", { name: "Pro Model" }));
-  const disabled = screen.getByRole<HTMLButtonElement>("button", { name: "Effort：Regular（モデルを切り替えたあとに選べます）" });
+  const disabled = screen.getByRole<HTMLButtonElement>("button", { name: "Effort：Regular（モデルを切り替えて送ったあとに、Effort を選べます）" });
   expect(disabled.disabled).toBe(true);
-  expect(disabled.title).toBe("モデルを切り替えたあとに選べます");
+  expect(disabled.title).toBe("モデルを切り替えて送ったあとに、Effort を選べます");
+  expect(screen.getByText("モデルを切り替えて送ったあとに、Effort を選べます", { exact: true })).toBeTruthy();
 
   await user.click(screen.getByRole("button", { name: /^モデル：Pro Model/ }));
   await user.click(screen.getByRole("option", { name: /^Base/ }));
   expect(screen.getByRole("button", { name: "Effort：Deep（送るときに切り替えます）" })).toBeTruthy();
+  expect(screen.queryByText("モデルを切り替えて送ったあとに、Effort を選べます", { exact: true })).toBeNull();
 
   await user.click(screen.getByRole("button", { name: /^モデル：Base/ }));
   await user.click(screen.getByRole("option", { name: "Pro Model" }));
